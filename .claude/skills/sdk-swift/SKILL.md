@@ -168,6 +168,14 @@ socket close, or a session ending.
 Distinguish, and keep distinguishing: transport failure before any response; an HTTP status;
 a decoded error body; a socket close code. Never classify by parsing `localizedDescription`.
 
+`http` carries an `HTTPFailure`: the status, the envelope's `type`, `code`, `message` and
+`docURL`, and `requestID` from `X-Request-Id`, which is what a user quotes for a 500. `type` and
+`code` are strings, so a value the router adds later still reads, and a body that is not the
+envelope keeps its trimmed text as `message` with the rest empty. `FailureMiddleware` throws every
+non-2xx, documented or not, before the generated client decodes it, so a switch over an
+operation's output handles its success and nothing else. A refused socket upgrade is an `http`
+too, with only the status and request id: URLSession never hands over its body.
+
 ## Public API
 
 `VisionAgents(apiKey:)`, defaulting to Stream's hosted router, then `setUser` with a token

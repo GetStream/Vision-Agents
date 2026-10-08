@@ -223,8 +223,8 @@ import Testing
     }
 
     @Test func a403IsRecognisedAsAServerSideOnlyPath() {
-        #expect(AgentsError.http(status: 403, message: "server-side only").isServerSideOnly)
-        #expect(!AgentsError.http(status: 404, message: "no such session").isServerSideOnly)
+        #expect(AgentsError.http(HTTPFailure(status: 403, message: "server-side only")).isServerSideOnly)
+        #expect(!AgentsError.http(HTTPFailure(status: 404, message: "no such session")).isServerSideOnly)
     }
 }
 
@@ -252,7 +252,11 @@ private actor ExpiringRouter: ClientTransport {
         var headers = HTTPFields()
         headers[.contentType] = "application/json"
         if requests.count == 1 {
-            return (HTTPResponse(status: .unauthorized, headerFields: headers), HTTPBody(#"{"error":"token expired"}"#))
+            return (
+                HTTPResponse(status: .unauthorized, headerFields: headers),
+                HTTPBody(
+                    #"{"error":{"message":"token expired","type":"authentication","code":"unauthenticated","doc_url":"https://getstream.io/agents/docs/api/errors/#unauthenticated"}}"#
+                ))
         }
         return (HTTPResponse(status: .ok, headerFields: headers), HTTPBody(#"{"items":[],"has_more":false}"#))
     }

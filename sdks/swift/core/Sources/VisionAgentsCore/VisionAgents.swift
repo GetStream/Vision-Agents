@@ -172,16 +172,8 @@ public struct VisionAgents: Sendable {
         switch output {
         case .created(let response):
             return Session(try response.body.json)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .conflict(let response):
-            throw AgentsError.http(status: 409, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
+        default:
+            throw AgentsError.undescribedSuccess
         }
     }
 
@@ -202,16 +194,8 @@ public struct VisionAgents: Sendable {
         switch output {
         case .noContent:
             return
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .internalServerError(let response):
-            throw AgentsError.http(status: 500, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
+        default:
+            throw AgentsError.undescribedSuccess
         }
     }
 
@@ -239,16 +223,8 @@ public struct VisionAgents: Sendable {
         switch output {
         case .noContent:
             return
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .forbidden(let response):
-            throw AgentsError.http(status: 403, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
+        default:
+            throw AgentsError.undescribedSuccess
         }
     }
 
@@ -271,16 +247,8 @@ public struct VisionAgents: Sendable {
         switch output {
         case .created(let response):
             return Session(try response.body.json)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .forbidden(let response):
-            throw AgentsError.http(status: 403, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
+        default:
+            throw AgentsError.undescribedSuccess
         }
     }
 
@@ -348,14 +316,8 @@ public struct Sessions: Sendable {
         switch output {
         case .ok(let response):
             return Session(try response.body.json)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .forbidden(let response):
-            throw AgentsError.http(status: 403, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
+        default:
+            throw AgentsError.undescribedSuccess
         }
     }
 
@@ -373,18 +335,8 @@ public struct Sessions: Sendable {
         switch output {
         case .ok(let response):
             return Session(try response.body.json)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .forbidden(let response):
-            throw AgentsError.http(status: 403, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .internalServerError(let response):
-            throw AgentsError.http(status: 500, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
+        default:
+            throw AgentsError.undescribedSuccess
         }
     }
 
@@ -395,16 +347,8 @@ public struct Sessions: Sendable {
         switch output {
         case .noContent:
             return
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .internalServerError(let response):
-            throw AgentsError.http(status: 500, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
+        default:
+            throw AgentsError.undescribedSuccess
         }
     }
 
@@ -431,14 +375,8 @@ public struct Sessions: Sendable {
             return Page(
                 items: page.items.map(Session.init), hasMore: page.hasMore,
                 nextCursor: page.nextCursor)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .internalServerError(let response):
-            throw AgentsError.http(status: 500, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
+        default:
+            throw AgentsError.undescribedSuccess
         }
     }
 }
@@ -460,11 +398,20 @@ extension Backend {
         } catch let error as ClientError {
             if error.underlyingError is CancellationError { throw CancellationError() }
             if let error = error.underlyingError as? AgentsError { throw error }
+            // A response arrived, so this is a success whose body did not read.
+            if error.response != nil { throw AgentsError.unreadable("\(error.underlyingError)") }
             throw AgentsError.transport(error.underlyingError)
         } catch {
             throw AgentsError.transport(error)
         }
     }
+}
+
+extension AgentsError {
+    /// An operation's answer that is neither the success it names nor a failure, which
+    /// `FailureMiddleware` threw before the generated client read it: a success status the spec
+    /// does not describe.
+    static let undescribedSuccess = AgentsError.unreadable("a success status the spec does not describe")
 }
 
 /// Hands a JSON Schema object to the generated client, which holds open-ended objects in a
@@ -473,8 +420,8 @@ private func container(for schema: JSONValue) -> Components.Schemas.SessionTool.
     let encoded = try? JSONEncoder().encode(schema)
     let decoded =
         encoded.flatMap {
-            try? JSONDecoder().decode(OpenAPIObjectContainer.self, from: $0)
-        } ?? OpenAPIObjectContainer()
+            try? JSONDecoder().decode([String: OpenAPIValueContainer].self, from: $0)
+        } ?? [:]
     return .init(additionalProperties: decoded)
 }
 
