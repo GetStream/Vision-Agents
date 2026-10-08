@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
@@ -50,6 +51,15 @@ func documentHandWritten(api huma.API) {
 			"selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer " +
 			"declares). " +
 			"Every watcher is sent each one when it attaches.\n" +
+			"`connector_scope_required` says a connector tool call was refused because the caller's " +
+			"own connection lacks access the provider asked for (insufficient_scope or a claims " +
+			"challenge), and a step-up consent was begun for it: name (the binding's alias), " +
+			"connector_id, connection_id, scopes (what the provider asked for, empty for a claims " +
+			"challenge), authorization_id, launch_url, handoff_token and expires_at. A client opens " +
+			"launch_url in a popup and posts it handoff_token, as for createAuthorization. The old " +
+			"grant keeps working until the step-up succeeds, and the same call works afterwards in " +
+			"the same session. While that step-up is open, calls refused for the same access send " +
+			"no second event.\n" +
 			"Persistent text sessions also emit `conversation_updated` with conversation_id and a " +
 			"complete message snapshot: id, command_id, question_id, role, text, state, " +
 			"response_started_at, state_started_at, finished_at, duration_ms, saved, " +
@@ -65,7 +75,8 @@ func documentHandWritten(api huma.API) {
 			"client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. " +
 			"Once the user finishes that login the message is sent again with status connected and " +
 			"no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, " +
-			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; " +
+			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and " +
+			"pre_speech when the tool's connector binding sets one in its policy; " +
 			"tool_ran also includes tool_call_id.\n" +
 			"A respond command carrying command_id emits command_accepted with a nested command " +
 			"receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal " +
@@ -93,7 +104,9 @@ func documentHandWritten(api huma.API) {
 			"command recovery is unchanged.\n" +
 			"The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, " +
 			"`interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the " +
-			"session. A `tool_call` is the only frame that must be answered: everything else is a " +
+			"session. `instructions` is server-side only: from an end user's device it changes " +
+			"nothing and is answered with an `error` frame, `context` `command`, as `updateSession` " +
+			"refuses it. A `tool_call` is the only frame that must be answered: everything else is a " +
 			"report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; " +
 			"their result must repeat both values so a result cannot be adopted by another command " +
 			"or turn.\n" +
@@ -134,7 +147,7 @@ func documentHandWritten(api huma.API) {
 			"optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes " +
 			"one up for the records. A `text` session is refused, because the socket carries audio. " +
 			"A field that `createSession` refuses from an end user's device is refused here too: " +
-			"`history` is server-side only.\n" +
+			"`history` and `instructions` are server-side only.\n" +
 			"The server answers `session`, with the `Session` and the `sample_rate` in use. Then " +
 			"binary frames are PCM16 mono at that rate in both directions: the caller's audio in, " +
 			"and the agent's speech out at the pace it would be heard on a call. A `cleared` frame " +
@@ -404,6 +417,85 @@ func documentHandWritten(api huma.API) {
 			"413": {Description: "The event is over 256 KiB"},
 		},
 	})
+	// The direct-call proxy is one route for every method a provider's API takes, so it is one
+	// operation per method. Its path runs on past {path}, which a Huma operation cannot route.
+	errorBody := map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}
+	for _, method := range proxyMethods {
+		var body *huma.RequestBody
+		if method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch {
+			// Any body of any media type, forwarded as it came with its Content-Type.
+			body = &huma.RequestBody{
+				Description: "The body for the provider, of any media type, at most 1 MiB.",
+				Content:     map[string]*huma.MediaType{"*/*": {Schema: &huma.Schema{Type: huma.TypeString, Format: "binary"}}},
+			}
+		}
+		document.AddOperation(&huma.Operation{
+			OperationID: "proxyConnection" + method[:1] + strings.ToLower(method[1:]),
+			Method:      method,
+			Path:        connectionProxyPath + "{path}",
+			Summary:     "Call a connection's provider directly (" + method + ")",
+			Description: "Forwards the request to the connector's api_base with path appended, and answers " +
+				"with the provider's answer as it came: status, headers and body. The request goes as it " +
+				"came, but for the router's own credentials and caller headers (Authorization, " +
+				"X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, " +
+				"token, customer_id, user_id), which never reach the provider; the connection's own " +
+				"credential is added instead. On a 401 the credential is renewed and the request sent " +
+				"once more when the scheme can renew it. A provider's 429 and Retry-After come back as " +
+				"they are, and the connection's calls are then refused with a 429 here until that " +
+				"Retry-After passes. A path with a dot segment, which would leave api_base, is " +
+				"refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base " +
+				"URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra " +
+				"headers. An app-owned connection is the app's backend's; a user-owned one is reached " +
+				"only by a backend acting for that user (X-Stream-User-Id). Each call that is sent " +
+				"leaves one proxy_call audit row.\n\n" +
+				"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+				"user's device.",
+			Parameters: []*huma.Param{
+				{Name: "id", In: "path", Description: "The connection.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+				{Name: "path", In: "path", Description: "The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+			},
+			RequestBody: body,
+			Responses: map[string]*huma.Response{
+				"200": {Description: "The provider's answer, as it came. It may have any status, a 401 or a 429 included."},
+				"400": {Ref: "#/components/responses/BadRequest"},
+				"401": {Ref: "#/components/responses/Unauthorized"},
+				"403": {Ref: "#/components/responses/Forbidden"},
+				"404": {Ref: "#/components/responses/NotFound"},
+				"409": {Description: "The connection is not connected", Content: errorBody},
+				"413": {Description: "The body is over 1 MiB", Content: errorBody},
+				"429": {Description: "The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came.", Content: errorBody},
+				"503": {Description: "The call did not reach the provider, or its answer did not come back", Content: errorBody},
+			},
+		})
+	}
+	document.AddOperation(&huma.Operation{
+		OperationID: "answerProviderAppHandshake",
+		Method:      http.MethodGet,
+		Path:        providerAppEventsPath + "{connector_id}/{provider_app_id}",
+		Summary:     "Answer a provider app's handshake",
+		Description: "Where a provider checks a provider app's events URL before it delivers to it: Meta's " +
+			"Verify Token check of a customer's WhatsApp webhook, for one. Unauthenticated because the " +
+			"provider is not a customer. Only a connector whose manifest declares channel.handshake " +
+			"answers it; the verify token is the provider app's id, the one in the URL, so nothing is " +
+			"stored for it, and every delivery is still verified with the app's own secret. With " +
+			"hub.mode subscribe, hub.verify_token the provider app's id and hub.challenge digits only, " +
+			"the challenge is echoed as text/plain. Any other connector, an unknown provider app, or a " +
+			"deployment without connectors answers 405 as for any method a route does not serve. No " +
+			"SDK wraps it: only a provider calls it.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "connector_id", In: "path", Description: "The connector the provider app is of, such as whatsapp.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "provider_app_id", In: "path", Description: "The provider's id for the app, such as a Meta app id.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "hub.mode", In: "query", Description: "subscribe.", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "hub.verify_token", In: "query", Description: "The provider app's id.", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "hub.challenge", In: "query", Description: "Digits to echo.", Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The challenge, echoed", Content: map[string]*huma.MediaType{"text/plain": {Schema: &huma.Schema{Type: huma.TypeString}}}},
+			"404": {Description: "The query is not this URL's handshake: another mode or token, or a challenge that is not digits"},
+			"405": {Description: "This connector, or this deployment, answers no handshake here"},
+		},
+	})
 	document.AddOperation(&huma.Operation{
 		OperationID: "getPluginLogo",
 		Method:      http.MethodGet,
@@ -537,7 +629,7 @@ func documentHandWritten(api huma.API) {
 			{Name: "config_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "session_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "user_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
-			{Name: "severity", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"info", "error"}}},
+			{Name: "severity", In: "query", Description: "The least serious level to show, not the only one: warn is warnings and errors.", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"info", "warn", "error"}}},
 			{Name: "source", In: "query", Description: "Comma-separated user/agent/tool/system sources.", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "q", In: "query", Schema: &huma.Schema{Type: huma.TypeString, MaxLength: itemLimit(256)}},
 			{Name: "from", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Format: "date-time"}},
@@ -581,7 +673,7 @@ func documentHandWritten(api huma.API) {
 			{Name: "config_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "session_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "user_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
-			{Name: "severity", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"info", "error"}}},
+			{Name: "severity", In: "query", Description: "The least serious level to show, not the only one: warn is warnings and errors.", Schema: &huma.Schema{Type: huma.TypeString, Enum: []any{"info", "warn", "error"}}},
 			{Name: "source", In: "query", Description: "Comma-separated user/agent/tool/system sources.", Schema: &huma.Schema{Type: huma.TypeString}},
 			{Name: "q", In: "query", Schema: &huma.Schema{Type: huma.TypeString, MaxLength: itemLimit(256)}},
 			{Name: "from", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Format: "date-time"}},

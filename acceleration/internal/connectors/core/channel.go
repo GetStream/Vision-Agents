@@ -31,6 +31,9 @@ type ChannelRule struct {
 	// Challenge is the path of the value a handshake asks the endpoint to send back. A body
 	// that has it is a handshake and carries no messages and no signals.
 	Challenge string `yaml:"challenge,omitempty" json:"challenge,omitempty"`
+	// Handshake is the GET a provider checks its events URL with before it delivers to it,
+	// answered on a provider app's route only. Empty means the route serves no GET.
+	Handshake HandshakeKind `yaml:"handshake,omitempty" json:"handshake,omitempty"`
 	// EventID is the paths of the provider's own id for a delivery, tried in order, such as
 	// Slack's event_id on an event and trigger_id on an interaction. A forward of the delivery
 	// to the customer's event destinations is keyed by it (EventID, eventforward). Empty, or
@@ -76,16 +79,16 @@ type VerifierRule struct {
 	Kind VerifierKind `yaml:"kind" json:"kind"`
 	// Secret is whose secret signs or carries the request.
 	Secret SecretSource `yaml:"secret" json:"secret"`
-	// Header is the request header that carries the signature (hmac_header) or the secret
-	// itself (secret_header).
+	// Header is the request header that carries the signature (hmac_header, ed25519) or the
+	// secret itself (secret_header).
 	Header string `yaml:"header,omitempty" json:"header,omitempty"`
 	// Algorithm and Encoding are the HMAC's hash and how the header writes the digest.
 	Algorithm string `yaml:"algorithm,omitempty" json:"algorithm,omitempty"`
 	Encoding  string `yaml:"encoding,omitempty" json:"encoding,omitempty"`
 	// Prefix is what the header writes before the digest, such as a version tag.
 	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
-	// Signed is the bytes the HMAC covers, as a template over {body}, the raw request body,
-	// and {timestamp}, the value of TimestampHeader.
+	// Signed is the bytes the HMAC or the Ed25519 signature covers, as a template over {body},
+	// the raw request body, and {timestamp}, the value of TimestampHeader.
 	Signed          string `yaml:"signed,omitempty" json:"signed,omitempty"`
 	TimestampHeader string `yaml:"timestamp_header,omitempty" json:"timestamp_header,omitempty"`
 	// MaxAge is how old a signed timestamp may be before the request is refused as a replay.
@@ -190,11 +193,16 @@ type VerifierKind string
 // and a shared secret compared as it is. standard_webhooks is the Standard Webhooks
 // specification (https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md),
 // whose headers, signed content and secret format are fixed there, so it takes no parameters
-// but its age.
+// but its age. ed25519 is an Ed25519 signature (RFC 8032) under the provider's public key,
+// written in base64 in a header, over a signed template as hmac_header's: Telnyx signs
+// {timestamp}|{body} this way
+// (https://developers.telnyx.com/docs/messaging/messages/receiving-webhooks, opened
+// October 8, 2026).
 const (
 	VerifierHMACHeader       VerifierKind = "hmac_header"
 	VerifierSecretHeader     VerifierKind = "secret_header"
 	VerifierStandardWebhooks VerifierKind = "standard_webhooks"
+	VerifierEd25519          VerifierKind = "ed25519"
 )
 
 // SecretSource is whose secret a verifier checks with.
@@ -209,6 +217,40 @@ const (
 	SecretOperator    SecretSource = "operator"
 	SecretProviderApp SecretSource = "provider_app"
 )
+
+// HandshakeKind is the GET handshake a channel's events URL answers.
+type HandshakeKind string
+
+// The handshakes. hub_challenge is PubSubHubbub 0.3's verification of intent
+// (https://pubsubhubbub.github.io/PubSubHubbub/pubsubhubbub-core-0.3.html, 6.2.1, opened
+// October 8, 2026): a GET whose query has hub.mode, hub.verify_token and hub.challenge, which
+// the URL's owner echoes when it agrees and answers 404 when it does not. Meta's webhooks check
+// a URL this way, with hub.mode «always set to subscribe» and hub.challenge «An int you must
+// pass back to us» (https://developers.facebook.com/docs/graph-api/webhooks/getting-started,
+// opened October 8, 2026). The verify token is the provider app's id, the one the URL names
+// (wave 3d Q1), so only a provider_app secret has the handshake.
+const (
+	HandshakeHubChallenge HandshakeKind = "hub_challenge"
+)
+
+// hubSubscribe is hub.mode on a handshake that asks to start deliveries (6.2.1 above).
+const hubSubscribe = "subscribe"
+
+// AnswerHandshake is the challenge to echo for a handshake's query, and whether the URL
+// agrees: the block declares hub_challenge, hub.mode is subscribe, hub.verify_token is
+// verifyToken, and hub.challenge is digits only, the int Meta sends, so the echo is never
+// anything a reader could take for markup.
+func (c ChannelRule) AnswerHandshake(query url.Values, verifyToken string) (string, bool) {
+	if c.Handshake != HandshakeHubChallenge || verifyToken == "" {
+		return "", false
+	}
+	challenge := query.Get("hub.challenge")
+	if query.Get("hub.mode") != hubSubscribe || query.Get("hub.verify_token") != verifyToken ||
+		challenge == "" || strings.Trim(challenge, "0123456789") != "" {
+		return "", false
+	}
+	return challenge, true
+}
 
 // BodyFormat is how an inbound body is read.
 type BodyFormat string
@@ -229,7 +271,8 @@ const (
 )
 
 var (
-	verifierKinds = []VerifierKind{VerifierHMACHeader, VerifierSecretHeader, VerifierStandardWebhooks}
+	verifierKinds = []VerifierKind{VerifierHMACHeader, VerifierSecretHeader, VerifierStandardWebhooks, VerifierEd25519}
+	handshakes    = []HandshakeKind{HandshakeHubChallenge}
 	secretSources = []SecretSource{SecretOperator, SecretProviderApp}
 	bodyFormats   = []BodyFormat{FormatJSON, FormatForm}
 	// hmacAlgorithms: SHA-256 is what Slack («Verifying requests from Slack»,
@@ -308,6 +351,11 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 	if v.Secret == SecretOperator && m.Client.Env == "" {
 		fail("channel.verifier.secret", "operator needs client.env to read the operator's secret under")
 	}
+	if c.Handshake != "" && !slices.Contains(handshakes, c.Handshake) {
+		fail("channel.handshake", "%q is not one of %v", c.Handshake, handshakes)
+	} else if c.Handshake != "" && v.Secret != SecretProviderApp {
+		fail("channel.handshake", "needs a provider_app secret: the verify token is the provider app's id")
+	}
 	unread := func(field string, set bool) {
 		if set {
 			fail("channel.verifier."+field, "is not read by %s", v.Kind)
@@ -323,15 +371,23 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 		fail("channel.verifier.max_age", "cannot be negative")
 	}
 	switch v.Kind {
-	case VerifierHMACHeader:
+	case VerifierHMACHeader, VerifierEd25519:
 		if v.Header == "" {
 			fail("channel.verifier.header", "is empty")
 		}
-		if !slices.Contains(hmacAlgorithms, v.Algorithm) {
-			fail("channel.verifier.algorithm", "%q is not one of %v", v.Algorithm, hmacAlgorithms)
-		}
-		if !slices.Contains(hmacEncodings, v.Encoding) {
-			fail("channel.verifier.encoding", "%q is not one of %v", v.Encoding, hmacEncodings)
+		if v.Kind == VerifierHMACHeader {
+			if !slices.Contains(hmacAlgorithms, v.Algorithm) {
+				fail("channel.verifier.algorithm", "%q is not one of %v", v.Algorithm, hmacAlgorithms)
+			}
+			if !slices.Contains(hmacEncodings, v.Encoding) {
+				fail("channel.verifier.encoding", "%q is not one of %v", v.Encoding, hmacEncodings)
+			}
+		} else {
+			// The signature is base64 and the algorithm is Ed25519 itself, as Telnyx's page
+			// above says («Base64-encoded Ed25519 signature»), so neither is a parameter.
+			unread("algorithm", v.Algorithm != "")
+			unread("encoding", v.Encoding != "")
+			unread("prefix", v.Prefix != "")
 		}
 		names, err := placeholderNames(v.Signed)
 		switch {

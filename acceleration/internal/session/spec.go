@@ -193,6 +193,9 @@ type Spec struct {
 	// and a session on a thread channel or a phone call start with the person's other cards,
 	// from the agent's config. Off, the session does what it did before the cards existed.
 	EpisodeCards bool
+	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
+	// answers the first call to each with its full description instead of running it.
+	ProgressiveTools bool
 
 	// SkillNames are the skills the voice model may hand to the subagent: the agent
 	// config's own, or one of the built-in think, recall and explain. Empty means the
@@ -322,6 +325,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Harness:            config.Harness,
 		DispatchText:       config.DispatchText,
 		EpisodeCards:       config.EpisodeCards,
+		ProgressiveTools:   config.ProgressiveTools,
 		Tags:               routing.Tags(config.Tags),
 	}
 }

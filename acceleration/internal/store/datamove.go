@@ -52,8 +52,9 @@ type dataTable struct {
 // sealed under this deployment's key, with connector_event_deliveries, forwards in flight. And
 // connection_event_subscriptions with connection_event_deliveries: their secrets are sealed
 // under this deployment's key and their callbacks are this deployment's URL. And
-// channel_threads, contact_map and episodes: the thread channels, omni-channels and cards they
-// point at live in the Stream app, which a move does not carry either. And
+// channel_threads, contact_map, episodes and episode_activity: the thread channels,
+// omni-channels and cards they point at live in the Stream app, which a move does not carry
+// either. And
 // connector_invocations and connector_audit: this deployment's record of what it did with
 // credentials sealed under its own key.
 var dataTables = []dataTable{

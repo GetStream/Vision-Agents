@@ -32,12 +32,15 @@ const connectorsPath = "github.com/GetStream/Vision-Agents/acceleration/internal
 //   - quickbooks, zoho, aws, linq: providers in the architecture doc's «Stress test: 12
 //     awkward providers» (rows 2, 3, 10 and 12) not already listed.
 //   - hubspot: the architecture doc's «Axes where providers differ», rows 1 and 15.
+//   - telnyx: the channels doc, «Other channels», item 1 «Scheme» («Telegram, Linq, Sendblue,
+//     Twilio and Telnyx need api_key»), a provider with a built-in since AI-881.
 var deniedNames = []string{
 	"salesforce", "slack", "calendly", "shopify", "google", "microsoft", "github", "gong",
 	"linear", "twilio",
 	"calcom",
 	"quickbooks", "zoho", "aws", "linq",
 	"hubspot",
+	"telnyx",
 }
 
 // GuardSuite keeps the core free of adapters and provider names. It reads the package

@@ -55,7 +55,9 @@ class TestDispatch < LocalRouterTest
   end
 
   def test_a_worker_that_only_hosts_tools_handles_nothing_and_finishes_work_it_is_handed
-    dispatch.host("my-agent", VA::Tools.new.register("weather_lookup", description: "Weather") { "sunny" })
+    agent = client.agent("my-agent")
+    agent.tools.register("weather_lookup", description: "Weather") { "sunny" }
+    dispatch.host(agent)
 
     run_until_closed do |peer|
       assert_equal({ "capacity" => "2", "active" => "0", "handles" => "" }, peer.request.query)
@@ -159,14 +161,15 @@ class TestDispatch < LocalRouterTest
 
   def test_a_hosted_tool_is_declared_on_every_ready_and_answered_without_blocking_the_socket
     release = Thread::Queue.new
-    tools = VA::Tools.new
+    agent = client.agent("my-agent", name: "Max")
+    tools = agent.tools
     tools.register("weather_lookup", description: "Weather for a place",
                                      parameters: { type: "object", properties: { location: { type: "string" } } }) do |args|
       { "location" => args["location"], "sky" => "sunny" }
     end
     tools.register("slow", description: "Waits to be released") { release.pop(timeout: 5) }
     tools.register("broken", description: "Always fails") { raise ArgumentError, "no sky today" }
-    dispatch.host("my-agent", tools, timeout: 2.5)
+    dispatch.host(agent, tool_timeout: 2.5)
 
     run_until_closed do |peer|
       peer.send_frame(type: "ready", worker_id: "w1")
@@ -200,8 +203,9 @@ class TestDispatch < LocalRouterTest
   end
 
   def test_a_worker_whose_tools_are_refused_stops_with_the_reason
-    tools = VA::Tools.new.register("weather_lookup", description: "Weather for a place") { "sunny" }
-    dispatch.host("my-agent", tools)
+    agent = client.agent("my-agent")
+    agent.tools.register("weather_lookup", description: "Weather for a place") { "sunny" }
+    dispatch.host(agent)
     runner = Thread.new { dispatch.run }
     runner.report_on_exception = false
     peer = @router.peer
@@ -215,6 +219,6 @@ class TestDispatch < LocalRouterTest
 
   def test_a_handler_or_hosted_tools_are_needed_before_running
     assert_raises(VA::ConfigurationError) { dispatch.run }
-    assert_raises(VA::ConfigurationError) { dispatch.host("my-agent", VA::Tools.new) }
+    assert_raises(VA::ConfigurationError) { dispatch.host(client.agent("my-agent")) }
   end
 end

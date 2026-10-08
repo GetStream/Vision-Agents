@@ -165,6 +165,13 @@ type Turn struct {
 	RoundtripMs *float64 `bun:"roundtrip_ms"`
 	// SpeechEndToAudioMs is voice in to voice out.
 	SpeechEndToAudioMs *float64 `bun:"speech_end_to_audio_ms"`
+	// FirstFrameQueuedMs is settled transcript to the edge queueing the first frame of the reply,
+	// FirstAudibleFrameMs to the track taking the first frame that was not silence, and
+	// SpeechEndToAudibleMs is SpeechEndToAudioMs measured to that moment. RoundtripMs stops at
+	// publishing returning, which for a long first chunk is later than both.
+	FirstFrameQueuedMs   *float64 `bun:"first_frame_queued_ms"`
+	FirstAudibleFrameMs  *float64 `bun:"first_audible_frame_ms"`
+	SpeechEndToAudibleMs *float64 `bun:"speech_end_to_audible_ms"`
 	// AudioOutMs is how much speech the agent published for this turn.
 	AudioOutMs *float64 `bun:"audio_out_ms"`
 	// AudioDroppedMs is speech that was synthesised for this turn but never published.
@@ -411,6 +418,10 @@ type AgentConfig struct {
 	// on a thread channel or a phone call under it start with the person's other cards. Off
 	// unless a config turns it on.
 	EpisodeCards bool `bun:"episode_cards,notnull"`
+	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
+	// sends a tool's full description the first time it is called instead of running it
+	// (20261008130000_agent_config_progressive_tools.sql). Off unless a config turns it on.
+	ProgressiveTools bool `bun:"progressive_tools,notnull"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`
@@ -440,6 +451,32 @@ type ConnectorBinding struct {
 	// Events are the MCP events the binding's fixed connection is subscribed to, each opening
 	// a conversation of its own when it arrives (internal/mcpevents). Empty subscribes to none.
 	Events []BindingEvent `json:"events,omitempty"`
+	// Policy is how the binding's calls behave around speech and interruptions. Nil is a
+	// binding written before it existed, or without one, and behaves as one always has.
+	Policy *BindingPolicy `json:"policy,omitempty"`
+}
+
+// The values of BindingPolicy.OnInterrupt. Empty is InterruptCancel.
+const (
+	// InterruptCancel stops waiting for the call when the turn is interrupted: today's
+	// behaviour, and Pipecat's default (cancel_on_interruption=True).
+	InterruptCancel = "cancel"
+	// InterruptWait lets the call finish after an interruption, as LiveKit does for a tool
+	// not flagged CANCELLABLE; its result goes into the history.
+	InterruptWait = "wait"
+)
+
+// BindingPolicy is a binding's policy envelope, as it was written: a field left out is
+// stored empty and means its default.
+type BindingPolicy struct {
+	// PreSpeech is what the agent says while one of the binding's tools runs, in place of
+	// the phrase it would pick itself. Empty leaves the agent's own.
+	PreSpeech string `json:"pre_speech,omitempty"`
+	// OnInterrupt is InterruptCancel or InterruptWait. Empty is InterruptCancel.
+	OnInterrupt string `json:"on_interrupt,omitempty"`
+	// Cancellable is whether the provider is told to stop a call the session stopped
+	// waiting for. Nil is true.
+	Cancellable *bool `json:"cancellable,omitempty"`
 }
 
 // BindingEvent is one MCP event a binding subscribes to on its connection's server.

@@ -1,6 +1,6 @@
 # internal/omnichannel
 
-The contact map and the episode cards (T43 and T41, AI-883). The design is «The episode card» and «How the agent knows it is the same person» in `docs/connectors/channels.md` on `connectors/planning`.
+The contact map and the episode cards (T43 and T41, AI-883), and closing and summarizing them (T55, AI-884). The design is «The episode card» and «How the agent knows it is the same person» in `docs/connectors/channels.md` on `connectors/planning`.
 
 ## Flow
 
@@ -40,6 +40,40 @@ session.Manager.Create, before the history is restored       callCards.read
                                       at most maxCardRunes
 ```
 
+Closing (T55, AI-884), `Closer`:
+
+```
+idle sweeper, every minute                     call.session_ended hook (api.endCallEpisodes)
+  Closer.Start, from cmd/router                  Closer.EndCall(scope, call id)
+  only with connectors on or a config            any call; one with no episode
+  with episode_cards on (startEpisodeSweeper)    matches no row and reaches no Stream
+              |                                           |
+  store.CloseIdleEpisodes                        store.EndCallEpisodes
+    thread episodes, last message                  call episodes of the call in the
+    older than episodes.idle_after                 event's app, still in progress
+              \                                          /
+               status ended, ended_at, summary lease (5 min): one router wins each row
+               card: status ended                      partial update, no new message
+               summary                                 config's own LLM (default llm-fast)
+                 linesOf(the episode's own window, last 100, 60,000 runes)
+                 ok:   card text = summary, status summarized; row summarized
+                 fail: card status summary_failed; row summary_failed; text and thread kept
+                 router stopped: row stays ended; the next sweep takes it once the lease runs out
+                                 (store.ClaimEpisodeSummaries)
+```
+
+### Close API (for T48 and later callers)
+
+| Call | What it does | Returns |
+| --- | --- | --- |
+| `NewCloser(CloserOptions{Store, Stream, LLM, IdleAfter})` | builds a closer; runs nothing | error without a store, Stream clients, an LLM or a positive idle period |
+| `Closer.Start()` | the idle sweeper until `Close`: a sweep at once, then every `Every` (1 min) | — |
+| `Closer.Sweep(ctx)` | one sweep: closes idle thread episodes, takes expired summary leases, summarizes each; returns when they are done | store error |
+| `Closer.EndCall(ctx, store.AppScope, callID)` | closes the call's episodes now, summarizes them off the caller | store error |
+| `Closer.Close()` | stops the sweeper and the summaries, and waits | — |
+
+A card closed after the idle period is updated in the app its episode is pinned to (`episodes.stream_app_pk`, through `streamapp.Clients.ForApp`), the same app the card was written in.
+
 ## Terms
 
 | Term | What it is | In code |
@@ -67,6 +101,11 @@ session.Manager.Create, before the history is restored       callCards.read
 - **A call card names where its transcript is.** Its `thread_channel` is the channel the transcript is written into (`Session.transcribedInto`), read as the transcript factory reads it (`Spec.TranscriptChannel`, `Spec.ConversationChannel`). A device's call under a thread channel's agent id writes none there (`persistent.BarThread`), so it has no episode.
 - **The budget covers the call read.** `callCards.read` puts `calledParty` under `ReadTimeout` too, so a slow Stream delays a call's join by at most 5 s.
 - **A card with nothing to say is skipped, not a stop.** `render` passes over a card with neither a summary nor a line, so the older cards are still read. Example: a call in a named channel at -60 s does not hide an SMS at -120 s.
+- **An episode closes once, whatever the number of routers.** Each close is one transaction whose row lock one router wins (`FOR UPDATE SKIP LOCKED`, then the status and the last message checked again), and the winner holds the summary for `summaryLease`. Example: two routers sweep at the same second; each idle thread gets one summary.
+- **A message keeps its thread open.** `store.OpenEpisode` sets `episode_activity.last_message_at` with each message, in the statement that finds the episode open and holds it against a close; a message that arrives after the close opens the next episode and card.
+- **A call ends with its call, never as idle.** The sweeper closes thread episodes only (`session_id IS NULL`).
+- **A failed summary keeps the raw text.** `summary_failed` changes the card's status only; the thread channel is never written. A call in a channel its session named gives no lines (`linesOf`), so its summary fails rather than mix in another caller's words.
+- **The summary is the config's own LLM**, the agent config's `llm`, or `llm-fast` (a session's default) when it names none. It is not written to memory (follow-up: memory's `Scope.UserID` is «the customer», not the person from the contact map).
 - **Card text is data.** The cards come as one user message, behind `cardsAttribution`, as restored shared history comes behind conversation's note.
 
 ## Bounds
@@ -77,10 +116,18 @@ session.Manager.Create, before the history is restored       callCards.read
 | Lines of a card without a summary | the last 20 | a choice |
 | Characters handed over, note included | 15,000 | `conversation.MaxHistoryRunes / 4` |
 | Time for the whole read, the call's `GetCall` included | 5 s (`ReadTimeout`) | a choice; past it, the cards read so far |
+| Idle period of a text episode | 1 h (`episodes.idle_after`), under 24 h | Kanat, 2026-10-07 (D4), `unverified` against traffic; 24 h is WhatsApp's window (AI-884) |
+| Sweep interval, and episodes per sweep | 1 min, 10 | a choice |
+| Summary lease | 5 min | a choice: longer than the 1 min a summary may take |
+| Lines a summary reads | the last 100, at most 60,000 runes | `conversation.MaxHistoryMessages`, `conversation.MaxHistoryRunes` |
+| Summary length | 400 tokens, 2,000 runes | a choice |
 
 ## Open
 
-- T55 closes and summarizes a card; T62 moves `channel_identities` onto `contact_map`.
+- T62 moves `channel_identities` onto `contact_map`.
+- The summary is not written to memory: it would change what `memory.Scope.UserID` means (`internal/memory/memory.go:31-32`).
+- A call whose `call.session_ended` arrives before its card's episode is opened (the card is written off the session's start) stays in progress: the sweeper closes thread episodes only.
+- The sweeper's gate is read once, at start: a config that turns `episode_cards` on later has its calls closed by the hook, and its expired summary leases taken from the next start.
 - A text session on a channel other than a thread channel reads no cards: the contact map keys no in-app user yet (`contact_map.user_id`, T62).
 - A session a caller opens on a thread channel through the API and keeps open is checked for a shared thread once, when it opens; the Router's own sessions open for each turn (`api.answerThread`).
 
@@ -91,4 +138,6 @@ go test ./internal/omnichannel
 ROUTER_POSTGRES_DSN=... ROUTER_REDIS_ADDR=... \
   go test -tags integration -run 'TestEpisodeCardsSuite|TestSlackChannelSuite' ./internal/api
 ROUTER_POSTGRES_DSN=... go test -tags integration -run TestEpisodeReadingSuite ./internal/session
+ROUTER_POSTGRES_DSN=... go test -tags integration -run TestCloserSuite ./internal/omnichannel
+ROUTER_POSTGRES_DSN=... go test -tags integration -run TestEpisodeSweeperSuite ./cmd/router
 ```

@@ -116,6 +116,10 @@ npm test        # typecheck, then the suite against a real http and ws server
 For Go tests, read the `go-testing` skill (`.claude/skills/go-testing/SKILL.md`) first: testify
 suites, the shared `RouterSuite` for integration tests, and how to wait for async writes.
 
+Before you run more than one coding agent at once (parallel PRs, reviewers, fixers), read the
+`parallel-agents` skill (`.claude/skills/parallel-agents/SKILL.md`): test databases, migration
+slots, merge order and how not to burn tokens.
+
 - Framework: pytest. Never mock.
 - `@pytest.mark.asyncio` is not needed (asyncio_mode = auto).
 - Integration tests use `@pytest.mark.integration`.

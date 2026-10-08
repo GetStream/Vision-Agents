@@ -238,11 +238,15 @@ func (s *Store) DeleteConnectorOAuthClient(ctx context.Context, customerID, conn
 }
 
 // checkOAuthClient is what the migration leaves to the store: a known registration, a
-// provider app for a managed client, and each sealed secret with the key version it was
-// sealed under, or neither.
+// provider app for a managed client, each sealed secret with the key version it was sealed
+// under, or neither, and a client id unless the record is a provider app with a signing
+// secret alone (20261009130000_connector_oauth_clients_provider_app_only.sql).
 func checkOAuthClient(client *ConnectorOAuthClient) error {
-	if client.CustomerID == "" || client.ConnectorID == "" || client.ClientID == "" {
-		return stack.Wrap(errors.New("store: an OAuth client needs a customer, a connector id and a client id"))
+	if client.CustomerID == "" || client.ConnectorID == "" {
+		return stack.Wrap(errors.New("store: an OAuth client needs a customer and a connector id"))
+	}
+	if client.ClientID == "" && len(client.SigningSecretSealed) == 0 {
+		return stack.Wrap(errors.New("store: a record without a client id is a provider app, so it needs a signing secret"))
 	}
 	if !slices.Contains(oauthClientRegistrations, client.Registration) {
 		return stack.Wrap(fmt.Errorf("store: OAuth client registration %q is not one of %v", client.Registration, oauthClientRegistrations))

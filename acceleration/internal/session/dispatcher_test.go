@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -227,6 +228,102 @@ func (s *DispatcherSuite) TestAnInterruptedCallIsCancelledAtTheProvider() {
 	s.ErrorIs(err, context.Canceled)
 	s.Eventually(func() bool { return slices.Contains(s.provider.sent("primary"), "notifications/cancelled") },
 		5*time.Second, 20*time.Millisecond)
+}
+
+// interrupted runs crm__slow through d on a turn interrupted 200 ms in, and says what the
+// turn was told and how long it waited.
+func (s *DispatcherSuite) interrupted(d *dispatcher) (string, time.Duration, error) {
+	turn, interrupt := context.WithCancel(s.ctx)
+	time.AfterFunc(200*time.Millisecond, interrupt)
+	started := time.Now()
+	parts, err := d.Run(turn, llm.ToolCall{ID: uuid.NewString(), Name: "crm__slow", Arguments: "{}"})
+	return llm.TextOf(parts), time.Since(started), err
+}
+
+// slowWith is a fixed binding of the app's primary account granting slow, with policy.
+func (s *DispatcherSuite) slowWith(policy *store.BindingPolicy) (*dispatcher, string) {
+	app := s.connection("", "primary")
+	binding := s.fixed("crm", app, "slow")
+	binding.TimeoutMs = 30000
+	binding.Policy = policy
+	d, _, _, err := s.attach(s.spec(s.config(binding), "", nil))
+	s.Require().NoError(err)
+	return d, app
+}
+
+// TestAWaitBindingFinishesItsCallAfterAnInterruption: on_interrupt wait, as LiveKit lets a
+// tool not flagged CANCELLABLE finish. The turn waits for the answer, and the provider is
+// never sent the cancel.
+func (s *DispatcherSuite) TestAWaitBindingFinishesItsCallAfterAnInterruption() {
+	d, _ := s.slowWith(&store.BindingPolicy{OnInterrupt: store.InterruptWait})
+
+	said, waited, err := s.interrupted(d)
+
+	s.Require().NoError(err)
+	s.Equal("done", said)
+	s.GreaterOrEqual(waited, slowFor, "the call ran to its answer")
+	s.NotContains(s.provider.sent("primary"), "notifications/cancelled")
+}
+
+// TestACancelBindingSendsTheCancelAsToday: on_interrupt cancel, written out or left empty,
+// is TestAnInterruptedCallIsCancelledAtTheProvider.
+func (s *DispatcherSuite) TestACancelBindingSendsTheCancelAsToday() {
+	cancellable := true
+	for name, policy := range map[string]*store.BindingPolicy{
+		"written out": {OnInterrupt: store.InterruptCancel, Cancellable: &cancellable},
+		"empty":       {},
+	} {
+		s.Run(name, func() {
+			s.provider.forget()
+			d, _ := s.slowWith(policy)
+
+			_, waited, err := s.interrupted(d)
+
+			s.ErrorIs(err, context.Canceled)
+			s.Less(waited, slowFor)
+			s.Eventually(func() bool { return slices.Contains(s.provider.sent("primary"), "notifications/cancelled") },
+				5*time.Second, 20*time.Millisecond)
+		})
+	}
+}
+
+// TestABindingThatIsNotCancellableStopsWaitingAndLeavesTheCallRunning: the turn moves on at
+// the interruption, the provider is never told to stop, and the row says the outcome is
+// unknown.
+func (s *DispatcherSuite) TestABindingThatIsNotCancellableStopsWaitingAndLeavesTheCallRunning() {
+	cancellable := false
+	d, app := s.slowWith(&store.BindingPolicy{Cancellable: &cancellable})
+
+	_, waited, err := s.interrupted(d)
+
+	s.ErrorIs(err, context.Canceled)
+	s.Less(waited, slowFor, "the turn did not wait for the answer")
+	s.Never(func() bool { return slices.Contains(s.provider.sent("primary"), "notifications/cancelled") },
+		slowFor, 50*time.Millisecond)
+	s.Equal(1, s.provider.calls("primary"))
+	s.Eventually(func() bool {
+		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, app, 0, nil)
+		return err == nil && len(rows) == 1 && rows[0].ErrorType == store.InvocationOutcomeUnknown
+	}, 5*time.Second, 20*time.Millisecond)
+}
+
+// TestAToolsPolicyIsWhatItsOwnBindingAsksFor: a phrase and a wait belong to their binding's
+// tools, and a cancel binding, a binding without a policy, or a name under no bound alias
+// asks for nothing.
+func (s *DispatcherSuite) TestAToolsPolicyIsWhatItsOwnBindingAsksFor() {
+	app := s.connection("", "primary")
+	speaking := s.fixed("crm", app, "slow")
+	speaking.Policy = &store.BindingPolicy{PreSpeech: "Let me pull that up.", OnInterrupt: store.InterruptWait}
+	cancelling := s.fixed("tickets", app, "whoami")
+	cancelling.Policy = &store.BindingPolicy{OnInterrupt: store.InterruptCancel}
+	d, _, _, err := s.attach(s.spec(s.config(speaking, cancelling, s.fixed("quiet", app, "whoami")), "", nil))
+	s.Require().NoError(err)
+
+	s.Equal(agent.ToolPolicy{PreSpeech: "Let me pull that up.", Waits: true}, d.toolPolicy("crm__slow"))
+	s.Equal(agent.ToolPolicy{}, d.toolPolicy("tickets__whoami"))
+	s.Equal(agent.ToolPolicy{}, d.toolPolicy("quiet__whoami"))
+	s.Equal(agent.ToolPolicy{}, d.toolPolicy("lookup_order"))
+	s.Equal(agent.ToolPolicy{}, d.toolPolicy("crm"), "a bare alias is no tool of the binding")
 }
 
 // answering is the rest of a session's tool chain, which answers whatever it is asked.

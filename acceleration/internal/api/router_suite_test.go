@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand/v2"
 	"net"
@@ -56,6 +57,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
@@ -174,9 +176,11 @@ type RouterSuite struct {
 
 	// The stubs standing in for providers, for a test to read back what the router asked
 	// them for. model answers questions, vision is the one that can see, voice keeps what
-	// it was told to say, knowledge keeps the passages written to it.
+	// it was told to say, knowledge keeps the passages written to it. holding answers once a
+	// test lets it, for a summary that has to still be in the writing.
 	model     *scriptedLLM
 	vision    *scriptedLLM
+	holding   *scriptedLLM
 	voice     *recordingTTS
 	ears      *quietSTT
 	knowledge *knowledgeBase
@@ -208,6 +212,10 @@ type RouterSuite struct {
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
 	connectors core.Registry
+	// connectorsOff gives the router no connector keyring, transports or limiter, as a deployment with
+	// ROUTER_CONNECTORS_ENABLED unset has, for a control suite to set before it starts the
+	// harness. The suite's store, resolver and sealer are still built.
+	connectorsOff bool
 	// eventSecrets and bridge are the connector events endpoint's secrets and channel
 	// bridge, for a suite about connector events to set before it starts the harness. Nil
 	// takes no events and drops messages, as a deployment without them does.
@@ -223,6 +231,11 @@ type RouterSuite struct {
 	// it returns at the time, whatever host a manifest's reply names: the test's own fake
 	// provider. Nil leaves bridge as the suite set it.
 	channelProvider func() string
+	// logs, set by a suite before it starts the harness, is where the router logs, as text,
+	// for a suite about what it warns of. Nil discards them.
+	logs io.Writer
+	// episodes is the router's closer, for a suite to sweep the idle thread episodes with.
+	episodes *omnichannel.Closer
 	// transcripts, set by a suite before it starts the harness, opens each voice session's
 	// transcript, as cmd/router's chatlog does. Nil keeps none, as the other suites do.
 	transcripts session.TranscriptFactory
@@ -320,6 +333,9 @@ func (s *RouterSuite) SetupSuite() {
 	}
 	ctx := context.Background()
 	logger := slog.New(slog.DiscardHandler)
+	if s.logs != nil {
+		logger = slog.New(slog.NewTextHandler(s.logs, nil))
+	}
 
 	pgStore, err := store.Open(testDatabase(s.T(), dsn))
 	s.Require().NoError(err)
@@ -421,6 +437,24 @@ func (s *RouterSuite) SetupSuite() {
 		s.T().Cleanup(s.mcpEvents.Close)
 	}
 
+	// The closer cmd/router builds wherever there is a store and an LLM router, which the call
+	// hook ends a call's episodes with. Its idle sweeper is not started: cmd/router starts it
+	// only with connectors on or a config with episode_cards (startEpisodeSweeper).
+	episodes, err := omnichannel.NewCloser(omnichannel.CloserOptions{
+		Store: pgStore, Stream: s.stream, LLM: streams.LLM, IdleAfter: time.Hour, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(episodes.Close)
+	s.episodes = episodes
+
+	// cmd/router passes no connector keyring with connectors off (main.go, connectorSecrets).
+	connectorSecrets := s.sealer
+	// cmd/router builds no transports and no limiter with connectors off either
+	// (newConnectorTransports, newConnectorLimiter).
+	serverTransports, connectorLimiter := transports, core.NewLimiter(liveClient.Redis(), nil)
+	if s.connectorsOff {
+		connectorSecrets, serverTransports, connectorLimiter = nil, nil, nil
+	}
 	server, err := NewServer(Options{
 		Routers:       s.modalities,
 		Streams:       streams,
@@ -449,7 +483,7 @@ func (s *RouterSuite) SetupSuite() {
 		Policies:      policies,
 		Connectors:    s.connectors,
 		// Connector consents and credentials seal under the suite's key.
-		ConnectorSecrets:  s.sealer,
+		ConnectorSecrets:  connectorSecrets,
 		PublicURL:         s.publicURL,
 		DashboardURL:      s.dashboardURL,
 		Quota:             limiter,
@@ -462,11 +496,13 @@ func (s *RouterSuite) SetupSuite() {
 		Logger:            logger,
 		// The connector events endpoint revokes through the suite's resolver.
 		ConnectorResolver:     s.resolver,
-		ConnectorTransports:   transports,
+		ConnectorTransports:   serverTransports,
+		ConnectorLimiter:      connectorLimiter,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
 		MCPEvents:             s.mcpEvents,
+		Episodes:              episodes,
 		SlackApps:             s.slackApps,
 		OperatorProviderApps:  s.operatorApps,
 	})
@@ -618,6 +654,8 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("vision", func(routing.Spec) (llmrouter.Provider, error) { return s.vision, nil })
 	reasoning.Register("echo", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{echoes: true}, nil })
 	reasoning.Register("recites", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{recites: true}, nil })
+	s.holding = &scriptedLLM{reply: "Held."}
+	reasoning.Register("holding", func(routing.Spec) (llmrouter.Provider, error) { return s.holding, nil })
 	reasoning.Register("noted", func(routing.Spec) (llmrouter.Provider, error) {
 		opened := &scriptedLLM{reply: "Noted."}
 		s.notedMu.Lock()
@@ -1025,6 +1063,17 @@ func (c *testClient) actingFor(user *testClient) *testClient {
 	named.header = c.header.Clone()
 	named.header.Set(auth.UserHeader, user.userID)
 	named.userID = user.userID
+	return &named
+}
+
+// from is the same caller saying which client it is and who is at the keyboard, which is
+// what the audit records a change as having been made with.
+func (c *testClient) from(client, actorID, actorName string) *testClient {
+	named := *c
+	named.header = c.header.Clone()
+	named.header.Set(clientHeader, client)
+	named.header.Set(actorIDHeader, actorID)
+	named.header.Set(actorNameHeader, actorName)
 	return &named
 }
 

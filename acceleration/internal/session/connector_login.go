@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -41,6 +42,10 @@ type ConsentRequest struct {
 	// ConnectionID is the connection to reconnect. Empty for none chosen: the caller's newest
 	// connection to the connector in any status, or a new one.
 	ConnectionID string
+	// StepUp is what the provider asked for on a call of ConnectionID, a scope_required
+	// outcome (step_up.go): the consent is a step-up that asks for that access. Nil for a
+	// login.
+	StepUp *core.Outcome
 }
 
 // Consent is a consent begun for one connection, as a client is handed it.

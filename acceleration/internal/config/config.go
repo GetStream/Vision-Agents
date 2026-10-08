@@ -73,6 +73,7 @@ type Config struct {
 	Stream          Stream     `koanf:"stream"`
 	Agent           Agent      `koanf:"agent"`
 	Connectors      Connectors `koanf:"connectors"`
+	Episodes        Episodes   `koanf:"episodes"`
 	Sandbox         Sandbox    `koanf:"sandbox"`
 }
 
@@ -192,6 +193,15 @@ type Agent struct {
 	// answer. It saves the ruling's round trip on every answered turn and pays for the
 	// replies a ruling throws away. Off by default.
 	SpeculativeReplies bool `koanf:"speculative_replies"`
+	// ChatTimings shows how long each stage of a turn took after the agent's reply in its
+	// chat channel, for a developer talking to the agent. Off by default: it is not something a
+	// caller should read.
+	ChatTimings bool `koanf:"chat_timings"`
+	// ReplyHedge is how long a reply may say nothing, neither text nor a tool call, before the same
+	// request is asked of another candidate of its target as well. Whichever says something first is
+	// kept and the other is cancelled. It only applies to a target with more than one candidate.
+	// 1.2s by default; 0 turns it off.
+	ReplyHedge time.Duration `koanf:"reply_hedge"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -200,6 +210,18 @@ type Connectors struct {
 	// credentials, in every auth mode, and refuses to start without one. Off by default.
 	Enabled bool `koanf:"enabled"`
 }
+
+// Episodes is how a person's episodes close (T55, AI-884; omnichannel.Closer).
+type Episodes struct {
+	// IdleAfter is how long a text episode goes without a message before it closes and is
+	// summarized. One setting for the whole router.
+	IdleAfter time.Duration `koanf:"idle_after"`
+}
+
+// maxEpisodeIdle bounds IdleAfter from above. It is the only external bound: WhatsApp's
+// customer service window, 24 hours from the person's last message, which AI-884 names as
+// the one a text episode must close inside.
+const maxEpisodeIdle = 24 * time.Hour
 
 // Sandbox holds an app with no approved 10DLC use case to a few numbers and a little
 // traffic. It is for the hosted router: a self-hosted one registers, or not, on its own
@@ -248,8 +270,11 @@ var variables = map[string]string{
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
 
 	"agent.speculative_replies": "ROUTER_SPECULATIVE_REPLIES",
+	"agent.chat_timings":        "ROUTER_CHAT_TIMINGS",
+	"agent.reply_hedge":         "ROUTER_REPLY_HEDGE",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
+	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
 
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
 	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
@@ -271,7 +296,11 @@ func Defaults() Config {
 		// can come to millions of tokens.
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 5_000_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
-		Sandbox:   Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
+		Agent:     Agent{ReplyHedge: 1200 * time.Millisecond},
+		// One hour is Kanat's decision of 2026-10-07 (D4, wave 3b), not a measurement:
+		// unverified against any traffic. The only external bound is maxEpisodeIdle.
+		Episodes: Episodes{IdleAfter: time.Hour},
+		Sandbox:  Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
 	}
 }
 
@@ -389,6 +418,13 @@ func (c Config) validate() error {
 	if c.DataMove.Retention < 0 {
 		return fmt.Errorf("config: data_move.retention cannot be negative, got %s", c.DataMove.Retention)
 	}
+	if c.Episodes.IdleAfter <= 0 || c.Episodes.IdleAfter >= maxEpisodeIdle {
+		return fmt.Errorf("config: episodes.idle_after is more than zero and less than %s, got %s",
+			maxEpisodeIdle, c.Episodes.IdleAfter)
+	}
+	if c.Agent.ReplyHedge < 0 {
+		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)
+	}
 	return nil
 }
 
@@ -460,7 +496,10 @@ func (c Config) export() error {
 		"rate_limit.messages_per_day":   fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":     fmt.Sprint(c.RateLimit.TokensPerDay),
 		"agent.speculative_replies":     fmt.Sprint(c.Agent.SpeculativeReplies),
+		"agent.chat_timings":            fmt.Sprint(c.Agent.ChatTimings),
+		"agent.reply_hedge":             c.Agent.ReplyHedge.String(),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
+		"episodes.idle_after":           c.Episodes.IdleAfter.String(),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),
 		"sandbox.recipients":            fmt.Sprint(c.Sandbox.Recipients),
 		"sandbox.messages_per_day":      fmt.Sprint(c.Sandbox.MessagesPerDay),

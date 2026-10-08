@@ -362,7 +362,13 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 		a.turns.dropped(chunk.ResponseID, chunk.Audio.DurationMs())
 		return
 	}
-	if err := a.options.Edge.PublishAudio(chunk.Audio); err != nil {
+	var err error
+	if marked, ok := a.options.Edge.(MarkedPlayout); ok {
+		err = marked.PublishAudioMarked(chunk.Audio, a.turns.marksFor(chunk.ResponseID))
+	} else {
+		err = a.options.Edge.PublishAudio(chunk.Audio)
+	}
+	if err != nil {
 		a.fail(err, "edge")
 	}
 	if a.abandonedTurn(chunk.ResponseID) {

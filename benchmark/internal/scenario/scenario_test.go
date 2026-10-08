@@ -190,3 +190,27 @@ func TestFrozenListLoads(t *testing.T) {
 		t.Fatalf("%v", filtered)
 	}
 }
+
+func TestShortListIsFrozenSubset(t *testing.T) {
+	root := findRepoRoot(t)
+	short, err := LoadIDList(ShortPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := LoadIDList(FrozenPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inFrozen := map[string]bool{}
+	for _, id := range frozen {
+		inFrozen[id] = true
+	}
+	if len(short) != 12 {
+		t.Fatalf("got %d short ids", len(short))
+	}
+	for _, id := range short {
+		if !inFrozen[id] {
+			t.Fatalf("%s is not in the frozen set", id)
+		}
+	}
+}

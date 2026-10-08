@@ -936,3 +936,63 @@ func (s *OAuth2CodeSuite) synthetic(status int, header http.Header, body string)
 	_, _ = recorder.WriteString(body)
 	return recorder.Result(), []byte(body), nil
 }
+
+// T45 (AI-874): Export is the access token as Wrap sends it, with the client the grant was
+// issued to, and never the refresh token.
+func (s *OAuth2CodeSuite) TestExportIsTheAccessTokenAsABearerTokenWithTheClientItWasIssuedTo() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	resolved.Client.Registration = []core.ClientRegistrationMethod{core.ClientCustomer}
+	lookup := func(context.Context, core.ConnectionRef, core.ResolvedManifest, core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
+		return oauth2code.Client{ID: srv.ClientID, Secret: srv.ClientSecret}, true, nil
+	}
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: lookup, Now: s.clock})
+	stored, _, err := s.connect(srv, scheme, resolved)
+	s.Require().NoError(err)
+	credential, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
+	s.Require().NoError(err)
+
+	exported, err := scheme.Export(credential)
+
+	s.Require().NoError(err)
+	s.Equal("Authorization", exported.Header)
+	s.Equal(core.ClientCustomer, exported.Client)
+	s.Equal(credential.ExpiresAt, exported.ExpiresAt)
+	s.True(strings.HasPrefix(exported.Value, "Bearer "))
+	request := s.toolCall(srv)
+	request.Header.Set(exported.Header, exported.Value)
+	s.Equal(http.StatusOK, s.status(srv.Client().Do(request)), "the provider takes it as it is")
+	s.NotContains(exported.Value, s.refreshToken(stored))
+}
+
+func (s *OAuth2CodeSuite) TestExportNamesTheOperatorsClientForAGrantIssuedToIt() {
+	srv := fakeprovider.New(s.T())
+	scheme, stored := s.connected(srv, s.preregistered(srv), nil)
+	credential, _, err := scheme.Retrieve(s.ctx, stored, s.preregistered(srv), core.RetrieveOptions{})
+	s.Require().NoError(err)
+
+	exported, err := scheme.Export(credential)
+
+	s.Require().NoError(err)
+	s.Equal(core.ClientOperator, exported.Client)
+}
+
+func (s *OAuth2CodeSuite) TestExportRefusesACredentialItDidNotIssue() {
+	srv := fakeprovider.New(s.T())
+	scheme, _ := s.connected(srv, s.preregistered(srv), nil)
+
+	_, err := scheme.Export(core.NewAccessCredential("bearer", time.Time{}, json.RawMessage(`{"access_token":"tok","client":"customer"}`)))
+
+	s.Error(err)
+}
+
+// A credential that does not say whose client its grant was issued to cannot be told to be
+// the customer's, so it is not exported.
+func (s *OAuth2CodeSuite) TestExportRefusesACredentialThatDoesNotSayItsClient() {
+	srv := fakeprovider.New(s.T())
+	scheme, _ := s.connected(srv, s.preregistered(srv), nil)
+
+	_, err := scheme.Export(core.NewAccessCredential(oauth2code.Name, time.Time{}, json.RawMessage(`{"access_token":"tok"}`)))
+
+	s.ErrorContains(err, "does not say which client")
+}

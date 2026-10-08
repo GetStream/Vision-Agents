@@ -1,0 +1,15 @@
+# Short Voicebench scenario set, for iterating on a change. A subset of frozen.txt. Per pack,
+# the coherence call gives most of the reply-time samples, and interrupt, selectivity and
+# tool_filler check turn-taking. One id per line.
+restaurant.coherence
+restaurant.interrupt
+restaurant.selectivity
+restaurant.tool_filler
+healthcare.coherence
+healthcare.interrupt
+healthcare.selectivity
+healthcare.tool_filler
+telecom.coherence
+telecom.interrupt
+telecom.selectivity
+telecom.tool_filler

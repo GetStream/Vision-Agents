@@ -182,7 +182,9 @@ A worker can also host tools for every session opened under an agent id, includi
 browser opened, where the session's own process cannot reach what the tool needs:
 
 ```ts
-dispatch.host("my-agent", agent.tools, { timeoutMs: 60_000 });
+const agent = client.agent("my-agent");
+agent.tools.register({ name: "lookup", description: "Look up an order", run: lookup });
+dispatch.host(agent, { toolTimeoutMs: 60_000 });
 ```
 
 The router offers them to each session naming the agent and sends every call here. `run`

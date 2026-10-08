@@ -41,8 +41,9 @@ func edgeFor(clients *streamapp.Clients) session.EdgeFactory {
 }
 
 // transcriptFor writes a session's transcript in the Stream app it is pinned to, with the
-// client already held for that app.
-func transcriptFor() session.TranscriptFactory {
+// client already held for that app. timings has each reply carry how long its turn took, which
+// is for a developer and not for a customer.
+func transcriptFor(timings bool) session.TranscriptFactory {
 	return func(_ context.Context, spec session.Spec, stream streamapp.Bound, logger *slog.Logger) (session.Transcript, error) {
 		if stream.Client == nil {
 			return nil, errNoStreamApp
@@ -54,6 +55,7 @@ func transcriptFor() session.TranscriptFactory {
 			CustomerID:   spec.CustomerID,
 			Agent:        chatlog.User{ID: spec.UserID, Name: spec.UserName},
 			VisibleTools: spec.VisibleTools,
+			Timings:      timings,
 			Client:       stream.Client,
 			Logger:       logger,
 		})

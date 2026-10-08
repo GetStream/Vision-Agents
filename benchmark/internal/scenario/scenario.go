@@ -229,6 +229,11 @@ func FrozenPath(root string) string {
 	return filepath.Join(root, "scenarios", "frozen.txt")
 }
 
+// ShortPath is the subset of the frozen list for quick runs while iterating on a change.
+func ShortPath(root string) string {
+	return filepath.Join(root, "scenarios", "short.txt")
+}
+
 // LoadIDList reads one scenario id per line, ignoring comments and blanks.
 func LoadIDList(path string) ([]string, error) {
 	raw, err := os.ReadFile(path)

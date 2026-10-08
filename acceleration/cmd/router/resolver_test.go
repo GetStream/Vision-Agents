@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -47,6 +50,33 @@ func (s *ConnectorResolverSuite) TestWithConnectorsOnAndADatabaseTheResolverIsBu
 	built, err := newConnectorResolver(s.connectorsOn(), s.store(), s.sealer())
 	s.Require().NoError(err)
 	s.NotNil(built)
+}
+
+// TestWithConnectorsOffThereIsNoLimiterAndNothingIsLogged: a deployment without connectors
+// starts as it did before the limiter, with no new warning.
+func (s *ConnectorResolverSuite) TestWithConnectorsOffThereIsNoLimiterAndNothingIsLogged() {
+	var logged bytes.Buffer
+
+	limiter := newConnectorLimiter(nil, nil, slog.New(slog.NewTextHandler(&logged, nil)))
+
+	s.Nil(limiter)
+	s.Empty(logged.String())
+}
+
+// TestWithConnectorsOnAndNoRedisThereIsNoLimiterAndOneWarning: as for the daily limits,
+// nothing is limited, and the operator is told once (Kanat, 2026-10-07, D7).
+func (s *ConnectorResolverSuite) TestWithConnectorsOnAndNoRedisThereIsNoLimiterAndOneWarning() {
+	resolver, err := newConnectorResolver(s.connectorsOn(), s.store(), s.sealer())
+	s.Require().NoError(err)
+	transports, err := newConnectorTransports(resolver)
+	s.Require().NoError(err)
+	var logged bytes.Buffer
+
+	limiter := newConnectorLimiter(transports, nil, slog.New(slog.NewTextHandler(&logged, nil)))
+
+	s.Nil(limiter)
+	s.Equal(1, strings.Count(logged.String(), "level=WARN"))
+	s.Contains(logged.String(), "connector calls will not wait out a provider's rate limit")
 }
 
 func (s *ConnectorResolverSuite) connectorsOn() core.Registry {

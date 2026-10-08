@@ -64,6 +64,7 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, pluginAuth *
 				PluginID:    conn.PluginID,
 				Endpoint:    endpoint,
 				AccessToken: FreshToken(ctx, db, pluginAuth, &conn, logger),
+				Renew:       Renewal(db, pluginAuth, &conn, logger),
 				Tools:       plugin.Tools,
 			})
 		}
@@ -89,6 +90,7 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, pluginAuth *
 				continue
 			}
 			connection.AccessToken = FreshToken(ctx, db, pluginAuth, &conn, logger)
+			connection.Renew = Renewal(db, pluginAuth, &conn, logger)
 		}
 		wanted = append(wanted, connection)
 	}
@@ -207,11 +209,41 @@ func FreshToken(ctx context.Context, db *store.Store, renewer *plugins.Auth, con
 	if conn.ExpiresAt == nil || time.Until(*conn.ExpiresAt) >= time.Minute || conn.RefreshToken == "" {
 		return conn.AccessToken
 	}
+	if err := renewToken(ctx, db, renewer, conn, logger); err != nil {
+		logger.Warn("could not refresh a plugin token", "plugin", conn.PluginID, "error", err)
+	}
+	return conn.AccessToken
+}
+
+// Renewal renews a login whenever the server refuses its token, whatever its expiry says,
+// as plugins.Connection.Renew. A login the provider will not renew is marked failed, so it
+// is no longer offered as connected. Nil for a login with no refresh token.
+func Renewal(db *store.Store, renewer *plugins.Auth, conn *store.PluginConnection, logger *slog.Logger) func(context.Context) (string, error) {
+	if conn.RefreshToken == "" {
+		return nil
+	}
+	return func(ctx context.Context) (string, error) {
+		err := renewToken(ctx, db, renewer, conn, logger)
+		if errors.Is(err, plugins.ErrRefreshRefused) {
+			conn.Status = store.PluginFailed
+			if saveErr := db.SavePluginConnection(ctx, conn); saveErr != nil {
+				logger.Warn("could not mark a plugin login failed", "plugin", conn.PluginID, "error", saveErr)
+			}
+		}
+		if err != nil {
+			return "", err
+		}
+		logger.Info("renewed a plugin token the server refused", "plugin", conn.PluginID, "config", conn.ConfigID)
+		return conn.AccessToken, nil
+	}
+}
+
+// renewToken swaps conn's tokens for new ones from its refresh token and stores them.
+func renewToken(ctx context.Context, db *store.Store, renewer *plugins.Auth, conn *store.PluginConnection, logger *slog.Logger) error {
 	owner := plugins.Owner{CustomerID: conn.CustomerID, ConfigID: conn.ConfigID}
 	refreshed, err := renewer.Refresh(ctx, owner, conn.PluginID, conn.TokenEndpoint, conn.ClientID, conn.RefreshToken)
 	if err != nil {
-		logger.Warn("could not refresh a plugin token", "plugin", conn.PluginID, "error", err)
-		return conn.AccessToken
+		return err
 	}
 	conn.AccessToken = refreshed.AccessToken
 	conn.RefreshToken = refreshed.RefreshToken
@@ -219,7 +251,7 @@ func FreshToken(ctx context.Context, db *store.Store, renewer *plugins.Auth, con
 	if err := db.SavePluginConnection(ctx, conn); err != nil {
 		logger.Warn("could not store a refreshed plugin token", "plugin", conn.PluginID, "error", err)
 	}
-	return conn.AccessToken
+	return nil
 }
 
 // userPlugins runs the plugins the caller connects with their own account, in front of
@@ -368,6 +400,7 @@ func (r *userPluginRunner) connect(ctx context.Context, plugin plugins.Plugin) (
 		PluginID:    plugin.ID,
 		Endpoint:    endpoint,
 		AccessToken: FreshToken(ctx, r.db, r.auth, &conn, r.logger),
+		Renew:       Renewal(r.db, r.auth, &conn, r.logger),
 		Tools:       plugin.Tools,
 	}}, r.auth.HTTP)
 	if runtime == nil {

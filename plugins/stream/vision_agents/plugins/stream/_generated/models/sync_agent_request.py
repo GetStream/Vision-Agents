@@ -42,10 +42,16 @@ class SyncAgentRequest:
             name (str): What the config is called, which is also the directory's name.
             agent_plugins (list[PluginWithOptions | str] | Unset): Plugins the agent reaches with the app's own login: a
                 catalog id, or an object naming it with how it is reached.
+            base_change (str | Unset): The newest change the caller has already seen, as last_change named it. Everything up
+                to it is taken as decided, so the sync is not refused for it again.
             channels (AgentChannels | Unset): The lines this agent answers on besides its Stream Chat channel. Each names a
                 number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message
                 that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest
                 of it is.
+            check_changes (bool | Unset): Refuse the sync, with unsynced_changes, when somebody has changed one of the
+                settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the
+                person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have
+                decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants.
             connectors (list[AgentConnectorBinding] | Unset): The connectors agent.yaml binds. Sent, they are the whole of
                 the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are
                 left alone.
@@ -70,6 +76,8 @@ class SyncAgentRequest:
                 speech target and a session created from it needs no call to join.
             plugin_events (list[PluginEvent] | Unset): MCP events the agent subscribes to on its plugins, each opening a
                 text conversation when it arrives.
+            progressive_tools (bool | Unset): Whether plugin, MCP server and connector tools are offered by a summary, the
+                first call to each returning its full description and input schema instead of running it.
             sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
                 code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
                 everything out in its head.
@@ -96,7 +104,9 @@ class SyncAgentRequest:
     hash_: str
     name: str
     agent_plugins: list[PluginWithOptions | str] | Unset = UNSET
+    base_change: str | Unset = UNSET
     channels: AgentChannels | Unset = UNSET
+    check_changes: bool | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
     greeting: str | Unset = UNSET
@@ -110,6 +120,7 @@ class SyncAgentRequest:
     mcp_servers: list[McpServer] | Unset = UNSET
     mode: AgentMode | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
+    progressive_tools: bool | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
@@ -144,9 +155,13 @@ class SyncAgentRequest:
                     agent_plugins_item = agent_plugins_item_data
                 agent_plugins.append(agent_plugins_item)
 
+        base_change = self.base_change
+
         channels: dict[str, Any] | Unset = UNSET
         if not isinstance(self.channels, Unset):
             channels = self.channels.to_dict()
+
+        check_changes = self.check_changes
 
         connectors: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.connectors, Unset):
@@ -206,6 +221,8 @@ class SyncAgentRequest:
             for plugin_events_item_data in self.plugin_events:
                 plugin_events_item = plugin_events_item_data.to_dict()
                 plugin_events.append(plugin_events_item)
+
+        progressive_tools = self.progressive_tools
 
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
@@ -272,8 +289,12 @@ class SyncAgentRequest:
         )
         if agent_plugins is not UNSET:
             field_dict["agent_plugins"] = agent_plugins
+        if base_change is not UNSET:
+            field_dict["base_change"] = base_change
         if channels is not UNSET:
             field_dict["channels"] = channels
+        if check_changes is not UNSET:
+            field_dict["check_changes"] = check_changes
         if connectors is not UNSET:
             field_dict["connectors"] = connectors
         if dispatch is not UNSET:
@@ -300,6 +321,8 @@ class SyncAgentRequest:
             field_dict["mode"] = mode
         if plugin_events is not UNSET:
             field_dict["plugin_events"] = plugin_events
+        if progressive_tools is not UNSET:
+            field_dict["progressive_tools"] = progressive_tools
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if sandbox_options is not UNSET:
@@ -383,12 +406,16 @@ class SyncAgentRequest:
 
                 agent_plugins.append(agent_plugins_item)
 
+        base_change = d.pop("base_change", UNSET)
+
         _channels = d.pop("channels", UNSET)
         channels: AgentChannels | Unset
         if isinstance(_channels, Unset):
             channels = UNSET
         else:
             channels = AgentChannels.from_dict(_channels)
+
+        check_changes = d.pop("check_changes", UNSET)
 
         _connectors = d.pop("connectors", UNSET)
         connectors: list[AgentConnectorBinding] | Unset = UNSET
@@ -467,6 +494,8 @@ class SyncAgentRequest:
                 plugin_events_item = PluginEvent.from_dict(plugin_events_item_data)
 
                 plugin_events.append(plugin_events_item)
+
+        progressive_tools = d.pop("progressive_tools", UNSET)
 
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
@@ -557,7 +586,9 @@ class SyncAgentRequest:
             hash_=hash_,
             name=name,
             agent_plugins=agent_plugins,
+            base_change=base_change,
             channels=channels,
+            check_changes=check_changes,
             connectors=connectors,
             dispatch=dispatch,
             greeting=greeting,
@@ -571,6 +602,7 @@ class SyncAgentRequest:
             mcp_servers=mcp_servers,
             mode=mode,
             plugin_events=plugin_events,
+            progressive_tools=progressive_tools,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
             search=search,

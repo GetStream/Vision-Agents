@@ -35,6 +35,8 @@ type store struct {
 	appReads int
 	// keyed are apps answered for one api key, standing in for several apps at one URL.
 	keyed map[string]App
+	// hooks are the event hooks each api key's app holds, as an app update last set them.
+	hooks map[string][]any
 	// asked is every request served, with the key it was made with.
 	asked []Request
 	// held is the request Hold keeps waiting, under a lock of its own: mu is taken only once
@@ -99,7 +101,7 @@ func NewServer(t *testing.T) *Server {
 	db := &store{
 		channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
 		users: map[string]map[string]any{}, trunks: map[string]map[string]any{},
-		rules: map[string]map[string]any{}, calls: map[string][]string{}, now: time.Now,
+		rules: map[string]map[string]any{}, calls: map[string][]string{}, hooks: map[string][]any{}, now: time.Now,
 		app: App{ID: 1, ChannelTypes: map[string]map[string][]string{"agent": safeGrants}, CallTypes: []string{"agent"}},
 	}
 	server := httptest.NewServer(http.HandlerFunc(db.serve))
@@ -150,6 +152,22 @@ func (s *Server) SetAppFor(apiKey string, app App) {
 		s.db.keyed = map[string]App{}
 	}
 	s.db.keyed[apiKey] = app
+}
+
+// EventHooks are the event hooks the app of an api key holds, as an app update last set
+// them: none until one does.
+func (s *Server) EventHooks(apiKey string) []getstream.EventHook {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	raw, err := json.Marshal(s.db.hooks[apiKey])
+	if err != nil {
+		s.t.Fatalf("chattest: %v", err)
+	}
+	var hooks []getstream.EventHook
+	if err := json.Unmarshal(raw, &hooks); err != nil {
+		s.t.Fatalf("chattest: %v", err)
+	}
+	return hooks
 }
 
 // Requests are the requests made with an api key, oldest first.
@@ -341,6 +359,17 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		result["app"] = map[string]any{
 			"id": app.ID, "channel_configs": channels, "call_types": calls,
 			"suspended": app.Suspended, "disable_auth_checks": app.DisableAuthChecks,
+			"event_hooks": db.hooks[r.URL.Query().Get("api_key")],
+		}
+	case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/api/v2/app"):
+		// An app update replaces the hooks whole with the ones it sends, as Stream's does.
+		if db.appFor(r).Refuses {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 5, "message": "api key not valid", "StatusCode": http.StatusUnauthorized})
+			return
+		}
+		if hooks, ok := body["event_hooks"].([]any); ok {
+			db.hooks[r.URL.Query().Get("api_key")] = hooks
 		}
 	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/channeltypes/"):
 		name := parts[len(parts)-1]
