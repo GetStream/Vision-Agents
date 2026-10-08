@@ -1034,10 +1034,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 		options.ConnectorLimiter = connectorLimiter
 		options.ConnectorEventSecrets = api.ConnectorEventSecrets(os.Getenv)
 		// The events endpoint hands it a provider app's messages; the conversation held on a
-		// thread channel, the agent's finished replies to them.
+		// thread channel, the agent's finished replies to them. Its texts pass the gate
+		// internal/channels' do.
 		bridge, err := channelbridge.New(channelbridge.Options{
 			Store: pgStore, Stream: streamClients, Schemes: connectors.Schemes, Transports: connectorTransports,
-			Resolver: connectorResolver, Logger: logger,
+			Resolver: connectorResolver, Gate: dlcGate, Logger: logger,
 		})
 		if err != nil {
 			return err
