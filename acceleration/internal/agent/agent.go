@@ -557,6 +557,9 @@ func (a *Agent) finishTurn(turn Turn) {
 		"text_to_tts_ms", turn.TextToTTSMs, "tts_to_audio_ms", turn.TTSToAudioMs,
 		"transcript_to_audio_ms", turn.RoundtripMs,
 		"speech_end_to_audio_ms", turn.SpeechEndToAudioMs,
+		"first_frame_queued_ms", turn.FirstFrameQueuedMs,
+		"first_audible_frame_ms", turn.FirstAudibleFrameMs,
+		"speech_end_to_audible_ms", turn.SpeechEndToAudibleMs,
 		"interrupted", turn.Interrupted)
 	a.emitter.Send(turn)
 	if a.turnStore != nil {
@@ -2060,7 +2063,15 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				}
 				continue
 			}
-			if err := a.options.Edge.PublishAudio(typed.Audio); err != nil {
+			var err error
+			if marked, ok := a.options.Edge.(MarkedPlayout); ok {
+				// Publishing returns once the chunk is queued, which for a long one is well
+				// after the participants could have heard it begin, so the edge says when.
+				err = marked.PublishAudioMarked(typed.Audio, a.turns.marksFor(turnOf(typed.SynthesisID)))
+			} else {
+				err = a.options.Edge.PublishAudio(typed.Audio)
+			}
+			if err != nil {
 				a.fail(err, "edge")
 			}
 			a.mu.Lock()

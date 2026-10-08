@@ -7300,6 +7300,16 @@ export type components = {
              * @description Stable turn to the main model request, including flow and queueing.
              */
             readonly decision_ms?: number;
+            /**
+             * Format: double
+             * @description Last transcript revision to the outgoing track taking the first frame of the reply that was not silence, which is when it could first be heard. Unlike roundtrip_ms it does not include the wait for a long first chunk to be queued. Absent where the edge does not report it.
+             */
+            readonly first_audible_frame_ms?: number | null;
+            /**
+             * Format: double
+             * @description Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it.
+             */
+            readonly first_frame_queued_ms?: number | null;
             /** @description What the caller said, when it can be matched to this exchange. */
             readonly heard?: string;
             /** @description Whether the caller talked over the answer. */
@@ -7323,6 +7333,11 @@ export type components = {
             readonly roundtrip_ms?: number;
             /** @description What the agent answered. */
             readonly said?: string;
+            /**
+             * Format: double
+             * @description Last input audio to the outgoing track taking the first frame of the reply that was not silence, estimated like speech_end_to_audio_ms. It excludes network transport and playback.
+             */
+            readonly speech_end_to_audible_ms?: number | null;
             /**
              * Format: double
              * @description Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback.

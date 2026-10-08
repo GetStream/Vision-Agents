@@ -1160,7 +1160,12 @@ decision before the reply model, first reply text, TTS submission and first audi
 edge. Its `model_calls` list keeps flow, reply and subagent requests separate, with TTFT
 and full duration for each attempt. `speech_end_to_audio_ms` estimates the delay from the
 last input audio using provider STT processing time; it cannot include network transit
-or browser playback. The router logs call join and each ICE peer connection
+or browser playback. `roundtrip_ms` and `speech_end_to_audio_ms` stop when publishing the
+first chunk of the reply returns, which for a chunk longer than the 400 ms outgoing queue is
+later than it could first be heard. `first_frame_queued_ms`, `first_audible_frame_ms` and
+`speech_end_to_audible_ms` stop at the first frame being queued for the outgoing track and at
+the track taking the first frame that is not silence; they are absent for an edge that does
+not report them. The router logs call join and each ICE peer connection
 independently; the subscriber can stay idle until someone publishes a track. The Python
 accelerated agent records join duration. Set `log_latency=True` on `stream.Accelerated`
 (or `VOICE_LATENCY_DAG=1` for `simple_voice_ai`) to print per-model timing and a console

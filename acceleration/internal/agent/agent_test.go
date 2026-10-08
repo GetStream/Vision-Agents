@@ -495,11 +495,14 @@ type AgentSuite struct {
 	suite.Suite
 	ctx context.Context
 
-	edge  *loopbackEdge
-	voice *stubTTS
-	model *stubLLM
-	flow  *stubLLM
-	ears  *stubSTT
+	edge *loopbackEdge
+	// edgeFactory wraps the loopback in an edge with more to it, for a test of what only such
+	// an edge does. Without it the agent joins the loopback itself.
+	edgeFactory func(*loopbackEdge) Edge
+	voice       *stubTTS
+	model       *stubLLM
+	flow        *stubLLM
+	ears        *stubSTT
 	// opened counts the transcription sessions the agent asked for, which is how a test
 	// tells a transcriber that was replaced from one that was never reopened.
 	opened atomic.Int64
@@ -558,6 +561,7 @@ func TestAgentSuite(t *testing.T) {
 
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
+	s.edgeFactory = nil
 	s.remembers = nil
 	s.incognito = false
 	s.knows = nil
@@ -731,8 +735,13 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		searchTarget = "stub/now"
 	}
 
+	var edge Edge = s.edge
+	if s.edgeFactory != nil {
+		edge = s.edgeFactory(s.edge)
+	}
+
 	agent, err := New(Options{
-		Edge:               s.edge,
+		Edge:               edge,
 		Instructions:       "be brief",
 		CustomerID:         "acme",
 		AgentID:            s.agentID,
