@@ -102,6 +102,22 @@ func (s *ConsentSuite) TestGitHubConnectsWithThePreregisteredClientAndRegistersN
 
 // The fake's preregistered client accepts both secret methods, so only the request on the
 // wire shows which one the manifest made the scheme send.
+// The user-token consent through the operator's Slack app, against oauth.v2.user.access's
+// live shape (SlackUserToken): the user is the top-level user_id, and the null enterprise
+// leaves enterprise_id out instead of failing the capture. Revision 4 read $.authed_user.id
+// and failed every consent here.
+func (s *ConsentSuite) TestSlackConnectsTheUserFromTheLiveUserTokenResponse() {
+	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes, fakeprovider.SlackUserToken)
+	resolved := s.atFake(srv, s.resolve("slack", nil))
+	scheme := s.scheme(srv, s.preregistered(srv, core.ClientOperator))
+
+	stored, account, err := s.complete(srv, scheme, resolved, s.begin(scheme, resolved))
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
+	s.Equal(map[string]string{"team_id": srv.TeamID, "user_id": srv.UserID}, account.Metadata)
+	s.Equal(srv.TeamID+":"+srv.UserID, account.AccountID)
+}
+
 // The bot install of a customer's Slack app: oauth.v2.access names the workspace as team.id
 // (https://docs.slack.dev/authentication/installing-with-oauth), which is the connection's
 // whole identity, so the bridge finds it by an event's team_id.

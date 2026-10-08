@@ -78,6 +78,51 @@ func (s *StoreSuite) seedingANewBuiltInLeavesTheOthersAsTheyWere(id string) {
 	s.Equal(1, added.Revision)
 }
 
+// AI-816: slack.yaml at revision 5 reads the user from $.user_id. A router that ships it,
+// starting on a database the build before it seeded with revision 4, stores 5 as the latest,
+// keeps 4 for the connections pinned to it, and moves no other built-in.
+func (s *StoreSuite) TestSlackRevisionFiveSeedsOverTheRevisionFourTheBuildBeforeStored() {
+	before := fstest.MapFS{}
+	files, err := fs.ReadDir(providers.FS, ".")
+	s.Require().NoError(err)
+	for _, file := range files {
+		raw, err := fs.ReadFile(providers.FS, file.Name())
+		s.Require().NoError(err)
+		before[file.Name()] = &fstest.MapFile{Data: raw}
+	}
+	// Revision 4 is this file with its two changed lines put back.
+	four := string(before["slack.yaml"].Data)
+	for from, to := range map[string]string{"\nrevision: 5\n": "\nrevision: 4\n", "path: $.user_id\n": "path: $.authed_user.id\n"} {
+		s.Require().Equal(1, strings.Count(four, from), from)
+		four = strings.Replace(four, from, to, 1)
+	}
+	before["slack.yaml"] = &fstest.MapFile{Data: []byte(four)}
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, before))
+	latest := func() map[string]int {
+		revisions := map[string]int{}
+		for name := range before {
+			definition, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, strings.TrimSuffix(name, ".yaml"))
+			s.Require().NoError(err)
+			revisions[definition.ID] = definition.Revision
+		}
+		return revisions
+	}
+	was := latest()
+
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS), "the changed content is a new revision, not refused")
+
+	now := latest()
+	s.Equal(5, now["slack"])
+	delete(was, "slack")
+	delete(now, "slack")
+	s.Equal(was, now)
+	for revision, path := range map[int]string{4: "$.authed_user.id", 5: "$.user_id"} {
+		definition, err := s.store.ConnectorDefinition(s.ctx, "anyone", "slack", revision)
+		s.Require().NoError(err)
+		s.Equal(path, definition.Manifest.Capture[1].Path, "revision %d", revision)
+	}
+}
+
 func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtTheRevisionItNames() {
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
 	shipped, err := builtinManifests(providers.FS)
