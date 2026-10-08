@@ -14,7 +14,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 k="${VOICEBENCH_K:-1}"
-set="${VOICEBENCH_SET:-short}"
+scenario_set="${VOICEBENCH_SET:-short}"
 packs="${VOICEBENCH_PACKS:-restaurant healthcare telecom}"
 parallel="${VOICEBENCH_PARALLEL:-1}"
 profile="${VOICEBENCH_NETWORK_PROFILE:-local}"
@@ -63,8 +63,8 @@ pids=()
 i=0
 for pack in $packs; do
   echo "== $pack"
-  set_args=("--$set")
-  if [[ "$set" == "golden" ]]; then
+  set_args=("--$scenario_set")
+  if [[ "$scenario_set" == "golden" ]]; then
     set_args=(--scenario "$pack.golden")
   fi
   "$voicebench" run --pack "$pack" "${set_args[@]}" --k "$k" --target accelerated --spawn \

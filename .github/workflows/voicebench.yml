@@ -70,7 +70,8 @@ jobs:
 
   # Nightly: the frozen set at k=1 on our stack alone, compared against the previous night's
   # run. The digest is posted to Slack only once VOICEBENCH_SLACK_BOT_TOKEN and
-  # VOICEBENCH_SLACK_CHANNEL are set.
+  # VOICEBENCH_SLACK_CHANNEL are set. GitHub fires a schedule only from the default branch's
+  # copy of this file, so a scheduled run checks out accelerate, where the work happens.
   nightly:
     if: >-
       github.event_name == 'schedule' ||
@@ -86,6 +87,8 @@ jobs:
       VOICEBENCH_SLACK_CHANNEL: ${{ secrets.VOICEBENCH_SLACK_CHANNEL }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'accelerate' || '' }}
 
       - uses: ./.github/actions/voicebench-setup
 
