@@ -1218,6 +1218,35 @@ func (s *AgentSuite) TestASpokenInterruptionLeavesAToolRunningUntilTheModelDrops
 		"a dropped tool still earned a reply of its own")
 }
 
+func (s *AgentSuite) TestASpokenInterruptionCancelsAToolWhoseBindingAsksForIt() {
+	s.ownsTools("")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Cancels: true} }
+	s.join(true)
+	runner := &cancellationTool{began: make(chan struct{}), stopped: make(chan struct{})}
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	select {
+	case <-runner.began:
+	case <-time.After(3 * time.Second):
+		s.FailNow("tool did not start")
+	}
+
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.mutters(participant, "hello?")
+
+	select {
+	case <-runner.stopped:
+	case <-time.After(3 * time.Second):
+		s.FailNow("the binding asked for its call to be cancelled and it kept running")
+	}
+	s.False(slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) }),
+		"a cancelled call was answered as still running")
+}
+
 func (s *AgentSuite) TestAToolResultLandingAfterAnInterruptionIsStillSpoken() {
 	s.ownsTools("")
 	s.join(true)

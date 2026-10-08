@@ -307,9 +307,9 @@ func (s *DispatcherSuite) TestABindingThatIsNotCancellableStopsWaitingAndLeavesT
 	}, 5*time.Second, 20*time.Millisecond)
 }
 
-// TestAToolsPolicyIsWhatItsOwnBindingAsksFor: a phrase and a wait belong to their binding's
-// tools, and a cancel binding, a binding without a policy, or a name under no bound alias
-// asks for nothing.
+// TestAToolsPolicyIsWhatItsOwnBindingAsksFor: a phrase, a wait and a cancel belong to their
+// binding's tools, and a binding without a policy, or a name under no bound alias, asks for
+// nothing.
 func (s *DispatcherSuite) TestAToolsPolicyIsWhatItsOwnBindingAsksFor() {
 	app := s.connection("", "primary")
 	speaking := s.fixed("crm", app, "slow")
@@ -320,7 +320,7 @@ func (s *DispatcherSuite) TestAToolsPolicyIsWhatItsOwnBindingAsksFor() {
 	s.Require().NoError(err)
 
 	s.Equal(agent.ToolPolicy{PreSpeech: "Let me pull that up.", Waits: true}, d.toolPolicy("crm__slow"))
-	s.Equal(agent.ToolPolicy{}, d.toolPolicy("tickets__whoami"))
+	s.Equal(agent.ToolPolicy{Cancels: true}, d.toolPolicy("tickets__whoami"))
 	s.Equal(agent.ToolPolicy{}, d.toolPolicy("quiet__whoami"))
 	s.Equal(agent.ToolPolicy{}, d.toolPolicy("lookup_order"))
 	s.Equal(agent.ToolPolicy{}, d.toolPolicy("crm"), "a bare alias is no tool of the binding")

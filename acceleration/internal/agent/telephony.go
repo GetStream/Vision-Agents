@@ -85,6 +85,9 @@ type ToolPolicy struct {
 	// answered then with stillRunning, and its result, when it comes, is added as a
 	// message of its own (lateResult).
 	Waits bool
+	// Cancels is set for a tool whose call is to be cancelled when the caller interrupts,
+	// where any other but a telephony tool outlives the interruption.
+	Cancels bool
 }
 
 // stillRunning answers a call that goes on after an interruption. A provider refuses a
@@ -166,6 +169,8 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 
 // prepareTool registers cancellation before native execution starts in a goroutine.
 func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, context.CancelFunc) {
+	cancels := telephonyTool(requested.Call.Name) ||
+		a.options.ToolPolicy != nil && a.options.ToolPolicy(requested.Call.Name).Cancels
 	a.mu.Lock()
 	parent := a.ctx
 	if parent == nil {
@@ -180,9 +185,10 @@ func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, c
 		a.toolsRunning = map[string]string{}
 	}
 	a.toolsRunning[requested.Call.ID] = requested.Call.Name
-	// Every tool but the two that act on the phone call outlives an interruption: what it
-	// was asked is still what the caller wants, and it is answered when it comes back.
-	if !telephonyTool(requested.Call.Name) {
+	// Every tool but the two that act on the phone call, and one whose binding asks for it to
+	// be cancelled, outlives an interruption: what it was asked is still what the caller
+	// wants, and it is answered when it comes back.
+	if !cancels {
 		if a.toolHolds == nil {
 			a.toolHolds = map[string]*toolHold{}
 		}
