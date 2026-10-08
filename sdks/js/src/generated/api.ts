@@ -1631,7 +1631,7 @@ export type paths = {
          *     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
          *     Two frames are only sent when asked for, because they are far more frequent than the rest and most consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives rather than a settled turn. `decisions=false` drops `decision`.
          *     `replay_pending_tools=true` opts a durable tool host into replay of external tool calls still awaiting results in a live voice session. Completed, cancelled and timed-out requests are excluded at snapshot time. Replays retain their tool and turn IDs and may duplicate live delivery; the host must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers should leave this disabled. Persistent text command recovery is unchanged.
-         *     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
+         *     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the session. `instructions` is server-side only: from an end user's device it changes nothing and is answered with an `error` frame, `context` `command`, as `updateSession` refuses it. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
          *     A call to a tool declared with an `approval` waits for a person. The client reports their answer with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary` shown when they declined), before it answers the call with `tool_result`.
          *     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.
          *     `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation receives the question and later the findings, without raw images. Video capture uses task-correlated `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically to conversational turns.
@@ -2112,7 +2112,7 @@ export type paths = {
         /**
          * Hold a voice conversation over the socket itself, with no call
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Text frames are JSON objects carrying a `type`.
-         *     The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` is server-side only.
+         *     The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` and `instructions` are server-side only.
          *     The server answers `session`, with the `Session` and the `sample_rate` in use. Then binary frames are PCM16 mono at that rate in both directions: the caller's audio in, and the agent's speech out at the pace it would be heard on a call. A `cleared` frame says speech already sent was thrown away because the caller cut in. Tool calls and every other event go over the session's events socket, as they do for a call.
          *     A refused start is an `error` frame with `error`, the message, and the socket closes. An `error` frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type` that `createSession` answers the same field with.
          *     The session lasts as long as the socket. Closing the socket, or sending `stop`, ends the conversation. A conversation that ends closes the socket.
@@ -4985,6 +4985,7 @@ export type components = {
              * @default false
              */
             readonly incognito?: boolean;
+            /** @description The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to decide. */
             readonly instructions?: string;
             /** @description Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them. */
             readonly keyterms?: readonly string[];
@@ -5190,6 +5191,7 @@ export type components = {
             readonly description?: string;
             /** @description Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept. */
             readonly incognito?: boolean;
+            /** @description Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession. */
             readonly instructions?: string;
             /**
              * @description Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.

@@ -103,7 +103,9 @@ func documentHandWritten(api huma.API) {
 			"command recovery is unchanged.\n" +
 			"The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, " +
 			"`interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the " +
-			"session. A `tool_call` is the only frame that must be answered: everything else is a " +
+			"session. `instructions` is server-side only: from an end user's device it changes " +
+			"nothing and is answered with an `error` frame, `context` `command`, as `updateSession` " +
+			"refuses it. A `tool_call` is the only frame that must be answered: everything else is a " +
 			"report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; " +
 			"their result must repeat both values so a result cannot be adopted by another command " +
 			"or turn.\n" +
@@ -144,7 +146,7 @@ func documentHandWritten(api huma.API) {
 			"optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes " +
 			"one up for the records. A `text` session is refused, because the socket carries audio. " +
 			"A field that `createSession` refuses from an end user's device is refused here too: " +
-			"`history` is server-side only.\n" +
+			"`history` and `instructions` are server-side only.\n" +
 			"The server answers `session`, with the `Session` and the `sample_rate` in use. Then " +
 			"binary frames are PCM16 mono at that rate in both directions: the caller's audio in, " +
 			"and the agent's speech out at the pace it would be heard on a call. A `cleared` frame " +
