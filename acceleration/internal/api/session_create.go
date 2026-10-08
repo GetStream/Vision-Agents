@@ -63,10 +63,10 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 var errDeviceHistory = forbidden("history is sent server-side: an assistant message in it is " +
 	"what the agent said, which a device cannot vouch for")
 
-// errDeviceInstructions refuses instructions sent by an end user's device, wherever a session
-// is opened: on create, on the session socket and on a fork.
-var errDeviceInstructions = forbidden("instructions are sent server-side: what the agent is told " +
-	"to be is the backend's to decide, as it is on an update")
+// errDeviceInstructions refuses instructions sent by an end user's device: on create, on the
+// session socket, on a fork and in the events socket's instructions command.
+var errDeviceInstructions = forbidden("a session's instructions are changed server-side, never " +
+	"by a device: what the agent is told to be is the backend's to decide")
 
 // refuseServerSideFields reports the failure a new session is refused with when an end user's
 // device sent a field only the backend may send. createSession and the session socket both

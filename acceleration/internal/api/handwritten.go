@@ -103,7 +103,9 @@ func documentHandWritten(api huma.API) {
 			"command recovery is unchanged.\n" +
 			"The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, " +
 			"`interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the " +
-			"session. A `tool_call` is the only frame that must be answered: everything else is a " +
+			"session. `instructions` is server-side only: from an end user's device it changes " +
+			"nothing and is answered with an `error` frame, `context` `command`, as `updateSession` " +
+			"refuses it. A `tool_call` is the only frame that must be answered: everything else is a " +
 			"report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; " +
 			"their result must repeat both values so a result cannot be adopted by another command " +
 			"or turn.\n" +

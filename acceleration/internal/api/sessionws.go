@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -336,6 +337,12 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, comma
 		found.Interrupt()
 
 	case "instructions":
+		// Refused from a device as on createSession and updateSession. The owner's kind is
+		// what a relayed command carries too, and only a backend's is KindServer.
+		if owner.Kind != auth.KindServer {
+			found.Report(errDeviceInstructions, "command")
+			return true
+		}
 		found.SetInstructions(command.Instructions)
 
 	case "close":

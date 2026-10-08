@@ -264,7 +264,7 @@ func (s *SessionVerbsSuite) TestADeviceMayNotForkASessionWithInstructions() {
 
 	s.Equal(http.StatusForbidden, status)
 	s.Equal(created, failure)
-	s.Contains(failure, "instructions are sent server-side")
+	s.Contains(failure, "instructions are changed server-side")
 	// The control: the same device forks its session when it leaves instructions out.
 	s.Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/fork",
 		ForkSessionRequest{Title: pointerTo("Asked again")}, nil))

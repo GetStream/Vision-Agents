@@ -172,7 +172,7 @@ func (s *SocketSessionSuite) TestADeviceMayNotHandTheSocketInstructions() {
 			s.Require().Equal(http.StatusForbidden, status, "createSession refuses a device's instructions")
 			var created ErrorResponse
 			s.Require().NoError(json.Unmarshal(body, &created))
-			s.Contains(created.Error.Message, "instructions are sent server-side")
+			s.Contains(created.Error.Message, "instructions are changed server-side")
 
 			connection := device.opens("/v1/agents/socket")
 			s.Require().NoError(connection.WriteJSON(map[string]any{
