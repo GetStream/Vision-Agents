@@ -76,16 +76,16 @@ type VerifierRule struct {
 	Kind VerifierKind `yaml:"kind" json:"kind"`
 	// Secret is whose secret signs or carries the request.
 	Secret SecretSource `yaml:"secret" json:"secret"`
-	// Header is the request header that carries the signature (hmac_header) or the secret
-	// itself (secret_header).
+	// Header is the request header that carries the signature (hmac_header, ed25519) or the
+	// secret itself (secret_header).
 	Header string `yaml:"header,omitempty" json:"header,omitempty"`
 	// Algorithm and Encoding are the HMAC's hash and how the header writes the digest.
 	Algorithm string `yaml:"algorithm,omitempty" json:"algorithm,omitempty"`
 	Encoding  string `yaml:"encoding,omitempty" json:"encoding,omitempty"`
 	// Prefix is what the header writes before the digest, such as a version tag.
 	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
-	// Signed is the bytes the HMAC covers, as a template over {body}, the raw request body,
-	// and {timestamp}, the value of TimestampHeader.
+	// Signed is the bytes the HMAC or the Ed25519 signature covers, as a template over {body},
+	// the raw request body, and {timestamp}, the value of TimestampHeader.
 	Signed          string `yaml:"signed,omitempty" json:"signed,omitempty"`
 	TimestampHeader string `yaml:"timestamp_header,omitempty" json:"timestamp_header,omitempty"`
 	// MaxAge is how old a signed timestamp may be before the request is refused as a replay.
@@ -190,11 +190,16 @@ type VerifierKind string
 // and a shared secret compared as it is. standard_webhooks is the Standard Webhooks
 // specification (https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md),
 // whose headers, signed content and secret format are fixed there, so it takes no parameters
-// but its age.
+// but its age. ed25519 is an Ed25519 signature (RFC 8032) under the provider's public key,
+// written in base64 in a header, over a signed template as hmac_header's: Telnyx signs
+// {timestamp}|{body} this way
+// (https://developers.telnyx.com/docs/messaging/messages/receiving-webhooks, opened
+// October 8, 2026).
 const (
 	VerifierHMACHeader       VerifierKind = "hmac_header"
 	VerifierSecretHeader     VerifierKind = "secret_header"
 	VerifierStandardWebhooks VerifierKind = "standard_webhooks"
+	VerifierEd25519          VerifierKind = "ed25519"
 )
 
 // SecretSource is whose secret a verifier checks with.
@@ -229,7 +234,7 @@ const (
 )
 
 var (
-	verifierKinds = []VerifierKind{VerifierHMACHeader, VerifierSecretHeader, VerifierStandardWebhooks}
+	verifierKinds = []VerifierKind{VerifierHMACHeader, VerifierSecretHeader, VerifierStandardWebhooks, VerifierEd25519}
 	secretSources = []SecretSource{SecretOperator, SecretProviderApp}
 	bodyFormats   = []BodyFormat{FormatJSON, FormatForm}
 	// hmacAlgorithms: SHA-256 is what Slack («Verifying requests from Slack»,
@@ -323,15 +328,23 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 		fail("channel.verifier.max_age", "cannot be negative")
 	}
 	switch v.Kind {
-	case VerifierHMACHeader:
+	case VerifierHMACHeader, VerifierEd25519:
 		if v.Header == "" {
 			fail("channel.verifier.header", "is empty")
 		}
-		if !slices.Contains(hmacAlgorithms, v.Algorithm) {
-			fail("channel.verifier.algorithm", "%q is not one of %v", v.Algorithm, hmacAlgorithms)
-		}
-		if !slices.Contains(hmacEncodings, v.Encoding) {
-			fail("channel.verifier.encoding", "%q is not one of %v", v.Encoding, hmacEncodings)
+		if v.Kind == VerifierHMACHeader {
+			if !slices.Contains(hmacAlgorithms, v.Algorithm) {
+				fail("channel.verifier.algorithm", "%q is not one of %v", v.Algorithm, hmacAlgorithms)
+			}
+			if !slices.Contains(hmacEncodings, v.Encoding) {
+				fail("channel.verifier.encoding", "%q is not one of %v", v.Encoding, hmacEncodings)
+			}
+		} else {
+			// The signature is base64 and the algorithm is Ed25519 itself, as Telnyx's page
+			// above says («Base64-encoded Ed25519 signature»), so neither is a parameter.
+			unread("algorithm", v.Algorithm != "")
+			unread("encoding", v.Encoding != "")
+			unread("prefix", v.Prefix != "")
 		}
 		names, err := placeholderNames(v.Signed)
 		switch {

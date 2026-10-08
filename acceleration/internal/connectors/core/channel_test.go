@@ -134,7 +134,7 @@ func (s *ChannelSuite) TestASubscriptionListedTwiceIsRefused() {
 
 func (s *ChannelSuite) TestAnUnknownVerifierKindIsRefusedWithItsField() {
 	err := s.variant("kind: secret_header", "kind: jwt_set")
-	s.ErrorContains(err, `channel.verifier.kind: "jwt_set" is not one of [hmac_header secret_header standard_webhooks]`)
+	s.ErrorContains(err, `channel.verifier.kind: "jwt_set" is not one of [hmac_header secret_header standard_webhooks ed25519]`)
 }
 
 func (s *ChannelSuite) TestAReplyBodyNamingAnUndeclaredInputIsRefused() {
@@ -211,6 +211,31 @@ func (s *ChannelSuite) TestASignedTimestampNeedsItsHeaderAndAnAge() {
 
 	err = s.variant("kind: secret_header\n    secret: provider_app\n    header: X-Secret\n", hmac+"    timestamp_header: X-Timestamp\n")
 	s.ErrorContains(err, "channel.verifier.max_age: is set exactly when timestamp_header is")
+}
+
+// AI-881: ed25519 reads hmac_header's header, signed template and timestamp, and fixes the
+// rest: Telnyx's signature is «Base64-encoded Ed25519»
+// (https://developers.telnyx.com/docs/messaging/messages/receiving-webhooks).
+func (s *ChannelSuite) TestAnEd25519VerifierTakesAHeaderASignedTemplateAndATimestamp() {
+	secretHeader := "kind: secret_header\n    secret: provider_app\n    header: X-Secret\n"
+	ed := "kind: ed25519\n    secret: provider_app\n    header: Telnyx-Signature-Ed25519\n"
+	_, err := ParseManifest(minimal(strings.Replace(baseChannel, secretHeader,
+		ed+"    signed: \"{timestamp}|{body}\"\n    timestamp_header: Telnyx-Timestamp\n    max_age: 5m\n", 1)))
+	s.Require().NoError(err)
+
+	err = s.variant(secretHeader, "kind: ed25519\n    secret: provider_app\n    signed: \"{body}\"\n")
+	s.ErrorContains(err, "channel.verifier.header: is empty")
+
+	err = s.variant(secretHeader, ed+"    signed: \"{timestamp}\"\n")
+	s.ErrorContains(err, "channel.verifier.signed: \"{timestamp}\" must name {body} once")
+
+	err = s.variant(secretHeader, ed+"    signed: \"{timestamp}|{body}\"\n")
+	s.ErrorContains(err, "channel.verifier.signed: {timestamp} and timestamp_header go together")
+
+	for _, parameter := range []string{"algorithm: sha256", "encoding: hex", "prefix: v1="} {
+		err = s.variant(secretHeader, ed+"    signed: \"{body}\"\n    "+parameter+"\n")
+		s.ErrorContains(err, "channel.verifier."+strings.Split(parameter, ":")[0]+": is not read by ed25519")
+	}
 }
 
 func (s *ChannelSuite) TestAnOperatorSecretNeedsClientEnv() {
