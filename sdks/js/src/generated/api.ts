@@ -3921,7 +3921,7 @@ export type components = {
         };
         readonly AttachedNumber: {
             readonly route_id: string;
-            /** @description Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com. */
+            /** @description Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com. */
             readonly sip_uri: string;
             readonly trunk_id: string;
         };

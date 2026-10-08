@@ -130,5 +130,5 @@ class TestInboundCalling:
 
         # The routing rule names the call after the number that was rung, and that name is
         # the only thing an agent has to go on when it joins.
-        assert call.call_id == "phone-" + called
+        assert call.call_id == "phone-" + called.removeprefix("+")
         assert digits(call.caller_number) == digits(caller)
