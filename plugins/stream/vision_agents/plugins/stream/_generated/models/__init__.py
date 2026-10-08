@@ -108,6 +108,7 @@ from .connection_page import ConnectionPage
 from .connection_request import ConnectionRequest
 from .connection_request_inputs import ConnectionRequestInputs
 from .connection_status import ConnectionStatus
+from .connection_token import ConnectionToken
 from .connection_tool import ConnectionTool
 from .connection_tool_input_schema import ConnectionToolInputSchema
 from .connection_tools import ConnectionTools
@@ -121,6 +122,7 @@ from .connector_audit_event import ConnectorAuditEvent
 from .connector_audit_page import ConnectorAuditPage
 from .connector_binding_event import ConnectorBindingEvent
 from .connector_binding_event_arguments import ConnectorBindingEventArguments
+from .connector_binding_policy import ConnectorBindingPolicy
 from .connector_client import ConnectorClient
 from .connector_client_alg import ConnectorClientAlg
 from .connector_client_auth_method import ConnectorClientAuthMethod
@@ -134,6 +136,7 @@ from .connector_input import ConnectorInput
 from .connector_o_auth_client import ConnectorOAuthClient
 from .connector_o_auth_client_auth_method import ConnectorOAuthClientAuthMethod
 from .connector_o_auth_client_request import ConnectorOAuthClientRequest
+from .connector_on_interrupt import ConnectorOnInterrupt
 from .connector_page import ConnectorPage
 from .connector_provider_app import ConnectorProviderApp
 from .connector_provider_app_request import ConnectorProviderAppRequest
@@ -523,6 +526,7 @@ __all__ = (
     "ConnectionRequest",
     "ConnectionRequestInputs",
     "ConnectionStatus",
+    "ConnectionToken",
     "ConnectionTool",
     "ConnectionToolInputSchema",
     "ConnectionTools",
@@ -536,6 +540,7 @@ __all__ = (
     "ConnectorAuditPage",
     "ConnectorBindingEvent",
     "ConnectorBindingEventArguments",
+    "ConnectorBindingPolicy",
     "ConnectorClient",
     "ConnectorClientAlg",
     "ConnectorClientAuthMethod",
@@ -549,6 +554,7 @@ __all__ = (
     "ConnectorOAuthClient",
     "ConnectorOAuthClientAuthMethod",
     "ConnectorOAuthClientRequest",
+    "ConnectorOnInterrupt",
     "ConnectorPage",
     "ConnectorProviderApp",
     "ConnectorProviderAppRequest",

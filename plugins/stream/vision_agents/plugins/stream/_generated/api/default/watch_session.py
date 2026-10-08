@@ -102,6 +102,14 @@ def sync_detailed(
     connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed,
     tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its
     config no longer declares). Every watcher is sent each one when it attaches.
+    `connector_scope_required` says a connector tool call was refused because the caller's own
+    connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a
+    step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes
+    (what the provider asked for, empty for a claims challenge), authorization_id, launch_url,
+    handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as
+    for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call
+    works afterwards in the same session. While that step-up is open, calls refused for the same access
+    send no second event.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -116,7 +124,8 @@ def sync_detailed(
     for createAuthorization. Once the user finishes that login the message is sent again with status
     connected and no handoff_token, and the agent carries on by itself. Activity states are thinking,
     queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
-    turn_id and started_at; tool_ran also includes tool_call_id.
+    turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy;
+    tool_ran also includes tool_call_id.
     A respond command carrying command_id emits command_accepted with a nested command receipt
     (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
@@ -139,10 +148,12 @@ def sync_detailed(
     must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers
     should leave this disabled. Persistent text command recovery is unchanged.
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
-    (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call`
-    is the only frame that must be answered: everything else is a report. Tool calls made by durable
-    personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
-    cannot be adopted by another command or turn.
+    (optionally naming a `command_id`), `instructions` or `close` to act on the session. `instructions`
+    is server-side only: from an end user's device it changes nothing and is answered with an `error`
+    frame, `context` `command`, as `updateSession` refuses it. A `tool_call` is the only frame that must
+    be answered: everything else is a report. Tool calls made by durable personal commands carry
+    `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
+    another command or turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`.
@@ -206,6 +217,14 @@ def sync(
     connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed,
     tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its
     config no longer declares). Every watcher is sent each one when it attaches.
+    `connector_scope_required` says a connector tool call was refused because the caller's own
+    connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a
+    step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes
+    (what the provider asked for, empty for a claims challenge), authorization_id, launch_url,
+    handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as
+    for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call
+    works afterwards in the same session. While that step-up is open, calls refused for the same access
+    send no second event.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -220,7 +239,8 @@ def sync(
     for createAuthorization. Once the user finishes that login the message is sent again with status
     connected and no handoff_token, and the agent carries on by itself. Activity states are thinking,
     queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
-    turn_id and started_at; tool_ran also includes tool_call_id.
+    turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy;
+    tool_ran also includes tool_call_id.
     A respond command carrying command_id emits command_accepted with a nested command receipt
     (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
@@ -243,10 +263,12 @@ def sync(
     must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers
     should leave this disabled. Persistent text command recovery is unchanged.
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
-    (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call`
-    is the only frame that must be answered: everything else is a report. Tool calls made by durable
-    personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
-    cannot be adopted by another command or turn.
+    (optionally naming a `command_id`), `instructions` or `close` to act on the session. `instructions`
+    is server-side only: from an end user's device it changes nothing and is answered with an `error`
+    frame, `context` `command`, as `updateSession` refuses it. A `tool_call` is the only frame that must
+    be answered: everything else is a report. Tool calls made by durable personal commands carry
+    `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
+    another command or turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`.
@@ -305,6 +327,14 @@ async def asyncio_detailed(
     connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed,
     tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its
     config no longer declares). Every watcher is sent each one when it attaches.
+    `connector_scope_required` says a connector tool call was refused because the caller's own
+    connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a
+    step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes
+    (what the provider asked for, empty for a claims challenge), authorization_id, launch_url,
+    handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as
+    for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call
+    works afterwards in the same session. While that step-up is open, calls refused for the same access
+    send no second event.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -319,7 +349,8 @@ async def asyncio_detailed(
     for createAuthorization. Once the user finishes that login the message is sent again with status
     connected and no handoff_token, and the agent carries on by itself. Activity states are thinking,
     queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
-    turn_id and started_at; tool_ran also includes tool_call_id.
+    turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy;
+    tool_ran also includes tool_call_id.
     A respond command carrying command_id emits command_accepted with a nested command receipt
     (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
@@ -342,10 +373,12 @@ async def asyncio_detailed(
     must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers
     should leave this disabled. Persistent text command recovery is unchanged.
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
-    (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call`
-    is the only frame that must be answered: everything else is a report. Tool calls made by durable
-    personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
-    cannot be adopted by another command or turn.
+    (optionally naming a `command_id`), `instructions` or `close` to act on the session. `instructions`
+    is server-side only: from an end user's device it changes nothing and is answered with an `error`
+    frame, `context` `command`, as `updateSession` refuses it. A `tool_call` is the only frame that must
+    be answered: everything else is a report. Tool calls made by durable personal commands carry
+    `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
+    another command or turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`.
@@ -407,6 +440,14 @@ async def asyncio(
     connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed,
     tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its
     config no longer declares). Every watcher is sent each one when it attaches.
+    `connector_scope_required` says a connector tool call was refused because the caller's own
+    connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a
+    step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes
+    (what the provider asked for, empty for a claims challenge), authorization_id, launch_url,
+    handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as
+    for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call
+    works afterwards in the same session. While that step-up is open, calls refused for the same access
+    send no second event.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, command_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
@@ -421,7 +462,8 @@ async def asyncio(
     for createAuthorization. Once the user finishes that login the message is sent again with status
     connected and no handoff_token, and the agent carries on by itself. Activity states are thinking,
     queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
-    turn_id and started_at; tool_ran also includes tool_call_id.
+    turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy;
+    tool_ran also includes tool_call_id.
     A respond command carrying command_id emits command_accepted with a nested command receipt
     (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
@@ -444,10 +486,12 @@ async def asyncio(
     must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers
     should leave this disabled. Persistent text command recovery is unchanged.
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
-    (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call`
-    is the only frame that must be answered: everything else is a report. Tool calls made by durable
-    personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
-    cannot be adopted by another command or turn.
+    (optionally naming a `command_id`), `instructions` or `close` to act on the session. `instructions`
+    is server-side only: from an end user's device it changes nothing and is answered with an `error`
+    frame, `context` `command`, as `updateSession` refuses it. A `tool_call` is the only frame that must
+    be answered: everything else is a report. Tool calls made by durable personal commands carry
+    `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
+    another command or turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
     with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`.

@@ -32,7 +32,8 @@ class ForkSessionRequest:
             description (str | Unset):
             incognito (bool | Unset): Hold the fork off the record. The parent still exists; this conversation onwards is
                 simply not kept.
-            instructions (str | Unset):
+            instructions (str | Unset): Server-side only: a device sending it is refused with a 403, as it is on
+                createSession and updateSession.
             messages (bool | Unset): Carry the parent's history into the fork, so the new conversation continues from what
                 was already said. False starts the same configuration over from nothing, which is what comparing two answers to
                 the same opening question wants. Default: True.
