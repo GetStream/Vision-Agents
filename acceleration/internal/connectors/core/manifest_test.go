@@ -83,6 +83,55 @@ func (s *ManifestSuite) TestAManifestWithoutSetupMarshalsWithoutIt() {
 	s.NotContains(string(raw), "setup")
 }
 
+func (s *ManifestSuite) TestAManifestNamesItsEarlierBrokenRevisionsWithAReason() {
+	parsed, err := ParseManifest([]byte("id: example\nrevision: 6\nname: Example\nschemes: [oauth2_code]\n" +
+		"broken_revisions:\n  - revisions: [1, 2]\n    reason: reads the wrong path\n  - revisions: [4]\n    reason: no scopes\n"))
+
+	s.Require().NoError(err)
+	s.Equal(map[int]string{1: "reads the wrong path", 2: "reads the wrong path", 4: "no scopes"}, parsed.Broken())
+}
+
+func (s *ManifestSuite) TestOnlyAnEarlierRevisionCanBeBroken() {
+	for _, revisions := range []string{"[2]", "[3]", "[0]"} {
+		_, err := ParseManifest([]byte("id: example\nrevision: 2\nname: Example\nschemes: [oauth2_code]\n" +
+			"broken_revisions:\n  - revisions: " + revisions + "\n    reason: wrong\n"))
+
+		s.ErrorContains(err, "broken_revisions[0].revisions:", revisions)
+		s.ErrorContains(err, "is not an earlier revision: it must be from 1 to 1", revisions)
+	}
+}
+
+func (s *ManifestSuite) TestABrokenRevisionNeedsAReason() {
+	_, err := ParseManifest([]byte("id: example\nrevision: 2\nname: Example\nschemes: [oauth2_code]\n" +
+		"broken_revisions:\n  - revisions: [1]\n    reason: \" \"\n"))
+
+	s.ErrorContains(err, "broken_revisions[0].reason: is required")
+}
+
+func (s *ManifestSuite) TestABrokenRevisionIsListedOnce() {
+	_, err := ParseManifest([]byte("id: example\nrevision: 3\nname: Example\nschemes: [oauth2_code]\n" +
+		"broken_revisions:\n  - revisions: [1]\n    reason: one\n  - revisions: [1, 2]\n    reason: two\n"))
+
+	s.ErrorContains(err, "broken_revisions[1].revisions: 1 is listed twice")
+}
+
+// A manifest without broken_revisions marshals as it did before the field existed, so the
+// seeder finds every stored built-in unchanged (store.sameManifest); and a stored manifest
+// that has them decodes in a build from before the field: a stored manifest is read with
+// encoding/json and no custom decoder, which ignores a member the model does not know, as
+// this one ignores a member from the future.
+func (s *ManifestSuite) TestBrokenRevisionsAreInvisibleToAModelWithoutThem() {
+	parsed, err := ParseManifest(minimal(""))
+	s.Require().NoError(err)
+	raw, err := json.Marshal(parsed)
+	s.Require().NoError(err)
+	s.NotContains(string(raw), "broken_revisions")
+
+	var stored Manifest
+	s.Require().NoError(json.Unmarshal([]byte(`{"id":"example","revision":2,"a_member_from_the_future":[{"revisions":[1]}]}`), &stored))
+	s.Equal(2, stored.Revision)
+}
+
 // The 12 stress-test manifests and the 4 channel ones (channel_test.go).
 func (s *ManifestSuite) TestEveryFixtureManifestLoads() {
 	paths, err := filepath.Glob(filepath.Join("testdata", "manifests", "*.yaml"))
