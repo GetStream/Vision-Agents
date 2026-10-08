@@ -456,7 +456,7 @@ func (s *ChannelSuite) TestAWhatsAppReplyInsideTheWindowIsText() {
 	})
 	s.Require().NoError(err)
 	s.Equal("https://graph.facebook.com/v25.0/200000000000001/messages", url)
-	s.JSONEq(`{"messaging_product":"whatsapp","recipient_type":"individual","to":"15550001111","type":"text","text":{"body":"Blue and red"}}`, string(body))
+	s.JSONEq(`{"messaging_product":"whatsapp","recipient_type":"individual","to":"+15550001111","type":"text","text":{"body":"Blue and red"}}`, string(body))
 }
 
 func (s *ChannelSuite) TestAWhatsAppReplyAfterTheWindowIsTheTemplate() {
@@ -469,7 +469,7 @@ func (s *ChannelSuite) TestAWhatsAppReplyAfterTheWindowIsTheTemplate() {
 		SinceInbound: 24 * time.Hour,
 	})
 	s.Require().NoError(err)
-	s.JSONEq(`{"messaging_product":"whatsapp","recipient_type":"individual","to":"15550001111","type":"template","template":{"name":"follow_up","language":{"code":"en_US"}}}`, string(body))
+	s.JSONEq(`{"messaging_product":"whatsapp","recipient_type":"individual","to":"+15550001111","type":"template","template":{"name":"follow_up","language":{"code":"en_US"}}}`, string(body))
 }
 
 // A thread key part goes into the reply URL as an input does, so a value from a message

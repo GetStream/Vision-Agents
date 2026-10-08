@@ -63,7 +63,7 @@ func (s *WhatsAppSuite) TestAReplyIsTextFromTheBusinessNumberToThePerson() {
 
 	s.Require().NoError(err)
 	s.Equal("https://graph.facebook.com/v25.0/200000000000001/messages", url)
-	s.JSONEq(`{"messaging_product":"whatsapp","recipient_type":"individual","to":"15550001111","type":"text","text":{"body":"Yes"}}`, string(body))
+	s.JSONEq(`{"messaging_product":"whatsapp","recipient_type":"individual","to":"+15550001111","type":"text","text":{"body":"Yes"}}`, string(body))
 }
 
 // Meta checks the events URL with a hub_challenge handshake before it delivers.

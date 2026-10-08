@@ -160,7 +160,7 @@ func (s *WhatsAppChannelSuite) TestAWhatsAppMessageIsAnsweredFromTheBusinessNumb
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
 	sent := s.took(1)[0]
-	s.Equal(metaMessage{unit: s.unit, to: person, kind: "text", text: "Noted."}, sent.withoutAuthorization())
+	s.Equal(metaMessage{unit: s.unit, to: "+" + person, kind: "text", text: "Noted."}, sent.withoutAuthorization())
 	s.True(sent.authorization == "Bearer "+s.token, "sent with the number's access token")
 }
 
@@ -187,7 +187,7 @@ func (s *WhatsAppChannelSuite) TestAPersonsMessagesAreOneThreadChannelAndOneWhat
 func (s *WhatsAppChannelSuite) TestStopKeepsTheAgentAwayUntilStart() {
 	person := "16505551234"
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.unit, person, "Stop")))
-	s.Equal(metaMessage{unit: s.unit, to: person, kind: "text", text: telnyxStopped}, s.took(1)[0].withoutAuthorization())
+	s.Equal(metaMessage{unit: s.unit, to: "+" + person, kind: "text", text: telnyxStopped}, s.took(1)[0].withoutAuthorization())
 	channel := s.threadChannel(person)
 	s.Equal(1, s.liveOptOuts("+"+person))
 
@@ -197,7 +197,7 @@ func (s *WhatsAppChannelSuite) TestStopKeepsTheAgentAwayUntilStart() {
 	s.Zero(s.episodes(), "a keyword opens no card")
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.unit, person, "START")))
-	s.Equal(metaMessage{unit: s.unit, to: person, kind: "text", text: telnyxStarted}, s.took(2)[1].withoutAuthorization())
+	s.Equal(metaMessage{unit: s.unit, to: "+" + person, kind: "text", text: telnyxStarted}, s.took(2)[1].withoutAuthorization())
 	s.Zero(s.liveOptOuts("+" + person))
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.unit, person, "Hi again")))

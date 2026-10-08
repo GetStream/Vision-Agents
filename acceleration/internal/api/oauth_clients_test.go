@@ -806,6 +806,27 @@ func (s *OAuthClientsOffSuite) TestAWhatsAppAppItsEventsAndItsHandshakeAnswerAsO
 	s.Empty(read)
 }
 
+// AI-879: a Meta app stored while connectors were on, read by Meta's handshake with connectors
+// off, gets the route's 405 as on base, not a failure from the keyring the router does not have.
+func (s *OAuthClientsOffSuite) TestAStoredWhatsAppAppIsStillAnsweredAsOnBaseByTheHandshake() {
+	app := "app-" + s.utils.uuid()
+	_, err := s.store.PutConnectorOAuthClient(context.Background(), &store.ConnectorOAuthClient{
+		CustomerID: s.customerID(), ConnectorID: "whatsapp", Registration: core.ClientCustomer,
+		ClientID: "synthetic-client", AuthMethod: core.AuthClientSecretPost, ProviderAppID: app,
+		SecretSealed: []byte("sealed"), KEKVersion: 1, SigningSecretSealed: []byte("sealed"), SigningKEKVersion: 1,
+	})
+	s.Require().NoError(err)
+
+	response, err := http.Get(s.server.URL + providerAppEventsPath + "whatsapp/" + app + "?hub.mode=subscribe&hub.verify_token=" + app + "&hub.challenge=987")
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	read, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+
+	s.Equal(http.StatusMethodNotAllowed, response.StatusCode)
+	s.Contains(string(read), `"error":{"message":"GET is not served on this route","type":"method_not_allowed","code":"method_not_allowed","doc_url":"https://getstream.io/agents/docs/api/errors/#method_not_allowed"}}`)
+}
+
 // AI-863: Linq's account put alone answers as any put does with connectors off, and its
 // events route takes nothing, as slack_bot's.
 func (s *OAuthClientsOffSuite) TestALinqAccountIsNotStoredAndItsEventsRouteTakesNothing() {

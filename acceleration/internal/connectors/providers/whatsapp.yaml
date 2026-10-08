@@ -75,11 +75,14 @@ channel:
     # [versions] lists with an «Available Until» date (July 29, 2028); v26.0's is «TBD».
     # Meta answers 200 with messages[].id when it takes the message ([send]).
     url: https://graph.facebook.com/v25.0/{provider_unit_id}/messages
-    # [send], the text message example.
+    # [send], the text message example. "to" carries a "+": Meta's "WhatsApp user phone number
+    # formats" section of https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages
+    # says that without it the business number's country calling code is prepended, which can
+    # misdeliver the message. The webhook's "from" is digits only, so the "+" is added here.
     body:
       messaging_product: whatsapp
       recipient_type: individual
-      to: "{thread.from}"
+      to: "+{thread.from}"
       type: text
       text:
         body: "{text}"
