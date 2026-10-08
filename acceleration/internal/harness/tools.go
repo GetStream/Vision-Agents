@@ -94,15 +94,28 @@ func (t Tools) Requests() []llm.Tool {
 // conversation that never acts. Acting at once is not the same as acting in silence: whatever
 // the operator's instructions have the agent say before acting, such as reading the caller's
 // details back, is still said, in the same turn as the call, and a bare filler does not stand
-// in for it. It says nothing about any one tool, so it holds for any set, and it leaves
-// confirmation to the operator's own instructions and to a tool's approval.
-const usePolicy = "Before calling a tool, say one short sentence: what your instructions ask you to " +
-	"say before acting (such as reading the caller's details back) or else what you are doing; " +
-	"a bare filler never replaces a required read-back. Then call it in the same turn once " +
-	"every argument it requires is known. Do not collect optional arguments or ask permission " +
-	"for what was asked. Take a name or value as given (a surname is a name). After a result, " +
-	"call the next tool the request needs. Pass bare values, not phrases. Where your " +
-	"instructions or a tool's approval require confirmation first, follow them."
+// in for it.
+//
+// The caller also hears nothing but that sentence while a slow tool runs, and a read-back
+// takes seconds to say, so a hold phrase tacked on at its end, or after the result, comes
+// after the wait it was meant to cover. The sentence therefore opens with the hold phrase and
+// runs on into the read-back. It is one sentence, not a one-word sentence and then the
+// read-back, because the pause between two utterances is where a caller's interruption lands.
+// After a result the answer is given without another hold phrase, so a wait has one.
+//
+// It says nothing about any one tool, so it holds for any set, and it leaves confirmation to
+// the operator's own instructions and to a tool's approval.
+const usePolicy = "Before calling a tool, say one short sentence that opens with a brief hold " +
+	"phrase, such as \"One moment,\" and goes straight on, with no full stop between, into what " +
+	"your instructions ask you to say before acting (such as reading the caller's details back) " +
+	"or else what you are doing. Say the hold phrase there and only there: never as a sentence " +
+	"of its own, never in place of a required read-back, never after the call or after a " +
+	"result. Then call the tool in the same turn once every argument it requires is known. " +
+	"Do not collect optional arguments or ask permission for what was asked. Take a name or " +
+	"value as given (a surname is a name). After a result, answer from it; if the request " +
+	"needs another tool, open that call with its own sentence. Pass bare values, not " +
+	"phrases. Where your instructions or a tool's approval require confirmation first, " +
+	"follow them."
 
 // Prompt is what the model is told about using its tools: when to call one and how to fill
 // it in. It is empty when there are none, so a harness without tools adds nothing to the

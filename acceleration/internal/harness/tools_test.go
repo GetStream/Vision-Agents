@@ -68,12 +68,29 @@ func (s *ToolsSuite) TestTheUsePolicyKeepsTheReadBackThatPrecedesAnAction() {
 	s.Contains(usePolicy, "what your instructions ask you to say before acting")
 	s.Contains(usePolicy, "reading the caller's details back")
 	s.Contains(usePolicy, "or else what you are doing")
-	s.Contains(usePolicy, "a bare filler never replaces a required read-back")
-	s.Contains(usePolicy, "call it in the same turn")
+	s.Contains(usePolicy, "never in place of a required read-back")
+	s.Contains(usePolicy, "call the tool in the same turn")
+}
+
+func (s *ToolsSuite) TestTheSentenceBeforeACallOpensWithTheHoldPhraseAndRunsOnIntoTheReadBack() {
+	// A read-back takes seconds to say, so a hold phrase after it, or after the result, is
+	// heard once the wait is over. It opens the sentence and the sentence carries on, because
+	// a one-word sentence of its own leaves a pause an interruption falls into.
+	s.Contains(usePolicy, "one short sentence that opens with a brief hold phrase")
+	s.Contains(usePolicy, "\"One moment,\" and goes straight on, with no full stop between, into what")
+	s.Contains(usePolicy, "never as a sentence of its own")
+	s.Contains(usePolicy, "never after the call or after a result")
+}
+
+func (s *ToolsSuite) TestAResultIsAnsweredFromWithoutAnotherHoldPhrase() {
+	// The wait has one hold phrase. A result that calls for another tool starts a wait of its
+	// own, which gets its own sentence.
+	s.Contains(usePolicy, "After a result, answer from it")
+	s.Contains(usePolicy, "if the request needs another tool, open that call with its own sentence")
 }
 
 func (s *ToolsSuite) TestTheUsePolicyIsShortAndNamesNoToolOrDeployment() {
-	s.LessOrEqual(len(strings.Fields(usePolicy)), 110)
+	s.LessOrEqual(len(strings.Fields(usePolicy)), 160)
 	s.GreaterOrEqual(len(strings.Fields(usePolicy)), 60)
 	built, err := DefaultTools()
 	s.Require().NoError(err)

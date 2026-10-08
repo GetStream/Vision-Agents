@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/video"
@@ -76,6 +77,9 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		}
 	} else {
 		responseID, err = found.Respond(ctx, request.Body.Text, parts)
+	}
+	if errors.Is(err, agent.ErrCannotSeeImages) {
+		return nil, notConfigured(agent.ErrCannotSeeImages.Error())
 	}
 	if err != nil {
 		return nil, invalidRequest(err.Error())

@@ -117,6 +117,10 @@ type Turn struct {
 	// Note is something true of this turn alone, such as the caller not having been
 	// heard clearly. It is not remembered past the reply it shapes.
 	Note string
+	// Images go with the last message of History for this reply alone, the way Note does.
+	// The conversation the harness keeps, and hands a colleague who may not see, stays as
+	// it was said.
+	Images []llm.ImagePart
 	// AfterTool says the reply follows a tool result rather than the caller.
 	AfterTool bool
 }
@@ -301,7 +305,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	if h.asking {
 		tools = nil
 	}
-	input, previous := h.resume(instructions, answerable(turn.History))
+	input, previous := h.resume(instructions, answerable(withImages(turn.History, turn.Images)))
 	model := session.Capabilities()
 	h.mu.Unlock()
 
@@ -449,6 +453,29 @@ func answerable(history []llm.Message) []llm.Message {
 	}
 	return append(append([]llm.Message(nil), history...),
 		llm.Message{Role: llm.User, Content: resumption})
+}
+
+// withImages puts images on the last message of history, after its words and each beside
+// its caption.
+func withImages(history []llm.Message, images []llm.ImagePart) []llm.Message {
+	if len(images) == 0 || len(history) == 0 {
+		return history
+	}
+	out := append([]llm.Message(nil), history...)
+	last := out[len(out)-1]
+	parts := append([]llm.ContentPart(nil), last.Parts...)
+	if len(parts) == 0 {
+		parts = llm.TextParts(last.Content)
+	}
+	for _, image := range images {
+		if image.Caption != "" {
+			parts = append(parts, llm.ContentPart{Text: image.Caption})
+		}
+		parts = append(parts, llm.ContentPart{Image: &image})
+	}
+	last.Content, last.Parts = "", parts
+	out[len(out)-1] = last
+	return out
 }
 
 // Requested reports the tools the model asked to have run in one reply.
@@ -869,6 +896,13 @@ func (h *Harness) Delegate(skillName, prompt, turnID string, parts []llm.Content
 		h.emitter.Send(Delegated{StartedAt: time.Now().UTC(), TaskID: id, Skill: skill.Name, Prompt: prompt, TurnID: turnID})
 	}
 	return id, err
+}
+
+// Offers reports whether work can be handed to a skill, which takes both the skill and a
+// subagent to run it.
+func (h *Harness) Offers(skill string) bool {
+	_, known := h.options.Skills.Lookup(skill)
+	return known && h.tasks != nil
 }
 
 // CancelSkill abandons work the caller no longer needs without interrupting speech.

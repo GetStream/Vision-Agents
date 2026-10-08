@@ -490,6 +490,25 @@ func (s *HarnessSuite) TestTheModelIsToldHowToUseTheToolsItIsOffered() {
 	s.Contains(instructions, "same turn", "a tool is called once what it requires is known")
 }
 
+func (s *HarnessSuite) TestTheReplyToAToolResultIsToldHowToUseToolsToo() {
+	// What keeps a hold phrase from being said again once the result is back is the same
+	// instruction, so the reply that follows a result must carry it as the first reply did.
+	s.tools = testTools()
+	s.build(false)
+
+	s.respond("turn-1", "a table for four at 7:30")
+	s.answer(Turn{
+		ID:           "tool-1",
+		Instructions: "be brief",
+		History:      []llm.Message{{Role: llm.User, Content: "a table for four at 7:30"}},
+		AfterTool:    true,
+	})
+
+	s.Require().Len(s.fast.requests(), 2)
+	s.Contains(s.fast.requests()[1].Instructions, "After a result, answer from it")
+	s.Equal(s.fast.requests()[0].Instructions, s.fast.requests()[1].Instructions)
+}
+
 func (s *HarnessSuite) TestWithoutToolsTheModelIsToldNothingAboutThem() {
 	s.build(true)
 
@@ -694,6 +713,49 @@ func (s *HarnessSuite) TestTheModelAskingAgainDoesNotReplaceTheCallersImages() {
 		s.NotEqual(ReasonSuperseded, settled.Result.Reason, "the picture's task was replaced")
 	}
 	s.Len(delegatedIn(s.events.seen()), 1)
+}
+
+func (s *HarnessSuite) TestATurnsImagesAreHandedToTheModelBesideTheWordsTheyCameWith() {
+	s.build(true)
+	picture := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xFF, 0xD8, 0xFF}, Caption: "the error dialog"}
+
+	s.answer(Turn{
+		ID:           "turn-1",
+		Instructions: "be brief",
+		History:      []llm.Message{{Role: llm.User, Content: "what does this say"}},
+		Images:       []llm.ImagePart{picture},
+	})
+
+	asked := s.fast.requests()
+	s.Require().Len(asked, 1)
+	s.Equal([]llm.Message{{Role: llm.User, Parts: []llm.ContentPart{
+		{Text: "what does this say"}, {Text: "the error dialog"}, {Image: &picture},
+	}}}, asked[0].Input)
+}
+
+func (s *HarnessSuite) TestAColleagueIsHandedTheConversationWithoutAReplysImages() {
+	s.build(true)
+	s.answer(Turn{
+		ID:           "turn-1",
+		Instructions: "be brief",
+		History:      []llm.Message{{Role: llm.User, Content: "what does this say"}},
+		Images:       []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xFF, 0xD8, 0xFF}}},
+	})
+
+	_, err := s.harness.Delegate("think", "work out what the caller should do", "turn-1", nil, nil)
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the subagent was never asked")
+	s.False(s.slow.requests()[0].HasImage(), "a subagent that may not see was handed the picture")
+}
+
+func (s *HarnessSuite) TestASkillIsOfferedOnlyWithASubagentToRunIt() {
+	s.build(false)
+	s.False(s.harness.Offers("think"), "nothing would run it")
+
+	s.build(true)
+	s.True(s.harness.Offers("think"))
+	s.False(s.harness.Offers("vision"), "the harness was given no such skill")
 }
 
 func (s *HarnessSuite) TestCompleteIdentifiersAreNotHandedToAColleague() {
