@@ -84,4 +84,7 @@ type CredentialState struct {
 	// ConnectedAt is when a consent last stored Credentials: when the grant they belong to
 	// began. A refresh keeps it. Zero for a connection connected before it was kept.
 	ConnectedAt time.Time
+	// DefinitionRevision is the manifest revision the connection reads: the one the consent
+	// that stored Credentials ran on, which sets it. A refresh keeps it.
+	DefinitionRevision int
 }

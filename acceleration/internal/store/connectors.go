@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 	"time"
 
@@ -302,7 +303,7 @@ func (s *Store) seedBuiltin(ctx context.Context, manifest core.Manifest) error {
 			if !same {
 				return fmt.Errorf("%s.yaml says revision %d, which is already stored with other content: give the change a new revision", manifest.ID, manifest.Revision)
 			}
-			return nil
+			return markBroken(ctx, tx, manifest)
 		case !errors.Is(err, sql.ErrNoRows):
 			return err
 		}
@@ -317,12 +318,130 @@ func (s *Store) seedBuiltin(ctx context.Context, manifest core.Manifest) error {
 			Manifest:    manifest,
 			CreatedAt:   time.Now().UTC(),
 		}).Exec(ctx)
-		return err
+		if err != nil {
+			return err
+		}
+		return markBroken(ctx, tx, manifest)
 	})
 	if err != nil {
 		return fmt.Errorf("store: seed connector definition %s: %w", manifest.ID, err)
 	}
 	return nil
+}
+
+// ConnectorBrokenRevision marks one revision of a built-in connector as not working, as a later
+// revision's manifest declared it (core.Manifest.BrokenRevisions). Table
+// connector_broken_revisions; the seeder is its one writer.
+type ConnectorBrokenRevision struct {
+	bun.BaseModel `bun:"table:connector_broken_revisions,alias:cbr"`
+
+	ConnectorID string `bun:"connector_id,pk"`
+	Revision    int    `bun:"revision,pk"`
+	Reason      string `bun:"reason,notnull"`
+	// MarkedBy is the revision whose manifest declared it.
+	MarkedBy  int       `bun:"marked_by,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+}
+
+// markBroken stores the marks manifest declares, in the seeder's transaction. A mark already
+// stored is kept as it is, so marks only accumulate: a later revision that lists one no longer,
+// or gives another reason, changes nothing.
+func markBroken(ctx context.Context, tx bun.Tx, manifest core.Manifest) error {
+	broken := manifest.Broken()
+	if len(broken) == 0 {
+		return nil
+	}
+	marks := make([]ConnectorBrokenRevision, 0, len(broken))
+	for revision, reason := range broken {
+		marks = append(marks, ConnectorBrokenRevision{ConnectorID: manifest.ID, Revision: revision, Reason: reason,
+			MarkedBy: manifest.Revision, CreatedAt: time.Now().UTC()})
+	}
+	_, err := tx.NewInsert().Model(&marks).On("CONFLICT (connector_id, revision) DO NOTHING").Exec(ctx)
+	return err
+}
+
+// BrokenConnectorRevision is why revision of connector is marked broken, and whether it is.
+func (s *Store) BrokenConnectorRevision(ctx context.Context, connectorID string, revision int) (string, bool, error) {
+	var mark ConnectorBrokenRevision
+	err := s.db.NewSelect().Model(&mark).
+		Where("connector_id = ?", connectorID).
+		Where("revision = ?", revision).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, stack.Wrap(fmt.Errorf("store: broken connector revision: %w", err))
+	}
+	return mark.Reason, true, nil
+}
+
+// How a connection's pinned revision compares with its connector's (DefinitionStatus.Status).
+const (
+	// DefinitionCurrent: the connection reads its connector's latest revision.
+	DefinitionCurrent = "current"
+	// DefinitionOutdated: a later revision exists, and the pinned one is not marked broken.
+	DefinitionOutdated = "outdated"
+	// DefinitionBroken: a later revision marked the pinned one broken.
+	DefinitionBroken = "broken"
+)
+
+// DefinitionStatus is how one connection's pinned revision compares with its connector's.
+type DefinitionStatus struct {
+	Status string
+	// Reason is the mark's, when Status is DefinitionBroken.
+	Reason string
+}
+
+// ConnectorDefinitionStatuses is the DefinitionStatus of each of the customer's connections, by
+// connection id, in two reads whatever their number: the latest revision of each connector,
+// and the marks on them.
+func (s *Store) ConnectorDefinitionStatuses(ctx context.Context, customerID string, connections []ConnectorConnection) (map[string]DefinitionStatus, error) {
+	statuses := make(map[string]DefinitionStatus, len(connections))
+	if len(connections) == 0 {
+		return statuses, nil
+	}
+	ids := make([]string, 0, len(connections))
+	for _, connection := range connections {
+		if !slices.Contains(ids, connection.ConnectorID) {
+			ids = append(ids, connection.ConnectorID)
+		}
+	}
+	var latest []struct {
+		ID       string `bun:"id"`
+		Revision int    `bun:"revision"`
+	}
+	err := s.db.NewSelect().Model((*ConnectorDefinition)(nil)).
+		Column("id").ColumnExpr("max(revision) AS revision").
+		Where("customer_id IN (?, ?)", BuiltinCustomer, customerID).
+		Where("id IN (?)", bun.In(ids)).
+		Group("id").
+		Scan(ctx, &latest)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: latest connector revisions: %w", err))
+	}
+	var marks []ConnectorBrokenRevision
+	err = s.db.NewSelect().Model(&marks).Where("connector_id IN (?)", bun.In(ids)).Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: broken connector revisions: %w", err))
+	}
+	newest := make(map[string]int, len(latest))
+	for _, row := range latest {
+		newest[row.ID] = row.Revision
+	}
+	for _, connection := range connections {
+		status := DefinitionStatus{Status: DefinitionCurrent}
+		if connection.DefinitionRevision < newest[connection.ConnectorID] {
+			status.Status = DefinitionOutdated
+		}
+		for _, mark := range marks {
+			if mark.ConnectorID == connection.ConnectorID && mark.Revision == connection.DefinitionRevision {
+				status = DefinitionStatus{Status: DefinitionBroken, Reason: mark.Reason}
+			}
+		}
+		statuses[connection.ID] = status
+	}
+	return statuses, nil
 }
 
 // latestDefinition is the newest revision of id under any of customers.

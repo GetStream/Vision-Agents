@@ -81,7 +81,10 @@ func (s *StoreSuite) seedingANewBuiltInLeavesTheOthersAsTheyWere(id string) {
 // AI-816: slack.yaml at revision 5 reads the user from $.user_id. A router that ships it,
 // starting on a database the build before it seeded with revision 4, stores 5 as the latest,
 // keeps 4 for the connections pinned to it, and moves no other built-in.
-func (s *StoreSuite) TestSlackRevisionFiveSeedsOverTheRevisionFourTheBuildBeforeStored() {
+// TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeStored: revision 6 says what 5
+// says and marks 1 to 4 broken, which is a change, so it is a new revision rather than an
+// edit the seeder refuses. The marks are stored with it, and every other built-in stays.
+func (s *StoreSuite) TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeStored() {
 	before := fstest.MapFS{}
 	files, err := fs.ReadDir(providers.FS, ".")
 	s.Require().NoError(err)
@@ -90,13 +93,13 @@ func (s *StoreSuite) TestSlackRevisionFiveSeedsOverTheRevisionFourTheBuildBefore
 		s.Require().NoError(err)
 		before[file.Name()] = &fstest.MapFile{Data: raw}
 	}
-	// Revision 4 is this file with its two changed lines put back.
-	four := string(before["slack.yaml"].Data)
-	for from, to := range map[string]string{"\nrevision: 5\n": "\nrevision: 4\n", "path: $.user_id\n": "path: $.authed_user.id\n"} {
-		s.Require().Equal(1, strings.Count(four, from), from)
-		four = strings.Replace(four, from, to, 1)
-	}
-	before["slack.yaml"] = &fstest.MapFile{Data: []byte(four)}
+	// Revision 5 is this file with its revision put back and without the marks.
+	five, marks, found := strings.Cut(string(before["slack.yaml"].Data), "\nbroken_revisions:\n")
+	s.Require().True(found)
+	_, rest, found := strings.Cut(marks, "\n# [proto]:3-5\n")
+	s.Require().True(found)
+	five = strings.Replace(five, "\nrevision: 6\n", "\nrevision: 5\n", 1) + "\n# [proto]:3-5\n" + rest
+	before["slack.yaml"] = &fstest.MapFile{Data: []byte(five)}
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, before))
 	latest := func() map[string]int {
 		revisions := map[string]int{}
@@ -108,19 +111,95 @@ func (s *StoreSuite) TestSlackRevisionFiveSeedsOverTheRevisionFourTheBuildBefore
 		return revisions
 	}
 	was := latest()
+	s.Require().Equal(5, was["slack"])
+	_, broken, err := s.store.BrokenConnectorRevision(s.ctx, "slack", 4)
+	s.Require().NoError(err)
+	s.Require().False(broken, "revision 5 marks nothing")
 
-	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS), "the changed content is a new revision, not refused")
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS), "the marks are a new revision, not refused")
 
 	now := latest()
-	s.Equal(5, now["slack"])
+	s.Equal(6, now["slack"])
 	delete(was, "slack")
 	delete(now, "slack")
 	s.Equal(was, now)
-	for revision, path := range map[int]string{4: "$.authed_user.id", 5: "$.user_id"} {
-		definition, err := s.store.ConnectorDefinition(s.ctx, "anyone", "slack", revision)
+	for revision, want := range map[int]bool{1: true, 2: true, 3: true, 4: true, 5: false, 6: false} {
+		reason, broken, err := s.store.BrokenConnectorRevision(s.ctx, "slack", revision)
 		s.Require().NoError(err)
-		s.Equal(path, definition.Manifest.Capture[1].Path, "revision %d", revision)
+		s.Equal(want, broken, "revision %d", revision)
+		if want {
+			s.Equal("user_id read from $.authed_user.id; live Slack sends top-level user_id", reason)
+		}
 	}
+}
+
+// acmeMarking is acme at revision 3, marking revisions 1 and 2 broken.
+var acmeMarking = strings.Replace(acmeManifest, "revision: 1", "revision: 3", 1) +
+	"broken_revisions:\n  - revisions: [1, 2]\n    reason: the first reason\n"
+
+func (s *StoreSuite) TestSeedingABuiltInStoresTheRevisionsItMarksBroken() {
+	s.seed(acmeManifest)
+	s.seed(acmeMarking)
+
+	for revision, want := range map[int]bool{1: true, 2: true, 3: false} {
+		reason, broken, err := s.store.BrokenConnectorRevision(s.ctx, "acme", revision)
+		s.Require().NoError(err)
+		s.Equal(want, broken, "revision %d", revision)
+		if want {
+			s.Equal("the first reason", reason)
+		}
+	}
+	var stored []ConnectorBrokenRevision
+	s.Require().NoError(s.store.DB().NewSelect().Model(&stored).Order("revision").Scan(s.ctx))
+	s.Require().Len(stored, 2)
+	s.Equal(3, stored[0].MarkedBy)
+	s.seed(acmeMarking)
+	marks, err := s.store.DB().NewSelect().Model((*ConnectorBrokenRevision)(nil)).Count(s.ctx)
+	s.Require().NoError(err)
+	s.Equal(2, marks, "a restart stores no mark twice")
+}
+
+// TestAMarkStaysWhenALaterRevisionDropsItOrGivesAnotherReason: marks only accumulate, so a
+// manifest reverted to one without them is a new revision that unmarks nothing.
+func (s *StoreSuite) TestAMarkStaysWhenALaterRevisionDropsItOrGivesAnotherReason() {
+	s.seed(acmeMarking)
+	s.seed(strings.Replace(acmeManifest, "revision: 1", "revision: 4", 1))
+	s.seed(strings.Replace(acmeManifest, "revision: 1", "revision: 5", 1) +
+		"broken_revisions:\n  - revisions: [1]\n    reason: another reason\n")
+
+	reason, broken, err := s.store.BrokenConnectorRevision(s.ctx, "acme", 1)
+	s.Require().NoError(err)
+	s.True(broken)
+	s.Equal("the first reason", reason)
+	_, broken, err = s.store.BrokenConnectorRevision(s.ctx, "acme", 2)
+	s.Require().NoError(err)
+	s.True(broken)
+}
+
+func (s *StoreSuite) TestAConnectionsDefinitionIsCurrentOutdatedOrBroken() {
+	s.seed(acmeManifest)
+	s.seed(acmeChanged)
+	at := func(revision int) ConnectorConnection {
+		connection := appConnection()
+		connection.DefinitionRevision = revision
+		s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, testSchemes, connection))
+		return *connection
+	}
+	one, two := at(1), at(2)
+
+	statuses, err := s.store.ConnectorDefinitionStatuses(s.ctx, "acme-app", []ConnectorConnection{one, two})
+	s.Require().NoError(err)
+	s.Equal(map[string]DefinitionStatus{one.ID: {Status: DefinitionOutdated}, two.ID: {Status: DefinitionCurrent}}, statuses)
+
+	s.seed(acmeMarking)
+	three := at(3)
+	statuses, err = s.store.ConnectorDefinitionStatuses(s.ctx, "acme-app", []ConnectorConnection{one, two, three})
+	s.Require().NoError(err)
+	s.Equal(map[string]DefinitionStatus{
+		one.ID:   {Status: DefinitionBroken, Reason: "the first reason"},
+		two.ID:   {Status: DefinitionBroken, Reason: "the first reason"},
+		three.ID: {Status: DefinitionCurrent},
+	}, statuses)
 }
 
 func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtTheRevisionItNames() {
