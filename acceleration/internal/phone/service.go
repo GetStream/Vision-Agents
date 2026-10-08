@@ -934,6 +934,11 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		return Dialed{}, stack.Wrap(err)
 	}
 
+	bridge, err = bridge.WithNumber(request.From)
+	if err != nil {
+		return Dialed{}, stack.Wrap(err)
+	}
+
 	started := time.Now()
 	placed, err := provider.Dial(ctx, Outbound{From: request.From, To: request.To, Bridge: bridge, Trunk: trunk})
 	s.record(held.Vendor, "transfer", request.Owner, started, 0, err)

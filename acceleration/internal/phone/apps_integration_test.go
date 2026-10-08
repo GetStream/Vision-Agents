@@ -289,3 +289,12 @@ func (s *AppsSuite) TestTheVendorIsGivenATrunkAddressStreamCanFindByTheCallingNu
 	s.Require().Len(trunks, 1)
 	s.Equal("sip:"+s.e164+"@sip.example.test", s.vendor.dialed.Bridge.URI)
 }
+
+func (s *AppsSuite) TestATransferGivesTheVendorATrunkAddressStreamCanFindByTheCallingNumber() {
+	_, err := s.service.Transfer(s.ctx, TransferRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550002222", CallID: "call-1",
+	})
+	s.Require().NoError(err)
+
+	s.Equal("sip:"+s.e164+"@sip.example.test", s.vendor.dialed.Bridge.URI)
+}
