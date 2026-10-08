@@ -56,6 +56,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
@@ -174,9 +175,11 @@ type RouterSuite struct {
 
 	// The stubs standing in for providers, for a test to read back what the router asked
 	// them for. model answers questions, vision is the one that can see, voice keeps what
-	// it was told to say, knowledge keeps the passages written to it.
+	// it was told to say, knowledge keeps the passages written to it. holding answers once a
+	// test lets it, for a summary that has to still be in the writing.
 	model     *scriptedLLM
 	vision    *scriptedLLM
+	holding   *scriptedLLM
 	voice     *recordingTTS
 	ears      *quietSTT
 	knowledge *knowledgeBase
@@ -421,6 +424,15 @@ func (s *RouterSuite) SetupSuite() {
 		s.T().Cleanup(s.mcpEvents.Close)
 	}
 
+	// The closer cmd/router builds wherever there is a store and an LLM router, which the call
+	// hook ends a call's episodes with. Its idle sweeper is not started: cmd/router starts it
+	// only with connectors on or a config with episode_cards (startEpisodeSweeper).
+	episodes, err := omnichannel.NewCloser(omnichannel.CloserOptions{
+		Store: pgStore, Stream: s.stream, LLM: streams.LLM, IdleAfter: time.Hour, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(episodes.Close)
+
 	server, err := NewServer(Options{
 		Routers:       s.modalities,
 		Streams:       streams,
@@ -467,6 +479,7 @@ func (s *RouterSuite) SetupSuite() {
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
 		MCPEvents:             s.mcpEvents,
+		Episodes:              episodes,
 		SlackApps:             s.slackApps,
 		OperatorProviderApps:  s.operatorApps,
 	})
@@ -618,6 +631,8 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("vision", func(routing.Spec) (llmrouter.Provider, error) { return s.vision, nil })
 	reasoning.Register("echo", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{echoes: true}, nil })
 	reasoning.Register("recites", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{recites: true}, nil })
+	s.holding = &scriptedLLM{reply: "Held."}
+	reasoning.Register("holding", func(routing.Spec) (llmrouter.Provider, error) { return s.holding, nil })
 	reasoning.Register("noted", func(routing.Spec) (llmrouter.Provider, error) {
 		opened := &scriptedLLM{reply: "Noted."}
 		s.notedMu.Lock()

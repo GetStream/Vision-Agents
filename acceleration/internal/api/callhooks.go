@@ -92,6 +92,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.releaseEndedCall(r, origin, event)
+		s.endCallEpisodes(r, origin, event)
 
 	default:
 		s.logger.Debug("ignoring a call event", "type", eventType)
@@ -175,6 +176,25 @@ func (s *Server) releaseEndedCall(r *http.Request, origin hookOrigin, event call
 	// released: a call's id is only unique within its app.
 	if err := s.phone.ReleaseCall(r.Context(), origin.scope(), callType, callID); err != nil {
 		s.logger.Error("could not release an ended call's resources", "call", event.CallCid, "error", err)
+	}
+}
+
+// endCallEpisodes closes the episodes of an ended call and has them summarized off the request
+// (omnichannel.Closer.EndCall, T55). Only a call under an agent config with episode_cards on
+// has one; any other call matches no row, so nothing is written and no Stream is reached, and
+// the answer is the 200 it was before. A failure is logged and answered 200 as well: Stream
+// retries a non-2xx, and the episode is read by its last lines until it closes.
+func (s *Server) endCallEpisodes(r *http.Request, origin hookOrigin, event callEvent) {
+	if s.episodes == nil {
+		return
+	}
+	_, callID, split := strings.Cut(event.CallCid, ":")
+	if !split {
+		return
+	}
+	// The call id is unique only in the app that signed the event, as releaseEndedCall's is.
+	if err := s.episodes.EndCall(r.Context(), origin.scope(), callID); err != nil {
+		s.logger.Error("could not close an ended call's episodes", "call", event.CallCid, "error", err)
 	}
 }
 
