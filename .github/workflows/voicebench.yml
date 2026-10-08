@@ -2,7 +2,13 @@ name: Voicebench
 on:
   schedule:
     - cron: '0 4 * * *'
-  workflow_dispatch: { }
+  workflow_dispatch:
+    inputs:
+      set:
+        description: 'Scenario set: frozen (the nightly, compared with the previous night) or short (a quicker check, compared with nothing)'
+        type: choice
+        options: [ frozen, short ]
+        default: frozen
 
 permissions:
   contents: read
@@ -48,6 +54,7 @@ jobs:
       run:
         working-directory: benchmark
     env:
+      VOICEBENCH_SET: ${{ inputs.set || 'frozen' }}
       VOICEBENCH_LIVEKIT_ARMS: ''
       VOICEBENCH_SLACK_BOT_TOKEN: ${{ secrets.VOICEBENCH_SLACK_BOT_TOKEN }}
       VOICEBENCH_SLACK_CHANNEL: ${{ secrets.VOICEBENCH_SLACK_CHANNEL }}
@@ -58,23 +65,29 @@ jobs:
 
       - uses: ./.github/actions/voicebench-setup
 
+      # A short run is a quick check: it is not compared with the previous night, and it does
+      # not replace it as tomorrow's baseline.
       - name: Restore the previous night
+        if: env.VOICEBENCH_SET == 'frozen'
         uses: actions/cache/restore@v4
         with:
           path: benchmark/out/previous
           key: voicebench-nightly-${{ github.run_id }}
           restore-keys: voicebench-nightly-
 
-      - name: Run the frozen set
+      - name: Run the ${{ env.VOICEBENCH_SET }} set
         run: |
           if [[ -z "$VOICEBENCH_SLACK_BOT_TOKEN" || -z "$VOICEBENCH_SLACK_CHANNEL" ]]; then
             echo "Slack is not configured, writing the digest without posting it"
             export VOICEBENCH_DIGEST_POST=0
           fi
+          if [[ "$VOICEBENCH_SET" != frozen ]]; then
+            export VOICEBENCH_DIGEST_TITLE="Voicebench $VOICEBENCH_SET"
+          fi
           VOICEBENCH_K=1 scripts/digest.sh out/nightly
 
       - name: Compare with the previous night
-        if: always()
+        if: always() && env.VOICEBENCH_SET == 'frozen'
         run: |
           for run in out/nightly/*-accelerated; do
             previous="out/previous/$(basename "$run")"
@@ -85,7 +98,7 @@ jobs:
       # A night with no finished run keeps the last one it had, rather than an empty baseline.
       - name: Keep tonight for tomorrow
         id: keep
-        if: always()
+        if: always() && env.VOICEBENCH_SET == 'frozen'
         run: |
           tonight=(out/nightly/*-accelerated/summary.json)
           [[ -f "${tonight[0]}" ]] || exit 0

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs the frozen set against our stack and LiveKit, then posts the digest to Slack.
+# Runs the frozen set (or VOICEBENCH_SET=short) against our stack and LiveKit, then posts the
+# digest to Slack.
 #
 #   scripts/digest.sh                                   nightly: k=1, LiveKit Inference
 #   VOICEBENCH_K=3 VOICEBENCH_LIVEKIT_ARMS="inference realtime" \
@@ -14,6 +15,8 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 k="${VOICEBENCH_K:-1}"
+# frozen is the trend-line set; short is the quicker subset in scenarios/short.txt.
+scenario_set="${VOICEBENCH_SET:-frozen}"
 packs="${VOICEBENCH_PACKS:-restaurant healthcare telecom}"
 # An empty VOICEBENCH_LIVEKIT_ARMS runs our stack alone.
 arms="${VOICEBENCH_LIVEKIT_ARMS-inference}"
@@ -43,12 +46,12 @@ fi
 export CGO_ENABLED=1
 for pack in $packs; do
   echo "== $pack: accelerated"
-  go run -tags webrtc ./cmd/voicebench run --pack "$pack" --frozen --k "$k" "${ours[@]}" \
+  go run -tags webrtc ./cmd/voicebench run --pack "$pack" "--$scenario_set" --k "$k" "${ours[@]}" \
     --network-profile "$profile" --out "$out/$pack-accelerated" > "$out/$pack-accelerated.log" 2>&1 ||
     echo "   failed, see $out/$pack-accelerated.log"
   for arm in $arms; do
     echo "== $pack: livekit-$arm"
-    VOICEBENCH_LIVEKIT_PIPELINE="$arm" go run -tags webrtc ./cmd/voicebench run --pack "$pack" --frozen --k "$k" \
+    VOICEBENCH_LIVEKIT_PIPELINE="$arm" go run -tags webrtc ./cmd/voicebench run --pack "$pack" "--$scenario_set" --k "$k" \
       --target livekit --spawn --livekit-agent "$livekit_agent" --system "livekit-$arm" --network-profile "$profile" \
       --out "$out/$pack-livekit-$arm" > "$out/$pack-livekit-$arm.log" 2>&1 ||
       echo "   failed, see $out/$pack-livekit-$arm.log"
