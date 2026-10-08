@@ -135,14 +135,53 @@ func (s *LinqChannelSuite) TestAChatIsOneThreadChannelAndOneIMessageCardInTheSen
 	s.Equal("agent:"+thread, custom["thread_channel"])
 }
 
-// AI-881: the carriers' keywords are SMS's (channelbridge/keywords.go), so a STOP in iMessage
-// reaches the agent as any text does, as before.
-func (s *LinqChannelSuite) TestAStopInIMessageReachesTheAgentAsBefore() {
-	chat := s.utils.uuid()
-	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, "+12025550199", "STOP"), time.Now()))
+// T62a (AI-921): iMessage has the carriers' keywords, as internal/channels' iMessage lines do
+// (channelbridge/keywords.go). Linq answers none itself (its error 2024 page), so the bridge
+// confirms a STOP in the chat, records the sender's iMessage opt-out, and keeps their later
+// texts from the agent until START.
+func (s *LinqChannelSuite) TestAStopInIMessageIsConfirmedAndKeepsTheAgentAwayUntilStart() {
+	chat, person := s.utils.uuid(), "+12025550199"
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, person, "Stop."), time.Now()))
+	stopped := s.took(1)[0]
+	s.Equal(chat, stopped.chat)
+	s.Equal(telnyxStopped, stopped.text, "internal/channels' text, the same on every channel")
+	s.Equal(1, s.liveIMessageOptOuts(person))
+	channel := s.threadChannel(chat)
 
-	s.Equal("STOP", s.written(s.threadChannel(chat), 1)[0]["text"])
-	s.Never(func() bool { return len(s.linq.sent()) > 0 }, dropped, 20*time.Millisecond)
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, person, "Hi, are you there?"), time.Now()))
+	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, person, "START"), time.Now()))
+	s.Equal(telnyxStarted, s.took(2)[1].text)
+	s.Zero(s.liveIMessageOptOuts(person))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, person, "Hi again"), time.Now()))
+	s.Equal("Hi again", s.written(channel, 1)[0]["text"])
+}
+
+// A reply the agent was writing when the person texted STOP is not sent into the chat: a Linq
+// chat id names nobody, so the bridge reads who the chat's replies reach from the person who
+// started it (the contact map row of its episode).
+func (s *LinqChannelSuite) TestAReplyFinishedAfterAStopInTheChatIsNotSent() {
+	chat, person := s.utils.uuid(), "+12025550199"
+	s.deliver(s.received(chat, s.line, person, "Hi"), time.Now())
+	channel := s.threadChannel(chat)
+	s.written(channel, 1)
+	s.deliver(s.received(chat, s.line, person, "STOP"), time.Now())
+	s.took(1)
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+
+	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Equal(telnyxStopped, s.linq.sent()[0].text)
+}
+
+// liveIMessageOptOuts counts the person's iMessage opt-outs not revoked.
+func (s *LinqChannelSuite) liveIMessageOptOuts(person string) int {
+	var count int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM opt_outs WHERE customer_id = ? AND recipient = ? AND channel = 'imessage' AND source = 'keyword' AND revoked_at IS NULL",
+		s.customerID(), person).Scan(&count))
+	return count
 }
 
 // Linq delivers «At-least-once (duplicates possible)» (webhooks): the same message delivered

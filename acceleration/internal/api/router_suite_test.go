@@ -532,7 +532,8 @@ func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
 	})
 	s.Require().NoError(err)
 	bridge, err := channelbridge.New(channelbridge.Options{
-		Store: s.store, Stream: s.stream, Schemes: s.connectors.Schemes, Transports: transports, Resolver: s.resolver, Logger: logger,
+		Store: s.store, Stream: s.stream, Schemes: s.connectors.Schemes, Transports: transports, Resolver: s.resolver,
+		Gate: s.gate, Logger: logger,
 		// A reply sent again waits milliseconds here, not the production seconds.
 		RetryBackoff: []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
 	})

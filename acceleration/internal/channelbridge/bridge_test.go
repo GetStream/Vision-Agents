@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
 // BridgeSuite is what the bridge decides before it reaches a store or Stream Chat. Its whole
@@ -59,19 +61,35 @@ func (s *BridgeSuite) TestAKeywordIsReadWithoutItsCaseOrPunctuation() {
 	s.NotContains(stopWords, keywordOf("stop texting me"), "a sentence is the agent's to read")
 }
 
-// Only a connector whose episode source names an opt-out channel has keywords: SMS and, since
-// AI-879, WhatsApp, so a STOP in Slack or iMessage reaches the agent as before.
-func (s *BridgeSuite) TestOnlySMSAndWhatsAppHaveKeywords() {
+// Only a connector whose episode source names an opt-out channel has keywords and passes the
+// sandbox gate: SMS, WhatsApp (AI-879) and, since T62a (AI-921), iMessage, so a STOP in Slack
+// reaches the agent as before.
+func (s *BridgeSuite) TestOnlySMSWhatsAppAndIMessageHaveKeywords() {
 	for connector, source := range episodeSources {
 		switch connector {
 		case "telnyx":
 			s.Equal("sms", source.optOuts)
 		case "whatsapp":
 			s.Equal("whatsapp", source.optOuts)
+		case "linq":
+			s.Equal("imessage", source.optOuts)
 		default:
 			s.Empty(source.optOuts, connector)
 		}
 	}
+}
+
+// T62a (AI-921): a reply's files reach the external thread as links after its text, one a
+// line, on every provider.
+func (s *BridgeSuite) TestAReplysFilesAreLinksAfterItsText() {
+	graph := sandbox.Attachment{Name: "graph.png", MIME: "image/png", URL: "https://cdn.example/graph.png"}
+	report := sandbox.Attachment{Name: "report.pdf", MIME: "application/pdf", URL: "https://cdn.example/report.pdf"}
+
+	s.Equal("Here they are.\n\nhttps://cdn.example/graph.png\nhttps://cdn.example/report.pdf",
+		withFiles("Here they are.", []sandbox.Attachment{graph, report}))
+	s.Equal("https://cdn.example/graph.png", withFiles("", []sandbox.Attachment{graph}), "a reply that is only a file")
+	s.Equal("Noted.", withFiles("Noted.", nil), "a reply without files is its text, as before")
+	s.Equal("Noted.", withFiles("Noted.", []sandbox.Attachment{{Name: "lost.png"}}), "a file with no link adds nothing")
 }
 
 // AI-879: Meta writes a WhatsApp author as digits with no +, and the contact map and the

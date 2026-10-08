@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
 // ThreadChannelSuite is a persistent conversation held on a thread channel: the agent channel
@@ -95,6 +96,45 @@ func (s *ThreadChannelSuite) TestAFinishedReplyIsHandedOverWithItsStoredText() {
 	s.Contains(s.chat.Messages(s.channel), "It is.", "the reply is written into the thread channel")
 	s.Never(func() bool { return len(s.handedOver()) > 1 }, 200*time.Millisecond, 20*time.Millisecond,
 		"the reply being written is not handed over, only the stored final text")
+}
+
+// T62a (AI-921): the files the agent's code made for a reply are handed over with it, so the
+// bridge sends them on; a reply without any is handed over as before (above).
+func (s *ThreadChannelSuite) TestAFinishedReplyIsHandedOverWithItsFiles() {
+	s.person("U1", "draw the build graph")
+	c, _, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
+	s.Require().NoError(err)
+	graph := sandbox.Attachment{Name: "graph.png", MIME: "image/png", URL: "https://cdn.fake/image/graph.png", Size: 3}
+	_, err = c.BeginFollowUp("draw the build graph")
+	s.Require().NoError(err)
+
+	c.Observe(agent.Delegated{TaskID: "task-1", Skill: "render"})
+	c.Observe(agent.TaskSettled{TaskID: "task-1", Skill: "render", Files: []sandbox.Attachment{graph}})
+	c.Observe(agent.ResponseDelta{Text: "Here it is."})
+	c.Observe(agent.Responded{})
+
+	s.Require().Eventually(func() bool { return len(s.handedOver()) == 1 }, 5*time.Second, 10*time.Millisecond)
+	reply := s.handedOver()[0]
+	s.Equal("Here it is.", reply.Text)
+	s.Equal([]sandbox.Attachment{graph}, reply.Files)
+}
+
+// A reply that is only files, with no text, is handed over too: its files are all it says.
+func (s *ThreadChannelSuite) TestAReplyThatIsOnlyFilesIsHandedOver() {
+	s.person("U1", "draw the build graph")
+	c, _, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
+	s.Require().NoError(err)
+	graph := sandbox.Attachment{Name: "graph.png", MIME: "image/png", URL: "https://cdn.fake/image/graph.png", Size: 3}
+	_, err = c.BeginFollowUp("draw the build graph")
+	s.Require().NoError(err)
+
+	c.Observe(agent.Delegated{TaskID: "task-1", Skill: "render"})
+	c.Observe(agent.TaskSettled{TaskID: "task-1", Skill: "render", Files: []sandbox.Attachment{graph}})
+	c.Observe(agent.Responded{})
+
+	s.Require().Eventually(func() bool { return len(s.handedOver()) == 1 }, 5*time.Second, 10*time.Millisecond)
+	s.Equal([]sandbox.Attachment{graph}, s.handedOver()[0].Files)
+	s.Empty(s.handedOver()[0].Text)
 }
 
 // OnFinishedReply(nil) clears the hook: a reply finished after it is handed to nobody.
