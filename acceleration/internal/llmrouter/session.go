@@ -27,6 +27,9 @@ type statRecorder interface {
 	Record(routing.ProviderConfig, routing.Stat)
 }
 
+// errClosed is what a session answers once it has been closed.
+var errClosed = errors.New("llmrouter: session is closed")
+
 // Session is a live model attached to one customer. It hands out the provider's streams
 // untouched apart from recording a stat row per response on the way past.
 type Session struct {
@@ -34,7 +37,12 @@ type Session struct {
 	closed   bool
 	children map[*Session]struct{}
 	fallback func(context.Context, llm.ResponseParams) (*llm.Stream, error)
-	provider Provider
+	// hedge opens a session on another candidate of the same target, and hedgeAfter is how
+	// long a reply may say nothing before it is asked of that one as well. Both are unset on
+	// a fallback child, which is only ever asked for a response its parent has chosen it for.
+	hedge      func(context.Context) (*Session, error)
+	hedgeAfter time.Duration
+	provider   Provider
 	// config is the routing identity of the provider. Stats and health are keyed by it,
 	// so a provider registered under a different name still aggregates coherently.
 	config   routing.ProviderConfig
@@ -243,7 +251,7 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	closed := s.closed
 	s.mu.Unlock()
 	if closed {
-		return nil, stack.Wrap(errors.New("llmrouter: session is closed"))
+		return nil, stack.Wrap(errClosed)
 	}
 	ctx, span := tracer.Start(ctx, "llm.create")
 	defer span.End()
@@ -264,7 +272,11 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	if s.screen != nil {
 		verdict = s.screen(ctx, s.owner, params.Input)
 	}
-	stream, err := s.create(ctx, params)
+	open := s.create
+	if s.hedges(params) {
+		open = s.hedged
+	}
+	stream, err := open(ctx, params)
 	if err == nil || ctx.Err() != nil || s.fallback == nil || params.PreviousResponseID != "" || params.Conversation != "" {
 		return screened(stream, verdict), stack.Wrap(err)
 	}
