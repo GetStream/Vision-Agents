@@ -259,6 +259,8 @@ Borrow Inworld's taxonomy. Most of it is cheap in Go. One piece is not.
 
 Same direct-versus-through-the-router TTFB delta as STT.
 
+**The harness has landed, except the router delta and MOS.** `voicebench tts --target` speaks a corpus through the router's TTS socket and writes a `kind: tts` summary with round-trip WER, the audio-health grid and its grade, TTFB percentiles and real-time factor. The default corpus is the scenarios' agent reply lines, not Inworld's stress set, whose licensing is still open. As with STT, the bench cannot import the router's providers, so the direct leg of the delta needs a second path. The provider and model behind a shortcut target are not recorded yet: the Go SDK's voice socket drops the `started` frame that names them.
+
 ### MOS
 
 NISQAv2-style MOS prediction is an ONNX model. Go cannot run it cleanly. Three options, none assumed:
