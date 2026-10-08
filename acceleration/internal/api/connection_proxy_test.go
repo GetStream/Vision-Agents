@@ -29,7 +29,15 @@ import (
 const (
 	echoStatusHeader     = "X-Echo-Status"
 	echoRetryAfterHeader = "X-Echo-Retry-After"
+	// echoRawHeader has the echo answer rawAnswer with rawServerTiming instead.
+	echoRawHeader = "X-Echo-Raw"
 )
+
+// rawAnswer is a JSON object over 2 KiB, so net/http sends it chunked, with no Content-Length
+// (bufferBeforeChunkingSize in net/http/server.go is 2048).
+var rawAnswer = `{"ok":true,"pad":"` + strings.Repeat("x", 4096) + `"}`
+
+const rawServerTiming = "provider;dur=7"
 
 // echoed is what the echo provider received, as it answers it.
 type echoed struct {
@@ -133,6 +141,30 @@ func (s *ConnectionProxySuite) TestTheProviderGetsTheRequestAsItCameWithTheConne
 	}
 }
 
+// TestNoneOfTheRoutersCredentialsOrCallerNamesReachTheProvider: every header and query
+// parameter the router reads a credential or a caller from is stripped, a parameter name
+// escaped on the wire as well, since the router reads names unescaped.
+func (s *ConnectionProxySuite) TestNoneOfTheRoutersCredentialsOrCallerNamesReachTheProvider() {
+	id := s.connected(s.connector(""), bearer.Name)
+	router := []string{"Authorization", auth.APIKeyHeader, auth.AuthTypeHeader, auth.OrganizationHeader,
+		auth.AppHeader, auth.CustomerHeader, auth.UserHeader, mintingKeyHeader}
+	extra := http.Header{}
+	for _, name := range router[3:] {
+		extra.Set(name, "router-"+name)
+	}
+
+	status, answer := s.send(s.serverClient, http.MethodGet,
+		proxy(id, "q")+"?keep=1&api%5Fkey=router-key&%74oken=router-token&customer_id=c&customer%5Fid=c&user%5Fid=u", "", extra)
+
+	s.Require().Equal(http.StatusOK, status, string(answer))
+	got := s.echoed(answer)
+	s.Equal("keep=1", got.Query)
+	for _, name := range router[1:] {
+		s.Empty(got.Header.Values(name), name)
+	}
+	s.False(strings.HasPrefix(got.Header.Get("Authorization"), "Bearer ey"), "the router's token stayed with the router")
+}
+
 func (s *ConnectionProxySuite) TestABearerConnectionSendsItsTokenInsteadOfTheRouters() {
 	token := "token-" + s.utils.uuid()
 	id := s.connectedWithToken(s.connector(""), token)
@@ -156,6 +188,18 @@ func (s *ConnectionProxySuite) TestTheProvidersAnswerComesBackAsItCame() {
 	s.Empty(response.Header.Values("Keep-Alive"), "a hop-by-hop header stays with the hop")
 	s.Equal("brew", s.echoed(answer).Body)
 	s.True(strings.HasPrefix(response.Header.Get(RequestIDHeader), "caller-"), response.Header.Get(RequestIDHeader))
+}
+
+// TestAJSONAnswerComesBackByteForByte: a chunked JSON object, with no Content-Length, gets no
+// duration field from the router, and the provider's Server-Timing is not replaced.
+func (s *ConnectionProxySuite) TestAJSONAnswerComesBackByteForByte() {
+	id := s.connected(s.connector(""), bearer.Name)
+
+	response, answer := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "big"), "", http.Header{echoRawHeader: {"1"}})
+
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	s.Equal([]string{rawServerTiming}, response.Header.Values("Server-Timing"))
+	s.Equal(rawAnswer, string(answer))
 }
 
 // TestAPathThatWouldLeaveTheAPIIsRefusedAndNothingIsSent: a dot segment, written or escaped,
@@ -278,14 +322,7 @@ func (s *ConnectionProxySuite) TestEachCallSentLeavesOneAuditRow() {
 		echoStatusHeader: {"201"}, RequestIDHeader: {requestID}})
 
 	s.Require().Equal(http.StatusCreated, status)
-	var page ConnectorAuditPage
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connector-audit?connection_id="+id, nil, &page))
-	var calls []ConnectorAuditEvent
-	for _, row := range page.Items {
-		if row.Action == ConnectorAuditAction(store.AuditProxyCall) {
-			calls = append(calls, row)
-		}
-	}
+	calls := s.proxyCalls(id)
 	s.Require().Len(calls, 1)
 	echoURL, err := url.Parse(s.echo.URL)
 	s.Require().NoError(err)
@@ -297,10 +334,47 @@ func (s *ConnectionProxySuite) TestEachCallSentLeavesOneAuditRow() {
 	s.GreaterOrEqual(*calls[0].LatencyMs, int64(0))
 }
 
+// TestACallThatGetsNoAnswerIsUnavailableAndLeavesOneRow: api_base is a closed port, so the
+// call is sent and nothing answers. Its row has no status.
+func (s *ConnectionProxySuite) TestACallThatGetsNoAnswerIsUnavailableAndLeavesOneRow() {
+	closed := httptest.NewTLSServer(http.NotFoundHandler())
+	closed.Close()
+	connector := s.storeConnector("endpoints:\n  api_base: " + closed.URL + "/base\nschemes: [bearer]\n")
+	id := s.connected(connector, bearer.Name)
+
+	status, body := s.serverClient.call(http.MethodGet, proxy(id, "ping"), nil)
+
+	s.Equal(http.StatusServiceUnavailable, status)
+	s.Contains(string(body), `"type":"unavailable"`)
+	calls := s.proxyCalls(id)
+	s.Require().Len(calls, 1)
+	s.Nil(calls[0].StatusCode)
+	s.Equal(strings.TrimPrefix(closed.URL, "https://"), calls[0].Target)
+}
+
+// proxyCalls is the connection's proxy_call audit rows.
+func (s *ConnectionProxySuite) proxyCalls(id string) []ConnectorAuditEvent {
+	var page ConnectorAuditPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connector-audit?connection_id="+id, nil, &page))
+	var calls []ConnectorAuditEvent
+	for _, row := range page.Items {
+		if row.Action == ConnectorAuditAction(store.AuditProxyCall) {
+			calls = append(calls, row)
+		}
+	}
+	return calls
+}
+
 // answer is the echo provider: it answers with what it received, with the status and
-// Retry-After the test asked for.
+// Retry-After the test asked for, or with rawAnswer when asked.
 func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	s.hits.Add(1)
+	if r.Header.Get(echoRawHeader) != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Server-Timing", rawServerTiming)
+		_, _ = io.WriteString(w, rawAnswer)
+		return
+	}
 	body, _ := io.ReadAll(r.Body)
 	status := http.StatusOK
 	if asked := r.Header.Get(echoStatusHeader); asked != "" {
@@ -450,19 +524,10 @@ func (s *ConnectionProxyOffSuite) TestTheConnectionEndpointsAnswerAsOnBase() {
 	s.Contains(string(body), `"code":"validation_failed"`)
 }
 
-// TestAMissingConnectionIsNotFoundAsGetConnectionAnswers: the same answer getConnection gives.
-func (s *ConnectionProxyOffSuite) TestAMissingConnectionIsNotFoundAsGetConnectionAnswers() {
-	_, read := s.serverClient.call(http.MethodGet, "/v1/agents/connections/x", nil)
-
-	status, body := s.serverClient.call(http.MethodPost, proxy("x", "chat.postMessage"), nil)
-
-	s.Equal(http.StatusNotFound, status)
-	s.JSONEq(withoutDuration(read), withoutDuration(body))
-}
-
-// TestAConnectionLeftFromBeforeIsNotCalled: a stored connection is refused as not
-// configured, before anything could be sent.
-func (s *ConnectionProxyOffSuite) TestAConnectionLeftFromBeforeIsNotCalled() {
+// TestTheProxyIsNoRouteAsOnBase: base fd4b4405 with connectors off answered every method on
+// a proxy path with 404 "no such route", for a backend and a device, a missing and a stored
+// connection, one segment or two (probe, <scratchpad>/pr-w3d-t44/fx-probe-base.txt).
+func (s *ConnectionProxyOffSuite) TestTheProxyIsNoRouteAsOnBase() {
 	ctx := context.Background()
 	connectorID := "custom_proxy" + strings.ReplaceAll(s.utils.uuid(), "-", "")
 	manifest, err := core.ParseManifest([]byte("id: " + connectorID + "\nrevision: 1\nname: Proxy\n" +
@@ -474,9 +539,20 @@ func (s *ConnectionProxyOffSuite) TestAConnectionLeftFromBeforeIsNotCalled() {
 		OwnerType: store.OwnerApp, AuthScheme: bearer.Name, DefinitionRevision: 1}
 	registry := core.Registry{Schemes: map[string]core.Scheme{bearer.Name: bearer.New()}}
 	s.Require().NoError(s.store.CreateConnectorConnection(ctx, registry, connection))
+	device := s.data.createUser()
 
-	status, body := s.serverClient.call(http.MethodGet, proxy(connection.ID, "auth.test"), nil)
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(string(body), `"code":"not_configured"`)
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+		http.MethodDelete, http.MethodOptions, http.MethodTrace} {
+		for _, id := range []string{"x", connection.ID} {
+			for _, as := range []*testClient{s.serverClient, device} {
+				for _, path := range []string{"auth.test", "repos/octo/hello"} {
+					status, body := as.call(method, proxy(id, path), nil)
+					s.Equal(http.StatusNotFound, status, method+" "+path)
+					if method != http.MethodHead {
+						s.JSONEq(`{"error":{"message":"no such route","type":"not_found","code":"not_found","doc_url":"https://getstream.io/agents/docs/api/errors/#not_found"}}`, withoutDuration(body), method+" "+path)
+					}
+				}
+			}
+		}
+	}
 }

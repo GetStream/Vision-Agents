@@ -421,6 +421,14 @@ func documentHandWritten(api huma.API) {
 	// operation per method. Its path runs on past {path}, which a Huma operation cannot route.
 	errorBody := map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}
 	for _, method := range proxyMethods {
+		var body *huma.RequestBody
+		if method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch {
+			// Any body of any media type, forwarded as it came with its Content-Type.
+			body = &huma.RequestBody{
+				Description: "The body for the provider, of any media type, at most 1 MiB.",
+				Content:     map[string]*huma.MediaType{"*/*": {Schema: &huma.Schema{Type: huma.TypeString, Format: "binary"}}},
+			}
+		}
 		document.AddOperation(&huma.Operation{
 			OperationID: "proxyConnection" + method[:1] + strings.ToLower(method[1:]),
 			Method:      method,
@@ -444,8 +452,9 @@ func documentHandWritten(api huma.API) {
 				"user's device.",
 			Parameters: []*huma.Param{
 				{Name: "id", In: "path", Description: "The connection.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
-				{Name: "path", In: "path", Description: "The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+				{Name: "path", In: "path", Description: "The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
 			},
+			RequestBody: body,
 			Responses: map[string]*huma.Response{
 				"200": {Description: "The provider's answer, as it came. It may have any status, a 401 or a 429 included."},
 				"400": {Ref: "#/components/responses/BadRequest"},

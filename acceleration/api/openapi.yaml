@@ -9458,7 +9458,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues.
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
           in: path
           name: path
           required: true
@@ -9515,7 +9515,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues.
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
           in: path
           name: path
           required: true
@@ -9572,12 +9572,20 @@ paths:
           required: true
           schema:
             type: string
-        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues.
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
           in: path
           name: path
           required: true
           schema:
             type: string
+      requestBody:
+        content:
+          '*/*':
+            schema:
+              format: binary
+              type: string
+              x-contentMediaType: application/octet-stream
+        description: The body for the provider, of any media type, at most 1 MiB.
       responses:
         "200":
           description: The provider's answer, as it came. It may have any status, a 401 or a 429 included.
@@ -9629,12 +9637,20 @@ paths:
           required: true
           schema:
             type: string
-        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues.
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
           in: path
           name: path
           required: true
           schema:
             type: string
+      requestBody:
+        content:
+          '*/*':
+            schema:
+              format: binary
+              type: string
+              x-contentMediaType: application/octet-stream
+        description: The body for the provider, of any media type, at most 1 MiB.
       responses:
         "200":
           description: The provider's answer, as it came. It may have any status, a 401 or a 429 included.
@@ -9686,12 +9702,20 @@ paths:
           required: true
           schema:
             type: string
-        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues.
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
           in: path
           name: path
           required: true
           schema:
             type: string
+      requestBody:
+        content:
+          '*/*':
+            schema:
+              format: binary
+              type: string
+              x-contentMediaType: application/octet-stream
+        description: The body for the provider, of any media type, at most 1 MiB.
       responses:
         "200":
           description: The provider's answer, as it came. It may have any status, a 401 or a 429 included.

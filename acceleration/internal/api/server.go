@@ -552,8 +552,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+ConnectorClientMetadataPath, s.serveConnectorClientMetadata)
 	mux.HandleFunc("POST "+connectorEventsPath+"{connector_id}", s.receiveConnectorEvent)
 	mux.HandleFunc("POST "+providerAppEventsPath+"{connector_id}/{provider_app_id}", s.receiveProviderAppEvent)
-	for _, method := range proxyMethods {
-		mux.HandleFunc(method+" "+connectionProxyPath+"*", s.proxyConnection)
+	// With connectors off (no transports) the proxy is no route at all, as before it existed.
+	if s.connectorTransports != nil {
+		for _, method := range proxyMethods {
+			mux.HandleFunc(method+" "+connectionProxyPath+"*", s.proxyConnection)
+		}
 	}
 	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
 	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
@@ -617,8 +620,20 @@ func withSentry(handler http.Handler) http.Handler {
 // the policies as well as the handler: all of it is time the caller waited.
 func withTiming(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(&timedResponse{ResponseWriter: w, started: time.Now()}, r)
+		timed := &timedResponse{ResponseWriter: w, started: time.Now()}
+		next.ServeHTTP(timed, r.WithContext(context.WithValue(r.Context(), timedResponseKey{}, timed)))
 	})
+}
+
+// timedResponseKey holds the request's timedResponse, for leaveUntimed.
+type timedResponseKey struct{}
+
+// leaveUntimed has the answer written as the handler writes it, with no Server-Timing and no
+// duration field: for an answer that is somebody else's, as the connection proxy's is.
+func leaveUntimed(ctx context.Context) {
+	if timed, ok := ctx.Value(timedResponseKey{}).(*timedResponse); ok {
+		timed.stamped, timed.opened = true, true
+	}
 }
 
 // timedResponse stamps the header and names the duration in the body, both at the moment
@@ -870,7 +885,9 @@ func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
 	routes := http.NewServeMux()
 	nothing := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	for _, operation := range operations {
-		if operation.public || operation.open {
+		// The connection proxy refuses a client-side caller itself (proxyConnection), on every
+		// path; with connectors off it is no route, and a 403 here would answer for it.
+		if operation.public || operation.open || strings.HasPrefix(operation.path, connectionProxyPath) {
 			continue
 		}
 		routes.Handle(operation.method+" "+operation.path, nothing)

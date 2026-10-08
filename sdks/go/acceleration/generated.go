@@ -8769,32 +8769,38 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionGet` operationId).
 	ProxyConnectionGet(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ProxyConnectionPatch Call a connection's provider directly (PATCH)
+	// ProxyConnectionPatchWithBody Call a connection's provider directly (PATCH)
 	//
 	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionPatch` operationId).
-	ProxyConnectionPatch(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ProxyConnectionPatchWithBody(ctx context.Context, id string, path string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ProxyConnectionPost Call a connection's provider directly (POST)
+	// ProxyConnectionPostWithBody Call a connection's provider directly (POST)
 	//
 	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionPost` operationId).
-	ProxyConnectionPost(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ProxyConnectionPostWithBody(ctx context.Context, id string, path string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ProxyConnectionPut Call a connection's provider directly (PUT)
+	// ProxyConnectionPutWithBody Call a connection's provider directly (PUT)
 	//
 	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
+	// Takes any type of body and a specified content type.
+	//
 	// Corresponds with PUT /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionPut` operationId).
-	ProxyConnectionPut(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ProxyConnectionPutWithBody(ctx context.Context, id string, path string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExportConnectionToken Export a connection's access token
 	//
@@ -11791,15 +11797,17 @@ func (c *Client) ProxyConnectionGet(ctx context.Context, id string, path string,
 	return c.Client.Do(req)
 }
 
-// ProxyConnectionPatch Call a connection's provider directly (PATCH)
+// ProxyConnectionPatchWithBody Call a connection's provider directly (PATCH)
 //
 // Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
 //
 // Corresponds with PATCH /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionPatch` operationId).
-func (c *Client) ProxyConnectionPatch(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewProxyConnectionPatchRequest(c.Server, id, path)
+func (c *Client) ProxyConnectionPatchWithBody(ctx context.Context, id string, path string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewProxyConnectionPatchRequestWithBody(c.Server, id, path, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11810,15 +11818,17 @@ func (c *Client) ProxyConnectionPatch(ctx context.Context, id string, path strin
 	return c.Client.Do(req)
 }
 
-// ProxyConnectionPost Call a connection's provider directly (POST)
+// ProxyConnectionPostWithBody Call a connection's provider directly (POST)
 //
 // Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionPost` operationId).
-func (c *Client) ProxyConnectionPost(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewProxyConnectionPostRequest(c.Server, id, path)
+func (c *Client) ProxyConnectionPostWithBody(ctx context.Context, id string, path string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewProxyConnectionPostRequestWithBody(c.Server, id, path, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11829,15 +11839,17 @@ func (c *Client) ProxyConnectionPost(ctx context.Context, id string, path string
 	return c.Client.Do(req)
 }
 
-// ProxyConnectionPut Call a connection's provider directly (PUT)
+// ProxyConnectionPutWithBody Call a connection's provider directly (PUT)
 //
 // Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
+// Takes any type of body and a specified content type.
+//
 // Corresponds with PUT /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionPut` operationId).
-func (c *Client) ProxyConnectionPut(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewProxyConnectionPutRequest(c.Server, id, path)
+func (c *Client) ProxyConnectionPutWithBody(ctx context.Context, id string, path string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewProxyConnectionPutRequestWithBody(c.Server, id, path, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -17842,8 +17854,8 @@ func NewProxyConnectionGetRequest(server string, id string, path string) (*http.
 	return req, nil
 }
 
-// NewProxyConnectionPatchRequest constructs an http.Request for the ProxyConnectionPatch method
-func NewProxyConnectionPatchRequest(server string, id string, path string) (*http.Request, error) {
+// NewProxyConnectionPatchRequestWithBody constructs an http.Request for the ProxyConnectionPatch method, with any body, and a specified content type
+func NewProxyConnectionPatchRequestWithBody(server string, id string, path string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -17875,16 +17887,18 @@ func NewProxyConnectionPatchRequest(server string, id string, path string) (*htt
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
 
-// NewProxyConnectionPostRequest constructs an http.Request for the ProxyConnectionPost method
-func NewProxyConnectionPostRequest(server string, id string, path string) (*http.Request, error) {
+// NewProxyConnectionPostRequestWithBody constructs an http.Request for the ProxyConnectionPost method, with any body, and a specified content type
+func NewProxyConnectionPostRequestWithBody(server string, id string, path string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -17916,16 +17930,18 @@ func NewProxyConnectionPostRequest(server string, id string, path string) (*http
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
 
-// NewProxyConnectionPutRequest constructs an http.Request for the ProxyConnectionPut method
-func NewProxyConnectionPutRequest(server string, id string, path string) (*http.Request, error) {
+// NewProxyConnectionPutRequestWithBody constructs an http.Request for the ProxyConnectionPut method, with any body, and a specified content type
+func NewProxyConnectionPutRequestWithBody(server string, id string, path string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -17957,10 +17973,12 @@ func NewProxyConnectionPutRequest(server string, id string, path string) (*http.
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -25878,38 +25896,38 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionGet` operationId).
 	ProxyConnectionGetWithResponse(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*ProxyConnectionGetResponse, error)
 
-	// ProxyConnectionPatchWithResponse Call a connection's provider directly (PATCH)
+	// ProxyConnectionPatchWithBodyWithResponse Call a connection's provider directly (PATCH)
 	//
 	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionPatch` operationId).
-	ProxyConnectionPatchWithResponse(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*ProxyConnectionPatchResponse, error)
+	ProxyConnectionPatchWithBodyWithResponse(ctx context.Context, id string, path string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ProxyConnectionPatchResponse, error)
 
-	// ProxyConnectionPostWithResponse Call a connection's provider directly (POST)
+	// ProxyConnectionPostWithBodyWithResponse Call a connection's provider directly (POST)
 	//
 	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionPost` operationId).
-	ProxyConnectionPostWithResponse(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*ProxyConnectionPostResponse, error)
+	ProxyConnectionPostWithBodyWithResponse(ctx context.Context, id string, path string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ProxyConnectionPostResponse, error)
 
-	// ProxyConnectionPutWithResponse Call a connection's provider directly (PUT)
+	// ProxyConnectionPutWithBodyWithResponse Call a connection's provider directly (PUT)
 	//
 	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionPut` operationId).
-	ProxyConnectionPutWithResponse(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*ProxyConnectionPutResponse, error)
+	ProxyConnectionPutWithBodyWithResponse(ctx context.Context, id string, path string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ProxyConnectionPutResponse, error)
 
 	// ExportConnectionTokenWithResponse Export a connection's access token
 	//
@@ -43867,51 +43885,51 @@ func (c *ClientWithResponses) ProxyConnectionGetWithResponse(ctx context.Context
 	return ParseProxyConnectionGetResponse(rsp)
 }
 
-// ProxyConnectionPatchWithResponse Call a connection's provider directly (PATCH)
+// ProxyConnectionPatchWithBodyWithResponse Call a connection's provider directly (PATCH)
 //
 // Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionPatch` operationId).
-func (c *ClientWithResponses) ProxyConnectionPatchWithResponse(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*ProxyConnectionPatchResponse, error) {
-	rsp, err := c.ProxyConnectionPatch(ctx, id, path, reqEditors...)
+func (c *ClientWithResponses) ProxyConnectionPatchWithBodyWithResponse(ctx context.Context, id string, path string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ProxyConnectionPatchResponse, error) {
+	rsp, err := c.ProxyConnectionPatchWithBody(ctx, id, path, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseProxyConnectionPatchResponse(rsp)
 }
 
-// ProxyConnectionPostWithResponse Call a connection's provider directly (POST)
+// ProxyConnectionPostWithBodyWithResponse Call a connection's provider directly (POST)
 //
 // Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionPost` operationId).
-func (c *ClientWithResponses) ProxyConnectionPostWithResponse(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*ProxyConnectionPostResponse, error) {
-	rsp, err := c.ProxyConnectionPost(ctx, id, path, reqEditors...)
+func (c *ClientWithResponses) ProxyConnectionPostWithBodyWithResponse(ctx context.Context, id string, path string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ProxyConnectionPostResponse, error) {
+	rsp, err := c.ProxyConnectionPostWithBody(ctx, id, path, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseProxyConnectionPostResponse(rsp)
 }
 
-// ProxyConnectionPutWithResponse Call a connection's provider directly (PUT)
+// ProxyConnectionPutWithBodyWithResponse Call a connection's provider directly (PUT)
 //
 // Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/connections/{id}/proxy/{path} (the `ProxyConnectionPut` operationId).
-func (c *ClientWithResponses) ProxyConnectionPutWithResponse(ctx context.Context, id string, path string, reqEditors ...RequestEditorFn) (*ProxyConnectionPutResponse, error) {
-	rsp, err := c.ProxyConnectionPut(ctx, id, path, reqEditors...)
+func (c *ClientWithResponses) ProxyConnectionPutWithBodyWithResponse(ctx context.Context, id string, path string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ProxyConnectionPutResponse, error) {
+	rsp, err := c.ProxyConnectionPutWithBody(ctx, id, path, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

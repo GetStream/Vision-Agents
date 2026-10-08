@@ -40,10 +40,6 @@ const proxyBase = "api_base"
 // of this API reads a body with. A choice, not a provider limit.
 const maxProxyBody = 1 << 20
 
-// errProxyOff is the answer to a direct call on a deployment with no transports, which is what
-// cmd/router builds with connectors off.
-var errProxyOff = notConfigured("connections cannot be called: connectors are not enabled on this deployment")
-
 // routerHeaders are what the router reads to authenticate and name the caller (internal/auth).
 // They are the caller's to the router, never the provider's, so none is forwarded. The
 // scheme's Wrap then sets the provider's own credential.
@@ -81,10 +77,6 @@ func (s *Server) proxyConnection(w http.ResponseWriter, r *http.Request) {
 	connection, err := s.reachableConnection(ctx, chi.URLParam(r, "id"))
 	if err != nil {
 		writeHandError(w, r, err)
-		return
-	}
-	if s.connectorTransports == nil {
-		writeError(w, errProxyOff)
 		return
 	}
 	if connection.Status != store.ConnectionConnected {
@@ -164,6 +156,8 @@ func (s *Server) proxyConnection(w http.ResponseWriter, r *http.Request) {
 	for _, name := range hopHeaders {
 		w.Header().Del(name)
 	}
+	// The answer is the provider's: withTiming adds neither its Server-Timing nor a duration field.
+	leaveUntimed(ctx)
 	w.WriteHeader(status)
 	// The status is sent: a body cut off midway can only end the answer early.
 	_, _ = io.Copy(w, response.Body)

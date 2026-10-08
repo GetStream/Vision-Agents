@@ -9513,7 +9513,7 @@ export interface operations {
             readonly path: {
                 /** @description The connection. */
                 readonly id: string;
-                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. */
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
                 readonly path: string;
             };
             readonly cookie?: never;
@@ -9577,12 +9577,17 @@ export interface operations {
             readonly path: {
                 /** @description The connection. */
                 readonly id: string;
-                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. */
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
                 readonly path: string;
             };
             readonly cookie?: never;
         };
-        readonly requestBody?: never;
+        /** @description The body for the provider, of any media type, at most 1 MiB. */
+        readonly requestBody?: {
+            readonly content: {
+                readonly "*/*": string;
+            };
+        };
         readonly responses: {
             /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
             readonly 200: {
@@ -9641,12 +9646,17 @@ export interface operations {
             readonly path: {
                 /** @description The connection. */
                 readonly id: string;
-                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. */
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
                 readonly path: string;
             };
             readonly cookie?: never;
         };
-        readonly requestBody?: never;
+        /** @description The body for the provider, of any media type, at most 1 MiB. */
+        readonly requestBody?: {
+            readonly content: {
+                readonly "*/*": string;
+            };
+        };
         readonly responses: {
             /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
             readonly 200: {
@@ -9705,7 +9715,7 @@ export interface operations {
             readonly path: {
                 /** @description The connection. */
                 readonly id: string;
-                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. */
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
                 readonly path: string;
             };
             readonly cookie?: never;
@@ -9769,12 +9779,17 @@ export interface operations {
             readonly path: {
                 /** @description The connection. */
                 readonly id: string;
-                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. */
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
                 readonly path: string;
             };
             readonly cookie?: never;
         };
-        readonly requestBody?: never;
+        /** @description The body for the provider, of any media type, at most 1 MiB. */
+        readonly requestBody?: {
+            readonly content: {
+                readonly "*/*": string;
+            };
+        };
         readonly responses: {
             /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
             readonly 200: {
