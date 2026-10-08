@@ -165,7 +165,7 @@ type connectionResponse struct {
 	Body Connection
 }
 
-// registerConnections declares the connection operations. All four are server-side only:
+// registerConnections declares the connection operations. All five are server-side only:
 // a user-owned connection is made by the app's backend for the user it acts for, and the
 // end user's device only ever sees the consent that backend sends it to (architecture doc,
 // one-way door 7: owner identity comes only from the trusted principal).
@@ -210,6 +210,26 @@ func (s *Server) registerConnections(api huma.API) {
 		Responses: map[string]*huma.Response{"200": {Description: "The connection"}},
 		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.getConnection)
+	huma.Register(api, huma.Operation{
+		OperationID: "exportConnectionToken",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/connections/{id}/token",
+		Summary:     "Export a connection's access token",
+		Description: "The connection's current access credential, for the app's backend to call the " +
+			"provider with directly: an OAuth access token, renewed first when it is about to " +
+			"expire, or an API key. A refresh token is never exported. Only the customer's own " +
+			"provider app exports: an oauth2_code connection exports when its grant was issued " +
+			"to the client the app registered itself, and that client is still the connector's; " +
+			"a grant issued to Stream's app, or to one the router created, is refused with a 403. " +
+			"An api_key connection always exports, since the key is the app's own. Other schemes " +
+			"are refused. Each export is recorded in the connector audit as token_export. Who " +
+			"may export it is who may read it.\n\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{"200": {Description: "The access credential"}},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable},
+	}, s.exportConnectionToken)
 	huma.Register(api, huma.Operation{
 		OperationID:   "deleteConnection",
 		Method:        http.MethodDelete,

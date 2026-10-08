@@ -43,6 +43,40 @@ type Scheme interface {
 	Revoke(ctx context.Context, stored StoredCredentials, m ResolvedManifest) error
 }
 
+// Exporter is a Scheme whose access credential the app's backend may take and send to the
+// provider itself (T45, AI-874). It is optional: a scheme that does not implement it exports
+// nothing.
+type Exporter interface {
+	// Export is c, a credential this scheme issued, as the backend sends it. It never holds
+	// what the router renews c with, such as a refresh token. A credential the scheme did not
+	// issue, or one it cannot tell the client of, is an error.
+	Export(c AccessCredential) (ExportedCredential, error)
+}
+
+// ExportedCredential is an access credential as the app's backend sends it.
+type ExportedCredential struct {
+	// Header is the HTTP field it goes in. Value is the whole field value, so a bearer token
+	// is "Bearer <token>" (RFC 6750 section 2.1). Value is left out of JSON, and so out of a
+	// structured log line, and redacted by String and GoString.
+	Header string
+	Value  string `json:"-"`
+	// ExpiresAt is zero when the provider gave no expiry.
+	ExpiresAt time.Time
+	// Client is the registration of the OAuth client the grant was issued to. It is empty for
+	// a credential no OAuth client issued, such as an API key the customer supplied.
+	Client ClientRegistrationMethod
+}
+
+// String keeps Value out of any %v or %s.
+func (e ExportedCredential) String() string {
+	return "ExportedCredential{Header:" + e.Header + " Client:" + string(e.Client) + " Value:redacted}"
+}
+
+// GoString keeps Value out of %#v, which ignores String.
+func (e ExportedCredential) GoString() string {
+	return e.String()
+}
+
 // BeginInput is what a scheme needs to start acquiring a credential for one connection.
 type BeginInput struct {
 	Ref      ConnectionRef
@@ -156,7 +190,7 @@ func NewAccessCredential(scheme string, expiresAt time.Time, secret json.RawMess
 	return AccessCredential{Scheme: scheme, ExpiresAt: expiresAt, secret: secret}
 }
 
-// Secret is for the scheme that issued the credential, in Wrap. Nothing else reads it.
+// Secret is for the scheme that issued the credential, in Wrap and Export. Nothing else reads it.
 func (c AccessCredential) Secret() json.RawMessage {
 	return c.secret
 }

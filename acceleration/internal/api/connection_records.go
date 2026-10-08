@@ -55,8 +55,8 @@ type ConnectionInvocationPage struct {
 	NextCursor *string                `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page. Absent on the last one."`
 }
 
-// ConnectorAuditEvent is one grant a connection got, renewed or lost, or one direct call sent
-// through it, as an operator reads it.
+// ConnectorAuditEvent is one grant a connection got, renewed or lost, one export of its access
+// credential, or one direct call sent through it, as an operator reads it.
 type ConnectorAuditEvent struct {
 	ID           string               `json:"id"`
 	ConnectionID string               `json:"connection_id" doc:"The connection, which may since have been deleted."`
@@ -75,8 +75,8 @@ type ConnectorAuditEvent struct {
 }
 
 func (*ConnectorAuditEvent) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "One grant a connection got, renewed or lost, or one direct call sent " +
-		"through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's " +
+	schema.Description = "One grant a connection got, renewed or lost, one export of its access credential, or one direct " +
+		"call sent through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's " +
 		"connections being deleted."
 	return schema
 }
@@ -89,8 +89,9 @@ func (ConnectorAuditAction) Schema(registry huma.Registry) *huma.Schema {
 		"grant_created: a consent or a credentials write gave the connection a grant. "+
 			"grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, "+
 			"because the provider refused or revoked it or the connection was deleted. "+
+			"token_export: the app's backend exported its access credential. "+
 			"proxy_call: a direct call went to the provider through the connection.",
-		store.AuditGrantCreated, store.AuditGrantRefreshed, store.AuditGrantRevoked, store.AuditProxyCall)
+		store.AuditGrantCreated, store.AuditGrantRefreshed, store.AuditGrantRevoked, store.AuditTokenExport, store.AuditProxyCall)
 }
 
 // ConnectorAuditPage is a page of audit rows.

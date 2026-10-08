@@ -121,7 +121,10 @@ type Scheme struct {
 	spent map[string]time.Time
 }
 
-var _ core.Scheme = (*Scheme)(nil)
+var (
+	_ core.Scheme   = (*Scheme)(nil)
+	_ core.Exporter = (*Scheme)(nil)
+)
 
 // New checks cfg and returns the scheme.
 func New(cfg Config) (*Scheme, error) {
