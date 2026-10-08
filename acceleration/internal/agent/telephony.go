@@ -157,7 +157,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	parts, left, err := a.callTool(ctx, requested.Call)
 	// Visual tool results go to the vision worker in both native and cascade calls.
 	if err == nil && a.harness != nil && llm.HasImage([]llm.Message{{Parts: parts}}) {
-		_, err = a.harness.Delegate("vision", "Analyze this tool result for the caller's current question.", requested.TurnID, parts, a.History())
+		_, err = a.harness.Delegate(visionSkill, "Analyze this tool result for the caller's current question.", requested.TurnID, parts, a.History())
 		if err == nil {
 			parts = llm.TextParts(llm.TextOf(parts) + "\nVisual analysis requested; wait for the vision findings before interpreting the images.")
 		}

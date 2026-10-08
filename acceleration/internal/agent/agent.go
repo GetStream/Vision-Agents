@@ -653,35 +653,50 @@ func (a *Agent) SimpleResponse(ctx context.Context, text string) error {
 // particular reply: every event of it carries the id, and it is what a session records the
 // turn under. A native agent returns an empty one, because a speech-to-speech model decides
 // for itself what counts as a turn and there is nothing here to name.
+//
+// Images go to the vision skill when the agent has one, and to the conversation model
+// itself when it has none but the model can see. With neither the turn is refused with
+// ErrCannotSeeImages rather than answered blind.
 func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePart) (string, error) {
 	if a.native() {
 		return "", a.respondNative(text, images)
 	}
 	if len(images) > 0 {
 		a.mu.Lock()
-		current := a.harness
+		current, model := a.harness, a.llm
 		a.mu.Unlock()
 		if current == nil {
 			return "", stack.Wrap(errors.New("agent: not joined"))
 		}
 		id := replyPrefix + turnStamp()
-		parts := llm.TextParts(text)
-		for index, image := range images {
+		attached := make([]llm.ImagePart, 0, len(images))
+		for _, image := range images {
 			if err := image.Validate(); err != nil {
 				return "", err
 			}
 			image.Data = append([]byte(nil), image.Data...)
-			described := map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()}
-			if image.Caption != "" {
-				described["caption"] = image.Caption
+			attached = append(attached, image)
+		}
+		switch {
+		case current.Offers(visionSkill):
+			parts := llm.TextParts(text)
+			for index, image := range attached {
+				described := map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()}
+				if image.Caption != "" {
+					described["caption"] = image.Caption
+				}
+				metadata, _ := json.Marshal(described)
+				parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
 			}
-			metadata, _ := json.Marshal(described)
-			parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
+			if _, err := current.Delegate(visionSkill, text, id, parts, nil); err != nil {
+				return "", err
+			}
+			return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
+		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
+			return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "", attached)
+		default:
+			return "", stack.Wrap(ErrCannotSeeImages)
 		}
-		if _, err := current.Delegate("vision", text, id, parts, nil); err != nil {
-			return "", err
-		}
-		return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
 	}
 	id := replyPrefix + turnStamp()
 	return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "", nil)
@@ -689,6 +704,13 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 
 // VideoFramesTool is the caller's tool the agent reads frames of the user's video through.
 const VideoFramesTool = "get_video_frames"
+
+// visionSkill is the skill images are handed to when the agent has one.
+const visionSkill = "vision"
+
+// ErrCannotSeeImages is a turn carrying images for an agent with nothing that can look at
+// them: no vision skill, and a conversation model that takes text alone.
+var ErrCannotSeeImages = errors.New("agent: images need a vision skill or a conversation model that accepts images, and this agent has neither")
 
 func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest) ([]llm.ContentPart, error) {
 	if a.options.ToolRunner == nil {
@@ -1498,6 +1520,7 @@ func (a *Agent) respondTurn(
 		Instructions: instructions,
 		History:      history,
 		Note:         joinNotes(note, a.duplex.Note(listened.confidence)),
+		Images:       images,
 	}, text)
 }
 
