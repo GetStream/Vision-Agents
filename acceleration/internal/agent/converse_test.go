@@ -804,26 +804,6 @@ func (s *ConverseSuite) TestOnlyTheLastThingSaidOverTheAgentIsAnswered() {
 	s.Equal("make it nine", action.Candidate.Text)
 }
 
-func (s *ConverseSuite) TestAnsweringANewTurnAbandonsTheWorkTheLastOneAskedFor() {
-	first := s.settle("what is the weather", s.quiet())
-	s.converse.Ruled(harness.Decided{
-		CandidateID: first.ID,
-		Disposition: harness.Respond,
-		Floor:       harness.Continue,
-	}, s.quiet())
-
-	second := s.settle("never mind, book a table", s.quiet())
-	actions := s.converse.Ruled(harness.Decided{
-		CandidateID: second.ID,
-		Disposition: harness.Respond,
-		Floor:       harness.Continue,
-	}, s.quiet())
-
-	s.Require().Len(actions, 1)
-	s.Equal(first.ID, actions[0].Supersede,
-		"the caller moved on, so what the last turn asked for is not wanted")
-}
-
 func (s *ConverseSuite) TestWhoKeepsTheFloorIsReported() {
 	ready := s.settle("actually", s.talking())
 	s.converse.Ruled(harness.Decided{
@@ -857,14 +837,77 @@ func (s *ConverseSuite) TestTheAgentDoesNotMurmurOverItself() {
 	}, s.talking())), ActBackchannel, "a murmur over the agent's own reply is not made")
 }
 
-func (s *ConverseSuite) TestALongSilenceWhileWorkRunsIsFilled() {
-	s.build(DuplexOptions{Backchannel: true, BackchannelGap: time.Millisecond})
+func (s *ConverseSuite) TestALongSilenceWhileWorkRunsSaysWhatIsStillGoing() {
+	s.build(DuplexOptions{})
 
 	state := s.quiet()
-	state.Delegating = true
-	state.LastSpokeAt = time.Now().Add(-time.Second)
+	state.Working = "the render"
+	state.LastSpokeAt = time.Now().Add(-11 * time.Second)
 
-	s.Equal([]ActionKind{ActBackchannel}, kinds(s.converse.Tick(state)))
+	actions := s.converse.Tick(state)
+	s.Require().Equal([]ActionKind{ActCheckIn}, kinds(actions))
+	s.Equal(updatePurpose, actions[0].Compose, "the model writes what is said, not a stock line")
+	s.Empty(actions[0].Text)
+}
+
+func (s *ConverseSuite) TestAShortSilenceWhileWorkRunsIsLeftAlone() {
+	s.build(DuplexOptions{})
+
+	state := s.quiet()
+	state.Working = "the render"
+	state.LastSpokeAt = time.Now().Add(-2 * time.Second)
+
+	s.Empty(s.converse.Tick(state))
+}
+
+func (s *ConverseSuite) TestACallerWaitingOnWorkIsNeverAskedWhetherThereIsAnythingElse() {
+	s.build(DuplexOptions{})
+
+	state := s.quiet()
+	state.Working = "the render"
+	state.LastSpokeAt = time.Now().Add(-time.Hour)
+
+	var purposes []string
+	for range 5 {
+		for _, action := range s.converse.Tick(state) {
+			purposes = append(purposes, action.Compose)
+		}
+	}
+	s.Equal([]string{updatePurpose, updatePurpose}, purposes,
+		"two updates, then the answer is what they are waiting for")
+}
+
+func (s *ConverseSuite) TestNothingMoreIsDecidedWhileALineIsBeingWritten() {
+	s.build(DuplexOptions{})
+
+	state := s.quiet()
+	state.Composing = true
+	state.LastSpokeAt = time.Now().Add(-time.Hour)
+
+	s.Empty(s.converse.Tick(state), "a second line would only say the first one again")
+	state.Working = "the render"
+	s.Empty(s.converse.Tick(state))
+}
+
+func (s *ConverseSuite) TestAnAnswerOwedToTheCallerIsNotTalkedOverWithACheckIn() {
+	s.build(DuplexOptions{})
+
+	state := s.quiet()
+	state.Owed = true
+	state.LastSpokeAt = time.Now().Add(-time.Hour)
+
+	s.Empty(s.converse.Tick(state))
+}
+
+func (s *ConverseSuite) TestNoUpdateIsSaidOverTheAgentsOwnReply() {
+	s.build(DuplexOptions{})
+
+	state := s.quiet()
+	state.Working = "the render"
+	state.Talking = true
+	state.LastSpokeAt = time.Now().Add(-time.Hour)
+
+	s.Empty(s.converse.Tick(state))
 }
 
 func (s *ConverseSuite) TestACallNobodyHasSpokenOnIsAskedWhetherAnythingElseIsNeeded() {
@@ -875,7 +918,7 @@ func (s *ConverseSuite) TestACallNobodyHasSpokenOnIsAskedWhetherAnythingElseIsNe
 
 	actions := s.converse.Tick(state)
 	s.Require().Equal([]ActionKind{ActCheckIn}, kinds(actions))
-	s.Contains(actions[0].Text, "anything else")
+	s.Equal(idlePurpose, actions[0].Compose)
 }
 
 func (s *ConverseSuite) TestACallThatHasJustGoneQuietIsLeftAlone() {

@@ -77,16 +77,18 @@ func (s *ToolsSuite) TestTheSentenceBeforeACallOpensWithTheHoldPhraseAndRunsOnIn
 	// heard once the wait is over. It opens the sentence and the sentence carries on, because
 	// a one-word sentence of its own leaves a pause an interruption falls into.
 	s.Contains(usePolicy, "one short sentence that opens with a brief hold phrase")
-	s.Contains(usePolicy, "\"One moment,\" and goes straight on, with no full stop between, into what")
+	s.Contains(usePolicy, "and goes straight on, with no full stop between, into what")
+	s.Contains(usePolicy, "in your own words, never the same twice")
+	s.NotContains(usePolicy, `"`, "an example hold phrase is the one every reply opens with")
 	s.Contains(usePolicy, "never as a sentence of its own")
 	s.Contains(usePolicy, "never after the call or after a result")
 }
 
 func (s *ToolsSuite) TestAResultIsAnsweredFromWithoutAnotherHoldPhrase() {
-	// The wait has one hold phrase. A result that calls for another tool starts a wait of its
-	// own, which gets its own sentence.
+	// The wait has one hold phrase, however many tools it takes: a sentence before each
+	// link queues behind the last, and the answer waits behind them all.
 	s.Contains(usePolicy, "After a result, answer from it")
-	s.Contains(usePolicy, "if the request needs another tool, open that call with its own sentence")
+	s.Contains(usePolicy, "if the request needs another tool, call it without a word")
 }
 
 func (s *ToolsSuite) TestTheUsePolicyIsShortAndNamesNoToolOrDeployment() {

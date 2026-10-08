@@ -149,6 +149,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) bool {
 	a.history = append(a.history, a.userTurnLocked(ready.Text, nil))
 	a.speakingTurn = ready.ID
 	a.generating = true
+	a.toolRounds = 0
 	a.lastParticipant = ready.Participant
 	a.generatingCancel[ready.ID] = spec.cancel
 	a.mu.Unlock()

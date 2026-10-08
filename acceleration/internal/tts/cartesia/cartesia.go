@@ -547,6 +547,10 @@ func (t *TTS) handleReadError(conn *websocket.Conn, err error) {
 		Context:  "read",
 		Fatal:    true,
 	})
+	// A socket that dropped without a close frame can still accept writes into nothing,
+	// so it is closed to make the next send redial rather than speak to nobody.
+	conn.Close()
+	go t.redial()
 }
 
 func (t *TTS) handleMessage(message serverMessage) {

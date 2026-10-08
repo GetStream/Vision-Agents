@@ -2,6 +2,16 @@
 
 ## Breaking Changes
 
+### Talking over the agent no longer cancels the tools it is running
+
+When the caller talked over a voice agent, every tool call still running was cancelled, and
+the answer they had asked for was lost. A call now goes on: the model is told it is still
+running, and the caller is told its result when it comes. It is stopped when the caller
+withdraws what they asked for, which the model says with `<drop skill="..."/>`, or at the
+binding's timeout. `press` and `transfer` are still cancelled, as is a call whose connector
+binding sets `on_interrupt: cancel`. A binding that leaves `on_interrupt` out, which was
+`cancel`, now lets its calls go on.
+
 ### Every client goes to the hosted router unless told otherwise
 
 A client that is given no URL, and finds no `STREAM_ACCELERATION_URL`, now goes to Stream's
@@ -520,6 +530,16 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A voice agent words its own hold lines, status updates and check-ins
+
+The stock lines a voice agent rotated through, "One moment." first, are gone. When the model
+reaches for a tool without a word, when a caller waiting on work is due an update, and when a
+quiet call is due a check-in, the agent asks the reply model for one line written from the
+conversation, with no tools and a three second limit. An update names what the caller asked
+for rather than a tool, and a line is dropped if the moment passed while it was written. A
+chain of tool calls gets one hold line, not one per call, and the prompts no longer show the
+model a hold phrase to copy. A binding's `pre_speech` is still said at once in its place.
+
 ### A reply that is late is asked of another candidate too: `ROUTER_REPLY_HEDGE`
 
 A model now and then takes many times its usual wait to start a reply, and the caller waits that
@@ -632,7 +652,7 @@ Each connector tool call a session runs leaves one row: the binding, the connect
 
 ### A connector binding says what its calls do on an interruption, and what the agent says while they run
 
-A connector binding takes `policy`, a `ConnectorBindingPolicy` with three optional fields. `on_interrupt: wait` lets a call finish after the caller interrupts the turn, up to the binding's timeout, and its result goes into the conversation when it comes; until then the call reads as still running, so the next turn does not wait for it; `cancel`, the default, cancels it at the provider as before. `cancellable: false` stops waiting at the interruption but does not send the provider the cancel for it, for a tool that is not safe to stop halfway; its call is logged as `outcome_unknown`. The binding's timeout still ends the call and sends the cancel, whatever the policy. `pre_speech` is what the agent says while one of the binding's tools runs, in place of its own "One moment.", and the session socket's `tool_started` carries it as `pre_speech`. A binding without `policy` behaves, and is stored and read back, as before. The Go client and the JavaScript types are regenerated; other SDKs follow.
+A connector binding takes `policy`, a `ConnectorBindingPolicy` with three optional fields. `on_interrupt: wait` lets a call finish after the caller interrupts the turn, up to the binding's timeout, and its result goes into the conversation when it comes; until then the call reads as still running, so the next turn does not wait for it; `cancel` cancels it at the provider, as every call was before; left out, the call goes on too, and is stopped only when the caller withdraws what they asked for. `cancellable: false` stops waiting at the interruption but does not send the provider the cancel for it, for a tool that is not safe to stop halfway; its call is logged as `outcome_unknown`. The binding's timeout still ends the call and sends the cancel, whatever the policy. `pre_speech` is what the agent says while one of the binding's tools runs, in place of the hold line it has the model write, and the session socket's `tool_started` carries it as `pre_speech`. A binding without `policy` is stored and read back as before. The Go client and the JavaScript types are regenerated; other SDKs follow.
 
 ### A provider app points its Stream app's message hook at the router
 
@@ -1754,6 +1774,24 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A voice agent says the answer at the end of a chain of tool calls. A tool asked for in a
+  reply to a tool result ran, but its result was never followed, so a Salesforce lookup that
+  read a schema and then queried it went silent after the schema. Every link is followed now,
+  and after eight rounds the model is made to answer.
+- A tool result is answered once. A result the agent picked up while another was being
+  queued started a second turn, and the caller heard the answer twice.
+- A colleague's answer is kept until a reply carrying it finishes. It was forgotten once a
+  reply was asked for, so a reply that was cut off or failed lost it for good.
+- Sub-agent work that came back empty, or still asking to run code once it was out of rounds,
+  is reported as failed. It settled as done, so the caller was promised an answer and heard
+  nothing.
+- A voice caller is told when a reply is lost. A model failure before any text left them in
+  silence after the hold line; the agent now says it went wrong and asks them to ask again.
+- Gemini takes a conversation with tool calls another model made. After a fallback its
+  OpenAI-compatible endpoint refused them with a 400 for a missing `thought_signature`; they
+  now carry Gemini's placeholder signature.
+- Cartesia speaks again after its socket drops without a close frame. The dropped socket
+  still took writes, so every later utterance went nowhere and the agent fell silent.
 - A response with images is answered by an agent that has no `vision` skill, as long as its
   conversation model accepts images. Images always went to the `vision` skill, and the
   built-in skill set leaves it out, so every agent on the defaults, and every text session,
