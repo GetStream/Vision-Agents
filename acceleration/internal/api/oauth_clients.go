@@ -20,6 +20,11 @@ import (
 
 const noOAuthClient = "the app has no OAuth client of its own for this connector"
 
+// errClientIDRequired is what Huma answered for a put without client_id while the schema required
+// it. Without connectors no provider app exists, so the put keeps answering it.
+var errClientIDRequired = APIError{Type: ErrorTypeInvalidRequest, Code: codeValidationFailed,
+	Message: "validation failed: expected required property client_id to be present (body)"}
+
 // errProviderAppTaken is the answer to a record naming a provider app another customer's
 // record of the connector already names (store.ErrProviderAppTaken). 409: the request
 // conflicts with the state of the resource (RFC 9110 section 15.5.10).
@@ -154,6 +159,9 @@ func (s *Server) registerOAuthClients(api huma.API) {
 
 // setConnectorOAuthClient stores the caller's own client for a connector that takes one.
 func (s *Server) setConnectorOAuthClient(ctx context.Context, request *oauthClientRequest) (*oauthClientResponse, error) {
+	if s.connectorSecrets == nil && request.Body.ClientID == "" {
+		return nil, errClientIDRequired
+	}
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
 		return nil, errMissingCustomer

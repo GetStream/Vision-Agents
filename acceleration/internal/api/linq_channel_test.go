@@ -373,3 +373,21 @@ func (s *LinqChannelSuite) took(count int) []linqMessage {
 		"Linq took %d messages, not %d", len(s.linq.sent()), count)
 	return s.linq.sent()
 }
+
+// An email handle is no phone number, so its author gets no contact row and no card, and is
+// answered all the same.
+func (s *LinqChannelSuite) TestAnEmailHandleIsAnsweredWithoutACard() {
+	chat := s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, "person@example.com", "Hi by email"), time.Now()))
+	channel := s.threadChannel(chat)
+	s.written(channel, 1)
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.Equal("Noted.", s.took(1)[0].text)
+	var contacts, episodes int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM contact_map WHERE customer_id = ?", s.customerID()).Scan(&contacts))
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM episodes WHERE customer_id = ?", s.customerID()).Scan(&episodes))
+	s.Zero(contacts)
+	s.Zero(episodes)
+}

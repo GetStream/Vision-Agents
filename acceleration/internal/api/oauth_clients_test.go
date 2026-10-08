@@ -719,13 +719,26 @@ func (s *OAuthClientsOffSuite) TestThePutAnswersAsBeforeAndStoresNothing() {
 		map[string]string{"type": "url_verification", "challenge": "c"}, nil))
 }
 
+// AI-863: a put without client_id answers as it did when the schema required it, whatever the
+// connector and whatever else the body carries.
+func (s *OAuthClientsOffSuite) TestAPutWithoutAClientIDIsRefusedAsBeforeProviderApps() {
+	for _, connector := range []string{"slack_bot", "linq", "nope"} {
+		status, body := s.serverClient.call(http.MethodPut, oauthClientPath(connector),
+			ConnectorOAuthClientRequest{ProviderAppID: "line-" + s.utils.uuid(), SigningSecret: "whsec_c2lnbmluZw=="})
+
+		s.Equal(http.StatusBadRequest, status, connector)
+		s.Contains(string(body), `"message":"validation failed: expected required property client_id to be present (body)"`, connector)
+		s.Contains(string(body), `"type":"invalid_request","code":"validation_failed"`, connector)
+	}
+}
+
 // AI-863: Linq's account put alone answers as any put does with connectors off, and its
 // events route takes nothing, as slack_bot's.
 func (s *OAuthClientsOffSuite) TestALinqAccountIsNotStoredAndItsEventsRouteTakesNothing() {
 	app := "line-" + s.utils.uuid()
 
 	status, body := s.serverClient.call(http.MethodPut, oauthClientPath("linq"),
-		ConnectorOAuthClientRequest{ProviderAppID: app, SigningSecret: "whsec_c2lnbmluZw=="})
+		ConnectorOAuthClientRequest{ClientID: "client", ProviderAppID: app, SigningSecret: "whsec_c2lnbmluZw=="})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(string(body), `"code":"not_configured"`)
