@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -21,6 +22,9 @@ import (
 // does not. Each test has an app of its own.
 type OAuthClientsSuite struct {
 	RouterSuite
+
+	// logged is what the router logged, for a test that no secret is in it.
+	logged *lockedLog
 }
 
 func TestOAuthClientsSuite(t *testing.T) {
@@ -29,6 +33,8 @@ func TestOAuthClientsSuite(t *testing.T) {
 
 func (s *OAuthClientsSuite) SetupSuite() {
 	s.connectors = core.Registry{Schemes: map[string]core.Scheme{oauth2code.Name: namedScheme(oauth2code.Name)}}
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -82,6 +88,154 @@ func (s *OAuthClientsSuite) TestTheSecretIsNeverInAnAnswer() {
 		s.NotContains(body, secret)
 		s.NotContains(body, "client_secret")
 	}
+}
+
+// A put without provider_app_id and signing_secret answers with exactly the fields it did
+// before them, and stores no app and no signing secret: the control for AI-906.
+func (s *OAuthClientsSuite) TestAPutWithoutAProviderAppAnswersAndStoresAsBefore() {
+	status, body := s.serverClient.call(http.MethodPut, oauthClientPath("github"), confidentialClient("secret-"+s.utils.uuid()))
+
+	s.Require().Equal(http.StatusCreated, status)
+	var fields map[string]any
+	s.Require().NoError(json.Unmarshal(body, &fields))
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	// duration is what the server adds to every answered object (server.go, timedResponse).
+	s.ElementsMatch([]string{"connector_id", "registration", "client_id", "created_at", "updated_at", "duration"}, keys)
+	record, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "github")
+	s.Require().NoError(err)
+	s.Empty(record.ProviderAppID)
+	s.Empty(record.SigningSecretSealed)
+	s.Zero(record.SigningKEKVersion)
+}
+
+// AI-906's acceptance: a put with both fields is the provider app the events route opens.
+func (s *OAuthClientsSuite) TestAPutWithAProviderAppAndItsSigningSecretIsTheAppTheEventsRouteOpens() {
+	app, signing := s.slackAppID(), "signing-"+s.utils.uuid()
+
+	var answered ConnectorOAuthClient
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPut, oauthClientPath("slack_bot"),
+		slackApp(app, signing), &answered))
+
+	s.Equal(app, answered.ProviderAppID)
+	record, secret, err := ProviderApp(context.Background(), s.store, s.sealer, "slack_bot", app)
+	s.Require().NoError(err)
+	s.Equal(signing, secret)
+	s.Equal(s.customerID(), record.CustomerID)
+	s.Equal(core.ClientCustomer, record.Registration)
+	s.NotContains(string(record.SigningSecretSealed), signing, "sealed at rest")
+	found, ok, err := ConnectorClients(s.store, s.sealer, func(string) string { return "" })(context.Background(),
+		core.ConnectionRef{CustomerID: s.customerID()}, core.ResolvedManifest{ConnectorID: "slack_bot"}, core.ClientCustomer)
+	s.Require().NoError(err)
+	s.True(ok)
+	s.Equal(oauth2code.Client{ID: "the-apps-client", Secret: "client-secret"}, found,
+		"the client secret is sealed apart from the signing secret")
+}
+
+func (s *OAuthClientsSuite) TestTheSigningSecretIsNeverInAnAnswerNorInTheLog() {
+	app, signing := s.slackAppID(), "never-shown-signing-"+s.utils.uuid()
+	sent := slackApp(app, signing)
+
+	created, createdBody := s.serverClient.call(http.MethodPut, oauthClientPath("slack_bot"), sent)
+	replaced, replacedBody := s.serverClient.call(http.MethodPut, oauthClientPath("slack_bot"), sent)
+	refusedPattern := sent
+	refusedPattern.SigningSecret = signing + "\n"
+	refused, refusedBody := s.serverClient.call(http.MethodPut, oauthClientPath("slack_bot"), refusedPattern)
+	noApp := sent
+	noApp.ProviderAppID = ""
+	unnamed, unnamedBody := s.serverClient.call(http.MethodPut, oauthClientPath("slack_bot"), noApp)
+	// An unknown field is refused with the whole object as the value it names.
+	unknown, unknownBody := s.serverClient.call(http.MethodPut, oauthClientPath("slack_bot"), map[string]string{
+		"client_id": sent.ClientID, "provider_app_id": app, "signing_secret": signing, "unknown": "field",
+	})
+	s.useApp(s.data.createApp())
+	taken, takenBody := s.serverClient.call(http.MethodPut, oauthClientPath("slack_bot"), sent)
+
+	s.Equal(http.StatusCreated, created)
+	s.Equal(http.StatusOK, replaced)
+	s.Equal(http.StatusBadRequest, refused)
+	s.Equal(http.StatusBadRequest, unnamed)
+	s.Equal(http.StatusBadRequest, unknown)
+	s.Equal(http.StatusConflict, taken)
+	for _, body := range []string{string(createdBody), string(replacedBody), string(refusedBody), string(unnamedBody), string(unknownBody), string(takenBody)} {
+		s.NotContains(body, signing)
+	}
+	for _, body := range []string{string(createdBody), string(replacedBody)} {
+		s.NotContains(body, "signing_secret")
+	}
+	s.NotContains(s.logged.String(), signing)
+}
+
+// One customer per app: the second customer naming it is a 409, and the app stays the first's.
+func (s *OAuthClientsSuite) TestASecondCustomerClaimingTheSameAppIsAConflict() {
+	app := s.slackAppID()
+	s.put("slack_bot", slackApp(app, "first-signing"))
+	first := s.customerID()
+	s.useApp(s.data.createApp())
+
+	status, failure := s.serverClient.failure(http.MethodPut, oauthClientPath("slack_bot"), slackApp(app, "second-signing"))
+
+	s.Equal(http.StatusConflict, status)
+	s.Equal(errProviderAppTaken.Message, failure)
+	record, secret, err := ProviderApp(context.Background(), s.store, s.sealer, "slack_bot", app)
+	s.Require().NoError(err)
+	s.Equal(first, record.CustomerID)
+	s.Equal("first-signing", secret)
+	_, err = s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack_bot")
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient, "nothing stored for the second customer")
+}
+
+// A put replaces the record whole: put again without the signing secret, the app takes no
+// events, as a put without client_secret drops that one.
+func (s *OAuthClientsSuite) TestPuttingTheClientAgainWithoutTheSigningSecretRemovesIt() {
+	app := s.slackAppID()
+	s.put("slack_bot", slackApp(app, "signing-"+s.utils.uuid()))
+
+	var answered ConnectorOAuthClient
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, oauthClientPath("slack_bot"), slackApp(app, ""), &answered))
+
+	s.Equal(app, answered.ProviderAppID)
+	_, _, err := ProviderApp(context.Background(), s.store, s.sealer, "slack_bot", app)
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+}
+
+func (s *OAuthClientsSuite) TestASigningSecretWithoutAProviderAppIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPut, oauthClientPath("slack_bot"), slackApp("", "signing"))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "signing_secret needs provider_app_id")
+	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack_bot")
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+}
+
+// github has no channel, so no route would ever read a signing secret put for it.
+func (s *OAuthClientsSuite) TestASigningSecretForAConnectorThatReadsNoAppsEventsIsRefused() {
+	sent := confidentialClient("secret")
+	sent.ProviderAppID, sent.SigningSecret = s.slackAppID(), "signing"
+
+	status, failure := s.serverClient.failure(http.MethodPut, oauthClientPath("github"), sent)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("github does not verify its events with the app's own secret (channel.verifier.secret provider_app), so nothing would read signing_secret: leave it out", failure)
+	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "github")
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+}
+
+func (s *OAuthClientsSuite) TestAProviderAppThatIsADotSegmentIsRefused() {
+	for _, app := range []string{".", ".."} {
+		status, failure := s.serverClient.failure(http.MethodPut, oauthClientPath("slack_bot"), slackApp(app, "signing"))
+
+		s.Equal(http.StatusBadRequest, status, app)
+		s.Contains(failure, "dot segment", app)
+	}
+}
+
+func (s *OAuthClientsSuite) TestAProviderAppOutsideUnreservedCharactersIsRefused() {
+	status, _ := s.serverClient.failure(http.MethodPut, oauthClientPath("slack_bot"), slackApp("A012/ABCD", "signing"))
+
+	s.Equal(http.StatusBadRequest, status)
 }
 
 func (s *OAuthClientsSuite) TestAConnectorTakingOnlyTheOperatorsClientRefusesTheAppsOwn() {
@@ -374,7 +528,8 @@ func (s *OAuthClientsSuite) onlyTheNewKey() *auth.Sealer {
 
 // providerApp stores the test app's record for connector as the router would write one it
 // created or was handed (T54): with a provider app id of its own and both secrets sealed, the
-// signing secret only when one is given. The API takes neither the app id nor the signing secret.
+// signing secret only when one is given. Written to the store directly, since the API writes
+// only a customer record.
 func (s *OAuthClientsSuite) providerApp(connector string, registration core.ClientRegistrationMethod, clientSecret, signingSecret string) store.ConnectorOAuthClient {
 	record := &store.ConnectorOAuthClient{
 		CustomerID: s.customerID(), ConnectorID: connector, Registration: registration,
@@ -457,6 +612,55 @@ func oauthClientPath(connector string) string {
 	return "/v1/agents/connectors/" + connector + "/oauth-client"
 }
 
+// slackAppID is a fresh app id starting with A, as Slack's do (A012ABCD0A0 in
+// https://docs.slack.dev/reference/methods/apps.manifest.create), and as long as a UUID so no
+// two tests share one.
+func (s *OAuthClientsSuite) slackAppID() string {
+	return "A" + strings.ToUpper(strings.ReplaceAll(s.utils.uuid(), "-", ""))
+}
+
+// slackApp is the app's own Slack app for slack_bot: its client, app id and signing secret.
+func slackApp(appID, signingSecret string) ConnectorOAuthClientRequest {
+	return ConnectorOAuthClientRequest{ClientID: "the-apps-client", ClientSecret: "client-secret",
+		ProviderAppID: appID, SigningSecret: signingSecret}
+}
+
 func confidentialClient(secret string) ConnectorOAuthClientRequest {
 	return ConnectorOAuthClientRequest{ClientID: "the-apps-client", ClientSecret: secret}
+}
+
+// OAuthClientsOffSuite is connectors off, the control: the router has no connector keyring, as
+// cmd/router gives it none with ROUTER_CONNECTORS_ENABLED unset, so the put answers as on base
+// whatever it carries, and the provider app's events route takes nothing.
+type OAuthClientsOffSuite struct {
+	RouterSuite
+}
+
+func TestOAuthClientsOffSuite(t *testing.T) {
+	runSuite(t, new(OAuthClientsOffSuite))
+}
+
+func (s *OAuthClientsOffSuite) SetupSuite() {
+	s.connectorsOff = true
+	s.RouterSuite.SetupSuite()
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
+}
+
+func (s *OAuthClientsOffSuite) SetupTest() {
+	s.useApp(s.data.createApp())
+}
+
+func (s *OAuthClientsOffSuite) TestThePutAnswersAsBeforeAndStoresNothing() {
+	app := "A" + strings.ToUpper(strings.ReplaceAll(s.utils.uuid(), "-", ""))
+	for _, sent := range []ConnectorOAuthClientRequest{confidentialClient("secret"), slackApp(app, "signing")} {
+		status, body := s.serverClient.call(http.MethodPut, oauthClientPath("slack_bot"), sent)
+
+		s.Equal(http.StatusBadRequest, status)
+		s.Contains(string(body), `"code":"not_configured"`)
+		s.Contains(string(body), "OAuth clients cannot be stored: connectors are not enabled on this deployment")
+	}
+	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack_bot")
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+	s.Equal(http.StatusNotFound, s.unauthenticatedClient.do(http.MethodPost, providerAppEventsPath+"slack_bot/"+app,
+		map[string]string{"type": "url_verification", "challenge": "c"}, nil))
 }
