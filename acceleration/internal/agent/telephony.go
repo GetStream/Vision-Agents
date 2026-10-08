@@ -511,20 +511,27 @@ func (a *Agent) resolveTool(call llm.ToolCall, parts []llm.ContentPart, hold *to
 // callsOpen reports whether history ends in an assistant message with a tool call that no
 // result after it answers yet.
 func callsOpen(history []llm.Message) bool {
+	return len(openCalls(history)) > 0
+}
+
+// openCalls returns the tool calls of the assistant message history ends on that no
+// result after it answers yet.
+func openCalls(history []llm.Message) []llm.ToolCall {
 	answered := map[string]bool{}
 	i := len(history) - 1
 	for ; i >= 0 && history[i].Role == llm.ToolResult; i-- {
 		answered[history[i].ToolCallID] = true
 	}
 	if i < 0 || history[i].Role != llm.Assistant {
-		return false
+		return nil
 	}
+	var open []llm.ToolCall
 	for _, call := range history[i].ToolCalls {
 		if !answered[call.ID] {
-			return true
+			open = append(open, call)
 		}
 	}
-	return false
+	return open
 }
 
 // toolHold is one call whose tool goes on after an interruption. Its fields are guarded by
