@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -154,6 +155,57 @@ func (s *TelnyxSandboxSuite) TestAKeywordIsAnsweredPastTheSandbox() {
 	s.Equal(telnyxHelp, s.took(1)[0].text)
 }
 
+// A gate that fails to read after the keywords is answered 500 and the message is unclaimed,
+// so the delivery Telnyx sends again reaches the agent: it is not dropped as one already taken.
+func (s *TelnyxSandboxSuite) TestAMessageWhoseSandboxCannotBeReadReachesTheAgentWhenTelnyxDeliversItAgain() {
+	ctx := context.Background()
+	_, err := s.store.DB().ExecContext(ctx, "ALTER TABLE sandbox_recipients RENAME TO sandbox_suite_recipients")
+	s.Require().NoError(err)
+	restored := false
+	restore := func() {
+		if !restored {
+			_, err := s.store.DB().ExecContext(ctx, "ALTER TABLE sandbox_suite_recipients RENAME TO sandbox_recipients")
+			s.Require().NoError(err)
+			restored = true
+		}
+	}
+	defer restore()
+	body := s.received(s.line, sandboxRecipient, "Hi")
+
+	s.Equal(http.StatusInternalServerError, s.deliver(body, time.Now()))
+	restore()
+	s.Equal(http.StatusOK, s.deliver(body, time.Now()))
+
+	s.Equal("Hi", s.written(s.threadChannel(sandboxRecipient), 1)[0]["text"])
+}
+
+// A reply the provider refuses is not a message sent, so it is not counted against the day's
+// limit: the next reply still goes.
+func (s *TelnyxSandboxSuite) TestAReplyTelnyxRefusesIsNotCountedAgainstTheDailyLimit() {
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, sandboxRecipient, "first"), time.Now()))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, sandboxRecipient, "second"), time.Now()))
+	channel := s.threadChannel(sandboxRecipient)
+	s.written(channel, 2)
+	var refused atomic.Bool
+	original := s.telnyx.server.Config.Handler
+	s.telnyx.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if refused.CompareAndSwap(false, true) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		original.ServeHTTP(w, r)
+	})
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.Require().Eventually(refused.Load, settleFor, 10*time.Millisecond, "Telnyx was not asked to send the first reply")
+	bridge, ok := s.bridge.(*channelbridge.Bridge)
+	s.Require().True(ok)
+	bridge.Close() // the first reply is over
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 1))
+
+	s.Equal("Noted.", s.took(1)[0].text)
+}
+
 // answers counts the agent's replies in a thread channel.
 func (s *TelnyxSandboxSuite) answers(channel string) int {
 	count := 0
@@ -163,4 +215,51 @@ func (s *TelnyxSandboxSuite) answers(channel string) int {
 		}
 	}
 	return count
+}
+
+// holdSandbox puts the test's app under a sandbox for the test: the harness built its gate
+// with none, and the bridge holds the same gate.
+func (s *RouterSuite) holdSandbox(sandbox dlc.Sandbox) {
+	original := *s.gate
+	*s.gate = *dlc.NewGate(s.store, s.live.Redis(), sandbox, nil)
+	s.T().Cleanup(func() { *s.gate = original })
+}
+
+// Slack has no opt-out channel and no gate: a sandboxed customer's Slack user, who is no
+// sandbox recipient, reaches the agent, and the replies are sent and use up none of the day's
+// limit, which belongs to the texts (channelbridge/gate.go).
+func (s *SlackChannelSuite) TestASandboxedCustomersSlackThreadIsNeitherGatedNorCounted() {
+	s.holdSandbox(dlc.Sandbox{Enabled: true, Recipients: 2, MessagesPerDay: 1})
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.posted(1)
+	s.deliver(s.message("U0000ALICE", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	stored := s.written(channel, 3)
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, len(stored)-1))
+	s.posted(2)
+
+	usage, err := s.gate.Usage(context.Background(), s.customerID())
+
+	s.Require().NoError(err)
+	s.True(usage.Sandboxed)
+	s.Zero(usage.Messages, "Slack replies are not texts")
+}
+
+// The gate names a WhatsApp person by the number in E.164, as the sandbox lists it, though
+// Meta writes it as digits: a recipient reaches the agent and is answered, and another person
+// does not.
+func (s *WhatsAppChannelSuite) TestASandboxedCustomersRecipientIsAnsweredByTheNumberInE164() {
+	s.holdSandbox(dlc.Sandbox{Enabled: true, Recipients: 2, MessagesPerDay: 30})
+	recipient, other := "16505551234", "16505550199"
+	s.Require().NoError(s.store.SetSandboxRecipients(context.Background(), s.customerID(), []string{"+" + recipient}))
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.unit, other, "Hi")))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.unit, recipient, "Hi")))
+
+	channel := s.threadChannel(recipient)
+	s.written(channel, 1)
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.Equal(metaMessage{unit: s.unit, to: "+" + recipient, kind: "text", text: "Noted."}, s.took(1)[0].withoutAuthorization())
+	elsewhere := s.threadChannel(other)
+	s.Never(func() bool { return len(s.chat.Stored(elsewhere)) > 0 }, dropped, 20*time.Millisecond)
 }
