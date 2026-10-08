@@ -1989,6 +1989,14 @@ func (a *Agent) finish(response llm.Response) {
 				a.fail(err, "tts")
 			}
 		}
+		// A reply that failed before a word of it was said leaves the caller waiting for
+		// one that is not coming, and after "one moment" that silence is the answer lost.
+		if response.Status == llm.StatusFailed && strings.TrimSpace(a.spoken.String()) == "" {
+			a.spoken.WriteString(lostReply)
+			if err := a.speakSentence(response.ID, lostReply); err != nil {
+				a.fail(err, "tts")
+			}
+		}
 		if err := a.closeUtterance(response.ID); err != nil {
 			a.fail(err, "tts")
 		}

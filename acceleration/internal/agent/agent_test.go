@@ -2420,6 +2420,22 @@ func (s *AgentSuite) TestAProviderFailureIsReportedWithoutEndingTheCall() {
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the agent stopped answering")
 }
 
+func (s *AgentSuite) TestACallerIsToldWhenTheReplyIsLost() {
+	s.join(false)
+	s.model.refuses = errors.New("400 Bad Request")
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is our forecast")
+
+	s.eventually(func() bool { return s.spokenText("went wrong") },
+		"the caller was left in silence by a reply that failed")
+	s.eventually(func() bool { return countOf[Error](s.reported()) == 1 }, "the failure was never reported")
+	history := s.history()
+	s.Require().NotEmpty(history)
+	s.Equal(lostReply, history[len(history)-1].Content, "the model is shown what the caller heard")
+}
+
 func (s *AgentSuite) TestClosingLeavesTheCall() {
 	s.join(true)
 

@@ -70,6 +70,10 @@ var idlePhrases = []string{
 	"Anything else you wanted to look at?",
 }
 
+// lostReply is what the agent says when the model fails before it has said anything, so
+// a caller waiting on an answer hears that it is not coming rather than nothing at all.
+const lostReply = "Sorry, something went wrong on my side. Could you ask me that again?"
+
 // updateGaps are how long a caller waiting on work hears nothing before being told it is
 // still going, one per update. After the last one the agent waits quietly: a status read
 // out every few seconds is nagging, and the answer is what they are waiting for.
