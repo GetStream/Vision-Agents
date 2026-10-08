@@ -547,21 +547,6 @@ a preview among them; the flow controller, the guardrails, background work and a
 continues from a response the provider holds are not. `0` turns it off, `cmd/agent -reply-hedge`
 is the same setting, and the router option is `llmrouter.Options.ReplyHedge`.
 
-### A voice reply can show how fast its turn was: `ROUTER_CHAT_TIMINGS` and `-chat-timings`
-
-For development, a voice agent can write how long each stage of a turn took after its reply in
-the chat channel it writes its transcript to, so somebody talking to it in a call UI sees it
-without reading logs. It is off by default: `ROUTER_CHAT_TIMINGS=true` (`agent.chat_timings`)
-turns it on for the router's sessions and `cmd/agent -chat-timings` for the standalone agent. A
-reply gets one line after its text, such as
-`⏱ reply 1112 ms = eou 452 + llm 412 + tts 248 · ttft 731 · ttfb 120 · hold 300`: the wait from the
-end of the caller's speech to the first audible frame of the reply, split into end of utterance,
-model and voice stages that add up to it, then the providers' own first-token and first-byte waits; a figure that did not happen is left out, and a turn the caller
-talked over starts `⏱ interrupted ·`. The message also carries the same figures in whole
-milliseconds as a `timings` custom field. Reading a conversation back, as the transcript endpoint
-and the history a bound conversation gives the agent do, leaves the line out, so the agent never
-takes it for something it said.
-
 ### A log severity is the least serious level to show, not the only one
 
 `severity` on `GET /v1/agents/logs` was an exact match, so asking for `error` hid the warnings
@@ -985,19 +970,6 @@ for a participant. The retries share the patience of the words they are about, w
 instead of 3 s, and when it runs out the words are answered with a short question. The flow
 controller's waits keep the 700 ms retry.
 
-### A turn says when its reply could first be heard
-
-`roundtrip_ms` and `speech_end_to_audio_ms` end when publishing the first chunk of a reply
-returns. The call takes at most 400 ms of speech ahead and publishing waits until the whole
-chunk fits, so for a first chunk longer than that the return comes later than the reply
-began to be heard, by the part that did not fit. A voice call's turn now also carries
-`first_frame_queued_ms`, when the first frame of the reply was queued for the outgoing track,
-`first_audible_frame_ms`, when the track took the first frame that was not silence, and
-`speech_end_to_audible_ms`, which is `speech_end_to_audio_ms` measured to that moment. They
-are on the `turn` event of the session socket, in the turn log, in the `turns` table and in
-`GET /v1/agents/calls/{id}/timeline`, and absent where the edge does not report them. The
-older fields are unchanged.
-
 ### A held reply no longer holds up the voice, and a turn says how long it was held
 
 The first audio of a reply that is waiting for the caller to have been quiet was held by the
@@ -1012,7 +984,37 @@ A turn also says how long its reply was held: `reply_hold_ms` on the `turn` even
 session socket, in the turn log, in the `turns` table and in `GET /v1/agents/calls/{id}/timeline`,
 absent where the reply was not held. The hold before the first audio is inside `tts_to_audio_ms`
 and so inside `roundtrip_ms`, the turn log's `transcript_to_audio_ms` and `speech_end_to_audio_ms`,
-and the first-frame fields, which already included the wait.
+and the first-frame fields, which already included the wait. With `ROUTER_CHAT_TIMINGS` on, the
+timing line after a held reply ends with how long it was held, such as `· hold 300`.
+
+### A turn says when its reply could first be heard
+
+`roundtrip_ms` and `speech_end_to_audio_ms` end when publishing the first chunk of a reply
+returns. Publishing waits until no more than 400 ms of the speech is left in the queue to the
+outgoing track, so for a first chunk longer than that the return comes later than the reply
+began to be heard, by the part that did not fit. A voice call's turn now also carries
+`first_frame_queued_ms`, when the first frame of the reply was queued for the outgoing track,
+`first_audible_frame_ms`, when the track took the first frame that was not silence, and
+`speech_end_to_audible_ms`, which is `speech_end_to_audio_ms` measured to that moment. They
+are on the `turn` event of the session socket, in the turn log, in the `turns` table and in
+`GET /v1/agents/calls/{id}/timeline`, and absent where the edge does not report them. The
+older fields are unchanged.
+
+### A voice reply can show how fast its turn was: `ROUTER_CHAT_TIMINGS` and `-chat-timings`
+
+For development, a voice agent can write how long a turn took after its reply in the chat
+channel it writes its transcript to, so somebody talking to it in a call UI sees it without
+reading logs. It is off by default: `ROUTER_CHAT_TIMINGS=true` (`agent.chat_timings`) turns it on
+for the router's sessions and `cmd/agent -chat-timings` for the standalone agent. A reply gets
+one line after its text, such as
+`⏱ reply 1112 ms = eou 452 + llm 412 + tts 248 · ttft 731 · ttfb 120`: the wait from the end of
+the caller's speech to the first audible frame of the reply, split into end of utterance, model
+and voice stages that add up to it, then the providers' own first-token and first-byte waits. A
+figure that did not happen is left out, and a turn the caller talked over starts
+`⏱ interrupted ·`. The message also carries the same figures in whole milliseconds as a
+`timings` custom field. Reading a conversation back, as the transcript endpoint and the history a
+bound conversation gives the agent do, leaves the line out, so the agent never takes it for
+something it said.
 
 ### A session says whether the user wrote, spoke or showed video
 
