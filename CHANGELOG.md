@@ -1762,6 +1762,11 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
   includes the account's discounts), keeps it for 24 hours, and shows it with no change.
   If that call fails, the search still returns the numbers, with no price. A bought Twilio
   number still has no price (AI-931).
+- An outbound call from a bought number connects the person to the agent. The router gave
+  the vendor the address of the call's Stream SIP trunk with no number in it, and Stream
+  finds that trunk by the number, so the person answered and the call ended at once. The
+  router now puts the calling number in that address for every vendor, on calls and on
+  transfers. Calls through your own SIP trunk already did this and work as before.
 - A voice agent with tools says what it is about to do before it does it, and the caller hears a
   hold phrase as the wait begins. The instruction that has the reply model call a tool as soon as
   it has what the tool requires also made it skip the read-back an operator's own instructions
