@@ -175,12 +175,13 @@ JOIN contact_map AS cm ON cm.id = closed.contact_id`
 
 // idleEpisodesQuery locks at most limit thread episodes whose last message, or whose start
 // while they have none, is at or before the idle cutoff, and skips the ones another router,
-// or a message (touchThreadEpisodeQuery), holds.
+// or a message (touchThreadEpisodeQuery), holds. It reads the last message of each open
+// episode by its key: episode_activity keeps a row for every thread episode there was, and a
+// join may read all of them.
 const idleEpisodesQuery = `
 SELECT ep.id FROM episodes AS ep
-LEFT JOIN episode_activity AS act ON act.episode_id = ep.id
 WHERE ep.status = 'in_progress' AND ep.session_id IS NULL
-  AND COALESCE(act.last_message_at, ep.started_at) <= ?
+  AND COALESCE((SELECT act.last_message_at FROM episode_activity AS act WHERE act.episode_id = ep.id), ep.started_at) <= ?
 ORDER BY ep.started_at
 LIMIT ?
 FOR UPDATE OF ep SKIP LOCKED`

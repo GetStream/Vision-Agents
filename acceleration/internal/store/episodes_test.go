@@ -330,6 +330,8 @@ func (s *StoreSuite) TestAnEpisodeWhoseSummaryLeaseRanOutIsTakenAgainOnce() {
 	s.Require().Len(taken, 1)
 	s.Equal(episode.ID, taken[0].ID)
 	s.Equal("agent:omni-+15550100", taken[0].ConversationID)
+	s.Require().NotNil(taken[0].SummaryLeaseUntil)
+	s.True(late.Add(5*time.Minute).Equal(*taken[0].SummaryLeaseUntil), "the lease it was taken under")
 	again, err := s.store.ClaimEpisodeSummaries(s.ctx, late, 10, late.Add(5*time.Minute))
 	s.Require().NoError(err)
 	s.Empty(again, "the new lease holds it")
@@ -398,6 +400,33 @@ func (s *StoreSuite) TestAnEpisodeAMessageIsTouchingIsNotClosed() {
 	s.Empty(closed, "the sweep closed an episode a message was touching")
 	s.Require().NoError(touching.Commit())
 	s.Empty(s.closeIdle(s.store, now), "the message keeps the episode open")
+	s.Equal(episodeInProgress, s.episodeStatus(episode.ID))
+}
+
+// A message can commit after a sweep read the episode as idle and before it locked it: the
+// close reads the last message again once it holds the row, and leaves the episode open.
+func (s *StoreSuite) TestAMessageThatLandsAsASweepLocksTheEpisodeKeepsItOpen() {
+	person := s.mapped("+15550100")
+	episode := s.threadAt(person, "agent:thread-one", s.base)
+	s.threadAt(person, "agent:thread-one", s.base.Add(time.Minute))
+	now := s.base.Add(2 * time.Hour)
+	sweeping, err := s.store.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = sweeping.Rollback() }()
+	var due []string
+	s.Require().NoError(sweeping.NewRaw(idleEpisodesQuery, now.Add(-time.Hour), 50).Scan(s.ctx, &due))
+	s.Require().Equal([]string{episode.ID}, due, "the sweep holds the episode as idle")
+	// The message's touch, committed: it found the row before the sweep locked it.
+	_, err = s.store.DB().ExecContext(s.ctx,
+		"UPDATE episode_activity SET last_message_at = ? WHERE episode_id = ?", now, episode.ID)
+	s.Require().NoError(err)
+
+	var closed []ClosedEpisode
+	err = sweeping.NewRaw(closeIdleEpisodesQuery, now, bun.In(due), now.Add(-time.Hour), now.Add(5*time.Minute)).Scan(s.ctx, &closed)
+
+	s.Require().NoError(err)
+	s.Empty(closed, "the sweep closed an episode with a message in the idle period")
+	s.Require().NoError(sweeping.Commit())
 	s.Equal(episodeInProgress, s.episodeStatus(episode.ID))
 }
 
@@ -516,6 +545,24 @@ func (s *StoreSuite) TestACallsEpisodesAreFoundByTheirCall() {
 
 	s.Require().NoError(err)
 	s.Contains(strings.Join(plan, "\n"), "episodes_open_call")
+}
+
+// The sweep runs every minute, and episode_activity keeps a row for every thread episode
+// there was, so the sweep reads only the open episodes' rows, each by its key, rather than
+// joining the whole table.
+func (s *StoreSuite) TestASweepReadsTheLastMessageOfEachOpenEpisodeByItsKey() {
+	var plan []string
+	err := s.store.db.RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
+			return err
+		}
+		return tx.NewRaw("EXPLAIN "+idleEpisodesQuery, s.base, 10).Scan(ctx, &plan)
+	})
+
+	s.Require().NoError(err)
+	read := strings.Join(plan, "\n")
+	s.NotContains(read, "Join")
+	s.Contains(read, "episode_activity_pkey")
 }
 
 // episodeRows is how many episodes there are.
