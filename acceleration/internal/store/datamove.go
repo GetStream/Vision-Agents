@@ -56,7 +56,8 @@ type dataTable struct {
 // omni-channels and cards they point at live in the Stream app, which a move does not carry
 // either. And
 // connector_invocations and connector_audit: this deployment's record of what it did with
-// credentials sealed under its own key.
+// credentials sealed under its own key. And connector_tool_pins: the deployment a connection
+// moves to pins its tools again on first use.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},
