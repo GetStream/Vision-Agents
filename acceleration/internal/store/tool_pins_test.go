@@ -81,6 +81,30 @@ func (s *StoreSuite) TestAPinOfALaterGrantIsKept() {
 
 // TestAConnectionConnectedBeforeConnectedAtWasKeptIsPinnedToo: such a connection has no
 // connected_at, and its pins hold until a consent gives it one.
+// TestConnectionsPinnedUnderTheSameGrantReadOnlyTheirOwnPins: connections connected before
+// connected_at was kept all have a nil one, so the grant alone does not tell their pins apart.
+func (s *StoreSuite) TestConnectionsPinnedUnderTheSameGrantReadOnlyTheirOwnPins() {
+	shared := time.Now().UTC().Truncate(time.Microsecond)
+	for name, grant := range map[string]*time.Time{"legacy": nil, "dated": &shared} {
+		s.Run(name, func() {
+			alice := s.connection("acme-app", userOwned("alice-"+name))
+			bob := s.connection("acme-app", userOwned("bob-"+name))
+			_, err := s.store.PinConnectorTools(s.ctx, alice.ID, grant, map[string]string{"search": digestOf("a")})
+			s.Require().NoError(err)
+			_, err = s.store.PinConnectorTools(s.ctx, bob.ID, grant, map[string]string{"search": digestOf("b")})
+			s.Require().NoError(err)
+
+			alices, err := s.store.ConnectorToolPins(s.ctx, alice.ID, grant)
+			s.Require().NoError(err)
+			bobs, err := s.store.ConnectorToolPins(s.ctx, bob.ID, grant)
+			s.Require().NoError(err)
+
+			s.Equal(map[string]string{"search": digestOf("a")}, alices)
+			s.Equal(map[string]string{"search": digestOf("b")}, bobs)
+		})
+	}
+}
+
 func (s *StoreSuite) TestAConnectionConnectedBeforeConnectedAtWasKeptIsPinnedToo() {
 	connection := s.connection("acme-app", userOwned("alice"))
 	_, err := s.store.PinConnectorTools(s.ctx, connection.ID, nil, map[string]string{"search": digestOf("a")})
