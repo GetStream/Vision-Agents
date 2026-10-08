@@ -44,9 +44,11 @@ type CallResult struct {
 
 // RunManifest identifies the code, inputs, and runtime configuration behind a result.
 type RunManifest struct {
-	GitCommit                string            `json:"git_commit"`
-	GitDirty                 bool              `json:"git_dirty"`
-	ScenarioHash             string            `json:"scenario_hash"`
+	GitCommit    string `json:"git_commit"`
+	GitDirty     bool   `json:"git_dirty"`
+	ScenarioHash string `json:"scenario_hash"`
+	// DatasetHash fingerprints the clip manifest and its audio, for an STT run.
+	DatasetHash              string            `json:"dataset_hash,omitempty"`
 	ContractHash             string            `json:"contract_hash"`
 	Transport                string            `json:"transport"`
 	Target                   string            `json:"target"`
@@ -82,6 +84,8 @@ type Summary struct {
 	K                  int               `json:"k"`
 	Packs              []PackSummary     `json:"packs"`
 	Calls              []CallResult      `json:"calls"`
+	// STT is one row per target, for a run of kind stt.
+	STT []STTSummary `json:"stt,omitempty"`
 }
 
 // PackSummary is one vertical column.

@@ -196,6 +196,8 @@ The same command serves baseline-regression mode from the previous section. One 
 
 The provider suites already know how to stream a clip at call pace and score the settled transcript. What they lack is a dataset, a declared normalizer, aggregate reporting, and a direct-versus-through-the-router split.
 
+**The harness has landed; the datasets and the direct split have not.** `voicebench stt --target` streams a clip manifest through the router's STT socket at call pace and writes a `kind: stt` summary with every metric in the table below, timed the way `testaudio.Measure` times them. It cannot import the router's providers, so it measures through the router only; the direct leg of [Router overhead](#router-overhead) needs a second path. No dataset is wired in yet: a manifest is whatever clips are given to it.
+
 ### Metrics
 
 | Metric | Definition |
