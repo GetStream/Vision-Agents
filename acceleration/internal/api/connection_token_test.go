@@ -263,6 +263,67 @@ func (s *ConnectionTokenSuite) TestAnUnknownConnectionIsNotFound() {
 
 // connector stores a connector of the suite's app taking scheme, whose consent may use the
 // app's own client, a client the router created, or the operator's in the environment.
+func (s *ConnectionTokenSuite) TestAnExportWhoseAuditRowCannotBeWrittenIsNotHandedOver() {
+	ctx := context.Background()
+	id := s.keyConnection(appOwned(s.connector(apikey.Name)))
+	_, err := s.store.DB().ExecContext(ctx, `CREATE OR REPLACE FUNCTION refuse_token_export() RETURNS trigger AS $$
+		BEGIN RAISE EXCEPTION 'refused by the test'; END $$ LANGUAGE plpgsql`)
+	s.Require().NoError(err)
+	_, err = s.store.DB().ExecContext(ctx, `CREATE TRIGGER refuse_token_export BEFORE INSERT ON connector_audit
+		FOR EACH ROW WHEN (NEW.connection_id = '`+id+`' AND NEW.action = 'token_export') EXECUTE FUNCTION refuse_token_export()`)
+	s.Require().NoError(err)
+	defer func() {
+		_, err := s.store.DB().ExecContext(ctx, "DROP TRIGGER refuse_token_export ON connector_audit")
+		s.Require().NoError(err)
+	}()
+
+	status, body := s.serverClient.call(http.MethodPost, tokenPath(id), nil)
+
+	s.Equal(http.StatusInternalServerError, status, string(body))
+	s.NotContains(string(body), "the-key")
+	s.Empty(s.exports(id))
+}
+
+func (s *ConnectionTokenSuite) TestARenewalTheProviderCannotAnswerIsUnavailableAndExportsNothing() {
+	id := "custom_export" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	manifest, err := core.ParseManifest([]byte(`
+id: ` + id + `
+revision: 1
+name: Fake
+endpoints:
+  authorize: ` + s.provider.URL + fakeprovider.PathAuthorize + `
+  token: ` + s.provider.URL + fakeprovider.PathToken + `
+  refresh: ` + s.provider.URL + `/no-such-path
+  mcp: ` + s.provider.URL + fakeprovider.PathMCP + `
+schemes: [oauth2_code]
+client:
+  registration: [customer, managed, operator]
+  env: FAKE
+scopes:
+  list: [chat:write]
+  separator: ","
+sources:
+  - kind: mcp
+    endpoint: mcp
+`))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	s.putOwnClient(id)
+	conn := s.connection(appOwned(id))
+	status, body := s.serverClient.call(http.MethodPut, "/v1/agents/connections/"+conn+"/credentials",
+		map[string]any{"expected_revision": 1, "values": map[string]string{
+			oauth2code.SuppliedAccessToken: "the-access-token", oauth2code.SuppliedRefreshToken: "the-refresh-token",
+			oauth2code.SuppliedExpiresAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), oauth2code.SuppliedScope: "chat:write"}})
+	s.Require().Equal(http.StatusOK, status, string(body))
+
+	status, body = s.serverClient.call(http.MethodPost, tokenPath(conn), nil)
+
+	s.Equal(http.StatusServiceUnavailable, status, string(body))
+	s.NotContains(string(body), "the-access-token")
+	s.Empty(s.exports(conn))
+}
+
 func (s *ConnectionTokenSuite) connector(scheme string) string {
 	id := "custom_export" + strings.ReplaceAll(s.utils.uuid(), "-", "")
 	manifest, err := core.ParseManifest([]byte(`
