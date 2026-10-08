@@ -87,8 +87,9 @@ def sync_detailed(
     says it is ready; the browser then goes to the provider and comes back to the router, which stores
     the grant and sends the browser to the dashboard with connection_id and status (connected, denied,
     failed or account_mismatch). A reconnect that comes back with another provider account keeps the old
-    grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider
-    sends the browser back to.
+    grant. The consent runs on the connector's latest revision, and the connection reads that revision
+    once the consent connects it. Who may start it is who may read the connection. Needs
+    ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -126,8 +127,9 @@ def sync(
     says it is ready; the browser then goes to the provider and comes back to the router, which stores
     the grant and sends the browser to the dashboard with connection_id and status (connected, denied,
     failed or account_mismatch). A reconnect that comes back with another provider account keeps the old
-    grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider
-    sends the browser back to.
+    grant. The consent runs on the connector's latest revision, and the connection reads that revision
+    once the consent connects it. Who may start it is who may read the connection. Needs
+    ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -160,8 +162,9 @@ async def asyncio_detailed(
     says it is ready; the browser then goes to the provider and comes back to the router, which stores
     the grant and sends the browser to the dashboard with connection_id and status (connected, denied,
     failed or account_mismatch). A reconnect that comes back with another provider account keeps the old
-    grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider
-    sends the browser back to.
+    grant. The consent runs on the connector's latest revision, and the connection reads that revision
+    once the consent connects it. Who may start it is who may read the connection. Needs
+    ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -197,8 +200,9 @@ async def asyncio(
     says it is ready; the browser then goes to the provider and comes back to the router, which stores
     the grant and sends the browser to the dashboard with connection_id and status (connected, denied,
     failed or account_mismatch). A reconnect that comes back with another provider account keeps the old
-    grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider
-    sends the browser back to.
+    grant. The consent runs on the connector's latest revision, and the connection reads that revision
+    once the consent connects it. Who may start it is who may read the connection. Needs
+    ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

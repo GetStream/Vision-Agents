@@ -92,10 +92,17 @@ go run ./cmd/voicebench compare --baseline out/old out/new --mde baselines/accel
 # --store-baseline copies summary.json and manifest.json there after a run (gitignored)
 ```
 
-Score transcripts (raw and normalized WER) or clip health without a live call:
+Benchmark speech-to-text through the router. Each line of the manifest is `{"id", "reference", "audio"}`, with `audio` a 16-bit PCM WAV relative to the manifest. Every clip is streamed to each `--target` over the router's `/v1/stt/stream` socket at the pace a call delivers it, followed by two seconds of room tone:
 
 ```bash
-go run ./cmd/voicebench stt --manifest clips.jsonl
+go run ./cmd/voicebench stt --manifest clips.jsonl --target deepgram/flux-general-en --target deepgram/nova-3
+```
+
+It reports, per target, pooled and mean WER (normalized, with the raw pooled figure beside it), substitutions, insertions and deletions, the share of clips transcribed perfectly and the share that returned anything, and three timings measured on the clock the audio went out on, from the voice in the clip rather than the file's edges: TTFS (last word spoken to the last settled transcript, P50/P95/P99), time to first words (first word spoken to the first transcript of any kind) and the transcripts that arrived while the caller was still speaking. Results go to `out/stt-<time>/`: `clips.jsonl` with every clip's transcript, timings and error, `summary.json` with `kind: stt`, and `report.md`. A clip that ends in an error, from the router or the provider, is kept and counted, and makes the command exit non-zero. The router comes from `STREAM_ACCELERATION_URL`, as for `--target accelerated`. Without `--target`, lines carry a `hypothesis` instead of `audio` and are scored as given.
+
+Score clip health without a live call:
+
+```bash
 go run ./cmd/voicebench tts --wav out/run/agent.wav
 ```
 

@@ -98,6 +98,7 @@ from .connect_channel_request import ConnectChannelRequest
 from .connection import Connection
 from .connection_credentials import ConnectionCredentials
 from .connection_credentials_values import ConnectionCredentialsValues
+from .connection_definition_status import ConnectionDefinitionStatus
 from .connection_inputs import ConnectionInputs
 from .connection_invocation import ConnectionInvocation
 from .connection_invocation_page import ConnectionInvocationPage
@@ -516,6 +517,7 @@ __all__ = (
     "Connection",
     "ConnectionCredentials",
     "ConnectionCredentialsValues",
+    "ConnectionDefinitionStatus",
     "ConnectionInputs",
     "ConnectionInvocation",
     "ConnectionInvocationPage",

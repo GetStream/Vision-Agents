@@ -60,7 +60,8 @@ const (
 	unavailableConnection = "connection_unavailable"
 	// unavailableProvider: the connection is to another connector than the binding names.
 	unavailableProvider = "provider_mismatch"
-	// unavailableReauthorize: the provider no longer takes the connection's credential.
+	// unavailableReauthorize: the provider no longer takes the connection's credential, or the
+	// connection reads a definition revision a later one marked broken.
 	unavailableReauthorize = "needs_reauthorization"
 	// unavailableNotConnected: the connection has no credential yet, or was disconnected.
 	unavailableNotConnected = "not_connected"
@@ -233,6 +234,16 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 	definition, err := m.options.Store.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
 	if err != nil {
 		return "", err
+	}
+	// The resolver gives a connection on a revision marked broken no credential, so it is
+	// one that needs a reconnect: a binding of the caller's own waits for their login, whose
+	// consent runs on the latest revision.
+	_, broken, err := m.options.Store.BrokenConnectorRevision(ctx, connection.ConnectorID, connection.DefinitionRevision)
+	if err != nil {
+		return "", err
+	}
+	if broken {
+		return unavailableReauthorize, nil
 	}
 	manifest, err := definition.Manifest.Resolve(connection.AuthScheme, connection.Inputs, connection.Metadata)
 	if err != nil {

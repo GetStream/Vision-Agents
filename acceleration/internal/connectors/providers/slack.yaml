@@ -18,8 +18,16 @@ id: slack
 # A new revision for any change to what this file says; see AGENTS.md. 2 adds
 # endpoints.resource. 3 renames client.policy to client.registration. 4 adds the channel
 # block that reads tokens_revoked and app_uninstalled. 5 captures user_id from $.user_id,
-# where the live token response has it.
-revision: 5
+# where the live token response has it. 6 marks 1 to 4 broken.
+revision: 6
+# Revisions 1 to 4 captured user_id at $.authed_user.id. The live oauth.v2.user.access
+# response (token rotation on) has user_id at the top and no authed_user: router log
+# «capture user_id: token_response has no $.authed_user.id» on 2026-10-08, and the shape the
+# fake answers in fakeprovider.SlackUserToken. So no consent on them ever connected, and a
+# connection made on one is asked to log in again, on this revision.
+broken_revisions:
+  - revisions: [1, 2, 3, 4]
+    reason: "user_id read from $.authed_user.id; live Slack sends top-level user_id"
 # [proto]:3-5
 name: Slack
 category: Communication

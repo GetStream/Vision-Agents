@@ -117,6 +117,8 @@ func (l *locked) state() core.CredentialState {
 		AccountID:   l.connection.AccountID,
 		Metadata:    maps.Clone(l.connection.Metadata),
 		Scopes:      slices.Clone(l.connection.GrantedScopes),
+		// The revision is read under the lock, since a consent moves it with the grant.
+		DefinitionRevision: l.connection.DefinitionRevision,
 	}
 	if l.connection.ExpiresAt != nil {
 		state.ExpiresAt = *l.connection.ExpiresAt
@@ -159,6 +161,7 @@ func (b *CredentialStore) commit(ref core.ConnectionRef, stored *locked, state *
 	connection.AccountID = state.AccountID
 	connection.Metadata = maps.Clone(state.Metadata)
 	connection.GrantedScopes = slices.Clone(state.Scopes)
+	connection.DefinitionRevision = state.DefinitionRevision
 	connection.ExpiresAt = nil
 	if !state.ExpiresAt.IsZero() {
 		expires := state.ExpiresAt.UTC().Truncate(time.Microsecond)

@@ -36,22 +36,24 @@ var errNoSuchConnection = APIError{
 // Connection is one account at one connector, as a caller is shown it. Its stored
 // credentials are never part of it.
 type Connection struct {
-	ID                 string            `json:"id" readOnly:"true"`
-	ConnectorID        string            `json:"connector_id"`
-	DefinitionRevision int               `json:"definition_revision" readOnly:"true" doc:"The connector's revision when the connection was made, which it keeps reading until it is reconnected."`
-	Owner              ConnectionOwner   `json:"owner"`
-	AuthScheme         string            `json:"auth_scheme" doc:"How the connection authenticates, one of its connector's schemes."`
-	Inputs             map[string]string `json:"inputs" doc:"What the connection was created with, the connector's defaults filled in."`
-	Metadata           map[string]string `json:"metadata" readOnly:"true" doc:"What the provider said about the account when it was connected, such as a workspace id. Empty until then."`
-	Label              string            `json:"label,omitempty"`
-	AccountID          string            `json:"account_id,omitempty" readOnly:"true" doc:"The provider account, known once it is connected."`
-	Status             ConnectionStatus  `json:"status"`
-	GrantedScopes      []string          `json:"granted_scopes" readOnly:"true"`
-	Revision           int               `json:"revision" readOnly:"true" doc:"Advances with every new credential, starting at 1."`
-	ExpiresAt          *time.Time        `json:"expires_at,omitempty" readOnly:"true" doc:"When the current credential expires. Absent when there is none or it does not."`
-	CreatedAt          time.Time         `json:"created_at" readOnly:"true"`
-	UpdatedAt          time.Time         `json:"updated_at" readOnly:"true"`
-	UsedBy             []ConnectionUse   `json:"used_by" readOnly:"true" doc:"The agent config bindings that name this connection as their fixed connection, which deleting it would break. A binding a session fills with the caller's own connection names none, so it is never listed."`
+	ID                     string                     `json:"id" readOnly:"true"`
+	ConnectorID            string                     `json:"connector_id"`
+	DefinitionRevision     int                        `json:"definition_revision" readOnly:"true" doc:"The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there; until then it keeps this one."`
+	DefinitionStatus       ConnectionDefinitionStatus `json:"definition_status" readOnly:"true"`
+	DefinitionBrokenReason string                     `json:"definition_broken_reason,omitempty" readOnly:"true" doc:"Why the connector marked definition_revision broken. Present only when definition_status is broken."`
+	Owner                  ConnectionOwner            `json:"owner"`
+	AuthScheme             string                     `json:"auth_scheme" doc:"How the connection authenticates, one of its connector's schemes."`
+	Inputs                 map[string]string          `json:"inputs" doc:"What the connection was created with, the connector's defaults filled in."`
+	Metadata               map[string]string          `json:"metadata" readOnly:"true" doc:"What the provider said about the account when it was connected, such as a workspace id. Empty until then."`
+	Label                  string                     `json:"label,omitempty"`
+	AccountID              string                     `json:"account_id,omitempty" readOnly:"true" doc:"The provider account, known once it is connected."`
+	Status                 ConnectionStatus           `json:"status"`
+	GrantedScopes          []string                   `json:"granted_scopes" readOnly:"true"`
+	Revision               int                        `json:"revision" readOnly:"true" doc:"Advances with every new credential, starting at 1."`
+	ExpiresAt              *time.Time                 `json:"expires_at,omitempty" readOnly:"true" doc:"When the current credential expires. Absent when there is none or it does not."`
+	CreatedAt              time.Time                  `json:"created_at" readOnly:"true"`
+	UpdatedAt              time.Time                  `json:"updated_at" readOnly:"true"`
+	UsedBy                 []ConnectionUse            `json:"used_by" readOnly:"true" doc:"The agent config bindings that name this connection as their fixed connection, which deleting it would break. A binding a session fills with the caller's own connection names none, so it is never listed."`
 }
 
 // ConnectionUse is one binding of an agent config that names a connection as its fixed
@@ -96,6 +98,18 @@ func (ConnectionOwnerType) Schema(registry huma.Registry) *huma.Schema {
 		"x-enum-varnames": []string{"ConnectionOwnerTypeApp", "ConnectionOwnerTypeUser"},
 	}
 	return ref
+}
+
+// ConnectionDefinitionStatus is how the revision a connection reads compares with its
+// connector's latest (store.DefinitionStatus).
+type ConnectionDefinitionStatus string
+
+func (ConnectionDefinitionStatus) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ConnectionDefinitionStatus",
+		"current when the connection reads its connector's latest revision, outdated when a later "+
+			"one exists, and broken when a later one marked it as not working: the connection is "+
+			"given no credential until a consent connects it again, on the latest revision.",
+		store.DefinitionCurrent, store.DefinitionOutdated, store.DefinitionBroken)
 }
 
 // ConnectionStatus is where a connection is in its life.
@@ -310,8 +324,12 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 	if err != nil {
 		return nil, err
 	}
+	definitions, err := s.store.ConnectorDefinitionStatuses(ctx, customerID, []store.ConnectorConnection{connection})
+	if err != nil {
+		return nil, err
+	}
 	// A new connection is bound by nothing yet.
-	return &connectionResponse{Body: connectionOf(connection, nil)}, nil
+	return &connectionResponse{Body: connectionOf(connection, nil, definitions[connection.ID])}, nil
 }
 
 // listConnections lists one owner's connections, a page at a time.
@@ -350,14 +368,18 @@ func (s *Server) listConnections(ctx context.Context, request *listConnectionsRe
 	for _, connection := range kept {
 		ids = append(ids, connection.ID)
 	}
-	// One read for the whole page.
+	// One read for the whole page, and two for the revisions.
 	uses, err := s.store.ConnectorConnectionUses(ctx, customerID, ids)
+	if err != nil {
+		return nil, err
+	}
+	definitions, err := s.store.ConnectorDefinitionStatuses(ctx, customerID, kept)
 	if err != nil {
 		return nil, err
 	}
 	listed := ConnectionPage{Items: make([]Connection, 0, len(kept)), HasMore: more}
 	for _, connection := range kept {
-		listed.Items = append(listed.Items, connectionOf(connection, uses[connection.ID]))
+		listed.Items = append(listed.Items, connectionOf(connection, uses[connection.ID], definitions[connection.ID]))
 	}
 	if more {
 		last := kept[len(kept)-1]
@@ -376,7 +398,11 @@ func (s *Server) getConnection(ctx context.Context, request *connectionRequest) 
 	if err != nil {
 		return nil, err
 	}
-	return &connectionResponse{Body: connectionOf(connection, uses[connection.ID])}, nil
+	definitions, err := s.store.ConnectorDefinitionStatuses(ctx, connection.CustomerID, []store.ConnectorConnection{connection})
+	if err != nil {
+		return nil, err
+	}
+	return &connectionResponse{Body: connectionOf(connection, uses[connection.ID], definitions[connection.ID])}, nil
 }
 
 // deleteConnection soft deletes one connection the caller may have, unless an
@@ -513,8 +539,9 @@ func actingUser(ctx context.Context) string {
 // copied by name, so a column added to the row stays hidden until it is added here. Sealed
 // credentials, cached tools and last_error are left out: the first is never shown, and the
 // other two are for the operations that write them (T18, T12). uses are the bindings that
-// name it (store.ConnectorConnectionUses).
-func connectionOf(connection store.ConnectorConnection, uses []store.ConnectionUse) Connection {
+// name it (store.ConnectorConnectionUses), and definition how its revision compares with its
+// connector's (store.ConnectorDefinitionStatuses).
+func connectionOf(connection store.ConnectorConnection, uses []store.ConnectionUse, definition store.DefinitionStatus) Connection {
 	usedBy := make([]ConnectionUse, 0, len(uses))
 	for _, use := range uses {
 		usedBy = append(usedBy, ConnectionUse{ConfigID: use.ConfigID, ConfigName: use.ConfigName, Binding: use.Binding})
@@ -523,6 +550,9 @@ func connectionOf(connection store.ConnectorConnection, uses []store.ConnectionU
 		ID:                 connection.ID,
 		ConnectorID:        connection.ConnectorID,
 		DefinitionRevision: connection.DefinitionRevision,
+		DefinitionStatus:   ConnectionDefinitionStatus(definition.Status),
+		// Empty unless broken.
+		DefinitionBrokenReason: definition.Reason,
 		Owner: ConnectionOwner{
 			Type:   ConnectionOwnerType(connection.OwnerType),
 			UserID: connection.OwnerID,
