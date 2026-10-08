@@ -8,19 +8,21 @@
 # Our stack runs on a router built from this checkout, unless STREAM_ACCELERATION_URL names
 # a hosted one. The digest goes to VOICEBENCH_SLACK_CHANNEL as the bot behind
 # VOICEBENCH_SLACK_BOT_TOKEN, both read from benchmark/.env like the provider keys;
-# VOICEBENCH_DIGEST_POST=0 writes it to the run directory without posting.
+# VOICEBENCH_DIGEST_POST=0 writes it to the run directory without posting. Results go to
+# out/digest-<time>, or to the directory given as the argument.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 k="${VOICEBENCH_K:-1}"
 packs="${VOICEBENCH_PACKS:-restaurant healthcare telecom}"
-arms="${VOICEBENCH_LIVEKIT_ARMS:-inference}"
+# An empty VOICEBENCH_LIVEKIT_ARMS runs our stack alone.
+arms="${VOICEBENCH_LIVEKIT_ARMS-inference}"
 # The bench's own LiveKit worker registers under a name of its own, so a deployed agent
 # called "voicebench" cannot be dispatched the bench's calls.
 livekit_agent="${VOICEBENCH_LIVEKIT_AGENT:-voicebench-local}"
 title="${VOICEBENCH_DIGEST_TITLE:-Voicebench nightly}"
 profile="${VOICEBENCH_NETWORK_PROFILE:-local}"
-out="out/digest-$(date -u +%Y%m%dT%H%M%SZ)"
+out="${1:-out/digest-$(date -u +%Y%m%dT%H%M%SZ)}"
 mkdir -p "$out"
 
 ours=(--target accelerated)

@@ -1,0 +1,30 @@
+name: Voicebench setup
+description: Go with the native audio libraries, uv with the reference agents, and the cached caller audio.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: benchmark/go.mod
+        cache-dependency-path: |
+          benchmark/go.sum
+          acceleration/go.sum
+
+    - name: Install the native audio libraries
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y pkg-config libopus-dev libopusfile-dev libsoxr-dev
+
+    - uses: astral-sh/setup-uv@v5
+
+    - name: Install the reference agents
+      shell: bash
+      working-directory: benchmark/agents
+      run: uv sync
+
+    # Caller audio is keyed by voice, text and rate, so the scenarios decide what is in it.
+    # A hit keeps ElevenLabs out of the run and the stimulus byte-identical across runs.
+    - uses: actions/cache@v4
+      with:
+        path: benchmark/cache/tts
+        key: voicebench-tts-${{ hashFiles('benchmark/scenarios/**') }}
+        restore-keys: voicebench-tts-
