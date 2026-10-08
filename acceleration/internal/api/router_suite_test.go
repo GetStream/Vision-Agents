@@ -212,7 +212,7 @@ type RouterSuite struct {
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
 	connectors core.Registry
-	// connectorsOff gives the router no connector keyring, as a deployment with
+	// connectorsOff gives the router no connector keyring, transports or limiter, as a deployment with
 	// ROUTER_CONNECTORS_ENABLED unset has, for a control suite to set before it starts the
 	// harness. The suite's store, resolver and sealer are still built.
 	connectorsOff bool
@@ -449,8 +449,11 @@ func (s *RouterSuite) SetupSuite() {
 
 	// cmd/router passes no connector keyring with connectors off (main.go, connectorSecrets).
 	connectorSecrets := s.sealer
+	// cmd/router builds no transports and no limiter with connectors off either
+	// (newConnectorTransports, newConnectorLimiter).
+	serverTransports, connectorLimiter := transports, core.NewLimiter(liveClient.Redis(), nil)
 	if s.connectorsOff {
-		connectorSecrets = nil
+		connectorSecrets, serverTransports, connectorLimiter = nil, nil, nil
 	}
 	server, err := NewServer(Options{
 		Routers:       s.modalities,
@@ -493,7 +496,8 @@ func (s *RouterSuite) SetupSuite() {
 		Logger:            logger,
 		// The connector events endpoint revokes through the suite's resolver.
 		ConnectorResolver:     s.resolver,
-		ConnectorTransports:   transports,
+		ConnectorTransports:   serverTransports,
+		ConnectorLimiter:      connectorLimiter,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
