@@ -3,6 +3,7 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -258,6 +259,65 @@ func (s *MCPSuite) TestALoginTheServerRefusesIsToldApart() {
 
 	s.Require().Len(failures, 1)
 	s.ErrorIs(failures[0], ErrUnauthorized)
+}
+
+// A token that expired before the session opened, or while it was open, is renewed and the
+// request it was refused on is sent again with the new one.
+func (s *MCPSuite) TestARefusedTokenIsRenewedAndTheRequestSentAgain() {
+	var accepted atomic.Value
+	accepted.Store("fresh")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+accepted.Load().(string) {
+			http.Error(w, `{"errors":[{"message":"Invalid token"}]}`, http.StatusUnauthorized)
+			return
+		}
+		var body rpcRequest
+		s.Require().NoError(json.NewDecoder(r.Body).Decode(&body))
+		switch body.Method {
+		case "initialize":
+			writeRPC(w, body.ID, map[string]any{"protocolVersion": "2025-03-26"})
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			writeRPC(w, body.ID, toolsListResult{Tools: []mcpTool{{Name: "soql_query"}}})
+		case "tools/call":
+			writeRPC(w, body.ID, toolsCallResult{Content: []mcpContent{{Type: "text", Text: "3 opportunities"}}})
+		}
+	}))
+	defer server.Close()
+	issued := []string{"fresh", "fresher"}
+	renew := func(context.Context) (string, error) {
+		token := issued[0]
+		issued = issued[1:]
+		return token, nil
+	}
+
+	runtime, tools, failures := Open(context.Background(), []Connection{{
+		PluginID: "salesforce", Endpoint: server.URL, AccessToken: "stale", Renew: renew,
+	}}, server.Client())
+	s.Require().Empty(failures)
+	s.Require().Len(tools, 1)
+	accepted.Store("fresher")
+	result, err := runtime.Call(context.Background(), llm.ToolCall{Name: "salesforce__soql_query", Arguments: `{}`})
+
+	s.Require().NoError(err)
+	s.Equal("3 opportunities", result)
+}
+
+func (s *MCPSuite) TestARenewalThatFailsLeavesTheRefusal() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"errors":[{"message":"Invalid token"}]}`, http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	_, _, failures := Open(context.Background(), []Connection{{
+		PluginID: "salesforce", Endpoint: server.URL, AccessToken: "stale",
+		Renew: func(context.Context) (string, error) { return "", errors.New("invalid_grant") },
+	}}, server.Client())
+
+	s.Require().Len(failures, 1)
+	s.ErrorIs(failures[0], ErrUnauthorized)
+	s.ErrorContains(failures[0], "invalid_grant")
 }
 
 func writeRPC(w http.ResponseWriter, id int, result any) {

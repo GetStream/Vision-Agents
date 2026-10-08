@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -44,6 +45,10 @@ type Plugin struct {
 	ScopesSupported []string `yaml:"scopes_supported"`
 	// AuthorizeParams go on the authorize URL as well, for a provider that needs them.
 	AuthorizeParams map[string]string `yaml:"authorize_params"`
+	// AccessTTL is how long an access token lives when the token response gives no
+	// expires_in, so it is renewed before the provider ends it. Zero leaves such a token
+	// with no known expiry.
+	AccessTTL time.Duration `yaml:"access_ttl"`
 	// ReadonlyURL is the server's read-only endpoint, for a vendor that runs one, and
 	// ReadonlyScopes what is asked for at consent there instead of Scopes.
 	ReadonlyURL    string   `yaml:"readonly_url"`

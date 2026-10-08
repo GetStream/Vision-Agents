@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -189,6 +190,46 @@ func (s *OAuthSuite) TestExchangeStoresTheAccessToken() {
 	s.Equal("tok-1", token.AccessToken)
 	s.Equal("ref-1", token.RefreshToken)
 	s.NotNil(token.ExpiresAt)
+}
+
+// Salesforce's token response has no expires_in, so without the catalog's access_ttl its
+// login would be sent until the org's session timeout ended it.
+func (s *OAuthSuite) TestATokenWithNoExpiresInExpiresByTheCatalogsAccessTTL() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok", RefreshToken: "ref"})
+	}))
+	defer server.Close()
+	auth := &Auth{HTTP: server.Client()}
+	due := time.Now().UTC().Add(15 * time.Minute)
+
+	exchanged, err := auth.Exchange(context.Background(), Owner{}, Pending{
+		PluginID: "salesforce", ClientID: "eca", TokenEndpoint: server.URL,
+	}, "code")
+	s.Require().NoError(err)
+	refreshed, err := auth.Refresh(context.Background(), Owner{}, "salesforce", server.URL, "eca", "ref")
+	s.Require().NoError(err)
+	unlisted, err := auth.Refresh(context.Background(), Owner{}, "carrier-pigeon", server.URL, "dyn-1", "ref")
+	s.Require().NoError(err)
+
+	s.Require().NotNil(exchanged.ExpiresAt)
+	s.WithinDuration(due, *exchanged.ExpiresAt, time.Minute)
+	s.Require().NotNil(refreshed.ExpiresAt)
+	s.WithinDuration(due, *refreshed.ExpiresAt, time.Minute)
+	s.Nil(unlisted.ExpiresAt, "a plugin with no access_ttl has no known expiry")
+}
+
+func (s *OAuthSuite) TestARefreshTheProviderRefusesIsToldApart() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(tokenResponse{Error: "invalid_grant", ErrorDesc: "expired access/refresh token"})
+	}))
+	defer server.Close()
+	auth := &Auth{HTTP: server.Client()}
+
+	_, err := auth.Refresh(context.Background(), Owner{}, "salesforce", server.URL, "eca", "ref")
+
+	s.ErrorIs(err, ErrRefreshRefused)
+	s.ErrorContains(err, "expired access/refresh token")
 }
 
 func (s *OAuthSuite) TestMetadataAtTheEndpointsPathIsFoundFirst() {
