@@ -451,7 +451,9 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	}
 	callID := attachment.CallID
 	if callID == "" {
-		callID = "phone-" + attachment.E164
+		// Stream allows only a-z, 0-9, _ and - in a call id, so the + of the number cannot
+		// be part of it.
+		callID = "phone-" + strings.TrimPrefix(attachment.E164, "+")
 	}
 
 	routeID, err = stream.CreateRoute(ctx, Route{
