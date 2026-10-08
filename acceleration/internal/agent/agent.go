@@ -252,6 +252,12 @@ type Agent struct {
 	// the event loop and the floor until Cerebras answered.
 	generatingCancel map[string]context.CancelFunc
 	toolCancels      map[string]context.CancelFunc
+	// toolsRunning names each tool still running, by call, so a caller left waiting can
+	// be told what on.
+	toolsRunning map[string]string
+	// toolHolds are the calls still running that an interruption answers with
+	// stillRunning rather than cancels, by call.
+	toolHolds map[string]*toolHold
 	// speculations are replies started before the flow controller ruled on their words,
 	// held until it does, by candidate.
 	speculations map[string]*speculation
@@ -342,6 +348,9 @@ type Agent struct {
 	// pendingTools is how many tool calls from the current turn have not come back yet.
 	// The spoken follow-up waits until this is zero so two results share one generate.
 	pendingTools int
+	// toolRounds is how many replies to tool results have been started since the caller
+	// last spoke (maxToolRounds).
+	toolRounds int
 	// owedTurn is the last turn that ended with tools or delegated work outstanding, which
 	// the reply delivering that work continues.
 	owedTurn string
@@ -763,7 +772,7 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 		return "", errors.New("agent: not joined")
 	}
 	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
-	history := a.replayLocked()
+	history := append([]llm.Message(nil), a.history...)
 	instructions := a.instructions()
 	model, overwrites := a.llm, a.options.Overwrites
 	a.mu.Unlock()
@@ -1233,16 +1242,40 @@ func (a *Agent) floor() floor {
 	a.mu.Lock()
 	state := floor{
 		Quiet:           a.utterances == 0 && !a.generating && a.pendingTools == 0,
+		Talking:         a.utterances > 0 || a.generating,
+		Owed:            a.toolReply,
 		Speaking:        a.speakingTurn,
 		LastSpokeAt:     a.lastSpokeAt,
 		LastHeardAt:     a.lastHeardAt,
 		LastParticipant: a.lastParticipant,
 	}
+	tools := slices.Sorted(maps.Values(a.toolsRunning))
 	current := a.harness
 	a.mu.Unlock()
 
-	state.Delegating = current != nil && current.Delegating()
+	var skills []string
+	if current != nil {
+		state.Owed = state.Owed || current.Pending()
+		skills = current.Working()
+	}
+	state.Working = workingOn(skills, tools)
 	return state
+}
+
+// workingOn names what the caller is waiting on, for telling them it is still going: the
+// first skill at work, else the first tool, empty when neither is running.
+func workingOn(skills, tools []string) string {
+	if len(skills) > 0 {
+		return "the " + strings.ReplaceAll(skills[0], "_", " ")
+	}
+	if len(tools) == 0 {
+		return ""
+	}
+	name := tools[0]
+	if _, after, found := strings.Cut(name, "__"); found {
+		name = after
+	}
+	return "the " + strings.ReplaceAll(name, "_", " ") + " lookup"
 }
 
 // act carries out what the conversation decided, in the order it decided it.
@@ -1272,25 +1305,16 @@ func (a *Agent) perform(action Action) {
 		a.ask(action.Candidate)
 
 	case ActInterrupt:
+		// Work the interrupted reply handed over goes on: talking over the agent is not
+		// taking back what was asked, and the model drops it when the caller did.
 		a.dropSpeculations()
-		a.abandon(action.TurnID)
-		a.mu.Lock()
-		for _, cancel := range a.toolCancels {
-			cancel()
-		}
-		a.toolReply = false
-		a.mu.Unlock()
+		a.stopTools()
 		a.interrupt(action.Participant)
 
 	case ActShorten:
-		a.abandon(action.TurnID)
 		a.shorten()
 
-	case ActQueue:
-		a.abandon(action.Supersede)
-
 	case ActAnswer:
-		a.abandon(action.Supersede)
 		if a.adoptSpeculation(action.Candidate, action.Clarify) {
 			return
 		}
@@ -1429,10 +1453,11 @@ func (a *Agent) respondCandidate(ready candidate, note string) error {
 	}, note, nil)
 }
 
-// noteToolDone records that one of the tools the current turn asked for has returned.
-func (a *Agent) noteToolDone() {
+// noteToolDone records that one of the tools the current turn asked for has returned. A
+// call already answered with stillRunning stopped counting when it was.
+func (a *Agent) noteToolDone(hold *toolHold) {
 	a.mu.Lock()
-	if a.pendingTools > 0 {
+	if a.pendingTools > 0 && (hold == nil || !hold.answered) {
 		a.pendingTools--
 	}
 	a.mu.Unlock()
@@ -1474,6 +1499,8 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	a.speakingTurn = turnID
 	a.generating = true
 	a.toolReply = false
+	a.toolRounds++
+	answers := !a.options.Text && a.toolRounds >= maxToolRounds
 	continues := a.owedTurn
 	a.owedTurn = ""
 	instructions := a.instructions()
@@ -1487,6 +1514,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 		Instructions: instructions,
 		History:      history,
 		AfterTool:    true,
+		Answers:      answers,
 	}, "")
 }
 
@@ -1508,6 +1536,7 @@ func (a *Agent) respondTurn(
 
 	a.speakingTurn = turnID
 	a.generating = true
+	a.toolRounds = 0
 	a.lastParticipant = participant
 	instructions := a.instructions()
 	a.mu.Unlock()
@@ -1529,7 +1558,11 @@ func (a *Agent) userTurnLocked(text string, images []llm.ImagePart) llm.Message 
 }
 
 func (a *Agent) replayLocked() []llm.Message {
-	return append([]llm.Message(nil), a.history...)
+	replay := append([]llm.Message(nil), a.history...)
+	if a.options.Text {
+		return replay
+	}
+	return spokenResults(replay)
 }
 
 func joinNotes(notes ...string) string {
@@ -1946,7 +1979,7 @@ func (a *Agent) finish(response llm.Response) {
 		// nothing until it comes back, which on a phone is indistinguishable from having
 		// been cut off. Prompting for it is not enough: the models that do it reliably
 		// are not the ones fast enough to hold a conversation.
-		if fillsPause(response.ID, calls) && strings.TrimSpace(a.spoken.String()) == "" {
+		if a.fillsPause(response.ID, calls) && strings.TrimSpace(a.spoken.String()) == "" {
 			filler := a.preSpeech(calls)
 			if filler == "" {
 				filler = a.duplex.Working()
@@ -2045,17 +2078,11 @@ func (a *Agent) preSpeech(calls []llm.ToolCall) string {
 }
 
 // fillsPause reports whether a turn that said nothing should say something before the
-// tools it asked for are run.
-func fillsPause(completionID string, calls []llm.ToolCall) bool {
-	// A turn that is itself a tool's answer gets no follow-up, so filling the pause on
-	// one would leave the caller with a promise to check as the last thing they heard.
-	if len(calls) == 0 || strings.HasPrefix(completionID, toolPrefix) {
-		return false
-	}
-	// Pressing a menu option is meant to be silent. The menu answers next, and talking
-	// over it is talking to nobody.
+// tools it asked for are run. Only a result that earns a reply of its own is worth
+// promising: anything else leaves a promise to check as the last thing the caller heard.
+func (a *Agent) fillsPause(completionID string, calls []llm.ToolCall) bool {
 	return slices.ContainsFunc(calls, func(call llm.ToolCall) bool {
-		return call.Name != toolPress
+		return a.followsTool(harness.ToolRequested{TurnID: completionID, Call: call})
 	})
 }
 
@@ -2196,6 +2223,9 @@ func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) 
 				a.executeTool(ctx, cancel, typed)
 			}()
 
+		case harness.ToolDropped:
+			a.dropTool(typed.Name)
+
 		case harness.Settled:
 			a.converse.Delegated(typed.Result)
 			if typed.State == harness.Cancelled {
@@ -2297,6 +2327,7 @@ func (a *Agent) follow() error {
 		a.mu.Unlock()
 		return nil
 	}
+	afterTool := a.toolReply
 	a.toolReply = false
 	history := a.replayLocked()
 	turnID := replyPrefix + turnStamp()
@@ -2316,6 +2347,7 @@ func (a *Agent) follow() error {
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
+		AfterTool:    afterTool,
 	}, "")
 }
 
@@ -2345,15 +2377,18 @@ func (a *Agent) followUp() {
 }
 
 // Busy reports whether the agent still has something to finish: a reply it is writing,
-// speech it has not finished saying, work handed to the subagent, or an answer that has
-// come back and still owes the caller a turn.
+// speech it has not finished saying, a tool still running, work handed to the subagent,
+// or an answer that has come back and still owes the caller a turn.
 //
 // It exists because one thing said to the agent can produce several replies -- the turn
 // that called a tool, the turn that read the tool's answer, the turn a subagent's finding
 // earned -- so a caller who waited only for the first would talk over the rest.
 func (a *Agent) Busy() bool {
 	a.mu.Lock()
-	working := a.generating || a.utterances > 0
+	// A transfer finishes the call from inside itself, so counting it would have it wait on
+	// its own end.
+	working := a.generating || a.utterances > 0 ||
+		slices.ContainsFunc(slices.Collect(maps.Values(a.toolsRunning)), func(name string) bool { return !telephonyTool(name) })
 	current := a.harness
 	a.mu.Unlock()
 
@@ -2470,10 +2505,13 @@ func (a *Agent) interrupt(participant stt.Participant) {
 	a.speakingTurn = ""
 	a.generating = false
 	a.saying = ""
-	reply, voice, model := a.streams[turnID], a.tts, a.sts
+	reply, voice, model, current := a.streams[turnID], a.tts, a.sts, a.harness
 	a.mu.Unlock()
 
 	a.finishGenerate(turnID)
+	if current != nil {
+		current.Release(turnID)
+	}
 	a.logger.Debug("stopping mid-reply, the caller took the floor",
 		"turn", turnID, "participant", participant.ID)
 

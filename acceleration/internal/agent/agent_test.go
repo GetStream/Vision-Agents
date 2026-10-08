@@ -1587,13 +1587,9 @@ func (s *AgentSuite) TestARequestForHelpIsHandedOverRatherThanSpoken() {
 	s.Equal("Let me check that.", s.voice.spoken()[0].Text)
 }
 
-func (s *AgentSuite) TestLongThinkingWorkConfirmsTheAgentIsStillListening() {
+func (s *AgentSuite) TestLongThinkingWorkTellsTheCallerWhatIsStillGoing() {
 	s.delegates()
-	s.duplex = DuplexOptions{
-		Backchannel:      true,
-		BackchannelWords: 100,
-		BackchannelGap:   10 * time.Millisecond,
-	}
+	s.duplex = DuplexOptions{updateGaps: []time.Duration{10 * time.Millisecond}}
 	s.join(true)
 	s.model.reply = []string{`<ask skill="think">work through the itinerary</ask>`}
 	participant := stt.Participant{ID: "alice"}
@@ -1604,6 +1600,11 @@ func (s *AgentSuite) TestLongThinkingWorkConfirmsTheAgentIsStillListening() {
 	s.eventually(func() bool { return s.agent.delegating() }, "the thinking task never started")
 	s.eventually(func() bool { return countOf[Backchannel](s.reported()) == 1 },
 		"a long thinking gap sounded like a dead call")
+	for _, event := range s.reported() {
+		if update, ok := event.(Backchannel); ok {
+			s.Equal("Still working on the think.", update.Text)
+		}
+	}
 }
 
 func (s *AgentSuite) TestDelegatedWorkIsReported() {
@@ -1811,11 +1812,11 @@ func (s *AgentSuite) TestClosingAbandonsWorkNobodyWillHear() {
 	s.Equal(harness.ReasonClosed, cancelled.Reason)
 }
 
-func (s *AgentSuite) TestARelevantNewCandidateCancelsWorkFromTheOldPremise() {
+func (s *AgentSuite) TestWorkTheCallerWithdrewIsDroppedByTheModel() {
 	s.delegates()
 	s.join(true)
 	s.model.reply = []string{`<ask skill="think">15% of 84.20</ask>`}
-	s.model.then = []string{"Okay."}
+	s.model.then = []string{`<drop skill="think"/>Okay, 20 percent then.`}
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 	s.says(participant, "what is 15% of 84.20")
@@ -1826,8 +1827,29 @@ func (s *AgentSuite) TestARelevantNewCandidateCancelsWorkFromTheOldPremise() {
 	s.eventually(func() bool { return countOf[TaskCancelled](s.reported()) == 1 },
 		"work based on the old premise was not cancelled")
 	cancelled, _ := firstOf[TaskCancelled](s.reported())
-	s.Equal(harness.ReasonSuperseded, cancelled.Reason)
+	s.Equal(harness.ReasonDropped, cancelled.Reason)
 	s.Equal(1, s.subagent.interrupted())
+	s.model.mu.Lock()
+	defer s.model.mu.Unlock()
+	s.Contains(s.model.asked[len(s.model.asked)-1].Instructions, "still working on the think",
+		"the model cannot drop work it was never told is running")
+}
+
+func (s *AgentSuite) TestAQuestionAboutWorkStillRunningLeavesItRunning() {
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`One moment. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"Still on it."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool { return s.agent.delegating() }, "the task never started")
+
+	s.says(participant, "is it done yet?")
+
+	s.eventually(func() bool { return s.spokenText("Still on it.") }, "the question was not answered")
+	s.True(s.agent.delegating(), "asking how it is going is not withdrawing the request")
+	s.Zero(countOf[TaskCancelled](s.reported()))
 }
 
 func (s *AgentSuite) TestTheAgentMurmursWhileSomeoneIsStillTalking() {

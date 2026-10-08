@@ -97,6 +97,29 @@ func (s *DuplexSuite) TestASilentCallIsAskedWhetherAnythingElseIsNeeded() {
 		"anything else", "a call nobody is talking on gets an invitation back into it")
 }
 
+func (s *DuplexSuite) TestACallerToldAboutWorkIsToldAgainAfterTheySpeak() {
+	listener := newDuplex(DuplexOptions{})
+	silent := time.Now().Add(-time.Hour)
+
+	listener.Update("the render", silent)
+	listener.Update("the render", silent)
+	s.Empty(listener.Update("the render", silent))
+
+	listener.Heard(stt.Participant{ID: "alice"}, "is it done yet?", true)
+	s.Equal("Still working on the render.", listener.Update("the render", silent))
+}
+
+func (s *DuplexSuite) TestNewWorkIsUpdatedOnFromTheStart() {
+	listener := newDuplex(DuplexOptions{})
+	silent := time.Now().Add(-time.Hour)
+
+	listener.Update("the render", silent)
+	listener.Update("the render", silent)
+
+	s.Equal("Still working on the search places lookup.",
+		listener.Update("the search places lookup", silent))
+}
+
 func (s *DuplexSuite) TestAShortSilenceIsLeftAlone() {
 	listener := newDuplex(DuplexOptions{})
 

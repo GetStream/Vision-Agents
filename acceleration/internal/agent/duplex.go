@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,17 @@ var idlePhrases = []string{
 	"Anything else you wanted to look at?",
 }
 
+// updateGaps are how long a caller waiting on work hears nothing before being told it is
+// still going, one per update. After the last one the agent waits quietly: a status read
+// out every few seconds is nagging, and the answer is what they are waiting for.
+var updateGaps = []time.Duration{10 * time.Second, 15 * time.Second}
+
+// updatePhrases say that named work is still running, one per update.
+var updatePhrases = []string{
+	"Still working on %s.",
+	"Bear with me, %s is taking a little longer.",
+}
+
 // uncertainNote is what the model is told about a turn the transcriber was doubtful
 // about. Checking is cheaper than confidently answering the wrong question.
 const uncertainNote = "You did not catch all of that. Check what they meant before " +
@@ -93,6 +105,9 @@ type DuplexOptions struct {
 	// as though it heard it properly. Below it the agent checks what they meant instead.
 	// Zero turns this off.
 	MinConfidence float64
+	// updateGaps is how long a caller waiting on work hears nothing before each update.
+	// Empty means the built-in ones.
+	updateGaps []time.Duration
 }
 
 // duplex tracks acknowledgements and confidence for each participant.
@@ -114,6 +129,10 @@ type duplex struct {
 	// idle rotates what is said to a call that has gone quiet. It runs on across the
 	// whole call, so a later silence does not open with the same question as the first.
 	idle int
+	// updating is the work the caller was last told is still running, and updates how
+	// often they were told about it since they last spoke.
+	updating string
+	updates  int
 }
 
 // speaker is what one participant is in the middle of.
@@ -132,6 +151,9 @@ func newDuplex(options DuplexOptions) *duplex {
 	if len(options.Phrases) == 0 {
 		options.Phrases = defaultPhrases
 	}
+	if len(options.updateGaps) == 0 {
+		options.updateGaps = updateGaps
+	}
 	return &duplex{options: options, speakers: map[string]*speaker{}}
 }
 
@@ -146,6 +168,7 @@ func (d *duplex) Heard(participant stt.Participant, text string, quiet bool) str
 	// one is worth asking about again. Only the count is cleared: the rotation carries
 	// on, so the next silence is not opened with the same question as the last.
 	d.asked = 0
+	d.updates = 0
 	current := d.speakerFor(participant)
 
 	if !d.options.Backchannel || !quiet {
@@ -197,6 +220,27 @@ func (d *duplex) Idle(lastActivity time.Time, quiet bool) string {
 	phrase := idlePhrases[d.idle%len(idlePhrases)]
 	d.asked++
 	d.idle++
+	return phrase
+}
+
+// Update returns what to tell a caller who has heard nothing for a while about the work
+// they are waiting on, or empty when it is not time to. Work names what is running, so
+// the caller hears what is taking the time rather than a stock filler.
+func (d *duplex) Update(work string, lastSpokeAt time.Time) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if work != d.updating {
+		d.updating = work
+		d.updates = 0
+	}
+	gaps := d.options.updateGaps
+	if work == "" || lastSpokeAt.IsZero() || d.updates >= len(gaps) ||
+		time.Since(lastSpokeAt) < gaps[d.updates] {
+		return ""
+	}
+	phrase := fmt.Sprintf(updatePhrases[d.updates%len(updatePhrases)], work)
+	d.updates++
 	return phrase
 }
 

@@ -98,9 +98,6 @@ type Action struct {
 	Text string
 	// TurnID is the reply being interrupted, shortened or abandoned.
 	TurnID string
-	// Supersede names an earlier turn whose delegated work is no longer wanted, because
-	// the caller has moved on from what asked for it.
-	Supersede string
 	// Clarify is what the model is told when the turn is owed a short question rather than
 	// an answer. Empty on a turn that is simply answered.
 	Clarify string
@@ -120,8 +117,14 @@ type floor struct {
 	Quiet bool
 	// Speaking is the reply currently allowed to make audio, empty when there is none.
 	Speaking string
-	// Delegating reports whether the subagent is still working on something.
-	Delegating bool
+	// Talking reports whether the agent is writing or saying a reply, which Quiet cannot
+	// say on its own because a tool that is running also leaves the agent not quiet.
+	Talking bool
+	// Working names the work the caller is waiting on, a tool or the subagent, empty
+	// when nothing is running.
+	Working string
+	// Owed reports whether something came back that the caller has not been told yet.
+	Owed bool
 	// LastSpokeAt is when the agent last published audio.
 	LastSpokeAt time.Time
 	// LastHeardAt is when anyone on the call was last transcribed.
@@ -166,8 +169,6 @@ type converse struct {
 	candidates map[string]candidate
 	// queued is a relevant turn heard while the agent chose to finish speaking.
 	queued *queuedCandidate
-	// lastCandidate owns delegated work from the last relevant caller turn.
-	lastCandidate string
 	// delegated is the turn each piece of delegated work was asked for in, so what comes
 	// back lands against the exchange that wanted it. A subagent's result names the task
 	// and not the turn, and by the time it arrives the conversation has usually moved on.
@@ -558,21 +559,12 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		Language:    ready.Language,
 	})
 
-	c.mu.Lock()
-	previous := c.lastCandidate
-	c.lastCandidate = ready.ID
-	c.mu.Unlock()
-	if previous == ready.ID {
-		previous = ""
-	}
-
 	answer := Action{
 		Kind:        ActAnswer,
 		Reason:      "a complete thought addressed to the agent",
 		Candidate:   ready,
 		Participant: ready.Participant,
 		Text:        ready.Text,
-		Supersede:   previous,
 		Clarify:     clarify,
 		LatencyMs:   ruling.TookMs,
 	}
@@ -714,14 +706,38 @@ func (c *converse) idle(state floor, participant stt.Participant) []Action {
 	})}
 }
 
+// update tells a caller waiting on work that it is still going, once they have heard
+// nothing for long enough to wonder.
+func (c *converse) update(state floor, participant stt.Participant) []Action {
+	if state.Talking {
+		return nil
+	}
+	phrase := c.duplex.Update(state.Working, state.LastSpokeAt)
+	if phrase == "" {
+		return nil
+	}
+	return []Action{c.decide(Action{
+		Kind:        ActBackchannel,
+		Reason:      "work the caller was promised is still running and they have heard nothing for a while",
+		Participant: participant,
+		Text:        phrase,
+	})}
+}
+
 // Tick decides whether a long listening or thinking gap needs filling, so an agent that
 // is busy does not sound like a dead line.
 func (c *converse) Tick(state floor) []Action {
 	participant, _, hearing := c.cadence.Active()
 	if !hearing {
 		participant = state.LastParticipant
-	}
-	if !hearing && !state.Delegating {
+		switch {
+		case state.Owed:
+			// The answer is on its way to them, and asking whether there is anything
+			// else would talk over the thing they asked for.
+			return nil
+		case state.Working != "":
+			return c.update(state, participant)
+		}
 		return c.idle(state, participant)
 	}
 
@@ -730,13 +746,9 @@ func (c *converse) Tick(state floor) []Action {
 		return nil
 	}
 
-	reason := "the caller has been talking a while without hearing anything back"
-	if !hearing {
-		reason = "work the caller was promised is still running and they have heard nothing for a while"
-	}
 	return []Action{c.decide(Action{
 		Kind:        ActBackchannel,
-		Reason:      reason,
+		Reason:      "the caller has been talking a while without hearing anything back",
 		Participant: participant,
 		Text:        phrase,
 	})}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -80,16 +81,55 @@ type ToolPolicy struct {
 	// PreSpeech is what to say while the tool runs, in place of a phrase the agent picks
 	// itself (workingPhrases), and what ToolStarted carries. Empty says the agent's own.
 	PreSpeech string
-	// Waits is set for a tool its runner lets finish after an interruption. The call is
-	// answered at the interruption with stillRunning, and its result, when it comes, is
-	// added as a message of its own (lateResult).
+	// Waits is set for a tool its runner lets finish after its context ends. The call is
+	// answered then with stillRunning, and its result, when it comes, is added as a
+	// message of its own (lateResult).
 	Waits bool
 }
 
-// stillRunning answers a call that goes on after an interruption (ToolPolicy.Waits). A
-// provider refuses a conversation that replays a call without its result right after it,
-// and the next turn must not wait for the call.
+// stillRunning answers a call that goes on after an interruption. A provider refuses a
+// conversation that replays a call without its result right after it, and the next turn
+// must not wait for the call.
 const stillRunning = "This is still running. Its result will follow in a later message."
+
+// stillRunningAnswer is stillRunning for one call, naming the tool the model would drop.
+func stillRunningAnswer(tool string) string {
+	return fmt.Sprintf("%s Only if the caller no longer wants it, write <drop skill=%q/>.", stillRunning, tool)
+}
+
+// spokenResult ends what a tool returned when a voice model reads it (spokenResults).
+const spokenResult = "The caller is listening, not reading: tell them the part that answers " +
+	"them in one to three short sentences, with no links, lists, markup or record ids, " +
+	"and offer the rest."
+
+// spokenResults is history as a voice model is given it: every tool result but a telephony
+// tool's ends with spokenResult. The fast models read a page of results out whole,
+// whatever the instructions said, unless the result itself says not to. It is the same on
+// every turn, so a provider that keeps its replies still sees a conversation that only grew.
+func spokenResults(history []llm.Message) []llm.Message {
+	names := map[string]string{}
+	for i, message := range history {
+		for _, call := range message.ToolCalls {
+			names[call.ID] = call.Name
+		}
+		if message.Role != llm.ToolResult || telephonyTool(names[message.ToolCallID]) {
+			continue
+		}
+		if len(message.Parts) > 0 {
+			message.Parts = append(slices.Clone(message.Parts), llm.ContentPart{Text: spokenResult})
+		} else {
+			message.Content += "\n" + spokenResult
+		}
+		history[i] = message
+	}
+	return history
+}
+
+// maxToolRounds is the reply to a tool result, counted since the caller last spoke, that a
+// voice call makes answer rather than reach for another tool. Progressive tools spend a
+// round describing each tool before running it, so it leaves room for three of them and a
+// query corrected once.
+const maxToolRounds = 8
 
 // lateResult introduces the result of a call answered with stillRunning. It comes after
 // other turns, where a tool result answering an earlier call is refused, so it is the
@@ -136,7 +176,18 @@ func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, c
 		a.toolCancels = map[string]context.CancelFunc{}
 	}
 	a.toolCancels[requested.Call.ID] = cancel
-	if _, abandoned := a.abandoned[requested.TurnID]; abandoned {
+	if a.toolsRunning == nil {
+		a.toolsRunning = map[string]string{}
+	}
+	a.toolsRunning[requested.Call.ID] = requested.Call.Name
+	// Every tool but the two that act on the phone call outlives an interruption: what it
+	// was asked is still what the caller wants, and it is answered when it comes back.
+	if !telephonyTool(requested.Call.Name) {
+		if a.toolHolds == nil {
+			a.toolHolds = map[string]*toolHold{}
+		}
+		a.toolHolds[requested.Call.ID] = &toolHold{}
+	} else if _, abandoned := a.abandoned[requested.TurnID]; abandoned {
 		cancel()
 	}
 	a.mu.Unlock()
@@ -144,7 +195,13 @@ func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, c
 }
 
 func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requested harness.ToolRequested) {
-	defer func() { cancel(); a.mu.Lock(); delete(a.toolCancels, requested.Call.ID); a.mu.Unlock() }()
+	defer func() {
+		cancel()
+		a.mu.Lock()
+		delete(a.toolCancels, requested.Call.ID)
+		delete(a.toolHolds, requested.Call.ID)
+		a.mu.Unlock()
+	}()
 	started := ToolStarted{ID: requested.Call.ID, TurnID: requested.TurnID, Tool: requested.Call.Name, Arguments: requested.Call.Arguments, StartedAt: time.Now().UTC()}
 	started.Product, started.SDK = toolScope(requested.Call)
 	started.PreSpeech = a.preSpeech([]llm.ToolCall{requested.Call})
@@ -155,6 +212,9 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	requested.Call.TurnID = requested.TurnID
 	hold := a.holdOnInterrupt(ctx, requested.Call)
 	parts, left, err := a.callTool(ctx, requested.Call)
+	a.mu.Lock()
+	delete(a.toolsRunning, requested.Call.ID)
+	a.mu.Unlock()
 	// Visual tool results go to the vision worker in both native and cascade calls.
 	if err == nil && a.harness != nil && llm.HasImage([]llm.Message{{Parts: parts}}) {
 		_, err = a.harness.Delegate(visionSkill, "Analyze this tool result for the caller's current question.", requested.TurnID, parts, a.History())
@@ -166,7 +226,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(fmt.Sprintf("That did not work: %s. Tell the caller, in your own words.", err))
 	}
 	result := llm.TextOf(parts)
-	a.resolveTool(requested.Call, parts, hold)
+	a.resolveTool(requested.Call, parts, hold, ctx.Err() != nil)
 
 	a.emitter.Send(ToolRan{
 		ID:        requested.Call.ID,
@@ -179,7 +239,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	// A native model is answered on its own session and carries on by itself; there is no
 	// follow-up turn to queue because the model speaks the moment it has the result.
 	if model := a.speech(); model != nil {
-		defer a.noteToolDone()
+		defer a.noteToolDone(hold)
 		if ctx.Err() == nil {
 			a.mu.Lock()
 			a.nativeAwaiting = true
@@ -200,7 +260,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		}
 		return
 	}
-	a.noteToolDone()
+	a.noteToolDone(hold)
 	if ctx.Err() != nil {
 		return
 	}
@@ -208,16 +268,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		// A tool result is not something the caller can hear. Whether it worked or not,
 		// somebody asked a question and is waiting on the answer, so the agent says it
 		// rather than sitting on it until they happen to speak again.
-		//
-		// Pressing at a menu is the exception: the digits are the whole point of the
-		// tool and the menu is what answers next, so talking over it would be talking to
-		// nobody.
-		//
-		// Voice calls stop automatic follow-ups after one tool round, so a broken
-		// transfer cannot keep the phone line open by retrying itself. Text sessions
-		// must continue: a docs lookup can lead to source research, whose result still
-		// needs a final answer even though it was requested in a tool follow-up turn.
-		if requested.Call.Name != toolPress && (a.options.Text || !strings.HasPrefix(requested.TurnID, toolPrefix)) {
+		if a.followsTool(requested) {
 			a.queueToolReply()
 		}
 		return
@@ -229,6 +280,26 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 			a.logger.Error("could not leave after transferring", "error", err)
 		}
 	}()
+}
+
+// followsTool reports whether what a tool returned earns a reply of its own.
+//
+// Pressing at a menu does not: the digits are the whole point of the tool and the menu is
+// what answers next, so talking over it would be talking to nobody. A transfer asked for
+// in a reply to a tool does not either, so a broken one cannot keep the line open by
+// retrying itself. Other tools chain, a lookup leading to the lookup it needed, and are
+// always followed: a result nobody speaks is the answer lost. A voice call that has
+// chained maxToolRounds times is made to answer instead (respondAfterTool).
+func (a *Agent) followsTool(requested harness.ToolRequested) bool {
+	switch {
+	case requested.Call.Name == toolPress:
+		return false
+	case a.options.Text:
+		return true
+	case telephonyTool(requested.Call.Name):
+		return !strings.HasPrefix(requested.TurnID, toolPrefix)
+	}
+	return true
 }
 
 // callTool runs one tool, reporting what to tell the model and whether the agent has left
@@ -398,7 +469,10 @@ func (a *Agent) press(ctx context.Context, call llm.ToolCall) (string, bool, err
 // caller's message instead (lateResult). While the history ends in calls not all answered
 // (callsOpen), that message is held back, so it never comes between a call and its
 // result, and added once they are.
-func (a *Agent) resolveTool(call llm.ToolCall, parts []llm.ContentPart, hold *toolHold) {
+//
+// A call answered with stillRunning and then cancelled was dropped, and what it returned
+// is nothing anybody is waiting for.
+func (a *Agent) resolveTool(call llm.ToolCall, parts []llm.ContentPart, hold *toolHold, cancelled bool) {
 	a.mu.Lock()
 	message := llm.Message{
 		Role:       llm.ToolResult,
@@ -407,6 +481,10 @@ func (a *Agent) resolveTool(call llm.ToolCall, parts []llm.ContentPart, hold *to
 	late := false
 	if hold != nil {
 		hold.resolved = true
+		if hold.answered && cancelled {
+			a.mu.Unlock()
+			return
+		}
 		if hold.answered {
 			message = llm.Message{Role: llm.User}
 			parts = append(llm.TextParts(fmt.Sprintf(lateResult, call.Name, call.ID)), parts...)
@@ -449,8 +527,8 @@ func callsOpen(history []llm.Message) bool {
 	return false
 }
 
-// toolHold is one call whose tool goes on after an interruption (ToolPolicy.Waits). Its
-// fields are guarded by Agent.mu.
+// toolHold is one call whose tool goes on after an interruption. Its fields are guarded by
+// Agent.mu.
 type toolHold struct {
 	// answered is set once the call was answered with stillRunning.
 	answered bool
@@ -458,28 +536,73 @@ type toolHold struct {
 	resolved bool
 }
 
-// holdOnInterrupt answers call with stillRunning the moment ctx ends, when its tool goes on
-// after an interruption, so the next turn replays it answered. Nil for any other tool,
-// which an interruption cancels as it always has.
+// holdOnInterrupt returns the hold prepareTool registered for call, and answers the call
+// with stillRunning the moment ctx ends when its runner lets it finish anyway
+// (ToolPolicy.Waits). Nil for a telephony tool, which an interruption cancels.
 func (a *Agent) holdOnInterrupt(ctx context.Context, call llm.ToolCall) *toolHold {
-	if a.options.ToolPolicy == nil || !a.options.ToolPolicy(call.Name).Waits {
-		return nil
+	a.mu.Lock()
+	hold := a.toolHolds[call.ID]
+	a.mu.Unlock()
+	if hold != nil && a.options.ToolPolicy != nil && a.options.ToolPolicy(call.Name).Waits {
+		context.AfterFunc(ctx, func() {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			a.answerLocked(call.ID, hold)
+		})
 	}
-	hold := &toolHold{}
-	context.AfterFunc(ctx, func() {
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		if hold.resolved {
-			return
-		}
-		hold.answered = true
-		a.history = append(a.history, llm.Message{Role: llm.ToolResult, ToolCallID: call.ID, Content: stillRunning})
-		if !callsOpen(a.history) {
-			a.history = append(a.history, a.lateResults...)
-			a.lateResults = nil
-		}
-	})
 	return hold
+}
+
+// answerLocked answers a call whose tool is still running with stillRunning, so the next
+// turn replays it answered and is not held up by it. The caller holds the lock.
+func (a *Agent) answerLocked(callID string, hold *toolHold) {
+	if hold.resolved || hold.answered {
+		return
+	}
+	hold.answered = true
+	if a.pendingTools > 0 {
+		a.pendingTools--
+	}
+	a.history = append(a.history, llm.Message{
+		Role: llm.ToolResult, ToolCallID: callID, Content: stillRunningAnswer(a.toolsRunning[callID]),
+	})
+	if !callsOpen(a.history) {
+		a.history = append(a.history, a.lateResults...)
+		a.lateResults = nil
+	}
+}
+
+// stopTools ends the tools still running when the caller takes the floor: a telephony
+// tool is cancelled, and any other is answered with stillRunning and left to finish.
+func (a *Agent) stopTools() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for id, cancel := range a.toolCancels {
+		if hold := a.toolHolds[id]; hold != nil {
+			a.answerLocked(id, hold)
+			continue
+		}
+		cancel()
+	}
+	a.toolReply = false
+}
+
+// dropTool cancels the calls to a tool still running, because the caller no longer wants
+// what they would return.
+func (a *Agent) dropTool(name string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for id, running := range a.toolsRunning {
+		if running != name {
+			continue
+		}
+		if hold := a.toolHolds[id]; hold != nil {
+			a.answerLocked(id, hold)
+		}
+		if cancel := a.toolCancels[id]; cancel != nil {
+			cancel()
+		}
+	}
 }
 
 // heardSoFar is who the agent has opened a transcription session for, which is everyone it
