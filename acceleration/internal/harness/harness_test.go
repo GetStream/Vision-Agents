@@ -1093,7 +1093,23 @@ func (s *HarnessSuite) TestWorkThatFailsStillTellsTheCallerSomething() {
 	s.True(settled.Actionable())
 
 	s.respond("turn-2", "")
-	s.Contains(s.fast.requests()[1].Instructions, "could not find out")
+	s.Contains(s.fast.requests()[1].Instructions, "think you asked for failed")
+}
+
+func (s *HarnessSuite) TestWorkThatComesBackEmptyIsReportedAsFailed() {
+	// An empty answer is not actionable as an answer, so it used to settle in silence:
+	// the caller was promised something and heard nothing.
+	s.build(true)
+	s.slow.automatic = " "
+	s.respond("turn-1", "render the clip")
+
+	s.reply("turn-1", `<ask skill="think">render the clip</ask>`)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Failed, settled.State)
+	s.True(settled.Actionable())
+	s.respond("turn-2", "")
+	s.Contains(s.fast.requests()[1].Instructions, "think you asked for failed")
 }
 
 func (s *HarnessSuite) TestAColdLargePrefixIsCompactedPrivately() {
