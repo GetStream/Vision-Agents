@@ -205,6 +205,16 @@ type Turn struct {
 	// SpeechEndToAudioMs is voice in to voice out: the roundtrip plus the time the
 	// transcriber spent deciding the participant had stopped.
 	SpeechEndToAudioMs float64
+	// FirstFrameQueuedMs and FirstAudibleFrameMs run from the last transcript revision, like
+	// RoundtripMs, to the two moments publishing returning stands in for: the edge queueing the
+	// first frame of the reply for its outgoing track, and the track taking the first frame
+	// that was not silence, which is when the reply could first be heard. Publishing returns
+	// once no more than the queue is left of the chunk, so for a chunk longer than the queue it
+	// returns later than both. Zero where the edge does not report them.
+	FirstFrameQueuedMs  float64
+	FirstAudibleFrameMs float64
+	// SpeechEndToAudibleMs is SpeechEndToAudioMs measured to FirstAudibleFrameMs instead.
+	SpeechEndToAudibleMs float64
 	// AudioOutMs is how much speech the agent published for the turn.
 	AudioOutMs float64
 	// AudioDroppedMs is speech that was synthesised for the turn but never published,

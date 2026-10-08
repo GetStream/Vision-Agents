@@ -640,20 +640,23 @@ func timelineOf(turns []store.Turn, said []chatlog.Spoken, models []store.Reques
 	timeline := make([]TimelineEntry, 0, len(turns))
 	for index, turn := range turns {
 		entry := TimelineEntry{
-			TurnId:             turn.TurnID,
-			StartedAt:          turn.StartedAt,
-			CadenceMs:          turn.CadenceMs,
-			DecisionMs:         turn.DecisionMs,
-			ModelToFirstTextMs: turn.ModelToFirstTextMs,
-			TextToTtsMs:        turn.TextToTTSMs,
-			TtsToAudioMs:       turn.TTSToAudioMs,
-			RoundtripMs:        turn.RoundtripMs,
-			SttLatencyMs:       turn.STTLatencyMs,
-			LlmTtftMs:          turn.LLMTTFTMs,
-			TtsTtfbMs:          turn.TTSTTFBMs,
-			SpeechEndToAudioMs: turn.SpeechEndToAudioMs,
-			AudioOutMs:         turn.AudioOutMs,
-			Interrupted:        &turn.Interrupted,
+			TurnId:               turn.TurnID,
+			StartedAt:            turn.StartedAt,
+			CadenceMs:            turn.CadenceMs,
+			DecisionMs:           turn.DecisionMs,
+			ModelToFirstTextMs:   turn.ModelToFirstTextMs,
+			TextToTtsMs:          turn.TextToTTSMs,
+			TtsToAudioMs:         turn.TTSToAudioMs,
+			RoundtripMs:          turn.RoundtripMs,
+			SttLatencyMs:         turn.STTLatencyMs,
+			LlmTtftMs:            turn.LLMTTFTMs,
+			TtsTtfbMs:            turn.TTSTTFBMs,
+			SpeechEndToAudioMs:   turn.SpeechEndToAudioMs,
+			FirstFrameQueuedMs:   turn.FirstFrameQueuedMs,
+			FirstAudibleFrameMs:  turn.FirstAudibleFrameMs,
+			SpeechEndToAudibleMs: turn.SpeechEndToAudibleMs,
+			AudioOutMs:           turn.AudioOutMs,
+			Interrupted:          &turn.Interrupted,
 		}
 		if calls := modelCalls[turn.TurnID]; len(calls) > 0 {
 			entry.ModelCalls = &calls
@@ -1252,23 +1255,26 @@ type ModelCallTiming struct {
 
 // TimelineEntry is the TimelineEntry schema.
 type TimelineEntry struct {
-	AudioOutMs         *float64           `json:"audio_out_ms,omitempty" doc:"How much the agent spoke."`
-	CadenceMs          *float64           `json:"cadence_ms,omitempty" doc:"Last transcript revision to a stable turn ready for the flow controller."`
-	DecisionMs         *float64           `json:"decision_ms,omitempty" doc:"Stable turn to the main model request, including flow and queueing."`
-	Heard              *string            `json:"heard,omitempty" doc:"What the caller said, when it can be matched to this exchange."`
-	Interrupted        *bool              `json:"interrupted,omitempty" doc:"Whether the caller talked over the answer."`
-	LlmTtftMs          *float64           `json:"llm_ttft_ms,omitempty" doc:"The wait between asking the model and its first token." nullable:"true"`
-	ModelCalls         *[]ModelCallTiming `json:"model_calls,omitempty" doc:"Individual model requests for this turn, including flow and delegated work."`
-	ModelToFirstTextMs *float64           `json:"model_to_first_text_ms,omitempty" doc:"Main model request to the first text delta admitted to the voice pipeline."`
-	RoundtripMs        *float64           `json:"roundtrip_ms,omitempty" doc:"Last transcript revision to first audio published; includes cadence settling."`
-	Said               *string            `json:"said,omitempty" doc:"What the agent answered."`
-	SpeechEndToAudioMs *float64           `json:"speech_end_to_audio_ms,omitempty" doc:"Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback." nullable:"true"`
-	StartedAt          time.Time          `json:"started_at"`
-	SttLatencyMs       *float64           `json:"stt_latency_ms,omitempty" doc:"The provider's decode time for the transcript that settled the turn." nullable:"true"`
-	TextToTtsMs        *float64           `json:"text_to_tts_ms,omitempty" doc:"First text delta to the first TTS request."`
-	TtsToAudioMs       *float64           `json:"tts_to_audio_ms,omitempty" doc:"First TTS request to the first audio chunk published to the edge."`
-	TtsTtfbMs          *float64           `json:"tts_ttfb_ms,omitempty" doc:"The wait between sending the first sentence and the first audio." nullable:"true"`
-	TurnId             string             `json:"turn_id"`
+	AudioOutMs           *float64           `json:"audio_out_ms,omitempty" doc:"How much the agent spoke."`
+	CadenceMs            *float64           `json:"cadence_ms,omitempty" doc:"Last transcript revision to a stable turn ready for the flow controller."`
+	DecisionMs           *float64           `json:"decision_ms,omitempty" doc:"Stable turn to the main model request, including flow and queueing."`
+	FirstAudibleFrameMs  *float64           `json:"first_audible_frame_ms,omitempty" doc:"Last transcript revision to the outgoing track taking the first frame of the reply that was not silence, which is when it could first be heard. Unlike roundtrip_ms it does not include the wait for a long first chunk to be queued. Absent where the edge does not report it." nullable:"true"`
+	FirstFrameQueuedMs   *float64           `json:"first_frame_queued_ms,omitempty" doc:"Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it." nullable:"true"`
+	Heard                *string            `json:"heard,omitempty" doc:"What the caller said, when it can be matched to this exchange."`
+	Interrupted          *bool              `json:"interrupted,omitempty" doc:"Whether the caller talked over the answer."`
+	LlmTtftMs            *float64           `json:"llm_ttft_ms,omitempty" doc:"The wait between asking the model and its first token." nullable:"true"`
+	ModelCalls           *[]ModelCallTiming `json:"model_calls,omitempty" doc:"Individual model requests for this turn, including flow and delegated work."`
+	ModelToFirstTextMs   *float64           `json:"model_to_first_text_ms,omitempty" doc:"Main model request to the first text delta admitted to the voice pipeline."`
+	RoundtripMs          *float64           `json:"roundtrip_ms,omitempty" doc:"Last transcript revision to first audio published; includes cadence settling."`
+	Said                 *string            `json:"said,omitempty" doc:"What the agent answered."`
+	SpeechEndToAudioMs   *float64           `json:"speech_end_to_audio_ms,omitempty" doc:"Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback." nullable:"true"`
+	SpeechEndToAudibleMs *float64           `json:"speech_end_to_audible_ms,omitempty" doc:"Last input audio to the outgoing track taking the first frame of the reply that was not silence, estimated like speech_end_to_audio_ms. It excludes network transport and playback." nullable:"true"`
+	StartedAt            time.Time          `json:"started_at"`
+	SttLatencyMs         *float64           `json:"stt_latency_ms,omitempty" doc:"The provider's decode time for the transcript that settled the turn." nullable:"true"`
+	TextToTtsMs          *float64           `json:"text_to_tts_ms,omitempty" doc:"First text delta to the first TTS request."`
+	TtsToAudioMs         *float64           `json:"tts_to_audio_ms,omitempty" doc:"First TTS request to the first audio chunk published to the edge."`
+	TtsTtfbMs            *float64           `json:"tts_ttfb_ms,omitempty" doc:"The wait between sending the first sentence and the first audio." nullable:"true"`
+	TurnId               string             `json:"turn_id"`
 }
 
 // TranscriptMessage is the TranscriptMessage schema.

@@ -94,6 +94,8 @@ func main() {
 		"how sure the transcriber must be for the agent to answer rather than check what was meant")
 	flag.BoolVar(&options.demo, "demo", true,
 		"open a browser on a link that joins the call, so there is somebody for the agent to talk to")
+	flag.BoolVar(&options.chatTimings, "chat-timings", false,
+		"for development: show how long each stage of a turn took after the agent's reply in the chat channel")
 	flag.DurationVar(&options.replyHedge, "reply-hedge", config.Defaults().Agent.ReplyHedge,
 		"how long a reply may say nothing before the same request is asked of another candidate as well, 0 asks once")
 	verbose := flag.Bool("verbose", false, "log lifecycle events")
@@ -135,6 +137,7 @@ type options struct {
 	backchannel    bool
 	minConfidence  float64
 	demo           bool
+	chatTimings    bool
 	replyHedge     time.Duration
 
 	number       string
@@ -272,6 +275,7 @@ func run(options options, logger *slog.Logger) error {
 		Agent:     chatlog.User{ID: options.userID, Name: "Vision Agent"},
 		APIKey:    streamKey,
 		APISecret: streamSecret,
+		Timings:   options.chatTimings,
 		Logger:    logger,
 	})
 	if err != nil {

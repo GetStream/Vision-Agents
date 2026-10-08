@@ -418,6 +418,29 @@ func (s *StoreSuite) TestTurnStatsReportThePercentilesOfWhatCallersWaited() {
 	s.InDelta(250, *buckets[0].RoundtripP50Ms, 0.001, "the median of 100,200,300,400")
 }
 
+func (s *StoreSuite) TestWhenAReplyWasQueuedAndHeardIsReadBackWithItsTurn() {
+	queuedMs, audibleMs, speechEndMs := 880.0, 940.0, 1060.0
+	turn := s.turn("turn-1", s.base.Add(time.Minute), 1400)
+	turn.FirstFrameQueuedMs = &queuedMs
+	turn.FirstAudibleFrameMs = &audibleMs
+	turn.SpeechEndToAudibleMs = &speechEndMs
+	unreported := s.turn("turn-2", s.base.Add(2*time.Minute), 900)
+	s.Require().NoError(s.store.RecordTurn(s.ctx, turn))
+	s.Require().NoError(s.store.RecordTurn(s.ctx, unreported))
+
+	turns, err := s.store.CallTurns(s.ctx, "acme", "agent-1", s.base, nil)
+
+	s.Require().NoError(err)
+	s.Require().Len(turns, 2)
+	s.Require().NotNil(turns[0].FirstAudibleFrameMs)
+	s.InDelta(880, *turns[0].FirstFrameQueuedMs, 0.001)
+	s.InDelta(940, *turns[0].FirstAudibleFrameMs, 0.001)
+	s.InDelta(1060, *turns[0].SpeechEndToAudibleMs, 0.001)
+	s.InDelta(1400, *turns[0].RoundtripMs, 0.001, "the figure taken at the return is kept")
+	s.Nil(turns[1].FirstFrameQueuedMs, "an edge that does not report them leaves them out")
+	s.Nil(turns[1].FirstAudibleFrameMs)
+}
+
 func (s *StoreSuite) TestALegThatNeverHappenedIsNotCountedAsInstant() {
 	// A realtime model that hears and speaks for itself has no transcription leg, and
 	// counting that as zero would flatter the percentiles.
