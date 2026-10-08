@@ -155,7 +155,9 @@ func (s *Server) registerAuthorizations(api huma.API) {
 			"provider and comes back to the router, which stores the grant and sends the browser " +
 			"to the dashboard with connection_id and status (connected, denied, failed or " +
 			"account_mismatch). A reconnect that comes back with another provider account keeps " +
-			"the old grant. Who may start it is who may read the connection. Needs " +
+			"the old grant. The consent runs on the connector's latest revision, and the " +
+			"connection reads that revision once the consent connects it. Who may start it is who " +
+			"may read the connection. Needs " +
 			"ROUTER_PUBLIC_URL, where the provider sends the browser back to.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
@@ -307,7 +309,16 @@ func (c consents) begin(ctx context.Context, connection store.ConnectorConnectio
 	if !found {
 		return Authorization{}, invalidRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has", connection.AuthScheme))
 	}
-	manifest, err := connectionManifest(ctx, c.store, connection, connection.DefinitionRevision)
+	// Every consent runs on the connector's latest revision, whatever the connection reads
+	// now: a pending one made before a fix, or one connected on a revision marked broken
+	// since, gets the fixed manifest. The connection moves to it only once the consent
+	// connects it (completeConsent), so a consent denied, failed or for another account
+	// leaves it reading what its grant was made with.
+	latest, err := c.store.LatestConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID)
+	if err != nil {
+		return Authorization{}, err
+	}
+	manifest, err := connectionManifest(ctx, c.store, connection, latest.Revision)
 	if err != nil {
 		return Authorization{}, err
 	}
@@ -348,7 +359,7 @@ func (c consents) begin(ctx context.Context, connection store.ConnectorConnectio
 	id := store.NewID()
 	raw, err := json.Marshal(attempt{
 		ConnectorID:        connection.ConnectorID,
-		DefinitionRevision: connection.DefinitionRevision,
+		DefinitionRevision: latest.Revision,
 		Scheme:             connection.AuthScheme,
 		Handoff:            handoff,
 		AuthorizeURL:       begun.AuthorizeURL,
@@ -681,6 +692,8 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 		state.AccountID = account.AccountID
 		state.Metadata = account.Metadata
 		state.Scopes = account.Scopes
+		// The connection reads the revision its grant was made on from now on.
+		state.DefinitionRevision = sealed.DefinitionRevision
 		// Unknown here: the expiry is inside the scheme's stored credentials, and the
 		// resolver (T12) sets it the first time it retrieves an access credential.
 		state.ExpiresAt = time.Time{}
@@ -791,12 +804,21 @@ func (s *Server) connectionManifest(ctx context.Context, connection store.Connec
 	return connectionManifest(ctx, s.store, connection, revision)
 }
 
+// connectionManifest keeps only the captured values revision still captures. A consent runs
+// on the latest revision (begin), which may have dropped a capture rule the connection's own
+// revision had; no template of revision can name that value, and Resolve refuses one it does
+// not capture. At the connection's own revision every value is one it captured, so nothing
+// is left out.
 func connectionManifest(ctx context.Context, records *store.Store, connection store.ConnectorConnection, revision int) (core.ResolvedManifest, error) {
 	definition, err := records.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, revision)
 	if err != nil {
 		return core.ResolvedManifest{}, err
 	}
-	return definition.Manifest.Resolve(connection.AuthScheme, connection.Inputs, connection.Metadata)
+	metadata := maps.Clone(connection.Metadata)
+	maps.DeleteFunc(metadata, func(name, _ string) bool {
+		return !slices.ContainsFunc(definition.Manifest.Capture, func(rule core.CaptureRule) bool { return rule.Name == name })
+	})
+	return definition.Manifest.Resolve(connection.AuthScheme, connection.Inputs, metadata)
 }
 
 // openAttemptByID and openAttemptByState read an open attempt and open what it sealed. A

@@ -50,12 +50,12 @@ const (
 // credentialColumns are what a credentials write sets: the credential state itself
 // (core.CredentialState: status, revision, stored credentials, expiry, last error) and what a
 // consent captures beside it (account, scopes,
-// metadata, when it connected). The prototype's list (SaveConnectorConnectionAtRevision at cf62af0d) with its
+// metadata, when it connected, the definition revision it ran on). The prototype's list (SaveConnectorConnectionAtRevision at cf62af0d) with its
 // credential columns renamed to credentials ones and metadata added, less cached_tools and
 // tools_*: those have a writer of their own, and a credentials write would put back a stale copy.
 var credentialColumns = []string{
 	"status", "revision", "credentials_sealed", "credentials_kek_version", "expires_at", "last_error",
-	"account_id", "granted_scopes", "metadata", "connected_at", "updated_at",
+	"account_id", "granted_scopes", "metadata", "connected_at", "definition_revision", "updated_at",
 }
 
 // SaveConnectorConnectionAtRevision saves new stored credentials, already sealed for

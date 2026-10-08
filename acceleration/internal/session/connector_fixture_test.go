@@ -107,9 +107,18 @@ func (s *connectorFixture) SetupTest() {
 	s.provider.forget()
 	s.customerID = "connectors-" + uuid.NewString()
 	s.connectorID = "custom_crm"
-	manifest, err := core.ParseManifest([]byte(fmt.Sprintf(`
+	manifest, err := core.ParseManifest([]byte(s.crmManifest(s.connectorID, 1)))
+	s.Require().NoError(err)
+	definition, err := s.store.CreateConnectorDefinition(s.ctx, s.customerID, manifest)
+	s.Require().NoError(err)
+	s.revision = definition.Revision
+}
+
+// crmManifest is the YAML of the test's connector, id, at revision.
+func (s *connectorFixture) crmManifest(id string, revision int) string {
+	return fmt.Sprintf(`
 id: %s
-revision: 1
+revision: %d
 name: CRM
 inputs:
   - name: account
@@ -120,11 +129,7 @@ schemes: [bearer]
 sources:
   - kind: mcp
     endpoint: mcp
-`, s.connectorID, s.provider.URL)))
-	s.Require().NoError(err)
-	definition, err := s.store.CreateConnectorDefinition(s.ctx, s.customerID, manifest)
-	s.Require().NoError(err)
-	s.revision = definition.Revision
+`, id, revision, s.provider.URL)
 }
 
 // connection is a connected bearer connection to account, owned by the app when user is
