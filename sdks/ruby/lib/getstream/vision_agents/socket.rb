@@ -23,7 +23,8 @@ module GetStream
       OPEN_TIMEOUT = 10
       # The router takes a message of up to 5 MB; this leaves room for what it sends back.
       MAX_MESSAGE = 8 * 1024 * 1024
-      # How long a close waits for the router to answer before the connection is dropped.
+      # How long a close waits for the router to answer before the connection is dropped,
+      # and a refused upgrade for the rest of its body.
       CLOSE_TIMEOUT = 2
 
       attr_reader :url, :close_code
@@ -47,28 +48,39 @@ module GetStream
       # Opens the connection and waits for the upgrade.
       #
       # @raise [RouterError] with the handshake's status when the router refused it, or 0
-      #   when it could not be reached.
+      #   when it could not be reached. A refusal is read as an HTTP answer is, so it
+      #   carries the router's type, code, doc_url and request id.
       def connect
         uri = URI(@url)
         @io = dial(uri)
+        # What arrived before the upgrade, kept for the body of a refusal: the driver reads
+        # its status and headers but not its body.
+        @handshake = "".b
         @driver = WebSocket::Driver.client(self, max_length: MAX_MESSAGE, binary_data_format: :string)
         @headers.each { |name, value| @driver.set_header(name, value) }
-        @driver.on(:open) { update { @open = true } }
+        @driver.on(:open) do
+          update do
+            @open = true
+            @handshake = nil
+          end
+        end
         @driver.on(:message) { |event| received(event.data) }
         @driver.on(:error) { |event| update { @failure = event.message } }
-        # The connection is dropped once the close handshake is done, or the reader would wait
-        # on a connection the router has finished with.
-        @driver.on(:close) { |event| drop(event.code) }
+        # An open socket is dropped once the close handshake is done, or the reader would wait
+        # on a connection the router has finished with. A refused one is kept until #connect
+        # has read the refusal's body.
+        @driver.on(:close) { |event| @state.synchronize { @open } ? drop(event.code) : update { @refused = true } }
         @driver_lock.synchronize { @driver.start }
         @reader = Thread.new { read }
         @reader.report_on_exception = false
 
-        opened = wait_until(OPEN_TIMEOUT) { @open || @finished }
+        opened = wait_until(OPEN_TIMEOUT) { @open || @finished || @refused }
         return self if opened && @open
 
-        status = @driver.respond_to?(:status) ? @driver.status.to_i : 0
+        failure = refusal(uri) || RouterError.new(@driver.status.to_i, "GET #{uri.path}",
+                                                  @failure || "the socket did not open")
         drop
-        raise RouterError.new(status, "GET #{uri.path}", @failure || "the socket did not open")
+        raise failure
       rescue SystemCallError, IOError, SocketError, OpenSSL::SSL::SSLError => e
         raise RouterError.new(0, "GET #{uri.path}", "the socket never opened: #{e.message}")
       end
@@ -139,10 +151,27 @@ module GetStream
       def read
         loop do
           data = @io.readpartial(16_384)
+          update { @handshake << data } if @handshake
           @driver_lock.synchronize { @driver.parse(data) }
         end
       rescue EOFError, IOError, SystemCallError, OpenSSL::SSL::SSLError
         finish(nil)
+      end
+
+      # The router's answer to an upgrade it refused, or nil when there was no answer to
+      # read. The body is whole once Content-Length bytes are in, or the router hung up.
+      def refusal(uri)
+        status = @driver.status.to_i
+        return nil if status.zero? || status == 101
+
+        length = @driver.headers["Content-Length"]&.to_i
+        wait_until(CLOSE_TIMEOUT) { @finished || (length && refused_body.bytesize >= length) }
+        text = @state.synchronize { refused_body }
+        RouterError.answered(status, "GET #{uri.path}", length ? text.byteslice(0, length) : text, @driver.headers)
+      end
+
+      def refused_body
+        @handshake.split("\r\n\r\n", 2)[1].to_s
       end
 
       def received(data)
