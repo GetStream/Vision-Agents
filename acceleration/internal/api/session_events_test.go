@@ -62,6 +62,9 @@ func (s *SessionEventsSuite) TestADeviceMayNotRewriteASessionsInstructionsOverTh
 			s.Equal("command", refused["context"])
 			s.Equal(created, refused["error"])
 			s.Contains(created, "instructions are changed server-side")
+			// The refusal leaves the socket reading: a later command still gets its answer.
+			s.Require().NoError(watching.WriteJSON(map[string]any{"type": "no-such-command"}))
+			s.Contains(s.await(watching, "error")["error"], "unknown command")
 			s.Empty(value(device.getSession(opened.Id).Instructions), "a refused command changes nothing")
 		})
 	}
