@@ -74,11 +74,13 @@ const maxAnswerBytes = 1 << 20
 // contact map, so each channel adds its connector here: slack_bot is Slack (T35), keyed by
 // the workspace and the user; linq is iMessage (T36), keyed by the sender's number, so an
 // author Linq names by an email address gets no card; telnyx is SMS (T53), keyed by the
-// sender's number, with the carriers' keywords (keywords.go). WhatsApp (T51) adds its own.
+// sender's number, with the carriers' keywords (keywords.go); whatsapp is WhatsApp (T51),
+// keyed by the sender's number with a +, with the same keywords, which Meta answers none of.
 var episodeSources = map[string]episodeSource{
 	"slack_bot": {source: store.EpisodeSlack, person: omnichannel.SlackUser},
 	"linq":      {source: store.EpisodeIMessage, person: byNumber},
 	"telnyx":    {source: store.EpisodeSMS, person: byNumber, optOuts: dlc.SMS, answered: telnyxAnswered},
+	"whatsapp":  {source: store.EpisodeWhatsApp, person: byWhatsAppNumber, optOuts: dlc.WhatsApp, recipient: whatsAppNumber},
 }
 
 // episodeSource is one connector's card source and the person its message's author is.
@@ -92,11 +94,36 @@ type episodeSource struct {
 	// answered is whether the provider answered a keyword itself, read from the raw event, so
 	// the bridge records it without answering it again (keywords.go). Nil is never.
 	answered func(raw []byte) bool
+	// recipient is the opt-out recipient an author id, or the thread key a reply goes to, is:
+	// the number in E.164, the shape the opt-out API names (api.OptOut, «The number, in
+	// E.164»). Nil is the id as the provider wrote it.
+	recipient func(id string) string
+}
+
+// recipientOf is the opt-out recipient an author id or a thread key is.
+func (source episodeSource) recipientOf(id string) string {
+	if source.recipient == nil {
+		return id
+	}
+	return source.recipient(id)
 }
 
 // byNumber is the person an author's E.164 number is to the contact map.
 func byNumber(_, author string) (omnichannel.Person, error) {
 	return omnichannel.Phone(author)
+}
+
+// whatsAppNumber is a WhatsApp author's number in E.164. Meta writes messages[].from as the
+// digits of the international number with no + («"from": "16505551234"»,
+// https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/payload-examples, opened
+// October 8, 2026), the rule internal/channels' e164 follows too.
+func whatsAppNumber(from string) string {
+	return "+" + from
+}
+
+// byWhatsAppNumber is the person a WhatsApp author's number is to the contact map.
+func byWhatsAppNumber(_, author string) (omnichannel.Person, error) {
+	return omnichannel.Phone(whatsAppNumber(author))
 }
 
 // Options configures a Bridge.

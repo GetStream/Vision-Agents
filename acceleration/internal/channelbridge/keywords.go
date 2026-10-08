@@ -14,7 +14,12 @@ import (
 
 // The words a texting program obeys whatever the agent would have said (T53, AI-881; wave 3c
 // Q9: STOP, START and HELP are handled on the bridge, before the agent; the bridge answers
-// only the ones the provider did not, episodeSource.answered). A message is one of them when
+// only the ones the provider did not, episodeSource.answered). WhatsApp has them too (T51,
+// AI-879): Meta's policy asks a business to «respect all requests (either on or off
+// WhatsApp) by a person to block, discontinue, or otherwise opt out of communications from
+// you via WhatsApp» and names no keyword Meta answers itself
+// (https://whatsappbusiness.com/policy/, opened October 8, 2026),
+// and internal/channels answers these words on its WhatsApp lines. A message is one of them when
 // it is nothing else, read without its case or punctuation (keywordOf).
 //
 //   - stopWords: the CTIA Messaging Principles and Best Practices (May 2023), 5.1.3, «stop,
@@ -66,16 +71,16 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, messag
 	switch {
 	case slices.Contains(stopWords, word):
 		err = b.store.OptOut(ctx, &store.OptOut{
-			CustomerID: thread.CustomerID, Recipient: message.AuthorID, Channel: channel, Source: optOutSource,
+			CustomerID: thread.CustomerID, Recipient: source.recipientOf(message.AuthorID), Channel: channel, Source: optOutSource,
 		})
 		reply = stoppedReply
 	case slices.Contains(startWords, word):
-		err = b.store.RevokeOptOuts(ctx, thread.CustomerID, message.AuthorID, channel)
+		err = b.store.RevokeOptOuts(ctx, thread.CustomerID, source.recipientOf(message.AuthorID), channel)
 		reply = startedReply
 	case slices.Contains(helpWords, word):
 		reply = helpReply
 	default:
-		optedOut, err := b.store.OptedOut(ctx, thread.CustomerID, message.AuthorID, channel)
+		optedOut, err := b.store.OptedOut(ctx, thread.CustomerID, source.recipientOf(message.AuthorID), channel)
 		if err != nil {
 			return false, b.unclaim(ctx, thread, message, err)
 		}
@@ -130,14 +135,14 @@ func (b *Bridge) unclaim(ctx context.Context, thread store.ChannelThread, messag
 
 // optedOut is whether the person a thread's replies go to opted out of its connector's
 // opt-out channel. That person is the thread key: an SMS thread is the person's number
-// (telnyx.yaml's one thread key part), which Read writes as it is, since an E.164 number has
-// no % or : to encode.
+// (telnyx.yaml's one thread key part), a WhatsApp thread its digits (whatsapp.yaml's), which
+// Read writes as they are, since a number has no % or : to encode.
 func (b *Bridge) optedOut(ctx context.Context, thread store.ChannelThread) (bool, error) {
-	channel := episodeSources[thread.ConnectorID].optOuts
-	if channel == "" {
+	source := episodeSources[thread.ConnectorID]
+	if source.optOuts == "" {
 		return false, nil
 	}
-	return b.store.OptedOut(ctx, thread.CustomerID, thread.ThreadKey, channel)
+	return b.store.OptedOut(ctx, thread.CustomerID, source.recipientOf(thread.ThreadKey), source.optOuts)
 }
 
 // keywordOf is a message as a keyword: its words in upper case, without the punctuation
