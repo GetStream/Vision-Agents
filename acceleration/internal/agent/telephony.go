@@ -474,6 +474,10 @@ func (a *Agent) holdOnInterrupt(ctx context.Context, call llm.ToolCall) *toolHol
 		}
 		hold.answered = true
 		a.history = append(a.history, llm.Message{Role: llm.ToolResult, ToolCallID: call.ID, Content: stillRunning})
+		if !callsOpen(a.history) {
+			a.history = append(a.history, a.lateResults...)
+			a.lateResults = nil
+		}
 	})
 	return hold
 }

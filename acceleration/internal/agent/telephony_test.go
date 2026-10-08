@@ -801,6 +801,96 @@ func (s *AgentSuite) TestALateResultWaitsForTheCallsRunningWhenItComes() {
 		last[len(last)-1])
 }
 
+func (s *AgentSuite) TestALateResultIsKeptWhenTheNextCallIsInterruptedToo() {
+	// The next turn's call is interrupted and answered, which closes the open call: the
+	// late result that already came must go into the history then, not wait for a result
+	// that is already there.
+	runner := newHeldCalls("call-1", "call-2")
+	s.interruptsWaitCallsThenCalls(runner,
+		[]llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}},
+		llm.ToolCall{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`})
+	close(runner.release["call-1"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the first call never answered")
+
+	participant := stt.Participant{ID: "alice"}
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.mutters(participant, "stop that too")
+	s.eventually(func() bool {
+		answered := 0
+		for _, m := range s.history() {
+			if m.Content == stillRunning {
+				answered++
+			}
+		}
+		return answered == 2
+	}, "the second call was not answered")
+	s.flow.then = nil
+	s.model.mu.Lock()
+	s.model.then = []string{"Fifteen."}
+	s.model.mu.Unlock()
+	s.says(participant, "what is seven plus eight")
+	s.eventually(func() bool { return s.spokenText("Fifteen") }, "the third turn never spoke")
+
+	s.model.mu.Lock()
+	last := s.model.asked[len(s.model.asked)-1].Input
+	s.model.mu.Unlock()
+	s.Equal([]string{fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result"}, lateResultsIn(last))
+
+	close(runner.release["call-2"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "the second call never answered")
+}
+
+func (s *AgentSuite) TestALateResultWaitsForEveryCallOfTheNextTurn() {
+	// The next turn asks for two calls and one is answered: the history still ends in an
+	// open call, so the late result waits for the other.
+	s.ownsTools("")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
+	s.join(true)
+	runner := newHeldCalls("call-1", "call-2", "call-3")
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.model.then = []string{"Checking."}
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	s.began(runner, "call-1")
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.mutters(participant, "stop cancel that lookup")
+	s.eventually(func() bool {
+		for _, m := range s.history() {
+			if m.Content == stillRunning {
+				return true
+			}
+		}
+		return false
+	}, "the call was not answered")
+	s.flow.then = nil
+	s.model.mu.Lock()
+	s.model.calls = []llm.ToolCall{
+		{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`},
+		{ID: "call-3", Name: "lookup_order", Arguments: `{"order":"14"}`},
+	}
+	s.model.keepCalling = true
+	s.model.mu.Unlock()
+	s.says(participant, "and my other two orders")
+	s.began(runner, "call-2")
+	s.began(runner, "call-3")
+	s.model.mu.Lock()
+	s.model.keepCalling = false
+	s.model.mu.Unlock()
+
+	close(runner.release["call-2"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "call-2 never answered")
+	close(runner.release["call-1"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "call-1 never answered")
+	s.Empty(lateResultsIn(s.history()), "the late result came while call-3 was still running")
+
+	close(runner.release["call-3"])
+	s.eventually(func() bool { return len(lateResultsIn(s.history())) == 1 }, "the late result was never added")
+	s.Empty(unanswered(s.history()))
+}
+
 func (s *AgentSuite) TestLateResultsHeldBackComeInTheOrderTheyCame() {
 	runner := newHeldCalls("call-1", "call-2", "call-3", "call-4")
 	s.interruptsWaitCallsThenCalls(runner,
