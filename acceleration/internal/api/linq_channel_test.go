@@ -135,6 +135,16 @@ func (s *LinqChannelSuite) TestAChatIsOneThreadChannelAndOneIMessageCardInTheSen
 	s.Equal("agent:"+thread, custom["thread_channel"])
 }
 
+// AI-881: the carriers' keywords are SMS's (channelbridge/keywords.go), so a STOP in iMessage
+// reaches the agent as any text does, as before.
+func (s *LinqChannelSuite) TestAStopInIMessageReachesTheAgentAsBefore() {
+	chat := s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, "+12025550199", "STOP"), time.Now()))
+
+	s.Equal("STOP", s.written(s.threadChannel(chat), 1)[0]["text"])
+	s.Never(func() bool { return len(s.linq.sent()) > 0 }, dropped, 20*time.Millisecond)
+}
+
 // Linq delivers «At-least-once (duplicates possible)» (webhooks): the same message delivered
 // again is written once.
 func (s *LinqChannelSuite) TestADeliveryLinqRepeatsIsWrittenOnce() {

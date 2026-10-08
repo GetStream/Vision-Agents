@@ -53,17 +53,18 @@ func (s *ConnectorRegistrySuite) TestWithConnectorsOnTheFiveSchemesAreRegistered
 }
 
 // AI-863: Linq's events are Standard Webhooks, which a manifest names as standard_webhooks.
-func (s *ConnectorRegistrySuite) TestWithConnectorsOnBothVerifiersAreRegisteredByKind() {
+// AI-881: Telnyx's are Ed25519, ed25519.
+func (s *ConnectorRegistrySuite) TestWithConnectorsOnEveryVerifierIsRegisteredByKind() {
 	s.settings.Connectors.Enabled = true
 
 	registry, err := newConnectorRegistry(s.settings, nil)
 
 	s.Require().NoError(err)
-	for _, kind := range []core.VerifierKind{core.VerifierHMACHeader, core.VerifierStandardWebhooks} {
+	for _, kind := range []core.VerifierKind{core.VerifierHMACHeader, core.VerifierStandardWebhooks, core.VerifierEd25519} {
 		s.Require().Contains(registry.Verifiers, string(kind))
 		s.Equal(string(kind), registry.Verifiers[string(kind)].Name())
 	}
-	s.Len(registry.Verifiers, 2)
+	s.Len(registry.Verifiers, 3)
 }
 
 func (s *ConnectorRegistrySuite) TestWithConnectorsOffNoVerifierIsRegistered() {
