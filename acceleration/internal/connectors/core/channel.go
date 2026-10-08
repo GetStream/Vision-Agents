@@ -31,6 +31,9 @@ type ChannelRule struct {
 	// Challenge is the path of the value a handshake asks the endpoint to send back. A body
 	// that has it is a handshake and carries no messages and no signals.
 	Challenge string `yaml:"challenge,omitempty" json:"challenge,omitempty"`
+	// Handshake is the GET a provider checks its events URL with before it delivers to it,
+	// answered on a provider app's route only. Empty means the route serves no GET.
+	Handshake HandshakeKind `yaml:"handshake,omitempty" json:"handshake,omitempty"`
 	// EventID is the paths of the provider's own id for a delivery, tried in order, such as
 	// Slack's event_id on an event and trigger_id on an interaction. A forward of the delivery
 	// to the customer's event destinations is keyed by it (EventID, eventforward). Empty, or
@@ -215,6 +218,40 @@ const (
 	SecretProviderApp SecretSource = "provider_app"
 )
 
+// HandshakeKind is the GET handshake a channel's events URL answers.
+type HandshakeKind string
+
+// The handshakes. hub_challenge is PubSubHubbub 0.3's verification of intent
+// (https://pubsubhubbub.github.io/PubSubHubbub/pubsubhubbub-core-0.3.html, 6.2.1, opened
+// October 8, 2026): a GET whose query has hub.mode, hub.verify_token and hub.challenge, which
+// the URL's owner echoes when it agrees and answers 404 when it does not. Meta's webhooks check
+// a URL this way, with hub.mode «always set to subscribe» and hub.challenge «An int you must
+// pass back to us» (https://developers.facebook.com/docs/graph-api/webhooks/getting-started,
+// opened October 8, 2026). The verify token is the provider app's id, the one the URL names
+// (wave 3d Q1), so only a provider_app secret has the handshake.
+const (
+	HandshakeHubChallenge HandshakeKind = "hub_challenge"
+)
+
+// hubSubscribe is hub.mode on a handshake that asks to start deliveries (6.2.1 above).
+const hubSubscribe = "subscribe"
+
+// AnswerHandshake is the challenge to echo for a handshake's query, and whether the URL
+// agrees: the block declares hub_challenge, hub.mode is subscribe, hub.verify_token is
+// verifyToken, and hub.challenge is digits only, the int Meta sends, so the echo is never
+// anything a reader could take for markup.
+func (c ChannelRule) AnswerHandshake(query url.Values, verifyToken string) (string, bool) {
+	if c.Handshake != HandshakeHubChallenge || verifyToken == "" {
+		return "", false
+	}
+	challenge := query.Get("hub.challenge")
+	if query.Get("hub.mode") != hubSubscribe || query.Get("hub.verify_token") != verifyToken ||
+		challenge == "" || strings.Trim(challenge, "0123456789") != "" {
+		return "", false
+	}
+	return challenge, true
+}
+
 // BodyFormat is how an inbound body is read.
 type BodyFormat string
 
@@ -235,6 +272,7 @@ const (
 
 var (
 	verifierKinds = []VerifierKind{VerifierHMACHeader, VerifierSecretHeader, VerifierStandardWebhooks, VerifierEd25519}
+	handshakes    = []HandshakeKind{HandshakeHubChallenge}
 	secretSources = []SecretSource{SecretOperator, SecretProviderApp}
 	bodyFormats   = []BodyFormat{FormatJSON, FormatForm}
 	// hmacAlgorithms: SHA-256 is what Slack («Verifying requests from Slack»,
@@ -312,6 +350,11 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 	}
 	if v.Secret == SecretOperator && m.Client.Env == "" {
 		fail("channel.verifier.secret", "operator needs client.env to read the operator's secret under")
+	}
+	if c.Handshake != "" && !slices.Contains(handshakes, c.Handshake) {
+		fail("channel.handshake", "%q is not one of %v", c.Handshake, handshakes)
+	} else if c.Handshake != "" && v.Secret != SecretProviderApp {
+		fail("channel.handshake", "needs a provider_app secret: the verify token is the provider app's id")
 	}
 	unread := func(field string, set bool) {
 		if set {
