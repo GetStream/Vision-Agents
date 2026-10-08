@@ -121,8 +121,7 @@ func (i *Items) List(ctx context.Context, limit int, cursor string) (*accelerati
 		return nil, fmt.Errorf("client: reading the items of %s: %w", i.sessionID, err)
 	}
 	if listed.JSON200 == nil {
-		return nil, failure("reading the items of "+i.sessionID, listed.Status(),
-			listed.JSON400, listed.JSON401, listed.JSON403, listed.JSON404)
+		return nil, failure("reading the items of "+i.sessionID, listed.HTTPResponse, listed.Body)
 	}
 	return listed.JSON200, nil
 }
@@ -276,8 +275,7 @@ func (r *Responses) Create(ctx context.Context, text string, inputs ...Input) (*
 		return nil, fmt.Errorf("client: asking %s: %w", r.sessionID, err)
 	}
 	if created.JSON202 == nil {
-		return nil, failure("asking "+r.sessionID, created.Status(),
-			created.JSON400, created.JSON401, created.JSON403, created.JSON404)
+		return nil, failure("asking "+r.sessionID, created.HTTPResponse, created.Body)
 	}
 	return &AgentResponse{
 		Created: *created.JSON202,
@@ -299,8 +297,7 @@ func (r *Responses) List(ctx context.Context, limit int, cursor string) (*accele
 		return nil, fmt.Errorf("client: reading the turns of %s: %w", r.sessionID, err)
 	}
 	if listed.JSON200 == nil {
-		return nil, failure("reading the turns of "+r.sessionID, listed.Status(),
-			listed.JSON400, listed.JSON401, listed.JSON403, listed.JSON404)
+		return nil, failure("reading the turns of "+r.sessionID, listed.HTTPResponse, listed.Body)
 	}
 	return listed.JSON200, nil
 }
@@ -328,8 +325,7 @@ func (r *Responses) Rewind(ctx context.Context, responseID string) error {
 		return fmt.Errorf("client: rewinding %s: %w", r.sessionID, err)
 	}
 	if rewound.StatusCode() != http.StatusNoContent {
-		return failure("rewinding "+r.sessionID, rewound.Status(),
-			rewound.JSON400, rewound.JSON401, rewound.JSON403, rewound.JSON404)
+		return failure("rewinding "+r.sessionID, rewound.HTTPResponse, rewound.Body)
 	}
 	return nil
 }

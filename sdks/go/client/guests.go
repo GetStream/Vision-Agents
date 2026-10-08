@@ -51,7 +51,7 @@ func (c *Client) GuestUser(ctx context.Context, options GuestOptions) (*Guest, e
 		return nil, fmt.Errorf("client: minting a guest: %w", err)
 	}
 	if minted.JSON201 == nil {
-		return nil, failure("minting a guest", minted.Status(), minted.JSON400, minted.JSON401)
+		return nil, failure("minting a guest", minted.HTTPResponse, minted.Body)
 	}
 	return minted.JSON201, nil
 }
@@ -89,8 +89,7 @@ func (c *Client) ClaimGuestUser(ctx context.Context, guestID, userID string) (*a
 		return nil, fmt.Errorf("client: claiming the guest %s: %w", guestID, err)
 	}
 	if claimed.JSON200 == nil {
-		return nil, failure("claiming the guest "+guestID, claimed.Status(),
-			claimed.JSON400, claimed.JSON401, claimed.JSON403, claimed.JSON404, claimed.JSON409)
+		return nil, failure("claiming the guest "+guestID, claimed.HTTPResponse, claimed.Body)
 	}
 	return claimed.JSON200, nil
 }
