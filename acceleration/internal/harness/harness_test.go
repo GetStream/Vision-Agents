@@ -490,6 +490,25 @@ func (s *HarnessSuite) TestTheModelIsToldHowToUseTheToolsItIsOffered() {
 	s.Contains(instructions, "same turn", "a tool is called once what it requires is known")
 }
 
+func (s *HarnessSuite) TestTheReplyToAToolResultIsToldHowToUseToolsToo() {
+	// What keeps a hold phrase from being said again once the result is back is the same
+	// instruction, so the reply that follows a result must carry it as the first reply did.
+	s.tools = testTools()
+	s.build(false)
+
+	s.respond("turn-1", "a table for four at 7:30")
+	s.answer(Turn{
+		ID:           "tool-1",
+		Instructions: "be brief",
+		History:      []llm.Message{{Role: llm.User, Content: "a table for four at 7:30"}},
+		AfterTool:    true,
+	})
+
+	s.Require().Len(s.fast.requests(), 2)
+	s.Contains(s.fast.requests()[1].Instructions, "After a result, answer from it")
+	s.Equal(s.fast.requests()[0].Instructions, s.fast.requests()[1].Instructions)
+}
+
 func (s *HarnessSuite) TestWithoutToolsTheModelIsToldNothingAboutThem() {
 	s.build(true)
 

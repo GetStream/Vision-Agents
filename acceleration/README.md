@@ -748,15 +748,22 @@ tool instead.
   tag is released immediately, because the caller is listening to the gap.
 - **A model that has tools is told how to use them.** The reply model is given a short block
   after the agent's own instructions whenever the harness offers tools: before calling one,
-  say a short sentence of what the operator's instructions ask to be said before acting, such
-  as reading the caller's details back, or else what the agent is doing, and never a bare
-  filler in place of a required read-back; then call it in the same turn once every argument
-  it requires is known, without collecting optional ones first or asking leave for what the
-  caller just asked for; take a name or value as the caller gave it, since a surname is a
-  name; call the next tool the request needs after a result; pass bare values. It names no
-  tool and defers to the operator's own instructions and a tool's approval setting wherever
-  confirmation is required first. A reply carrying a colleague's question is offered no tools
-  and is not told about them.
+  say one short sentence that opens with a brief hold phrase ("One moment,") and runs straight
+  on, with no full stop between, into what the operator's instructions ask to be said before
+  acting, such as reading the caller's details back, or else what the agent is doing. The
+  phrase belongs there and nowhere else, never a sentence of its own, never in place of a
+  required read-back and never after the call or the result: a read-back takes seconds to say,
+  so a phrase after it comes after the wait it was meant to cover, and a one-word sentence
+  before it leaves a pause a caller's interruption falls into. After a result the model
+  answers from it without another one. It then calls the tool in the same turn once every
+  argument it requires is known, without collecting optional ones first or asking leave for
+  what the caller just asked for; takes a name or value as the caller gave it, since a surname
+  is a name; calls the next tool the request needs after a result; and passes bare values. It
+  names no tool and defers to the operator's own instructions and a tool's approval setting
+  wherever confirmation is required first. A reply carrying a colleague's question is offered
+  no tools and is not told about them. The agent's own filler and a tool's `pre_speech` stay
+  what they were, for a model that reached for a tool without a word: a turn that said
+  something before its call is given neither, so a wait has one hold phrase.
 - **A task is a completion, so cancelling one is a targeted interrupt.** `Interrupt` on
   `llm.LLM` takes completion ids, which is what lets a conversation abandon stale work
   without stopping the reply being spoken. Work is abandoned when a newer request for the
