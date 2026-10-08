@@ -59,14 +59,30 @@ func (s *BridgeSuite) TestAKeywordIsReadWithoutItsCaseOrPunctuation() {
 	s.NotContains(stopWords, keywordOf("stop texting me"), "a sentence is the agent's to read")
 }
 
-// Only a connector whose episode source names an opt-out channel has keywords: SMS today, so
-// a STOP in Slack or iMessage reaches the agent as before.
-func (s *BridgeSuite) TestOnlySMSHasKeywords() {
+// Only a connector whose episode source names an opt-out channel has keywords: SMS and, since
+// AI-879, WhatsApp, so a STOP in Slack or iMessage reaches the agent as before.
+func (s *BridgeSuite) TestOnlySMSAndWhatsAppHaveKeywords() {
 	for connector, source := range episodeSources {
-		if connector == "telnyx" {
+		switch connector {
+		case "telnyx":
 			s.Equal("sms", source.optOuts)
-			continue
+		case "whatsapp":
+			s.Equal("whatsapp", source.optOuts)
+		default:
+			s.Empty(source.optOuts, connector)
 		}
-		s.Empty(source.optOuts, connector)
 	}
+}
+
+// AI-879: Meta writes a WhatsApp author as digits with no +, and the contact map and the
+// opt-outs key the person by the number in E.164; an SMS number is E.164 already.
+func (s *BridgeSuite) TestAWhatsAppAuthorIsTheirNumberInE164() {
+	whatsapp, telnyx := episodeSources["whatsapp"], episodeSources["telnyx"]
+
+	person, err := whatsapp.person("106540352242922", "16505551234")
+
+	s.Require().NoError(err)
+	s.Equal("+16505551234", person.Address)
+	s.Equal("+16505551234", whatsapp.recipientOf("16505551234"))
+	s.Equal("+13125550001", telnyx.recipientOf("+13125550001"))
 }

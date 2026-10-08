@@ -7572,6 +7572,18 @@ type ListLibraryVoicesParams struct {
 	Provider *string `form:"provider,omitempty" json:"provider,omitempty"`
 }
 
+// AnswerProviderAppHandshakeParams defines parameters for AnswerProviderAppHandshake.
+type AnswerProviderAppHandshakeParams struct {
+	// HubMode subscribe.
+	HubMode *string `form:"hub.mode,omitempty" json:"hub.mode,omitempty"`
+
+	// HubVerifyToken The provider app's id.
+	HubVerifyToken *string `form:"hub.verify_token,omitempty" json:"hub.verify_token,omitempty"`
+
+	// HubChallenge Digits to echo.
+	HubChallenge *string `form:"hub.challenge,omitempty" json:"hub.challenge,omitempty"`
+}
+
 // ListDataChangesParams defines parameters for ListDataChanges.
 type ListDataChangesParams struct {
 	// After The cursor the last page ended at.
@@ -9923,6 +9935,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/classify (the `Classify` operationId).
 	Classify(ctx context.Context, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AnswerProviderAppHandshake Answer a provider app's handshake
+	//
+	// Where a provider checks a provider app's events URL before it delivers to it: Meta's Verify Token check of a customer's WhatsApp webhook, for one. Unauthenticated because the provider is not a customer. Only a connector whose manifest declares channel.handshake answers it; the verify token is the provider app's id, the one in the URL, so nothing is stored for it, and every delivery is still verified with the app's own secret. With hub.mode subscribe, hub.verify_token the provider app's id and hub.challenge digits only, the challenge is echoed as text/plain. Any other connector, an unknown provider app, or a deployment without connectors answers 405 as for any method a route does not serve. No SDK wraps it: only a provider calls it.
+	//
+	// Corresponds with GET /v1/connectors/events/{connector_id}/{provider_app_id} (the `AnswerProviderAppHandshake` operationId).
+	AnswerProviderAppHandshake(ctx context.Context, connectorId string, providerAppId string, params *AnswerProviderAppHandshakeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReceiveProviderAppEvent Receive a provider app's event
 	//
@@ -14192,6 +14211,23 @@ func (c *Client) ClassifyWithBody(ctx context.Context, contentType string, body 
 // Corresponds with POST /v1/classify (the `Classify` operationId).
 func (c *Client) Classify(ctx context.Context, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClassifyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AnswerProviderAppHandshake Answer a provider app's handshake
+//
+// Where a provider checks a provider app's events URL before it delivers to it: Meta's Verify Token check of a customer's WhatsApp webhook, for one. Unauthenticated because the provider is not a customer. Only a connector whose manifest declares channel.handshake answers it; the verify token is the provider app's id, the one in the URL, so nothing is stored for it, and every delivery is still verified with the app's own secret. With hub.mode subscribe, hub.verify_token the provider app's id and hub.challenge digits only, the challenge is echoed as text/plain. Any other connector, an unknown provider app, or a deployment without connectors answers 405 as for any method a route does not serve. No SDK wraps it: only a provider calls it.
+//
+// Corresponds with GET /v1/connectors/events/{connector_id}/{provider_app_id} (the `AnswerProviderAppHandshake` operationId).
+func (c *Client) AnswerProviderAppHandshake(ctx context.Context, connectorId string, providerAppId string, params *AnswerProviderAppHandshakeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAnswerProviderAppHandshakeRequest(c.Server, connectorId, providerAppId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -22188,6 +22224,98 @@ func NewClassifyRequestWithBody(server string, contentType string, body io.Reade
 	return req, nil
 }
 
+// NewAnswerProviderAppHandshakeRequest constructs an http.Request for the AnswerProviderAppHandshake method
+func NewAnswerProviderAppHandshakeRequest(server string, connectorId string, providerAppId string, params *AnswerProviderAppHandshakeParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "connector_id", connectorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "provider_app_id", providerAppId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/connectors/events/%s/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.HubMode != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "hub.mode", *params.HubMode, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.HubVerifyToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "hub.verify_token", *params.HubVerifyToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.HubChallenge != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "hub.challenge", *params.HubChallenge, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewReceiveProviderAppEventRequest constructs an http.Request for the ReceiveProviderAppEvent method
 func NewReceiveProviderAppEventRequest(server string, connectorId string, providerAppId string) (*http.Request, error) {
 	var err error
@@ -27170,6 +27298,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/classify (the `Classify` operationId).
 	ClassifyWithResponse(ctx context.Context, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*ClassifyResponse, error)
+
+	// AnswerProviderAppHandshakeWithResponse Answer a provider app's handshake
+	//
+	// Where a provider checks a provider app's events URL before it delivers to it: Meta's Verify Token check of a customer's WhatsApp webhook, for one. Unauthenticated because the provider is not a customer. Only a connector whose manifest declares channel.handshake answers it; the verify token is the provider app's id, the one in the URL, so nothing is stored for it, and every delivery is still verified with the app's own secret. With hub.mode subscribe, hub.verify_token the provider app's id and hub.challenge digits only, the challenge is echoed as text/plain. Any other connector, an unknown provider app, or a deployment without connectors answers 405 as for any method a route does not serve. No SDK wraps it: only a provider calls it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/connectors/events/{connector_id}/{provider_app_id} (the `AnswerProviderAppHandshake` operationId).
+	AnswerProviderAppHandshakeWithResponse(ctx context.Context, connectorId string, providerAppId string, params *AnswerProviderAppHandshakeParams, reqEditors ...RequestEditorFn) (*AnswerProviderAppHandshakeResponse, error)
 
 	// ReceiveProviderAppEventWithResponse Receive a provider app's event
 	//
@@ -38034,6 +38171,47 @@ func (r ClassifyResponse) ContentType() string {
 	return ""
 }
 
+type AnswerProviderAppHandshakeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AnswerProviderAppHandshakeResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AnswerProviderAppHandshakeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AnswerProviderAppHandshakeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AnswerProviderAppHandshakeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AnswerProviderAppHandshakeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ReceiveProviderAppEventResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -45908,6 +46086,21 @@ func (c *ClientWithResponses) ClassifyWithResponse(ctx context.Context, body Cla
 		return nil, err
 	}
 	return ParseClassifyResponse(rsp)
+}
+
+// AnswerProviderAppHandshakeWithResponse Answer a provider app's handshake
+//
+// Where a provider checks a provider app's events URL before it delivers to it: Meta's Verify Token check of a customer's WhatsApp webhook, for one. Unauthenticated because the provider is not a customer. Only a connector whose manifest declares channel.handshake answers it; the verify token is the provider app's id, the one in the URL, so nothing is stored for it, and every delivery is still verified with the app's own secret. With hub.mode subscribe, hub.verify_token the provider app's id and hub.challenge digits only, the challenge is echoed as text/plain. Any other connector, an unknown provider app, or a deployment without connectors answers 405 as for any method a route does not serve. No SDK wraps it: only a provider calls it.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/connectors/events/{connector_id}/{provider_app_id} (the `AnswerProviderAppHandshake` operationId).
+func (c *ClientWithResponses) AnswerProviderAppHandshakeWithResponse(ctx context.Context, connectorId string, providerAppId string, params *AnswerProviderAppHandshakeParams, reqEditors ...RequestEditorFn) (*AnswerProviderAppHandshakeResponse, error) {
+	rsp, err := c.AnswerProviderAppHandshake(ctx, connectorId, providerAppId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAnswerProviderAppHandshakeResponse(rsp)
 }
 
 // ReceiveProviderAppEventWithResponse Receive a provider app's event
@@ -55398,6 +55591,38 @@ func ParseClassifyResponse(rsp *http.Response) (*ClassifyResponse, error) {
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAnswerProviderAppHandshakeResponse parses an HTTP response from a AnswerProviderAppHandshakeWithResponse call
+func ParseAnswerProviderAppHandshakeResponse(rsp *http.Response) (*AnswerProviderAppHandshakeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AnswerProviderAppHandshakeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 405:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

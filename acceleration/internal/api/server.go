@@ -513,6 +513,11 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	return server, nil
 }
 
+// methodNotAllowed is the answer to a method a route does not serve.
+func methodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	writeError(w, newAPIError(ErrorTypeMethodNotAllowed, r.Method+" is not served on this route"))
+}
+
 // Handler returns the HTTP handler for the whole API.
 //
 // The routes served by hand are registered first, on the router the Huma operations are then
@@ -526,9 +531,7 @@ func (s *Server) Handler() http.Handler {
 	mux.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, notFound("no such route"))
 	})
-	mux.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, newAPIError(ErrorTypeMethodNotAllowed, r.Method+" is not served on this route"))
-	})
+	mux.MethodNotAllowed(methodNotAllowed)
 	mux.HandleFunc("GET /v1/agents/logs", s.listAgentLogs)
 	mux.HandleFunc("GET /v1/agents/logs/stream", s.streamAgentLogs)
 	mux.HandleFunc("GET /v1/agents/logs/{id}", s.getAgentLog)
@@ -552,6 +555,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+ConnectorClientMetadataPath, s.serveConnectorClientMetadata)
 	mux.HandleFunc("POST "+connectorEventsPath+"{connector_id}", s.receiveConnectorEvent)
 	mux.HandleFunc("POST "+providerAppEventsPath+"{connector_id}/{provider_app_id}", s.receiveProviderAppEvent)
+	mux.HandleFunc("GET "+providerAppEventsPath+"{connector_id}/{provider_app_id}", s.answerProviderAppHandshake)
 	// With connectors off (no transports) the proxy is no route at all, as before it existed.
 	if s.connectorTransports != nil {
 		for _, method := range proxyMethods {

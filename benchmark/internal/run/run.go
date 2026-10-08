@@ -52,6 +52,7 @@ type Config struct {
 	WorldURL          string
 	NetworkProfile    string
 	Frozen            bool
+	Short             bool
 	Target            benchtarget.Target
 	SkipSTT           bool
 	SkipJudge         bool
@@ -103,8 +104,15 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 		}
 		scenarios = filtered
 	}
-	if cfg.Frozen {
-		ids, err := scenario.LoadIDList(scenario.FrozenPath(cfg.Root))
+	if cfg.Frozen && cfg.Short {
+		return report.Summary{}, fmt.Errorf("run: --frozen and --short are separate scenario sets, pick one")
+	}
+	if cfg.Frozen || cfg.Short {
+		list := scenario.FrozenPath(cfg.Root)
+		if cfg.Short {
+			list = scenario.ShortPath(cfg.Root)
+		}
+		ids, err := scenario.LoadIDList(list)
 		if err != nil {
 			return report.Summary{}, err
 		}

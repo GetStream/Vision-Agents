@@ -2493,7 +2493,11 @@ export type paths = {
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
+        /**
+         * Answer a provider app's handshake
+         * @description Where a provider checks a provider app's events URL before it delivers to it: Meta's Verify Token check of a customer's WhatsApp webhook, for one. Unauthenticated because the provider is not a customer. Only a connector whose manifest declares channel.handshake answers it; the verify token is the provider app's id, the one in the URL, so nothing is stored for it, and every delivery is still verified with the app's own secret. With hub.mode subscribe, hub.verify_token the provider app's id and hub.challenge digits only, the challenge is echoed as text/plain. Any other connector, an unknown provider app, or a deployment without connectors answers 405 as for any method a route does not serve. No SDK wraps it: only a provider calls it.
+         */
+        readonly get: operations["answerProviderAppHandshake"];
         readonly put?: never;
         /**
          * Receive a provider app's event
@@ -12765,6 +12769,53 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+        };
+    };
+    readonly answerProviderAppHandshake: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Digits to echo. */
+                readonly "hub.challenge"?: string;
+                /** @description subscribe. */
+                readonly "hub.mode"?: string;
+                /** @description The provider app's id. */
+                readonly "hub.verify_token"?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector the provider app is of, such as whatsapp. */
+                readonly connector_id: string;
+                /** @description The provider's id for the app, such as a Meta app id. */
+                readonly provider_app_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The challenge, echoed */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "text/plain": string;
+                };
+            };
+            /** @description The query is not this URL's handshake: another mode or token, or a challenge that is not digits */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description This connector, or this deployment, answers no handshake here */
+            readonly 405: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly receiveProviderAppEvent: {
