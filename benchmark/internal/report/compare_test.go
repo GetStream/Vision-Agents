@@ -74,7 +74,7 @@ func TestCompareBaselineFlagsMDE(t *testing.T) {
 			{Label: "new", Summary: newer},
 		},
 		Baseline: 0,
-		MDE: &NoiseFloor{Runs: []string{"a", "b", "c"}, Packs: []string{"restaurant"}, Metrics: []MetricSpread{
+		MDE: &NoiseFloor{MethodologyVersion: MethodologyVersion, Runs: []string{"a", "b", "c"}, Packs: []string{"restaurant"}, Metrics: []MetricSpread{
 			{Name: "v2v_p50_ms", Unit: "ms", MDE: 50},
 		}},
 	})

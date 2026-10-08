@@ -90,6 +90,10 @@ func MeasureNoise(runs []LabeledRun) (NoiseFloor, error) {
 		if err := out.matches(run.Summary); err != nil {
 			return NoiseFloor{}, fmt.Errorf("noise: %s: %w", run.Label, err)
 		}
+		// The same run twice would shrink the spread it is meant to measure.
+		if slices.Contains(out.Runs, run.Summary.RunID) {
+			return NoiseFloor{}, fmt.Errorf("noise: %s: run %s is given twice", run.Label, run.Summary.RunID)
+		}
 		out.Runs = append(out.Runs, run.Summary.RunID)
 	}
 	stats := make([]runStats, len(runs))

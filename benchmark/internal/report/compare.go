@@ -379,9 +379,13 @@ func baselineSection(cfg CompareConfig) string {
 	if cfg.MDE == nil {
 		b.WriteString("No noise floor is configured, so deltas are reported without a regression gate.\n\n")
 	} else {
-		fmt.Fprintf(&b, "Changes bigger than the noise floor measured on `%s` over %d runs are flagged.\n\n", orDash(cfg.MDE.NetworkProfile), len(cfg.MDE.Runs))
-		if err := cfg.MDE.matchesSeries(cfg.Runs[cfg.Baseline].Summary); err != nil {
-			fmt.Fprintf(&b, "The noise floor is from a different series (%v), so its flags are not a gate.\n\n", err)
+		fmt.Fprintf(&b, "Changes bigger than the noise floor measured on `%s` over %d runs are flagged, for runs of the series it measured.\n\n", orDash(cfg.MDE.NetworkProfile), len(cfg.MDE.Runs))
+	}
+	var baseSeries error
+	if cfg.MDE != nil {
+		baseSeries = cfg.MDE.matchesSeries(cfg.Runs[cfg.Baseline].Summary)
+		if baseSeries != nil {
+			fmt.Fprintf(&b, "The baseline is from a different series than the noise floor (%v), so nothing is flagged.\n\n", baseSeries)
 		}
 	}
 	b.WriteString("Reply time is non-tool P50. Its interval is the 95% bootstrap interval of the difference, and the smallest detectable difference is half its width: a change smaller than that cannot be told from noise with these samples.\n\n")
@@ -395,8 +399,12 @@ func baselineSection(cfg CompareConfig) string {
 		rate, _, _ := wilson95(st.Passed, st.Valid)
 		v2v := st.V2VP50 - base.V2VP50
 		flag := ""
-		if cfg.MDE != nil {
-			flag = strings.Join(mdeFlags(*cfg.MDE, base, st), "; ")
+		if cfg.MDE != nil && baseSeries == nil {
+			if err := cfg.MDE.matchesSeries(run.Summary); err != nil {
+				flag = fmt.Sprintf("not gated: %v", err)
+			} else {
+				flag = strings.Join(mdeFlags(*cfg.MDE, base, st), "; ")
+			}
 		}
 		first := "—"
 		if st.FirstResponseSamples > 0 && base.FirstResponseSamples > 0 {

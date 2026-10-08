@@ -57,9 +57,13 @@ func TestMeasureNoiseRefusesRunsFromDifferentSeries(t *testing.T) {
 	if _, err := MeasureNoise([]LabeledRun{noiseRun("r1", 500, true), noiseRun("r2", 500, true)}); err == nil {
 		t.Fatal("two runs are too few to read a spread from")
 	}
+	_, err := MeasureNoise([]LabeledRun{noiseRun("r1", 500, true), noiseRun("r2", 500, true), noiseRun("r1", 500, true)})
+	if err == nil || !strings.Contains(err.Error(), "given twice") {
+		t.Fatalf("the same run twice must be refused, got %v", err)
+	}
 	moved := noiseRun("r3", 500, true)
 	moved.Summary.Manifest.NetworkProfile = "laptop"
-	_, err := MeasureNoise([]LabeledRun{noiseRun("r1", 500, true), noiseRun("r2", 500, true), moved})
+	_, err = MeasureNoise([]LabeledRun{noiseRun("r1", 500, true), noiseRun("r2", 500, true), moved})
 	if err == nil || !strings.Contains(err.Error(), "network_profile") {
 		t.Fatalf("a run on another network profile must be refused, got %v", err)
 	}
@@ -90,7 +94,14 @@ func TestCompareFlagsOnlyChangesBiggerThanTheNoiseFloor(t *testing.T) {
 	other := noiseRun("baseline", 500, true)
 	other.Summary.Manifest.ScenarioHash = "new"
 	md = CompareMarkdown(CompareConfig{Baseline: 0, MDE: &n, Runs: []LabeledRun{other, noiseRun("slower", 600, true)}})
-	if !strings.Contains(md, "different series (scenario_hash") {
-		t.Fatalf("a noise floor from another series must say it is not a gate:\n%s", md)
+	if !strings.Contains(md, "different series than the noise floor (scenario_hash") || strings.Contains(md, "regression") {
+		t.Fatalf("a baseline from another series must flag nothing:\n%s", md)
+	}
+
+	livekit := noiseRun("livekit", 900, true)
+	livekit.Summary.Manifest.Target = "livekit"
+	md = CompareMarkdown(CompareConfig{Baseline: 0, MDE: &n, Runs: []LabeledRun{noiseRun("baseline", 500, true), livekit}})
+	if !strings.Contains(md, "not gated: target is \"livekit\"") || strings.Contains(md, "regression") {
+		t.Fatalf("a run of another target must not be judged on this target's noise floor:\n%s", md)
 	}
 }
