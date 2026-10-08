@@ -62,7 +62,7 @@ func dispatch(cmd string, args []string) error {
 	case "stt":
 		return cmdSTT(ctx, root, args)
 	case "tts":
-		return cmdTTS(args)
+		return cmdTTS(ctx, root, args)
 	default:
 		usage()
 		return fmt.Errorf("unknown command %s", cmd)
@@ -433,25 +433,57 @@ func (l *stringList) Set(value string) error {
 	return nil
 }
 
-func cmdTTS(args []string) error {
+func cmdTTS(ctx context.Context, root string, args []string) error {
 	fs := flag.NewFlagSet("tts", flag.ExitOnError)
-	wav := fs.String("wav", "", "16-bit PCM wav to score for clipping and silence")
+	wav := fs.String("wav", "", "16-bit PCM wav to score for clipping and silence, without synthesizing anything")
+	var targets stringList
+	fs.Var(&targets, "target", "provider/model or shortcut to speak the corpus with through the router; repeat for several")
+	corpus := fs.String("corpus", "", "JSONL of id and text (default every scenario's agent reply lines)")
+	voice := fs.String("voice", "", "voice for every target, when the target's default is not wanted")
+	out := fs.String("out", "", "output directory (default out/tts-<time>)")
+	networkProfile := fs.String("network-profile", os.Getenv("VOICEBENCH_NETWORK_PROFILE"), "stable label for the runner region and network setup")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *wav == "" {
-		return fmt.Errorf("tts: --wav is required")
+	if *wav != "" {
+		pcm, err := audio.ReadWAV(*wav)
+		if err != nil {
+			return err
+		}
+		health := audio.MeasureHealth(pcm.Samples, pcm.Rate)
+		raw, err := json.MarshalIndent(health, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(raw))
+		return nil
 	}
-	pcm, err := audio.ReadWAV(*wav)
+	if len(targets) == 0 {
+		return fmt.Errorf("tts: --target or --wav is required")
+	}
+	dir := *out
+	if dir == "" {
+		dir = filepath.Join(root, "out", "tts-"+time.Now().UTC().Format("20060102T150405Z"))
+	}
+	sum, err := run.TTS(ctx, run.TTSConfig{
+		Root:           root,
+		Corpus:         *corpus,
+		Targets:        targets,
+		Voice:          *voice,
+		Out:            dir,
+		NetworkProfile: *networkProfile,
+		Logger:         slog.Default(),
+	})
 	if err != nil {
 		return err
 	}
-	health := audio.MeasureHealth(pcm.Samples, pcm.Rate)
-	out, err := json.MarshalIndent(health, "", "  ")
-	if err != nil {
-		return err
+	fmt.Print(report.TTSMarkdown(sum))
+	fmt.Printf("\nresults in %s\n", dir)
+	for _, target := range sum.TTS {
+		if target.Failed > 0 {
+			return fmt.Errorf("tts: %d line(s) for %s ended in an error, see clips.jsonl", target.Failed, target.Target)
+		}
 	}
-	fmt.Println(string(out))
 	return nil
 }
 

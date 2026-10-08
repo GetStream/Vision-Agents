@@ -123,7 +123,7 @@ func STT(ctx context.Context, cfg STTConfig) (report.Summary, error) {
 			sum.STT = append(sum.STT, report.SummarizeSTT(target, targetClips))
 		}
 	}
-	return sum, writeSTT(cfg.Out, sum, clips)
+	return sum, writeBench(cfg.Out, sum, clips, report.STTMarkdown(sum))
 }
 
 func parseClipRows(raw []byte, dir string, streamed bool) ([]STTClipRow, error) {
@@ -357,7 +357,8 @@ func scoreClip(row STTClipRow, target string, voice speech, timeline []heard) re
 	return clip
 }
 
-func writeSTT(out string, sum report.Summary, clips []report.STTClip) error {
+// writeBench writes a component bench's per-clip JSONL, summary and markdown report.
+func writeBench[Clip any](out string, sum report.Summary, clips []Clip, markdown string) error {
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return err
 	}
@@ -387,5 +388,5 @@ func writeSTT(out string, sum report.Summary, clips []report.STTClip) error {
 	if err := os.WriteFile(filepath.Join(out, "summary.json"), append(raw, '\n'), 0o644); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(out, "report.md"), []byte(report.STTMarkdown(sum)), 0o644)
+	return os.WriteFile(filepath.Join(out, "report.md"), []byte(markdown), 0o644)
 }
