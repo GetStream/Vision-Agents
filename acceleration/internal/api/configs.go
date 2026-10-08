@@ -596,9 +596,23 @@ func storedBindings(bindings []AgentConnectorBinding) []store.ConnectorBinding {
 			Required:  value(binding.Required),
 			TimeoutMs: value(binding.TimeoutMs),
 			Events:    bindingEventsOf(binding.Events),
+			Policy:    bindingPolicyOf(binding.Policy),
 		})
 	}
 	return stored
+}
+
+// bindingPolicyOf reads the policy a caller wrote on a binding, or nil for none, so a binding
+// without one is stored as it was before policies existed.
+func bindingPolicyOf(policy *ConnectorBindingPolicy) *store.BindingPolicy {
+	if policy == nil {
+		return nil
+	}
+	return &store.BindingPolicy{
+		PreSpeech:   value(policy.PreSpeech),
+		OnInterrupt: string(value(policy.OnInterrupt)),
+		Cancellable: policy.Cancellable,
+	}
 }
 
 // bindingEventsOf reads the events a caller declared on a binding, or nothing for none, so a
@@ -651,6 +665,13 @@ func bindingsOf(bindings []store.ConnectorBinding) []AgentConnectorBinding {
 				events = append(events, declared)
 			}
 			one.Events = &events
+		}
+		if policy := binding.Policy; policy != nil {
+			one.Policy = &ConnectorBindingPolicy{PreSpeech: optional(policy.PreSpeech), Cancellable: policy.Cancellable}
+			if policy.OnInterrupt != "" {
+				onInterrupt := ConnectorOnInterrupt(policy.OnInterrupt)
+				one.Policy.OnInterrupt = &onInterrupt
+			}
 		}
 		rendered = append(rendered, one)
 	}
@@ -1612,6 +1633,35 @@ type AgentConnectorBinding struct {
 	Required    *bool                    `json:"required,omitempty" default:"false" doc:"Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it."`
 	TimeoutMs   *int                     `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
 	Events      *[]ConnectorBindingEvent `json:"events,omitempty" maxItems:"32" doc:"MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open."`
+	Policy      *ConnectorBindingPolicy  `json:"policy,omitempty" doc:"How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs."`
+}
+
+// ConnectorBindingPolicy is a binding's policy envelope, read back as it was written.
+type ConnectorBindingPolicy struct {
+	PreSpeech   *string               `json:"pre_speech,omitempty" minLength:"1" doc:"What the agent says while one of the binding's tools runs, such as \"Let me pull up your calendar.\", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started."`
+	OnInterrupt *ConnectorOnInterrupt `json:"on_interrupt,omitempty" doc:"What an interruption of the turn does to a call in flight. Omitted is cancel."`
+	Cancellable *bool                 `json:"cancellable,omitempty" doc:"Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption."`
+}
+
+func (*ConnectorBindingPolicy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "How a binding's tool calls behave around speech and interruptions. Every field is " +
+		"optional, and a field left out keeps today's behaviour."
+	return schema
+}
+
+// ConnectorOnInterrupt is what an interruption does to a binding's call in flight.
+type ConnectorOnInterrupt string
+
+const (
+	ConnectorOnInterruptCancel ConnectorOnInterrupt = store.InterruptCancel
+	ConnectorOnInterruptWait   ConnectorOnInterrupt = store.InterruptWait
+)
+
+func (ConnectorOnInterrupt) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ConnectorOnInterrupt", "cancel stops waiting for the call when the turn "+
+		"is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call "+
+		"finish, up to the binding's timeout, and its result goes into the conversation for the next turn.",
+		string(ConnectorOnInterruptCancel), string(ConnectorOnInterruptWait))
 }
 
 // ConnectorBindingEvent is one MCP event a binding subscribes to on its connection's server.

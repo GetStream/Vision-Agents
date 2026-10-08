@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -29,6 +30,32 @@ func TestASettledTaskWithNoFilesSaysSoWithAnEmptyList(t *testing.T) {
 	raw, err := json.Marshal(sent)
 	require.NoError(t, err)
 	require.JSONEq(t, `[]`, string(mustField(t, raw, "files")))
+}
+
+func TestAToolStartedWithoutPreSpeechIsTheFrameItAlwaysWas(t *testing.T) {
+	// The bytes base sends, for a tool whose binding names no phrase or that is no
+	// connector's at all.
+	at := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+
+	sent, ok := frameOf(agent.ToolStarted{ID: "call-1", TurnID: "turn-1", Tool: "crm__slow", StartedAt: at})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.Equal(t, `{"started_at":"2026-10-07T12:00:00Z","tool":"crm__slow","tool_call_id":"call-1","turn_id":"turn-1","type":"tool_started"}`,
+		string(raw))
+}
+
+func TestAToolStartedCarriesItsBindingsPreSpeech(t *testing.T) {
+	at := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+
+	sent, ok := frameOf(agent.ToolStarted{ID: "call-1", TurnID: "turn-1", Tool: "crm__slow", StartedAt: at,
+		PreSpeech: "Let me pull that up."})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.Equal(t, `"Let me pull that up."`, string(mustField(t, raw, "pre_speech")))
 }
 
 func mustField(t *testing.T, raw []byte, name string) json.RawMessage {

@@ -1623,7 +1623,7 @@ export type paths = {
          *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
          *     `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
          *     `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
-         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
+         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id.
          *     A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
          *     An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `command_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
          *     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
@@ -3726,6 +3726,8 @@ export type components = {
             readonly events?: readonly components["schemas"]["ConnectorBindingEvent"][];
             /** @description The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place. */
             readonly name: string;
+            /** @description How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs. */
+            readonly policy?: components["schemas"]["ConnectorBindingPolicy"];
             /**
              * @description Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
              * @default false
@@ -3773,7 +3775,7 @@ export type components = {
             readonly occurred_at: string;
             readonly session_id: string;
             /** @enum {string} */
-            readonly severity: "info" | "error";
+            readonly severity: "info" | "warn" | "error";
             /** @enum {string} */
             readonly source: "user" | "agent" | "tool" | "system";
             readonly user_id?: string;
@@ -4719,6 +4721,15 @@ export type components = {
             /** @description What the agent does with the event when it arrives, added to its instructions for that conversation. */
             readonly instructions?: string;
         };
+        /** @description How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour. */
+        readonly ConnectorBindingPolicy: {
+            /** @description Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption. */
+            readonly cancellable?: boolean;
+            /** @description What an interruption of the turn does to a call in flight. Omitted is cancel. */
+            readonly on_interrupt?: components["schemas"]["ConnectorOnInterrupt"];
+            /** @description What the agent says while one of the binding's tools runs, such as "Let me pull up your calendar.", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started. */
+            readonly pre_speech?: string;
+        };
         /** @description How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint. */
         readonly ConnectorClient: {
             /**
@@ -4819,6 +4830,11 @@ export type components = {
             /** @description Sealed at rest and never returned. Left out for a public client (auth_method none). */
             readonly client_secret?: string;
         };
+        /**
+         * @description cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
+         * @enum {string}
+         */
+        readonly ConnectorOnInterrupt: "cancel" | "wait";
         readonly ConnectorPage: {
             readonly has_more: boolean;
             readonly items: readonly components["schemas"]["Connector"][] | null;
@@ -10451,7 +10467,8 @@ export interface operations {
                 readonly limit?: number;
                 readonly q?: string;
                 readonly session_id?: string;
-                readonly severity?: "info" | "error";
+                /** @description The least serious level to show, not the only one: warn is warnings and errors. */
+                readonly severity?: "info" | "warn" | "error";
                 /** @description Comma-separated user/agent/tool/system sources. */
                 readonly source?: string;
                 readonly to?: string;
@@ -10530,7 +10547,8 @@ export interface operations {
                 readonly from?: string;
                 readonly q?: string;
                 readonly session_id?: string;
-                readonly severity?: "info" | "error";
+                /** @description The least serious level to show, not the only one: warn is warnings and errors. */
+                readonly severity?: "info" | "warn" | "error";
                 /** @description Comma-separated user/agent/tool/system sources. */
                 readonly source?: string;
                 readonly to?: string;

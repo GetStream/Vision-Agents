@@ -28,7 +28,7 @@ import (
 //
 // Every call is checked again against the config and the connection as they are now, then
 // run inside one envelope for every source: the binding's timeout, a cancel when the turn is
-// interrupted, and the result cap.
+// interrupted (as the binding's policy says), and the result cap.
 //
 // Every call it opened, refused or run, leaves one row in the invocation log once it has
 // answered (store.ConnectorInvocation), queued so the model never waits on the write.
@@ -146,6 +146,12 @@ func (d *dispatcher) Close() {
 // interrupted cancels ctx, and the MCP SDK sends notifications/cancelled for the call in
 // flight (cancelCall in go-sdk v1.8.0 mcp/transport.go).
 //
+// The binding's policy (store.BindingPolicy) changes what an interruption does. A wait
+// binding's call does not see it, and the turn waits for its answer. A binding that is not
+// cancellable stops waiting at the interruption and leaves the call running to its answer or
+// deadline, so the interruption never sends the provider the cancel; the binding's timeout
+// still does, as for every call. A binding with no policy is the paragraph above.
+//
 // A provider that answered a call on the same rate limit key with 429 and Retry-After is not
 // sent the call until that passes, on any router sharing the limiter's Redis: the model reads
 // connector_rate_limited instead, and so it does for the 429 itself, with the wait the router
@@ -155,6 +161,36 @@ func (d *dispatcher) Close() {
 // It also says how the call failed, for its row: empty when it answered, else one of the
 // store.Invocation* values.
 func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, string, error) {
+	policy := r.binding.Policy
+	switch {
+	case policy == nil || policy.OnInterrupt != store.InterruptWait && (policy.Cancellable == nil || *policy.Cancellable):
+		return d.send(ctx, r, call)
+	case policy.OnInterrupt == store.InterruptWait:
+		return d.send(context.WithoutCancel(ctx), r, call)
+	}
+	type answer struct {
+		parts   []llm.ContentPart
+		failure string
+		err     error
+	}
+	answered := make(chan answer, 1)
+	go func() {
+		parts, failure, err := d.send(context.WithoutCancel(ctx), r, call)
+		answered <- answer{parts, failure, err}
+	}()
+	select {
+	case got := <-answered:
+		return got.parts, got.failure, got.err
+	case <-ctx.Done():
+		// The call goes on, so whether the provider does what was asked is unknown here.
+		return nil, store.InvocationOutcomeUnknown, stack.Wrap(fmt.Errorf(
+			"session: %s was left running at the provider: %w", call.Name, ctx.Err()))
+	}
+}
+
+// send runs one tool inside the provider's rate limit, the binding's timeout and the result
+// cap, cancelled with ctx.
+func (d *dispatcher) send(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, string, error) {
 	if wait := d.limiter.Wait(ctx, r.limit); wait > 0 {
 		return llm.TextParts(rateLimited(call.Name, wait)), store.InvocationDenied, nil
 	}
@@ -280,4 +316,19 @@ func (d *dispatcher) recheck(ctx context.Context, r route) error {
 // boundAlias reports whether a connector binding of the spec is called alias.
 func (s Spec) boundAlias(alias string) bool {
 	return slices.ContainsFunc(s.ConnectorBindings, func(b store.ConnectorBinding) bool { return b.Name == alias })
+}
+
+// toolPolicy is what the binding of the tool offered as name asks of the agent
+// (store.BindingPolicy): what to say while it runs, and whether its call goes on after an
+// interruption. The binding is the one bound under the name's alias, so a binding waiting
+// for a login is found by the two tools it offers until then. Nothing for a name under no
+// bound alias, or a binding with no policy.
+func (d *dispatcher) toolPolicy(name string) agent.ToolPolicy {
+	alias, _, cut := strings.Cut(name, mcp.Separator)
+	index := slices.IndexFunc(d.spec.ConnectorBindings, func(b store.ConnectorBinding) bool { return b.Name == alias })
+	if !cut || index < 0 || d.spec.ConnectorBindings[index].Policy == nil {
+		return agent.ToolPolicy{}
+	}
+	policy := d.spec.ConnectorBindings[index].Policy
+	return agent.ToolPolicy{PreSpeech: policy.PreSpeech, Waits: policy.OnInterrupt == store.InterruptWait}
 }

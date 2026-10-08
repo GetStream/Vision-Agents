@@ -444,6 +444,32 @@ type ConnectorBinding struct {
 	// Events are the MCP events the binding's fixed connection is subscribed to, each opening
 	// a conversation of its own when it arrives (internal/mcpevents). Empty subscribes to none.
 	Events []BindingEvent `json:"events,omitempty"`
+	// Policy is how the binding's calls behave around speech and interruptions. Nil is a
+	// binding written before it existed, or without one, and behaves as one always has.
+	Policy *BindingPolicy `json:"policy,omitempty"`
+}
+
+// The values of BindingPolicy.OnInterrupt. Empty is InterruptCancel.
+const (
+	// InterruptCancel stops waiting for the call when the turn is interrupted: today's
+	// behaviour, and Pipecat's default (cancel_on_interruption=True).
+	InterruptCancel = "cancel"
+	// InterruptWait lets the call finish after an interruption, as LiveKit does for a tool
+	// not flagged CANCELLABLE; its result goes into the history.
+	InterruptWait = "wait"
+)
+
+// BindingPolicy is a binding's policy envelope, as it was written: a field left out is
+// stored empty and means its default.
+type BindingPolicy struct {
+	// PreSpeech is what the agent says while one of the binding's tools runs, in place of
+	// the phrase it would pick itself. Empty leaves the agent's own.
+	PreSpeech string `json:"pre_speech,omitempty"`
+	// OnInterrupt is InterruptCancel or InterruptWait. Empty is InterruptCancel.
+	OnInterrupt string `json:"on_interrupt,omitempty"`
+	// Cancellable is whether the provider is told to stop a call the session stopped
+	// waiting for. Nil is true.
+	Cancellable *bool `json:"cancellable,omitempty"`
 }
 
 // BindingEvent is one MCP event a binding subscribes to on its connection's server.
