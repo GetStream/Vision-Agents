@@ -3320,6 +3320,14 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID),
 				"audio_ms", typed.AudioDurationMs, "ttfb_ms", typed.TimeToFirstByteMs,
 				"interrupted", typed.Interrupted)
+			if spokeNothing(typed) {
+				// Without this the agent goes quiet with nothing in the logs: a voice that
+				// stops returning audio, say once its account runs out, still settles each
+				// utterance normally.
+				a.logger.Warn("the voice returned no audio for a reply",
+					"provider", typed.Provider, "model", typed.Model, "synthesis", typed.SynthesisID,
+					"turn", turnOf(typed.SynthesisID), "characters", typed.Characters)
+			}
 			a.turns.spoke(turnOf(typed.SynthesisID), typed.TimeToFirstByteMs, typed.AudioDurationMs)
 			if active && !typed.Interrupted {
 				// An interrupted utterance was not heard in full, so it must not be
@@ -4225,6 +4233,12 @@ func turnOf(synthesisID string) string {
 		return synthesisID[:index]
 	}
 	return synthesisID
+}
+
+// spokeNothing reports whether an utterance the voice was given text for came back without
+// any audio, which is not the same as one cut short by the caller.
+func spokeNothing(done tts.SynthesisComplete) bool {
+	return done.Characters > 0 && done.AudioDurationMs == 0 && !done.Interrupted
 }
 
 // RestoreHistory seeds a new text session with previously completed conversation turns.

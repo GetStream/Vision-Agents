@@ -823,7 +823,7 @@ func (t *TTS) readLoop(sock *socket) {
 
 		var message serverMessage
 		if err := json.Unmarshal(raw, &message); err != nil {
-			t.logger.Debug("undecodable frame", "error", err)
+			t.logger.Warn("the voice sent a frame that could not be read", "error", err, "bytes", len(raw))
 			continue
 		}
 		t.handleMessage(sock, message)
@@ -957,7 +957,9 @@ func (t *TTS) isPresent(sock *socket, id string, current *utterance) bool {
 
 func (t *TTS) failUtterance(sock *socket, id string, err error, context string) {
 	if id == "" {
-		t.logger.Debug("server error without synthesis id", "context", context)
+		// An error that names no utterance is about the connection or the account, such as a
+		// spent quota, and is the only word of it the agent gets.
+		t.logger.Warn("the voice reported an error for no utterance", "error", err, "context", context)
 		return
 	}
 	t.mu.Lock()
