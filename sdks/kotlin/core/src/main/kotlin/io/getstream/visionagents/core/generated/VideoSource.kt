@@ -36,14 +36,14 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * 
  *
- * @param url Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address. 
+ * @param url Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
  * @param maxFrames How many frames to sample, evenly spaced across the clip. Default 8.
  */
 @Serializable
 
 internal data class VideoSource (
 
-    /* Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.  */
+    /* Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address. */
     @SerialName(value = "url")
     val url: kotlin.String,
 

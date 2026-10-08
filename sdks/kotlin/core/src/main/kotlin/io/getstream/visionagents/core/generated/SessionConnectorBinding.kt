@@ -23,7 +23,6 @@
 
 package io.getstream.visionagents.core.generated
 
-import io.getstream.visionagents.core.generated.SearchResult
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
@@ -35,30 +34,22 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * 
+ * The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.
  *
- * @param model 
- * @param provider 
- * @param results The sources behind it, most relevant first.
- * @param answer The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read.
+ * @param connectionId The caller's own connection to the binding's connector.
+ * @param name The binding's alias in the agent config.
  */
 @Serializable
 
-internal data class SearchAnswer (
+internal data class SessionConnectorBinding (
 
-    @SerialName(value = "model")
-    val model: kotlin.String,
+    /* The caller's own connection to the binding's connector. */
+    @SerialName(value = "connection_id")
+    val connectionId: kotlin.String,
 
-    @SerialName(value = "provider")
-    val provider: kotlin.String,
-
-    /* The sources behind it, most relevant first. */
-    @SerialName(value = "results")
-    val results: kotlin.collections.List<SearchResult>,
-
-    /* The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read. */
-    @SerialName(value = "answer")
-    val answer: kotlin.String? = null
+    /* The binding's alias in the agent config. */
+    @SerialName(value = "name")
+    val name: kotlin.String
 
 ) {
 

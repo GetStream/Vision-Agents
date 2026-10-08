@@ -49,7 +49,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param modality 
  * @param state 
  * @param userId 
- * @param agent The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against. 
+ * @param agent The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against.
  * @param closedAt When the session ended. Absent while it is still running.
  * @param configId The agent config the session ran under, empty for one that spelled itself out.
  * @param contextTruncated Older history was omitted from the model context.
@@ -57,21 +57,21 @@ import kotlinx.serialization.encoding.Encoder
  * @param custom 
  * @param description 
  * @param forkedFrom The session this one continued from, empty for one opened fresh.
- * @param incognito Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from. 
+ * @param incognito Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from.
  * @param instructions 
- * @param lastResponseAt When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent. 
+ * @param lastResponseAt When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent.
  * @param llm The provider and model answering, once routing has picked one.
  * @param mode 
  * @param modelOverwrites 
  * @param projectId 
  * @param sts The provider and model holding a native conversation, once routing has picked one.
  * @param stt The provider and model transcribing, once somebody has been heard.
- * @param subagent The provider and model delegated work runs on.
  * @param text The conversation is held in writing rather than on a call.
+ * @param thinkingLlm The provider and model delegated work runs on.
  * @param title 
  * @param tts The provider and model speaking.
  * @param video 
- * @param voice The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none. 
+ * @param voice The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
  */
 @Serializable
 
@@ -102,7 +102,7 @@ internal data class Session (
     @SerialName(value = "user_id")
     val userId: kotlin.String,
 
-    /* The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against.  */
+    /* The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against. */
     @SerialName(value = "agent")
     val agent: kotlin.String? = null,
 
@@ -132,14 +132,14 @@ internal data class Session (
     @SerialName(value = "forked_from")
     val forkedFrom: kotlin.String? = null,
 
-    /* Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from.  */
+    /* Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from. */
     @SerialName(value = "incognito")
     val incognito: kotlin.Boolean? = null,
 
     @SerialName(value = "instructions")
     val instructions: kotlin.String? = null,
 
-    /* When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent.  */
+    /* When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent. */
     @SerialName(value = "last_response_at")
     val lastResponseAt: kotlin.String? = null,
 
@@ -164,13 +164,13 @@ internal data class Session (
     @SerialName(value = "stt")
     val stt: kotlin.String? = null,
 
-    /* The provider and model delegated work runs on. */
-    @SerialName(value = "subagent")
-    val subagent: kotlin.String? = null,
-
     /* The conversation is held in writing rather than on a call. */
     @SerialName(value = "text")
     val text: kotlin.Boolean? = null,
+
+    /* The provider and model delegated work runs on. */
+    @SerialName(value = "thinking_llm")
+    val thinkingLlm: kotlin.String? = null,
 
     @SerialName(value = "title")
     val title: kotlin.String? = null,
@@ -182,7 +182,7 @@ internal data class Session (
     @SerialName(value = "video")
     val video: SessionVideo? = null,
 
-    /* The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.  */
+    /* The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none. */
     @SerialName(value = "voice")
     val voice: kotlin.String? = null
 

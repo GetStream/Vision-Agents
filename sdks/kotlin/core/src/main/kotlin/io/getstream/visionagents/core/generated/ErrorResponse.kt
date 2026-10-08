@@ -23,7 +23,7 @@
 
 package io.getstream.visionagents.core.generated
 
-import io.getstream.visionagents.core.generated.SearchResult
+import io.getstream.visionagents.core.generated.ErrorDetail
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
@@ -35,30 +35,16 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * 
+ * The body of every failure. A failure that is not the caller's own is a 500 of type internal saying only \"something went wrong\": quote the response's X-Request-Id to find out more.
  *
- * @param model 
- * @param provider 
- * @param results The sources behind it, most relevant first.
- * @param answer The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read.
+ * @param error 
  */
 @Serializable
 
-internal data class SearchAnswer (
+internal data class ErrorResponse (
 
-    @SerialName(value = "model")
-    val model: kotlin.String,
-
-    @SerialName(value = "provider")
-    val provider: kotlin.String,
-
-    /* The sources behind it, most relevant first. */
-    @SerialName(value = "results")
-    val results: kotlin.collections.List<SearchResult>,
-
-    /* The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read. */
-    @SerialName(value = "answer")
-    val answer: kotlin.String? = null
+    @SerialName(value = "error")
+    val error: ErrorDetail
 
 ) {
 

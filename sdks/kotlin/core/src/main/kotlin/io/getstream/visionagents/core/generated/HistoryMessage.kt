@@ -23,7 +23,7 @@
 
 package io.getstream.visionagents.core.generated
 
-import io.getstream.visionagents.core.generated.SearchResult
+import io.getstream.visionagents.core.generated.HistoryRole
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
@@ -37,28 +37,28 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * 
  *
- * @param model 
- * @param provider 
- * @param results The sources behind it, most relevant first.
- * @param answer The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read.
+ * @param role 
+ * @param text 
+ * @param createdAt When it was said. The model is shown it beside a person's message, so it can tell an hour ago from just now.
+ * @param name Who said it, when several people share the thread. The model is shown it as a label, never as who is asking now.
  */
 @Serializable
 
-internal data class SearchAnswer (
+internal data class HistoryMessage (
 
-    @SerialName(value = "model")
-    val model: kotlin.String,
+    @Contextual @SerialName(value = "role")
+    val role: HistoryRole,
 
-    @SerialName(value = "provider")
-    val provider: kotlin.String,
+    @SerialName(value = "text")
+    val text: kotlin.String,
 
-    /* The sources behind it, most relevant first. */
-    @SerialName(value = "results")
-    val results: kotlin.collections.List<SearchResult>,
+    /* When it was said. The model is shown it beside a person's message, so it can tell an hour ago from just now. */
+    @SerialName(value = "created_at")
+    val createdAt: kotlin.String? = null,
 
-    /* The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read. */
-    @SerialName(value = "answer")
-    val answer: kotlin.String? = null
+    /* Who said it, when several people share the thread. The model is shown it as a label, never as who is asking now. */
+    @SerialName(value = "name")
+    val name: kotlin.String? = null
 
 ) {
 

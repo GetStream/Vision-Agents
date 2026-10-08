@@ -36,14 +36,20 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * 
  *
- * @param error 
+ * @param dollarGte At or after this RFC3339 time.
+ * @param dollarLt Strictly before this RFC3339 time.
  */
 @Serializable
 
-internal data class Error (
+internal data class TimeRange (
 
-    @SerialName(value = "error")
-    val error: kotlin.String
+    /* At or after this RFC3339 time. */
+    @SerialName(value = "\$gte")
+    val dollarGte: kotlin.String? = null,
+
+    /* Strictly before this RFC3339 time. */
+    @SerialName(value = "\$lt")
+    val dollarLt: kotlin.String? = null
 
 ) {
 

@@ -38,9 +38,9 @@ import kotlinx.serialization.encoding.Encoder
  *
  * @param at 
  * @param kind 
- * @param ordinal The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in. 
+ * @param ordinal The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in.
  * @param responseId 
- * @param payload Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. 
+ * @param payload Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
  * @param sessionId 
  * @param text 
  * @param toolName 
@@ -55,14 +55,14 @@ internal data class AgentResponseItem (
     @SerialName(value = "kind")
     val kind: AgentResponseItem.Kind,
 
-    /* The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in.  */
+    /* The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in. */
     @SerialName(value = "ordinal")
     val ordinal: kotlin.Int,
 
     @SerialName(value = "response_id")
     val responseId: kotlin.String,
 
-    /* Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.  */
+    /* Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. */
     @Contextual @SerialName(value = "payload")
     val payload: kotlin.collections.Map<kotlin.String, kotlinx.serialization.json.JsonElement>? = null,
 

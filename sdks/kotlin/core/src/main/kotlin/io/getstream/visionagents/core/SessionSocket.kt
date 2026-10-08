@@ -9,10 +9,17 @@ import io.ktor.websocket.close
 import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
 import java.io.IOException
+import java.net.ProtocolException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import okio.ByteString
 
 /**
  * The socket carrying one conversation.
@@ -55,6 +62,8 @@ public class SessionSocket internal constructor(
             backend.http.webSocketSession(url) {
                 headers.forEach { (name, value) -> header(name, value) }
             }
+        } catch (e: HandshakeRefused) {
+            throw e.failure
         } catch (e: IOException) {
             throw AgentsException.Transport(e)
         }
@@ -96,5 +105,49 @@ public class SessionSocket internal constructor(
     public suspend fun close() {
         if (!closing.compareAndSet(false, true)) return
         connection?.close(CloseReason(CloseReason.Codes.NORMAL, ""))
+    }
+}
+
+/**
+ * Opens sockets on the app's client, keeping what the router said when it refuses one.
+ *
+ * Ktor hands a refused upgrade on as an exception that holds no response, so its status, body
+ * and request id are read here, in OkHttp's `onFailure`, while the response is still open.
+ * Redirects stay off, as in Ktor's own client: a handshake answered with one is refused.
+ */
+internal class Handshakes(client: OkHttpClient) : WebSocket.Factory {
+    private val client = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
+
+    override fun newWebSocket(request: Request, listener: WebSocketListener): WebSocket =
+        client.newWebSocket(request, Refusals(listener))
+}
+
+/** A handshake answered with something other than an upgrade, and the error it is. */
+internal class HandshakeRefused(val failure: AgentsException.Http) : ProtocolException(failure.message)
+
+private class Refusals(private val next: WebSocketListener) : WebSocketListener() {
+    override fun onOpen(webSocket: WebSocket, response: Response) = next.onOpen(webSocket, response)
+
+    override fun onMessage(webSocket: WebSocket, text: String) = next.onMessage(webSocket, text)
+
+    override fun onMessage(webSocket: WebSocket, bytes: ByteString) = next.onMessage(webSocket, bytes)
+
+    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) = next.onClosing(webSocket, code, reason)
+
+    override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = next.onClosed(webSocket, code, reason)
+
+    override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+        if (response == null || response.code == 101) {
+            next.onFailure(webSocket, t, response)
+            return
+        }
+        val body = try {
+            response.body.string()
+        } catch (_: IOException) {
+            ""
+        }
+        // Handed on without the response: given a 401 with one, Ktor reads it as an answer and
+        // throws an exception of its own that says nothing.
+        next.onFailure(webSocket, HandshakeRefused(refusal(response.code, body) { response.header(it) }), null)
     }
 }

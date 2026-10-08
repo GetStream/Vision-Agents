@@ -34,24 +34,18 @@ import kotlinx.serialization.encoding.Encoder
 
 
 /**
- * How much work a search is worth. instant answers from the index in a few hundred milliseconds; deep crawls and reasons over what it finds and can take tens of seconds. Providers offer different ladders, so each one maps these four onto its own.
+ * user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.
  *
- * Values: instant,fast,standard,deep,unknown_default_open_api
+ * Values: HistoryRoleUser,HistoryRoleAssistant,unknown_default_open_api
  */
-@Serializable(with = SearchDepthSerializer::class)
-internal enum class SearchDepth(val value: kotlin.String) {
+@Serializable(with = HistoryRoleSerializer::class)
+internal enum class HistoryRole(val value: kotlin.String) {
 
-    @SerialName(value = "instant")
-    instant("instant"),
+    @SerialName(value = "user")
+    HistoryRoleUser("user"),
 
-    @SerialName(value = "fast")
-    fast("fast"),
-
-    @SerialName(value = "standard")
-    standard("standard"),
-
-    @SerialName(value = "deep")
-    deep("deep"),
+    @SerialName(value = "assistant")
+    HistoryRoleAssistant("assistant"),
 
     @SerialName(value = "unknown_default_open_api")
     unknown_default_open_api("unknown_default_open_api");
@@ -69,12 +63,12 @@ internal enum class SearchDepth(val value: kotlin.String) {
         /**
          * Converts the provided [data] to a [String] on success, null otherwise.
          */
-        fun encode(data: kotlin.Any?): kotlin.String? = if (data is SearchDepth) "$data" else null
+        fun encode(data: kotlin.Any?): kotlin.String? = if (data is HistoryRole) "$data" else null
 
         /**
-         * Returns a valid [SearchDepth] for [data], null otherwise.
+         * Returns a valid [HistoryRole] for [data], null otherwise.
          */
-        fun decode(data: kotlin.Any?): SearchDepth? = data?.let {
+        fun decode(data: kotlin.Any?): HistoryRole? = data?.let {
           val normalizedData = "$it".lowercase()
           entries.firstOrNull { value ->
             it == value || normalizedData == "$value".lowercase()
@@ -83,16 +77,16 @@ internal enum class SearchDepth(val value: kotlin.String) {
     }
 }
 
-internal object SearchDepthSerializer : KSerializer<SearchDepth> {
+internal object HistoryRoleSerializer : KSerializer<HistoryRole> {
     override val descriptor = kotlin.String.serializer().descriptor
 
-    override fun deserialize(decoder: Decoder): SearchDepth {
+    override fun deserialize(decoder: Decoder): HistoryRole {
         val value = decoder.decodeSerializableValue(kotlin.String.serializer())
-        return SearchDepth.entries.firstOrNull { it.value == value }
-            ?: SearchDepth.unknown_default_open_api
+        return HistoryRole.entries.firstOrNull { it.value == value }
+            ?: HistoryRole.unknown_default_open_api
     }
 
-    override fun serialize(encoder: Encoder, value: SearchDepth) {
+    override fun serialize(encoder: Encoder, value: HistoryRole) {
         encoder.encodeSerializableValue(kotlin.String.serializer(), value.value)
     }
 }
