@@ -354,6 +354,21 @@ func (s *PhoneSuite) TestABridgeMustBeASipAddress() {
 	s.NoError(Bridge{URI: "sip:trunk@sip.stream-io-api.com"}.Validate())
 }
 
+func (s *PhoneSuite) TestABridgeCarriesTheNumberStreamFindsItsTrunkBy() {
+	for uri, want := range map[string]string{
+		"sip:bridge.sip.example.com":               "sip:+15550000301@bridge.sip.example.com",
+		"sip:trunk@bridge.sip.example.com":         "sip:+15550000301@bridge.sip.example.com",
+		"sips:bridge.sip.example.com:5061":         "sips:+15550000301@bridge.sip.example.com:5061",
+		"sip:bridge.sip.example.com;transport=tcp": "sip:+15550000301@bridge.sip.example.com;transport=tcp",
+	} {
+		got, err := Bridge{URI: uri, Username: "stream-user", Password: "stream-pass"}.WithNumber("+15550000301")
+		s.Require().NoError(err, uri)
+		s.Equal(Bridge{URI: want, Username: "stream-user", Password: "stream-pass"}, got, uri)
+	}
+	_, err := Bridge{URI: "tel:+15550000301"}.WithNumber("+15550000301")
+	s.EqualError(err, `phone: "tel:+15550000301" is not a sip uri`)
+}
+
 func (s *PhoneSuite) TestCapabilitiesAreCoveredOnlyWhenEveryOneIsPresent() {
 	s.True(covers([]Capability{Voice, SMS}, []Capability{Voice}))
 	s.True(covers([]Capability{Voice}, nil))

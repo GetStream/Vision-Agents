@@ -325,6 +325,8 @@ If turn detection becomes a differentiator of its own, run an adapter against th
 
 Wire the two run tiers: per-PR smoke, nightly full, cached caller audio, pinned runner and region. Fail a PR on evaluator invalid, on inbound drops, and on a change that exceeds the MDE against the stored `accelerated` baseline. Do not fail a PR on a competitor column.
 
+**The nightly has landed, without the MDE gate; the per-PR smoke has not.** `.github/workflows/voicebench.yml` runs the frozen set every night with caller audio cached and network profile `github-ubuntu-latest`, and compares it against the previous night without a gate: no noise floor has been measured on that runner yet. Once one has, committing it and passing it to `compare --mde` makes the nightly a gate.
+
 ## Cross-cutting design
 
 ### Artifacts

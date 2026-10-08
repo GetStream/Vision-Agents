@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -87,10 +86,6 @@ func (p *Provider) Dial(_ context.Context, outbound phone.Outbound) (phone.Diale
 	if err := outbound.Validate(); err != nil {
 		return phone.Dialed{}, err
 	}
-	streamURI, err := streamRequestURI(outbound.Bridge.URI, outbound.From)
-	if err != nil {
-		return phone.Dialed{}, err
-	}
 
 	id := uuid.NewString()
 	trunk := outbound.Trunk
@@ -100,7 +95,7 @@ func (p *Provider) Dial(_ context.Context, outbound phone.Outbound) (phone.Diale
 			Password: trunk.Password, LateOffer: trunk.LateOffer, Codecs: trunk.Codecs,
 		},
 		Stream: sipbridge.StreamTrunk{
-			URI: streamURI, Username: outbound.Bridge.Username, Password: outbound.Bridge.Password,
+			URI: outbound.Bridge.URI, Username: outbound.Bridge.Username, Password: outbound.Bridge.Password,
 		},
 		Call:   sipbridge.CallParams{From: outbound.From, To: outbound.To, RingTimeout: outbound.RingTimeout},
 		Logger: p.logger.With("vendor", phone.SIPTrunkVendor, "vendor_call_id", id),
@@ -179,19 +174,6 @@ func (p *Provider) Close(ctx context.Context) error {
 	case <-ctx.Done():
 		return stack.Wrap(fmt.Errorf("phone: calls through customers' sip trunks still up at shutdown: %w", ctx.Err()))
 	}
-}
-
-// streamRequestURI is the Stream trunk's address with the calling number as its user.
-// Stream matches the routing rule on that number.
-func streamRequestURI(bridge, from string) (string, error) {
-	scheme, rest, ok := strings.Cut(bridge, ":")
-	if !ok || (scheme != "sip" && scheme != "sips") || rest == "" {
-		return "", stack.Wrap(fmt.Errorf("phone: %q is not a sip uri", bridge))
-	}
-	if _, host, hasUser := strings.Cut(rest, "@"); hasUser {
-		rest = host
-	}
-	return scheme + ":" + from + "@" + rest, nil
 }
 
 // SearchNumbers finds nothing: these numbers are the customer's own.

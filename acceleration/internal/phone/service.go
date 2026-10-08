@@ -624,7 +624,10 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		return Placed{}, stack.Wrap(err)
 	}
 
-	outbound.Bridge = bridge
+	outbound.Bridge, err = bridge.WithNumber(request.From)
+	if err != nil {
+		return Placed{}, stack.Wrap(err)
+	}
 	if err := outbound.Validate(); err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
@@ -927,6 +930,11 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		CallID:        request.CallID,
 		CallType:      callType,
 	})
+	if err != nil {
+		return Dialed{}, stack.Wrap(err)
+	}
+
+	bridge, err = bridge.WithNumber(request.From)
 	if err != nil {
 		return Dialed{}, stack.Wrap(err)
 	}
