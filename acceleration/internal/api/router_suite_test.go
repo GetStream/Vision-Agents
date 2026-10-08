@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand/v2"
 	"net"
@@ -226,6 +227,11 @@ type RouterSuite struct {
 	// it returns at the time, whatever host a manifest's reply names: the test's own fake
 	// provider. Nil leaves bridge as the suite set it.
 	channelProvider func() string
+	// logs, set by a suite before it starts the harness, is where the router logs, as text,
+	// for a suite about what it warns of. Nil discards them.
+	logs io.Writer
+	// episodes is the router's closer, for a suite to sweep the idle thread episodes with.
+	episodes *omnichannel.Closer
 	// transcripts, set by a suite before it starts the harness, opens each voice session's
 	// transcript, as cmd/router's chatlog does. Nil keeps none, as the other suites do.
 	transcripts session.TranscriptFactory
@@ -323,6 +329,9 @@ func (s *RouterSuite) SetupSuite() {
 	}
 	ctx := context.Background()
 	logger := slog.New(slog.DiscardHandler)
+	if s.logs != nil {
+		logger = slog.New(slog.NewTextHandler(s.logs, nil))
+	}
 
 	pgStore, err := store.Open(testDatabase(s.T(), dsn))
 	s.Require().NoError(err)
@@ -432,6 +441,7 @@ func (s *RouterSuite) SetupSuite() {
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(episodes.Close)
+	s.episodes = episodes
 
 	server, err := NewServer(Options{
 		Routers:       s.modalities,
