@@ -417,6 +417,34 @@ func documentHandWritten(api huma.API) {
 		},
 	})
 	document.AddOperation(&huma.Operation{
+		OperationID: "answerProviderAppHandshake",
+		Method:      http.MethodGet,
+		Path:        providerAppEventsPath + "{connector_id}/{provider_app_id}",
+		Summary:     "Answer a provider app's handshake",
+		Description: "Where a provider checks a provider app's events URL before it delivers to it: Meta's " +
+			"Verify Token check of a customer's WhatsApp webhook, for one. Unauthenticated because the " +
+			"provider is not a customer. Only a connector whose manifest declares channel.handshake " +
+			"answers it; the verify token is the provider app's id, the one in the URL, so nothing is " +
+			"stored for it, and every delivery is still verified with the app's own secret. With " +
+			"hub.mode subscribe, hub.verify_token the provider app's id and hub.challenge digits only, " +
+			"the challenge is echoed as text/plain. Any other connector, an unknown provider app, or a " +
+			"deployment without connectors answers 405 as for any method a route does not serve. No " +
+			"SDK wraps it: only a provider calls it.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "connector_id", In: "path", Description: "The connector the provider app is of, such as whatsapp.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "provider_app_id", In: "path", Description: "The provider's id for the app, such as a Meta app id.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "hub.mode", In: "query", Description: "subscribe.", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "hub.verify_token", In: "query", Description: "The provider app's id.", Schema: &huma.Schema{Type: huma.TypeString}},
+			{Name: "hub.challenge", In: "query", Description: "Digits to echo.", Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The challenge, echoed", Content: map[string]*huma.MediaType{"text/plain": {Schema: &huma.Schema{Type: huma.TypeString}}}},
+			"404": {Description: "The query is not this URL's handshake: another mode or token, or a challenge that is not digits"},
+			"405": {Description: "This connector, or this deployment, answers no handshake here"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
 		OperationID: "getPluginLogo",
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/plugins/{plugin_id}/logo",

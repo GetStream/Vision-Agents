@@ -763,6 +763,49 @@ func (s *OAuthClientsOffSuite) TestATelnyxAccountAndItsEventsAnswerAsOnBase() {
 	s.Contains(string(answer), `"error":{"message":"this connector takes no events here","type":"not_found","code":"not_found","doc_url":"https://getstream.io/agents/docs/api/errors/#not_found"}}`)
 }
 
+// AI-879: with connectors off a Meta app put alone, a WhatsApp-signed event on its route and
+// Meta's handshake there answer byte for byte as on base ad3fffd0, captured by a probe of this
+// suite there: PUT 400 validation_failed, POST 404 not_found, GET and HEAD 405
+// method_not_allowed with no Allow header.
+func (s *OAuthClientsOffSuite) TestAWhatsAppAppItsEventsAndItsHandshakeAnswerAsOnBase() {
+	app := "1" + strings.Repeat("0", 14)
+
+	status, body := s.serverClient.call(http.MethodPut, oauthClientPath("whatsapp"),
+		ConnectorOAuthClientRequest{ProviderAppID: app, SigningSecret: "app-secret"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), `"error":{"message":"validation failed: expected required property client_id to be present (body)","type":"invalid_request","code":"validation_failed","doc_url":"https://getstream.io/agents/docs/api/errors/#validation_failed"}}`)
+	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "whatsapp")
+	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
+
+	route := s.server.URL + providerAppEventsPath + "whatsapp/" + app
+	answer := func(method, target string, payload io.Reader) (*http.Response, string) {
+		request, err := http.NewRequest(method, target, payload)
+		s.Require().NoError(err)
+		request.Header.Set("X-Hub-Signature-256", "sha256=00")
+		response, err := http.DefaultClient.Do(request)
+		s.Require().NoError(err)
+		defer response.Body.Close()
+		read, err := io.ReadAll(response.Body)
+		s.Require().NoError(err)
+		return response, string(read)
+	}
+	response, read := answer(http.MethodPost, route, strings.NewReader(`{"object":"whatsapp_business_account","entry":[]}`))
+	s.Equal(http.StatusNotFound, response.StatusCode)
+	s.Contains(read, `"error":{"message":"this connector takes no events here","type":"not_found","code":"not_found","doc_url":"https://getstream.io/agents/docs/api/errors/#not_found"}}`)
+
+	response, read = answer(http.MethodGet, route+"?hub.mode=subscribe&hub.verify_token="+app+"&hub.challenge=987", nil)
+	s.Equal(http.StatusMethodNotAllowed, response.StatusCode)
+	s.Equal("application/json", response.Header.Get("Content-Type"))
+	s.Empty(response.Header.Get("Allow"))
+	s.Contains(read, `"error":{"message":"GET is not served on this route","type":"method_not_allowed","code":"method_not_allowed","doc_url":"https://getstream.io/agents/docs/api/errors/#method_not_allowed"}}`)
+	s.NotContains(read, "987")
+
+	response, read = answer(http.MethodHead, route, nil)
+	s.Equal(http.StatusMethodNotAllowed, response.StatusCode)
+	s.Empty(read)
+}
+
 // AI-863: Linq's account put alone answers as any put does with connectors off, and its
 // events route takes nothing, as slack_bot's.
 func (s *OAuthClientsOffSuite) TestALinqAccountIsNotStoredAndItsEventsRouteTakesNothing() {

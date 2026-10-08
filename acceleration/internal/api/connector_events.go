@@ -47,6 +47,12 @@ const signingSecretSuffix = "_MCP_SIGNING_SECRET"
 // a provider app's own route has. One answer, so a probe learns nothing of which.
 var errNoConnectorEvents = notFound("this connector takes no events here")
 
+// errHandshakeRefused is the answer to a handshake whose query the URL does not agree with:
+// PubSubHubbub 0.3, 6.2.1, «the subscriber MUST respond with a 404 "Not Found" response»
+// (https://pubsubhubbub.github.io/PubSubHubbub/pubsubhubbub-core-0.3.html, opened October 8,
+// 2026). Meta's page names no status for it.
+var errHandshakeRefused = notFound("this events URL does not agree to that handshake")
+
 // errUnsigned is the answer to a request the verifier did not prove the provider sent.
 var errUnsigned = unauthenticated("the request is not signed by the provider")
 
@@ -187,6 +193,65 @@ func (s *Server) receiveProviderAppEvent(w http.ResponseWriter, r *http.Request)
 	s.receiveEvent(w, r, body, manifest, []byte(secret), app)
 }
 
+// answerProviderAppHandshake is the GET a provider checks a provider app's events URL with
+// before it delivers to it, such as Meta's Verify Token check (T51, AI-879). Only a connector
+// whose manifest declares channel.handshake answers it, and the verify token is the provider
+// app's id, which the URL names (wave 3d Q1): nothing else is stored for it, since every
+// delivery is still verified with the app's own secret. Every other GET here, and every GET
+// with connectors off, is answered as the route answered before it served one.
+//
+//	the provider app's record                          405, as for any method not served
+//	the customer's latest definition, with a handshake 405, as for any method not served
+//	the query agrees (core.ChannelRule.AnswerHandshake) 404 errHandshakeRefused
+//	                                                   200 text/plain, the challenge
+func (s *Server) answerProviderAppHandshake(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil || s.connectorResolver == nil || s.connectorSecrets == nil {
+		methodNotAllowed(w, r)
+		return
+	}
+	connectorID, appID := r.PathValue("connector_id"), r.PathValue("provider_app_id")
+	app, _, err := ProviderApp(r.Context(), s.store, s.connectorSecrets, connectorID, appID)
+	if errors.Is(err, store.ErrNoConnectorOAuthClient) {
+		methodNotAllowed(w, r)
+		return
+	}
+	if err != nil {
+		writeFailure(w, r, err)
+		return
+	}
+	definition, err := s.store.LatestConnectorDefinition(r.Context(), app.CustomerID, connectorID)
+	if errors.Is(err, store.ErrNoConnectorDefinition) {
+		methodNotAllowed(w, r)
+		return
+	}
+	if err != nil {
+		writeFailure(w, r, err)
+		return
+	}
+	channel := definition.Manifest.Channel
+	if channel == nil || channel.Handshake == "" {
+		methodNotAllowed(w, r)
+		return
+	}
+	challenge, agreed := channel.AnswerHandshake(r.URL.Query(), app.ProviderAppID)
+	if !agreed {
+		s.logger.Info("refused a provider app's handshake", "connector", connectorID)
+		writeError(w, errHandshakeRefused)
+		return
+	}
+	writeChallenge(w, challenge)
+}
+
+// writeChallenge echoes a handshake's challenge as text/plain. Slack takes it back so
+// (url_verification, https://docs.slack.dev/reference/events/url_verification, opened October
+// 6, 2026). nosniff keeps a browser from reading the echoed value as anything else.
+func writeChallenge(w http.ResponseWriter, challenge string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, challenge)
+}
+
 // readConnectorEvent reads an event's body, at most maxConnectorEventBytes. false is an
 // answer already written.
 func readConnectorEvent(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
@@ -232,13 +297,7 @@ func (s *Server) receiveEvent(w http.ResponseWriter, r *http.Request, body []byt
 		return
 	}
 	if event.Challenge != "" {
-		// Slack takes the challenge back as text/plain (url_verification,
-		// https://docs.slack.dev/reference/events/url_verification, opened October 6, 2026).
-		// nosniff keeps a browser from reading the echoed value as anything else.
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, event.Challenge)
+		writeChallenge(w, event.Challenge)
 		return
 	}
 	for _, signal := range event.Signals {
