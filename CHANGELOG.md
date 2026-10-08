@@ -1749,6 +1749,13 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A voice agent with tools finishes a request that takes several of them while the caller is
+  still on the line. A result that called for another tool was given its own sentence, so a
+  request with several steps was a hold phrase, a read-back and a model turn per tool, and a
+  caller who asked for an appointment to be moved and their insurance and pharmacy updated was
+  gone before the last one ran. After a result the reply model now calls the tools the request
+  still needs straight away, without another hold phrase, and together when they do not need
+  each other.
 - A response with images is answered by an agent that has no `vision` skill, as long as its
   conversation model accepts images. Images always went to the `vision` skill, and the
   built-in skill set leaves it out, so every agent on the defaults, and every text session,

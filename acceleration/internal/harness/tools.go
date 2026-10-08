@@ -101,7 +101,10 @@ func (t Tools) Requests() []llm.Tool {
 // after the wait it was meant to cover. The sentence therefore opens with the hold phrase and
 // runs on into the read-back. It is one sentence, not a one-word sentence and then the
 // read-back, because the pause between two utterances is where a caller's interruption lands.
-// After a result the answer is given without another hold phrase, so a wait has one.
+// After a result the answer is given without another hold phrase, so a wait has one, and the
+// tools it still needs are called straight away, together when they do not need each other: a
+// sentence per tool is a model turn per tool, and a request with several steps outlasts the
+// caller.
 //
 // It says nothing about any one tool, so it holds for any set, and it leaves confirmation to
 // the operator's own instructions and to a tool's approval.
@@ -113,7 +116,8 @@ const usePolicy = "Before calling a tool, say one short sentence that opens with
 	"result. Then call the tool in the same turn once every argument it requires is known. " +
 	"Do not collect optional arguments or ask permission for what was asked. Take a name or " +
 	"value as given (a surname is a name). After a result, answer from it; if the request " +
-	"needs another tool, open that call with its own sentence. Pass bare values, not " +
+	"needs more tools, call them straight away without another hold phrase, together when " +
+	"independent. Pass bare values, not " +
 	"phrases. Where your instructions or a tool's approval require confirmation first, " +
 	"follow them."
 
