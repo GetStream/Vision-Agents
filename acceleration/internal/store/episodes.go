@@ -188,14 +188,14 @@ FOR UPDATE OF ep SKIP LOCKED`
 
 // closeIdleEpisodesQuery closes the episodes idleEpisodesQuery locked, which no other router
 // can close meanwhile, so each episode is closed once, by one router. It is a statement of
-// its own, so it reads the last messages as they are once the rows are locked: it checks the
-// last message again, and leaves alone an episode a message touched after idleEpisodesQuery
-// started.
+// its own, so it reads the status and the last messages as they are once the rows are locked:
+// it checks them again, so an episode already ended is not closed twice, and an episode a
+// message touched after idleEpisodesQuery started is left alone.
 const closeIdleEpisodesQuery = `
 WITH closed AS (
     UPDATE episodes AS ep
     SET status = 'ended', ended_at = ?
-    WHERE ep.id IN (?)
+    WHERE ep.id IN (?) AND ep.status = 'in_progress' AND ep.session_id IS NULL
       AND COALESCE((SELECT act.last_message_at FROM episode_activity AS act WHERE act.episode_id = ep.id), ep.started_at) <= ?
     RETURNING ep.*
 )` + leasedWithContact

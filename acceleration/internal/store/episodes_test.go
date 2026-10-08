@@ -430,6 +430,21 @@ func (s *StoreSuite) TestAMessageThatLandsAsASweepLocksTheEpisodeKeepsItOpen() {
 	s.Equal(episodeInProgress, s.episodeStatus(episode.ID))
 }
 
+// A sweep that locked an episode closes it once: the close checks the status again, so an
+// episode that already ended is not closed, leased and summarized a second time.
+func (s *StoreSuite) TestAnEpisodeThatAlreadyEndedIsNotClosedAgain() {
+	person := s.mapped("+15550100")
+	episode := s.threadAt(person, "agent:thread-one", s.base)
+	now := s.base.Add(2 * time.Hour)
+	s.Require().Len(s.closeIdle(s.store, now), 1)
+
+	var closed []ClosedEpisode
+	err := s.store.DB().NewRaw(closeIdleEpisodesQuery, now.Add(time.Minute), bun.In([]string{episode.ID}), now.Add(-time.Hour), now.Add(10*time.Minute)).Scan(s.ctx, &closed)
+
+	s.Require().NoError(err)
+	s.Empty(closed, "an ended episode was closed again")
+}
+
 // A sweep's batch is idle episodes only: a thread that started earlier but is still talking
 // takes no place in it.
 func (s *StoreSuite) TestASweepsBatchHoldsOnlyIdleEpisodes() {
