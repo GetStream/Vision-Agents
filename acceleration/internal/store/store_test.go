@@ -853,3 +853,72 @@ func (s *StoreSuite) TestAgentLogProviderFailureDetails() {
 	_, err = s.store.AgentLog(s.ctx, "another-customer", rows[0].ID)
 	s.Require().Error(err)
 }
+
+// recordCancelled stores a request its caller gave up on after it had generated something.
+func (s *StoreSuite) recordCancelled(at time.Time, latencyMs *float64) {
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "stt", CustomerID: "acme", Provider: "deepgram", Model: "flux-general-en",
+		Tags: map[string]string{"project": "support"}, StartedAt: at,
+		AudioMs: 700, CostMicros: 50, LatencyMs: latencyMs,
+		Success: false, ErrorCode: ErrorCancelled,
+	}))
+}
+
+func (s *StoreSuite) TestACancelledRequestIsSpendButNeitherAnErrorNorALatency() {
+	for index, latency := range []float64{100, 200} {
+		s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+			Modality: "stt", CustomerID: "acme", Provider: "deepgram", Model: "flux-general-en",
+			Tags: map[string]string{"project": "support"}, StartedAt: s.base.Add(time.Duration(index+1) * time.Minute),
+			AudioMs: 1000, CostMicros: 100, LatencyMs: &latency, Success: true,
+		}))
+	}
+	failedLatency := 900.0
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "stt", CustomerID: "acme", Provider: "deepgram", Model: "flux-general-en",
+		Tags: map[string]string{"project": "support"}, StartedAt: s.base.Add(3 * time.Minute),
+		AudioMs: 500, CostMicros: 60, LatencyMs: &failedLatency, Success: false, ErrorCode: "upstream_error",
+	}))
+	// Closed after a first token, and so with a latency, and closed before one, with none.
+	cancelledLatency := 5.0
+	s.recordCancelled(s.base.Add(4*time.Minute), &cancelledLatency)
+	s.recordCancelled(s.base.Add(5*time.Minute), nil)
+
+	_, err := s.store.Rollup(s.ctx, Hourly, s.base, s.base.Add(time.Hour))
+	s.Require().NoError(err)
+
+	check := func(name string, requests, errors, audio, cost int64, p50 *float64, uptime *float64) {
+		s.EqualValues(5, requests, name+": a cancelled request is still a request")
+		s.EqualValues(1, errors, name+": and is no error")
+		s.EqualValues(3900, audio, name+": what it generated is still counted")
+		s.EqualValues(360, cost, name+": and still billed")
+		s.Require().NotNil(p50, name)
+		s.InDelta(200.0, *p50, 0.001, name+": its latency is not one the provider had")
+		s.Require().NotNil(uptime, name)
+		s.InDelta(4.0/5.0, *uptime, 0.001, name+": nor is it downtime")
+	}
+
+	byProvider, err := s.store.CustomerStats(s.ctx, "stt", "acme", Hourly, s.base, s.base.Add(time.Hour), nil)
+	s.Require().NoError(err)
+	s.Require().Len(byProvider, 1)
+	bucket := byProvider[0]
+	check("rollup", bucket.RequestCount, bucket.ErrorCount, bucket.AudioMsTotal, bucket.CostMicrosTotal,
+		bucket.LatencyP50Ms, bucket.Uptime)
+
+	byTag, err := s.store.CustomerTagStats(s.ctx, "stt", "acme", "project", Hourly, s.base, s.base.Add(time.Hour))
+	s.Require().NoError(err)
+	s.Require().Len(byTag, 1)
+	tag := byTag[0]
+	s.EqualValues(5, tag.RequestCount, "tag rollup: a cancelled request is still a request")
+	s.EqualValues(1, tag.ErrorCount, "tag rollup: and is no error")
+	s.EqualValues(360, tag.CostMicrosTotal, "tag rollup: and still billed")
+	s.Require().NotNil(tag.LatencyP50Ms)
+	s.InDelta(200.0, *tag.LatencyP50Ms, 0.001, "tag rollup: its latency is not one the provider had")
+
+	filtered, err := s.store.CustomerStats(s.ctx, "stt", "acme", Hourly, s.base, s.base.Add(time.Hour),
+		map[string]string{"project": "support"})
+	s.Require().NoError(err)
+	s.Require().Len(filtered, 1)
+	bucket = filtered[0]
+	check("raw rows", bucket.RequestCount, bucket.ErrorCount, bucket.AudioMsTotal, bucket.CostMicrosTotal,
+		bucket.LatencyP50Ms, bucket.Uptime)
+}
