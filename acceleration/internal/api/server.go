@@ -243,6 +243,10 @@ type Options struct {
 	// The validate endpoint lists a connection's tools through it. Absent when connectors are
 	// off, in which case no connection can be validated.
 	ConnectorTransports *core.Transports
+	// ConnectorLimiter holds a connection's direct calls after its provider answered 429, until
+	// the Retry-After it asked for (core.Limiter). Absent, which it is with connectors off or
+	// without Redis, nothing is held and the provider limits alone.
+	ConnectorLimiter *core.Limiter
 	// ConnectorEventSecrets finds the secret a connector's events are verified with
 	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
 	// endpoint takes no events.
@@ -341,6 +345,8 @@ type Server struct {
 
 	// connectorTransports is what the validate endpoint reaches a connection's tools through.
 	connectorTransports *core.Transports
+	// connectorLimiter holds the proxy's calls after a provider's 429; nil holds none.
+	connectorLimiter *core.Limiter
 
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -483,6 +489,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		server.connectorSecrets, server.credentials = options.ConnectorSecrets, credentials
 	}
 	server.connectorTransports = options.ConnectorTransports
+	server.connectorLimiter = options.ConnectorLimiter
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}
 	}
@@ -545,6 +552,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+ConnectorClientMetadataPath, s.serveConnectorClientMetadata)
 	mux.HandleFunc("POST "+connectorEventsPath+"{connector_id}", s.receiveConnectorEvent)
 	mux.HandleFunc("POST "+providerAppEventsPath+"{connector_id}/{provider_app_id}", s.receiveProviderAppEvent)
+	for _, method := range proxyMethods {
+		mux.HandleFunc(method+" "+connectionProxyPath+"*", s.proxyConnection)
+	}
 	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
 	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
 	mux.HandleFunc("POST "+mcpevents.Path+"{token}", s.receiveConnectionEvent)

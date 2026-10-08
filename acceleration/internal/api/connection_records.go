@@ -55,7 +55,8 @@ type ConnectionInvocationPage struct {
 	NextCursor *string                `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page. Absent on the last one."`
 }
 
-// ConnectorAuditEvent is one grant a connection got, renewed or lost, as an operator reads it.
+// ConnectorAuditEvent is one grant a connection got, renewed or lost, or one direct call sent
+// through it, as an operator reads it.
 type ConnectorAuditEvent struct {
 	ID           string               `json:"id"`
 	ConnectionID string               `json:"connection_id" doc:"The connection, which may since have been deleted."`
@@ -67,12 +68,15 @@ type ConnectorAuditEvent struct {
 	RequestID    string               `json:"request_id,omitempty" doc:"The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted."`
 	SessionID    string               `json:"session_id,omitempty" doc:"The session whose tool call caused it. Absent for an incognito session, and once the connection's user was deleted."`
 	AttemptID    string               `json:"attempt_id,omitempty" doc:"The authorization attempt a consent finished. Absent once the connection's user was deleted."`
+	StatusCode   *int                 `json:"status_code,omitempty" doc:"A proxy_call's status from the provider. Absent when no answer came, and for a grant."`
+	LatencyMs    *int64               `json:"latency_ms,omitempty" doc:"How long a proxy_call took until the provider's answer, in milliseconds. Absent for a grant."`
+	Target       string               `json:"target,omitempty" doc:"The host a proxy_call reached. Absent for a grant."`
 	CreatedAt    time.Time            `json:"created_at"`
 }
 
 func (*ConnectorAuditEvent) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "One grant a connection got, renewed or lost, with the ids that tie it " +
-		"to what caused it. It names no user and no provider account, so it outlives a user's " +
+	schema.Description = "One grant a connection got, renewed or lost, or one direct call sent " +
+		"through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's " +
 		"connections being deleted."
 	return schema
 }
@@ -84,8 +88,9 @@ func (ConnectorAuditAction) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "ConnectorAuditAction",
 		"grant_created: a consent or a credentials write gave the connection a grant. "+
 			"grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, "+
-			"because the provider refused or revoked it or the connection was deleted.",
-		store.AuditGrantCreated, store.AuditGrantRefreshed, store.AuditGrantRevoked)
+			"because the provider refused or revoked it or the connection was deleted. "+
+			"proxy_call: a direct call went to the provider through the connection.",
+		store.AuditGrantCreated, store.AuditGrantRefreshed, store.AuditGrantRevoked, store.AuditProxyCall)
 }
 
 // ConnectorAuditPage is a page of audit rows.
@@ -238,7 +243,8 @@ func (s *Server) listConnectorAudit(ctx context.Context, request *listConnectorA
 			ID: row.ID, ConnectionID: row.ConnectionID, ConnectorID: row.ConnectorID,
 			OwnerType: ConnectionOwnerType(row.OwnerType), Action: ConnectorAuditAction(row.Action),
 			Reason: row.Reason, Revision: row.Revision, RequestID: row.RequestID, SessionID: row.SessionID,
-			AttemptID: row.AttemptID, CreatedAt: row.CreatedAt,
+			AttemptID: row.AttemptID, StatusCode: row.StatusCode, LatencyMs: row.LatencyMs, Target: row.Target,
+			CreatedAt: row.CreatedAt,
 		})
 	}
 	if more {

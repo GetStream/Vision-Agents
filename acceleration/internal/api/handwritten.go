@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
@@ -416,6 +417,48 @@ func documentHandWritten(api huma.API) {
 			"413": {Description: "The event is over 256 KiB"},
 		},
 	})
+	// The direct-call proxy is one route for every method a provider's API takes, so it is one
+	// operation per method. Its path runs on past {path}, which a Huma operation cannot route.
+	errorBody := map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}
+	for _, method := range proxyMethods {
+		document.AddOperation(&huma.Operation{
+			OperationID: "proxyConnection" + method[:1] + strings.ToLower(method[1:]),
+			Method:      method,
+			Path:        connectionProxyPath + "{path}",
+			Summary:     "Call a connection's provider directly (" + method + ")",
+			Description: "Forwards the request to the connector's api_base with path appended, and answers " +
+				"with the provider's answer as it came: status, headers and body. The request goes as it " +
+				"came, but for the router's own credentials and caller headers (Authorization, " +
+				"X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, " +
+				"token, customer_id, user_id), which never reach the provider; the connection's own " +
+				"credential is added instead. On a 401 the credential is renewed and the request sent " +
+				"once more when the scheme can renew it. A provider's 429 and Retry-After come back as " +
+				"they are, and the connection's calls are then refused with a 429 here until that " +
+				"Retry-After passes. A path with a dot segment, which would leave api_base, is " +
+				"refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base " +
+				"URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra " +
+				"headers. An app-owned connection is the app's backend's; a user-owned one is reached " +
+				"only by a backend acting for that user (X-Stream-User-Id). Each call that is sent " +
+				"leaves one proxy_call audit row.\n\n" +
+				"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+				"user's device.",
+			Parameters: []*huma.Param{
+				{Name: "id", In: "path", Description: "The connection.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+				{Name: "path", In: "path", Description: "The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+			},
+			Responses: map[string]*huma.Response{
+				"200": {Description: "The provider's answer, as it came. It may have any status, a 401 or a 429 included."},
+				"400": {Ref: "#/components/responses/BadRequest"},
+				"401": {Ref: "#/components/responses/Unauthorized"},
+				"403": {Ref: "#/components/responses/Forbidden"},
+				"404": {Ref: "#/components/responses/NotFound"},
+				"409": {Description: "The connection is not connected", Content: errorBody},
+				"413": {Description: "The body is over 1 MiB", Content: errorBody},
+				"429": {Description: "The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came.", Content: errorBody},
+				"503": {Description: "The call did not reach the provider, or its answer did not come back", Content: errorBody},
+			},
+		})
+	}
 	document.AddOperation(&huma.Operation{
 		OperationID: "getPluginLogo",
 		Method:      http.MethodGet,
