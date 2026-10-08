@@ -1,0 +1,146 @@
+name: Voicebench
+on:
+  pull_request:
+    paths:
+      - 'benchmark/**'
+      - 'acceleration/**'
+      - 'sdks/python/**'
+      - 'plugins/stream/**'
+      - 'plugins/getstream/**'
+      - 'plugins/openai/**'
+      - '.github/workflows/voicebench.yml'
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: 'smoke (one golden call per pack) or nightly (the frozen set)'
+        type: choice
+        options: [ smoke, nightly ]
+        default: smoke
+
+permissions:
+  contents: read
+
+# Every tier is live calls against the providers below, on a router built from this checkout.
+# The network profile names the runner, so a CI number never lands in a laptop's series.
+env:
+  CGO_ENABLED: '1'
+  VOICEBENCH_NETWORK_PROFILE: github-ubuntu-latest
+  STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
+  STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
+  STREAM_ACCELERATION_CUSTOMER_ID: voicebench
+  ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+  DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+  INWORLD_API_KEY: ${{ secrets.INWORLD_API_KEY }}
+
+jobs:
+  # Per pull request: each pack's golden call at k=1. It fails when a trial produces no
+  # verdict (a missing caller TTS, STT or judge output, or dropped inbound frames), not when
+  # the agent fails the scenario: one call is too few to tell a regression from noise.
+  smoke:
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && inputs.tier == 'smoke')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: benchmark
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/voicebench-setup
+
+      - name: Run each pack's golden call
+        run: VOICEBENCH_SET=golden VOICEBENCH_K=1 scripts/packs.sh out/smoke
+
+      - name: Report
+        if: always()
+        run: cat out/smoke/*/report.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: voicebench-smoke
+          path: benchmark/out/smoke
+          retention-days: 14
+
+  # Nightly: the frozen set at k=1 on our stack alone, compared against the previous night's
+  # run. The digest is posted to Slack only once VOICEBENCH_SLACK_BOT_TOKEN and
+  # VOICEBENCH_SLACK_CHANNEL are set.
+  nightly:
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.tier == 'nightly')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: benchmark
+    env:
+      VOICEBENCH_LIVEKIT_ARMS: ''
+      VOICEBENCH_SLACK_BOT_TOKEN: ${{ secrets.VOICEBENCH_SLACK_BOT_TOKEN }}
+      VOICEBENCH_SLACK_CHANNEL: ${{ secrets.VOICEBENCH_SLACK_CHANNEL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/voicebench-setup
+
+      - name: Restore the previous night
+        uses: actions/cache/restore@v4
+        with:
+          path: benchmark/out/previous
+          key: voicebench-nightly-${{ github.run_id }}
+          restore-keys: voicebench-nightly-
+
+      - name: Run the frozen set
+        run: |
+          if [[ -z "$VOICEBENCH_SLACK_BOT_TOKEN" || -z "$VOICEBENCH_SLACK_CHANNEL" ]]; then
+            echo "Slack is not configured, writing the digest without posting it"
+            export VOICEBENCH_DIGEST_POST=0
+          fi
+          VOICEBENCH_K=1 scripts/digest.sh out/nightly
+
+      - name: Compare with the previous night
+        if: always()
+        run: |
+          for run in out/nightly/*-accelerated; do
+            previous="out/previous/$(basename "$run")"
+            [[ -f "$run/summary.json" && -f "$previous/summary.json" ]] || continue
+            go run ./cmd/voicebench compare --baseline "$previous" "$run" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      # A night with no finished run keeps the last one it had, rather than an empty baseline.
+      - name: Keep tonight for tomorrow
+        id: keep
+        if: always()
+        run: |
+          tonight=(out/nightly/*-accelerated/summary.json)
+          [[ -f "${tonight[0]}" ]] || exit 0
+          rm -rf out/previous
+          for summary in "${tonight[@]}"; do
+            run="$(dirname "$summary")"
+            mkdir -p "out/previous/$(basename "$run")"
+            cp "$run/summary.json" "$run/manifest.json" "out/previous/$(basename "$run")/"
+          done
+          echo "saved=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/save@v4
+        if: always() && steps.keep.outputs.saved == 'true'
+        with:
+          path: benchmark/out/previous
+          key: voicebench-nightly-${{ github.run_id }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: voicebench-nightly
+          path: benchmark/out/nightly
+          retention-days: 30
+
+concurrency:
+  group: voicebench-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}

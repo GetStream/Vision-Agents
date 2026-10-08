@@ -265,6 +265,10 @@ go run ./cmd/voicebench digest --title "Voicebench" --out out/digest --slack out
 
 `scripts/digest.sh` runs the frozen set for every pack against our stack and LiveKit Inference, then posts the digest: the nightly run. `VOICEBENCH_K=3 VOICEBENCH_LIVEKIT_ARMS="inference realtime"` makes it the weekly one. It builds the router from this checkout unless `STREAM_ACCELERATION_URL` names a hosted one, and `VOICEBENCH_DIGEST_POST=0` writes the digest without posting it.
 
+### CI
+
+[`.github/workflows/voicebench.yml`](../.github/workflows/voicebench.yml) runs both tiers on a router built from the checkout, with network profile `github-ubuntu-latest`. A pull request touching `benchmark/`, `acceleration/`, the Python SDK or the plugins the agents use runs each pack's golden call at k=1 (`VOICEBENCH_SET=golden scripts/packs.sh`). It fails when a trial produces no verdict, not when the agent fails the scenario. Every night the frozen set runs on our stack alone through `scripts/digest.sh`, its compare against the previous night goes to the job summary, and the digest is posted to Slack once `VOICEBENCH_SLACK_BOT_TOKEN` and `VOICEBENCH_SLACK_CHANNEL` are repository secrets. Run either tier by hand from the Actions tab.
+
 ## Public benchmark basis
 
 Voicebench combines ideas from public work; it does not import their datasets or reproduce any one benchmark:
