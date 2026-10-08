@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -336,6 +337,12 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, comma
 		found.Interrupt()
 
 	case "instructions":
+		// Refused from a device as on createSession and updateSession. The owner's kind is
+		// what a relayed command carries too, and only a backend's is KindServer.
+		if owner.Kind != auth.KindServer {
+			found.Report(errDeviceInstructions, "command")
+			return true
+		}
 		found.SetInstructions(command.Instructions)
 
 	case "close":
@@ -472,22 +479,25 @@ func frameOf(event session.Event) (frame, bool) {
 
 	case agent.Turn:
 		return frame{
-			"type":                   "turn",
-			"turn_id":                typed.TurnID,
-			"participant":            participantOf(typed.Participant),
-			"started_at":             typed.StartedAt,
-			"stt_latency_ms":         typed.STTLatencyMs,
-			"cadence_ms":             typed.CadenceMs,
-			"decision_ms":            typed.DecisionMs,
-			"model_to_first_text_ms": typed.ModelToFirstTextMs,
-			"text_to_tts_ms":         typed.TextToTTSMs,
-			"tts_to_audio_ms":        typed.TTSToAudioMs,
-			"llm_ttft_ms":            typed.LLMTTFTMs,
-			"tts_ttfb_ms":            typed.TTSTTFBMs,
-			"roundtrip_ms":           typed.RoundtripMs,
-			"speech_end_to_audio_ms": typed.SpeechEndToAudioMs,
-			"audio_out_ms":           typed.AudioOutMs,
-			"interrupted":            typed.Interrupted,
+			"type":                     "turn",
+			"turn_id":                  typed.TurnID,
+			"participant":              participantOf(typed.Participant),
+			"started_at":               typed.StartedAt,
+			"stt_latency_ms":           typed.STTLatencyMs,
+			"cadence_ms":               typed.CadenceMs,
+			"decision_ms":              typed.DecisionMs,
+			"model_to_first_text_ms":   typed.ModelToFirstTextMs,
+			"text_to_tts_ms":           typed.TextToTTSMs,
+			"tts_to_audio_ms":          typed.TTSToAudioMs,
+			"llm_ttft_ms":              typed.LLMTTFTMs,
+			"tts_ttfb_ms":              typed.TTSTTFBMs,
+			"roundtrip_ms":             typed.RoundtripMs,
+			"speech_end_to_audio_ms":   typed.SpeechEndToAudioMs,
+			"first_frame_queued_ms":    typed.FirstFrameQueuedMs,
+			"first_audible_frame_ms":   typed.FirstAudibleFrameMs,
+			"speech_end_to_audible_ms": typed.SpeechEndToAudibleMs,
+			"audio_out_ms":             typed.AudioOutMs,
+			"interrupted":              typed.Interrupted,
 		}, true
 
 	case agent.ModelCall:
@@ -535,10 +545,28 @@ func frameOf(event session.Event) (frame, bool) {
 		return frame{"type": "command_stopped", "command": typed.CommandReceipt}, true
 	case session.ConnectorUnavailable:
 		return frame{"type": "connector_unavailable", "name": typed.Name, "connector_id": typed.ConnectorID, "reason": typed.Reason}, true
+	case session.ConnectorScopeRequired:
+		return frame{
+			"type":             "connector_scope_required",
+			"name":             typed.Name,
+			"connector_id":     typed.ConnectorID,
+			"connection_id":    typed.ConnectionID,
+			"scopes":           typed.Scopes,
+			"authorization_id": typed.AuthorizationID,
+			"launch_url":       typed.LaunchURL,
+			"handoff_token":    typed.HandoffToken,
+			"expires_at":       typed.ExpiresAt,
+		}, true
 	case conversation.Updated:
 		return frame{"type": "conversation_updated", "conversation_id": typed.CID, "message": typed.Message}, true
 	case agent.ToolStarted:
-		return frame{"type": "tool_started", "tool_call_id": typed.ID, "tool": typed.Tool, "turn_id": typed.TurnID, "started_at": typed.StartedAt}, true
+		started := frame{"type": "tool_started", "tool_call_id": typed.ID, "tool": typed.Tool, "turn_id": typed.TurnID, "started_at": typed.StartedAt}
+		// Only a connector binding whose policy sets pre_speech adds it, so every other
+		// tool_started is the frame it always was.
+		if typed.PreSpeech != "" {
+			started["pre_speech"] = typed.PreSpeech
+		}
+		return started, true
 	case agent.ToolRan:
 		return frame{
 			"type":         "tool_ran",

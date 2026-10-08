@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -93,6 +94,8 @@ const (
 	ignored
 	// artifact is a card for artifacts a tool stored, apart from anything said.
 	artifact
+	// timed is how long the stages of a turn took, to be shown on its reply.
+	timed
 )
 
 // Options configures a Log. Its credentials are given, never read from the environment.
@@ -112,6 +115,10 @@ type Options struct {
 	// CustomerID is stamped on a channel this log creates, so reading it back can tell
 	// whose it is. A bound conversation's channel already carries the stamp.
 	CustomerID string
+	// Timings writes how long each stage of a turn took after the reply to it, and on the
+	// message as the timings field, for a developer talking to the agent. Off by default:
+	// it is not something a caller should read.
+	Timings bool
 
 	// Client writes with a client the caller already holds for the app, which is how the
 	// router writes in the Stream app a session is pinned to. With it set, nothing is read
@@ -140,6 +147,7 @@ type Log struct {
 	customer string
 	agent    User
 	visible  []string
+	timings  bool
 	logger   *slog.Logger
 
 	queue chan message
@@ -164,6 +172,8 @@ type message struct {
 	// receiptID is the tool call an artifact card is for, which keeps its identity stable.
 	receiptID string
 	artifacts []conversation.ArtifactAttachment
+	// timings is what a timed message carries.
+	timings *timings
 }
 
 // New validates the options and returns a Log. It writes nothing; Start does that.
@@ -201,6 +211,7 @@ func New(options Options) (*Log, error) {
 		customer: options.CustomerID,
 		agent:    options.Agent,
 		visible:  options.VisibleTools,
+		timings:  options.Timings,
 		logger:   options.Logger.With("agent", options.AgentID, "channel", channel),
 		queue:    make(chan message, queueSize),
 		done:     make(chan struct{}),
@@ -281,6 +292,13 @@ func (l *Log) Record(event agent.Event) {
 		// The model may already have finished, but the caller did not hear that reply in
 		// full, so it must not be stored as a completed spoken line.
 		l.enqueue(message{author: l.agent, turnID: typed.TurnID, kind: interrupt, source: SourceAgent})
+	case agent.Turn:
+		if !l.timings || typed.TurnID == "" {
+			return
+		}
+		if described, ok := timingsOf(typed); ok {
+			l.enqueue(message{turnID: typed.TurnID, kind: timed, timings: &described})
+		}
 	}
 }
 
@@ -379,6 +397,10 @@ type writer struct {
 	interrupted map[string]struct{}
 	// listening is what each participant is saying, by user id, until it settles.
 	listening map[string]*reply
+	// recent is what is held of the last few turns until their reply and their timings have
+	// met, and turns is the order they were first held in, oldest first.
+	recent map[string]*turnRecord
+	turns  []string
 }
 
 func newWriter(l *Log) *writer {
@@ -390,6 +412,7 @@ func newWriter(l *Log) *writer {
 		writing:     map[string]*reply{},
 		interrupted: map[string]struct{}{},
 		listening:   map[string]*reply{},
+		recent:      map[string]*turnRecord{},
 	}
 }
 
@@ -447,6 +470,8 @@ func (w *writer) handle(queued message) {
 		w.retract(queued.author.ID)
 	case whole:
 		w.store(queued.author, queued.text, queued.source, false)
+	case timed:
+		w.arrived(queued.turnID, queued.timings)
 	}
 }
 
@@ -533,7 +558,8 @@ func (w *writer) settle(turnID, text string) {
 	writing, streamed := w.writing[turnID]
 	if !streamed {
 		// A reply that never streamed is just a line of the conversation.
-		w.store(w.log.agent, text, SourceAgent, false)
+		id := w.store(w.log.agent, text, SourceAgent, false)
+		w.keep(turnID, posted{id: id, author: w.log.agent, text: text})
 		return
 	}
 	delete(w.writing, turnID)
@@ -543,7 +569,8 @@ func (w *writer) settle(turnID, text string) {
 	}
 	if writing.messageID == "" {
 		// It finished before the first tick, so there is nothing to correct.
-		w.store(writing.author, text, SourceAgent, false)
+		id := w.store(writing.author, text, SourceAgent, false)
+		w.keep(turnID, posted{id: id, author: writing.author, text: text})
 		return
 	}
 
@@ -561,6 +588,7 @@ func (w *writer) settle(turnID, text string) {
 	if err != nil {
 		w.log.logger.Error("could not store a finished reply", "turn", turnID, "error", err)
 	}
+	w.keep(turnID, posted{id: writing.messageID, author: writing.author, text: text})
 }
 
 // closeOut finishes whatever was still being written. The queue closes when the call is
@@ -593,15 +621,18 @@ func (w *writer) abandon(turnID, spoken string) {
 	if spoken != "" {
 		if started && writing.messageID != "" {
 			w.patch(writing, spoken, true, SourceAgent)
+			w.keep(turnID, posted{id: writing.messageID, author: writing.author, text: spoken, interrupted: true})
 			return
 		}
-		w.store(w.log.agent, spoken, SourceAgent, true)
+		id := w.store(w.log.agent, spoken, SourceAgent, true)
+		w.keep(turnID, posted{id: id, author: w.log.agent, text: spoken, interrupted: true})
 		return
 	}
 	if !started || writing.messageID == "" {
 		return
 	}
 	w.patch(writing, "", true, SourceAgent)
+	w.keep(turnID, posted{id: writing.messageID, author: writing.author, interrupted: true})
 }
 
 func (w *writer) patch(writing *reply, text string, interrupted bool, source string) {
@@ -619,18 +650,102 @@ func (w *writer) patch(writing *reply, text string, interrupted bool, source str
 	}
 }
 
-// store writes one whole line of the conversation.
-func (w *writer) store(author User, text, source string, interrupted bool) {
-	if author.ID == "" || text == "" {
+// recentTurns is how many turns the writer holds a reply or its timings for while it waits for
+// the other. A turn is reported when its first sound is out, which is before or after the
+// voice has finished the reply, but never by many turns.
+const recentTurns = 32
+
+// turnRecord is what is held of one turn until its reply and its timings have met.
+type turnRecord struct {
+	// timings arrived before the reply was stored.
+	timings *timings
+	// reply is the message the reply was stored as, once it has been.
+	reply *posted
+}
+
+// posted is a reply as it was left in the channel, which is what timings are written onto.
+type posted struct {
+	id          string
+	author      User
+	text        string
+	interrupted bool
+}
+
+// keep notes where a turn's reply was left, and writes the turn's timings onto it if they
+// are already here. A reply that left no message has nothing to show them on.
+func (w *writer) keep(turnID string, post posted) {
+	if !w.log.timings || post.id == "" {
 		return
+	}
+	held := w.hold(turnID)
+	held.reply = &post
+	if held.timings != nil {
+		w.annotate(turnID, held)
+	}
+}
+
+// arrived takes a turn's timings, writing them onto its reply if that has been stored and
+// holding them for it if not.
+func (w *writer) arrived(turnID string, arrived *timings) {
+	held := w.hold(turnID)
+	held.timings = arrived
+	if held.reply != nil {
+		w.annotate(turnID, held)
+	}
+}
+
+// hold returns what is held of a turn, making room for a turn not held yet by letting go of
+// the oldest.
+func (w *writer) hold(turnID string) *turnRecord {
+	if held, ok := w.recent[turnID]; ok {
+		return held
+	}
+	if len(w.turns) == recentTurns {
+		delete(w.recent, w.turns[0])
+		w.turns = slices.Delete(w.turns, 0, 1)
+	}
+	held := &turnRecord{}
+	w.recent[turnID] = held
+	w.turns = append(w.turns, turnID)
+	return held
+}
+
+// annotate writes a turn's timings after its reply, which is all there is to keep of it.
+func (w *writer) annotate(turnID string, held *turnRecord) {
+	delete(w.recent, turnID)
+	w.turns = slices.DeleteFunc(w.turns, func(id string) bool { return id == turnID })
+
+	text := held.timings.line
+	if held.reply.text != "" {
+		text = held.reply.text + conversation.TimingsGap + text
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+	_, err := w.log.client.Chat().UpdateMessagePartial(ctx, held.reply.id,
+		&getstream.UpdateMessagePartialRequest{
+			UserID: &held.reply.author.ID,
+			Set:    map[string]any{"text": text, conversation.TimingsField: held.timings.fields},
+		})
+	if err != nil {
+		w.log.logger.Error("could not show a reply's timings", "turn", turnID, "error", err)
+	}
+}
+
+// store writes one whole line of the conversation and returns its id, empty if it was not
+// written.
+func (w *writer) store(author User, text, source string, interrupted bool) string {
+	if author.ID == "" || text == "" {
+		return ""
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
 
-	if _, err := w.send(ctx, author, text, false, interrupted, source); err != nil {
+	id, err := w.send(ctx, author, text, false, interrupted, source)
+	if err != nil {
 		w.log.logger.Error("could not store a message", "user", author.ID, "error", err)
 	}
+	return id
 }
 
 // send stores one message and returns its id, creating its author first if the app has

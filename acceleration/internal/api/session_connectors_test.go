@@ -4,7 +4,9 @@ package api
 
 import (
 	"context"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +77,38 @@ func (s *SessionConnectorsSuite) TestAModelsToolCallReachesTheProviderWithTheCon
 	s.Equal(connectorEchoText, ran["result"])
 	s.Empty(ran["error"])
 	s.Greater(s.provider.Hits(fakeprovider.PathMCP), before)
+}
+
+// toolStartedOn is the tool_started frame of a session of a config binding crm with policy,
+// none when policy is nil, once the model reached for crm__echo.
+func (s *SessionConnectorsSuite) toolStartedOn(policy map[string]any) map[string]any {
+	connector := s.connector()
+	mine, echo := s.connection(s.client, connector)
+	binding := s.binding("crm", connector, "session", "", echo)
+	if policy != nil {
+		binding["policy"] = policy
+	}
+	opened := s.client.createSession(s.session(s.config(binding), map[string]string{"crm": mine}))
+	events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	s.Require().Equal(http.StatusOK, s.serverClient.actingFor(s.client).do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
+		RespondRequest{Text: "ask the crm", CommandId: pointerTo(s.utils.uuid())}, nil))
+	return s.await(events, "tool_started")
+}
+
+// TestABindingsPreSpeechIsOnItsToolStarted: the policy written through the config API
+// reaches the session's tool_started.
+func (s *SessionConnectorsSuite) TestABindingsPreSpeechIsOnItsToolStarted() {
+	started := s.toolStartedOn(map[string]any{"pre_speech": "Let me look in the CRM."})
+
+	s.Equal(connectorEcho, started["tool"])
+	s.Equal("Let me look in the CRM.", started["pre_speech"])
+}
+
+// TestABindingWithoutAPolicyHasTheToolStartedOfBefore: the same keys as base sends, no more.
+func (s *SessionConnectorsSuite) TestABindingWithoutAPolicyHasTheToolStartedOfBefore() {
+	started := s.toolStartedOn(nil)
+
+	s.ElementsMatch([]string{"type", "tool_call_id", "tool", "turn_id", "started_at"}, slices.Collect(maps.Keys(started)))
 }
 
 func (s *SessionConnectorsSuite) TestAFixedAliasCannotBeGivenAConnection() {

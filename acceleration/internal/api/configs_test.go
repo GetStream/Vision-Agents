@@ -647,6 +647,84 @@ func (s *ConfigsSuite) TestAConfigsBindingsAreReadBackExactlyAsTheyWereWritten()
 	s.JSONEq(string(written), string(read.Connectors))
 }
 
+// readConnectors is a config's bindings as GET answers them, and as its row stores them.
+func (s *ConfigsSuite) readConnectors(id string) (json.RawMessage, string) {
+	status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/configs/"+id, nil)
+	s.Require().Equal(http.StatusOK, status)
+	var read struct {
+		Connectors json.RawMessage `json:"connectors"`
+	}
+	s.Require().NoError(json.Unmarshal(raw, &read))
+	var stored string
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT connectors::text FROM agent_configs WHERE id = ?", id).Scan(&stored))
+	return read.Connectors, stored
+}
+
+func (s *ConfigsSuite) TestABindingsPolicyIsReadBackExactlyAsItWasWritten() {
+	speaking := sessionSlack("inbox")
+	speaking["policy"] = map[string]any{"pre_speech": "Let me look in Slack.", "on_interrupt": "wait", "cancellable": false}
+	waiting := fixedSlack("crm", s.connection(""))
+	waiting["policy"] = map[string]any{"on_interrupt": "cancel"}
+	bindings := []map[string]any{speaking, waiting}
+
+	created := s.createConfig(map[string]any{"name": "support", "connectors": bindings})
+
+	read, _ := s.readConnectors(created.Id)
+	written, err := json.Marshal(bindings)
+	s.Require().NoError(err)
+	s.JSONEq(string(written), string(read))
+	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), created.Id)
+	s.Require().NoError(err)
+	cancellable := false
+	s.Equal(&store.BindingPolicy{PreSpeech: "Let me look in Slack.", OnInterrupt: store.InterruptWait, Cancellable: &cancellable},
+		stored.Connectors[0].Policy)
+	s.Equal(&store.BindingPolicy{OnInterrupt: store.InterruptCancel}, stored.Connectors[1].Policy)
+}
+
+func (s *ConfigsSuite) TestAPatchSetsABindingsPolicy() {
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("inbox")}})
+	patched := sessionSlack("inbox")
+	patched["policy"] = map[string]any{"on_interrupt": "wait"}
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"connectors": []map[string]any{patched}}, nil))
+
+	read, _ := s.readConnectors(created.Id)
+	written, err := json.Marshal([]map[string]any{patched})
+	s.Require().NoError(err)
+	s.JSONEq(string(written), string(read))
+}
+
+func (s *ConfigsSuite) TestAPolicyTheSchemaCannotHoldIsRefused() {
+	for name, policy := range map[string]map[string]any{
+		"an on_interrupt that is neither cancel nor wait": {"on_interrupt": "ignore"},
+		"an empty pre_speech":                             {"pre_speech": ""},
+		"cancellable that is not a boolean":               {"cancellable": "no"},
+	} {
+		s.Run(name, func() {
+			binding := sessionSlack("inbox")
+			binding["policy"] = policy
+
+			status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+				map[string]any{"name": "support", "connectors": []map[string]any{binding}})
+
+			s.Equal(http.StatusBadRequest, status)
+			s.Contains(failure, "policy")
+		})
+	}
+}
+
+func (s *ConfigsSuite) TestABindingWithoutAPolicyIsStoredAndReadAsBefore() {
+	// No policy key on the wire or in the row: what a binding was before policies existed.
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("inbox")}})
+
+	read, stored := s.readConnectors(created.Id)
+
+	s.NotContains(string(read), "policy")
+	s.NotContains(stored, "policy")
+}
+
 func (s *ConfigsSuite) TestAConfigWithoutBindingsShowsNone() {
 	created := s.createConfig(map[string]any{"name": "support"})
 

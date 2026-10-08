@@ -1,0 +1,5 @@
+---
+pending: [python, dotnet, ruby, rust, php, swift, kotlin, dart]
+---
+
+The session socket (`watchSession`) sends a new frame, `connector_scope_required` (AI-854): a connector tool call the provider refused for want of access (insufficient_scope, or a claims challenge) on the caller's own connection, and the step-up consent the router began for it. Fields: `name` (the binding's alias), `connector_id`, `connection_id`, `scopes` (what the provider asked for, empty for a claims challenge), `authorization_id`, `launch_url`, `handoff_token`, `expires_at`. A client opens `launch_url` in a popup and posts it `handoff_token`, as for `createAuthorization`. One open step-up per connection: calls refused for the same access send no second frame. The old grant keeps working until the step-up succeeds; then the same call works in the same session. Only the operation's description changed in the spec. Go has `stream.Event.ConnectorScopeRequired()` reading it; JavaScript has the regenerated types. Python, Swift, Kotlin, Dart, .NET, Ruby, Rust and PHP still need a typed reader for the frame.

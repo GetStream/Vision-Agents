@@ -91,10 +91,11 @@ func (r *Reader) Transcript(ctx context.Context, read Read) ([]Spoken, error) {
 
 	said := make([]Spoken, 0, len(found.Messages))
 	for _, stored := range found.Messages {
-		if stored.Text == "" || stored.DeletedAt != nil {
+		text := conversation.WithoutTimings(stored.Text, stored.Custom)
+		if text == "" || stored.DeletedAt != nil {
 			continue
 		}
-		line := Spoken{Speaker: stored.User.ID, Text: stored.Text}
+		line := Spoken{Speaker: stored.User.ID, Text: text}
 		if stored.CreatedAt.Time != nil {
 			line.At = *stored.CreatedAt.Time
 		}

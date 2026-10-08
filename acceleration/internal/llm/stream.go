@@ -42,8 +42,11 @@ type Stream struct {
 	current  Event
 	response Response
 	err      error
-	ended    bool
-	watchers []func(Event)
+	// exhausted is set once the puller has said the upstream is done, which Await can find
+	// out before Next has settled the response.
+	exhausted bool
+	ended     bool
+	watchers  []func(Event)
 
 	// closed is read by the goroutine calling Next and written by whichever one closes
 	// the stream, which is the whole of the concurrency here.
@@ -109,7 +112,7 @@ func (s *Stream) Next() bool {
 		if s.ended {
 			return false
 		}
-		if !s.puller.Advance(s.writer) {
+		if s.exhausted || !s.puller.Advance(s.writer) {
 			s.ended = true
 			if s.screened != nil {
 				<-s.screened
@@ -125,6 +128,29 @@ func (s *Stream) Next() bool {
 			}
 			s.writer.settle(s.puller.Err())
 		}
+	}
+}
+
+// Await blocks until the response has produced something to act on, text or a tool call,
+// and reports whether it did: false means it ended without. Thinking is neither, since it is
+// not part of the answer.
+//
+// It takes nothing off the stream, so Next still returns every event from the first. It is
+// for a caller that has to know a response is alive before committing to it, and it runs
+// before the first Next, on the goroutine that then hands the stream over. Closing the
+// stream from another goroutine is what ends the wait early.
+func (s *Stream) Await() bool {
+	for seen := 0; ; {
+		for ; seen < len(s.writer.pending); seen++ {
+			switch s.writer.pending[seen].(type) {
+			case OutputTextDelta, FunctionCallArgumentsDelta:
+				return true
+			}
+		}
+		if s.ended || s.exhausted {
+			return false
+		}
+		s.exhausted = !s.puller.Advance(s.writer)
 	}
 }
 

@@ -37,7 +37,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/ed25519header"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/standardwebhooks"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
@@ -54,6 +56,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
@@ -363,7 +366,7 @@ func newConnectorRegistry(settings config.Config, clients oauth2code.ClientLooku
 	}
 	// The verifiers a manifest's channel.verifier.kind may name; a new one is one more entry.
 	verifiers := map[string]core.Verifier{}
-	for _, verifier := range []core.Verifier{hmacheader.New()} {
+	for _, verifier := range []core.Verifier{hmacheader.New(), standardwebhooks.New(), ed25519header.New()} {
 		verifiers[verifier.Name()] = verifier
 	}
 	// The tool sources a manifest's sources[].kind may name; a new one is one more entry.
@@ -704,14 +707,15 @@ func run(settings config.Config, logger *slog.Logger) error {
 			screen = policies.Screener(judging)
 		}
 		chat, err := llmrouter.New(llmrouter.Options{
-			Config:   section,
-			Registry: llmrouter.DefaultRegistry(),
-			Store:    pgStore,
-			Live:     liveClient,
-			Quota:    limiter,
-			Gate:     gate,
-			Screen:   screen,
-			Logger:   logger,
+			Config:     section,
+			Registry:   llmrouter.DefaultRegistry(),
+			Store:      pgStore,
+			Live:       liveClient,
+			Quota:      limiter,
+			Gate:       gate,
+			Screen:     screen,
+			ReplyHedge: settings.Agent.ReplyHedge,
+			Logger:     logger,
 		})
 		if err != nil {
 			return err
@@ -1025,6 +1029,9 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if connectorResolver != nil {
 		options.ConnectorResolver = connectorResolver
 		options.ConnectorTransports = connectorTransports
+		// The proxy holds a connection's direct calls after a provider's 429, as the session's
+		// dispatcher holds its tool calls.
+		options.ConnectorLimiter = connectorLimiter
 		options.ConnectorEventSecrets = api.ConnectorEventSecrets(os.Getenv)
 		// The events endpoint hands it a provider app's messages; the conversation held on a
 		// thread channel, the agent's finished replies to them.
@@ -1081,6 +1088,22 @@ func run(settings config.Config, logger *slog.Logger) error {
 		events.Start()
 		defer events.Close()
 		options.MCPEvents = events
+	}
+	// A person's episodes close and are summarized (T55): a call's when the call hook says it
+	// ended, a thread's by the idle sweeper, which starts only where an episode can be
+	// (startEpisodeSweeper). A summary is an LLM response, so this needs the LLM router too.
+	if pgStore != nil && streams.LLM != nil {
+		closer, err := omnichannel.NewCloser(omnichannel.CloserOptions{
+			Store: pgStore, Stream: streamClients, LLM: streams.LLM, IdleAfter: settings.Episodes.IdleAfter, Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer closer.Close()
+		options.Episodes = closer
+		if _, err := startEpisodeSweeper(ctx, settings, pgStore, closer); err != nil {
+			logger.Error("could not tell whether any episode can be idle, so none is swept", "error", err)
+		}
 	}
 	if streamClients.PerApp() {
 		// Each registered app signs its own hooks and mints its own tokens, so only work in
@@ -1318,7 +1341,7 @@ func buildSessions(
 		Live:               liveClient,
 		Logger:             logger,
 		Edge:               edgeFor(stream),
-		Transcript:         transcriptFor(),
+		Transcript:         transcriptFor(settings.Agent.ChatTimings),
 		Configs:            configs,
 		Directory:          directory,
 		PluginAuth:         pluginAuth,

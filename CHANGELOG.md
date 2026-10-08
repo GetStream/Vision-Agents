@@ -515,6 +515,22 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A reply that is late is asked of another candidate too: `ROUTER_REPLY_HEDGE`
+
+A model now and then takes many times its usual wait to start a reply, and the caller waits that
+long. A voice reply that has said nothing, neither text nor a tool call, once `ROUTER_REPLY_HEDGE`
+(`agent.reply_hedge`) has passed, `1200ms` by default, is now asked a second time, as the same
+request, of another candidate of its target: one on a different model when the target has one and
+on a different provider when it has one, never one the router has found unavailable. Whichever
+says something first is kept, and the other is cancelled the moment it loses and still read out, so
+both calls are reported as model calls and recorded, the cancelled one as any cancelled call is.
+The wait counts from the request, so a model that is slow to answer at all is hedged as well as
+one that is slow to start streaming. A reply is hedged once, a hedge that fails leaves the first
+request going, and a target with no other candidate is asked once, as before. Replies are hedged;
+the flow controller, the guardrails, background work and a reply that continues from a response
+the provider holds are not. `0` turns it off, `cmd/agent -reply-hedge` is the same setting, and
+the router option is `llmrouter.Options.ReplyHedge`.
+
 ### A log severity is the least serious level to show, not the only one
 
 `severity` on `GET /v1/agents/logs` was an exact match, so asking for `error` hid the warnings
@@ -608,6 +624,30 @@ A fixed connector binding takes `events`, a list of `{event, arguments, instruct
 ### A connection's tool calls and grants are on record, and a user's connections can be deleted
 
 Each connector tool call a session runs leaves one row: the binding, the connection, the tool, the latency and, for a call that failed, an `error_type` of `customer_auth`, `external_server`, `client_timeout`, `outcome_unknown` or `denied`. No row holds what a call was asked or answered, and an incognito session's rows name no session. `GET /v1/agents/connections/{id}/invocations` (`listConnectionInvocations`, server-side only) pages through them, newest first. Each grant a connection gets, renews or loses leaves one audit row (`grant_created` at a consent or a credentials write, `grant_refreshed` when the router renews the credential, `grant_revoked` when the provider refuses or revokes it or the connection is deleted), with the request, session and authorization attempt that caused it; `GET /v1/agents/connector-audit` (`listConnectorAudit`, server-side only) pages through the app's, a deleted connection's included. `Connection` gains `used_by`: the agent config bindings that name it as their fixed connection. `DELETE /v1/agents/users/{user_id}/connections` (`deleteUserConnections`, server-side only) deletes every connection of one user for good, with its pending consents and its tool call log, so the next session for that user attaches none of them. A deployment with connectors off writes none of this. The Go client and the JavaScript types are regenerated; other SDKs follow.
+
+### A connector binding says what its calls do on an interruption, and what the agent says while they run
+
+A connector binding takes `policy`, a `ConnectorBindingPolicy` with three optional fields. `on_interrupt: wait` lets a call finish after the caller interrupts the turn, up to the binding's timeout, and its result goes into the conversation when it comes; until then the call reads as still running, so the next turn does not wait for it; `cancel`, the default, cancels it at the provider as before. `cancellable: false` stops waiting at the interruption but does not send the provider the cancel for it, for a tool that is not safe to stop halfway; its call is logged as `outcome_unknown`. The binding's timeout still ends the call and sends the cancel, whatever the policy. `pre_speech` is what the agent says while one of the binding's tools runs, in place of its own "One moment.", and the session socket's `tool_started` carries it as `pre_speech`. A binding without `policy` behaves, and is stored and read back, as before. The Go client and the JavaScript types are regenerated; other SDKs follow.
+
+### A provider app points its Stream app's message hook at the router
+
+With connectors on, `PUT /v1/agents/connectors/{id}/provider-app` (`setConnectorProviderApp`) and its ops twin `setOperatorProviderApp` point the message hook of the Stream app the provider app is pinned to at `ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}`, when that app is one the customer registered (T48, AI-887). The hook is matched by its URL, so a PUT again updates it rather than adding a second, and the app's other hooks stay. A provider app pinned to the deployment's own app points nothing: those hooks are the operator's, set with `router phone hooks`. A router without `ROUTER_PUBLIC_URL` points none and logs a warning. When Stream refuses, the provider app is kept and the answer is a 503; a PUT again points the hook. With connectors off both PUTs answer as before and ask nothing of Stream. The Go client and the JavaScript types are regenerated; other SDKs follow.
+
+### WhatsApp through the customer's own Meta app
+
+A built-in connector, `whatsapp`, answers people on WhatsApp from the customer's own business number through the channel bridge (T51, AI-879). The app's backend puts its Meta app as a provider app with `PUT /v1/agents/connectors/whatsapp/oauth-client`, `provider_app_id` the Meta app's id and `signing_secret` its App Secret, and no `client_id`; it creates an app-owned connection with the number's `phone_number_id` and the customer's access token as a `bearer` token, and binds one agent config to it. In the Meta app's WhatsApp webhook settings the callback URL is `/v1/connectors/events/whatsapp/{provider_app_id}` and the Verify Token is the same app id: a new `GET` on that route (`answerProviderAppHandshake`) echoes `hub.challenge` as text/plain when `hub.mode` is `subscribe`, the token is the app id and the challenge is digits, and answers 404 otherwise. Only a connector whose manifest declares the new `channel.handshake: hub_challenge` answers it; for every other connector, an unknown app or with connectors off, the GET answers 405 as before. Deliveries are verified with `X-Hub-Signature-256` under the App Secret. Text messages only: each person's number is a thread channel, the agent's reply goes back as a text message from the business number, and a thread opens a `whatsapp` episode card in the omni-channel of the sender's number in E.164. STOP, START and HELP are handled by the bridge before the agent, as for SMS, and recorded as `whatsapp` opt-outs of the number in E.164. Replies after Meta's 24-hour window (approved templates) and Meta's Tech Provider with Embedded Signup are not in this release. With connectors off, nothing changes.
+
+### SMS through the customer's own Telnyx account
+
+A built-in connector, `telnyx`, answers people over SMS on the customer's own Telnyx number through the channel bridge (T53, AI-881). The app's backend puts its Telnyx account as a provider app with `PUT /v1/agents/connectors/telnyx/oauth-client`, `provider_app_id` and the account's base64 Ed25519 public key as `signing_secret`, and no `client_id`; it creates an app-owned connection with its number as `phone_number` (E.164) and the account's API key as a `bearer` token, and binds one agent config to it. Telnyx's webhooks go to `/v1/connectors/events/telnyx/{provider_app_id}` and are verified with a new `ed25519` verifier kind; each person's number is a thread channel, the agent's reply goes to that number from the customer's, and a thread opens an `sms` episode card in the omni-channel of the sender's number. STOP, START and HELP are handled by the bridge before the agent: Telnyx answers its reserved keywords (STOP, START, HELP and their defaults) itself, and the bridge answers only the rest, such as REVOKE and OPT OUT; STOP records an opt-out (`source: keyword`, channel `sms`) and the person's later texts reach no agent, and get no reply, until START. With connectors off, nothing changes.
+
+### iMessage through the customer's own Linq account
+
+A built-in connector, `linq`, answers people over iMessage on the customer's own Linq line through the channel bridge (T36, AI-863). The app's backend puts its Linq account as a provider app with `PUT /v1/agents/connectors/linq/oauth-client`, `provider_app_id` and the webhook subscription's `signing_secret` and no `client_id`, which only a connector not consented through `oauth2_code` takes; it creates an app-owned connection with its line as `phone_number` (E.164) and the line's API key as a `bearer` token, and binds one agent config to it. Linq's events go to `/v1/connectors/events/linq/{provider_app_id}` and are verified as Standard Webhooks; each chat is a thread channel, the agent's reply goes back to the chat with the API key, and a chat opens an `imessage` episode card in the omni-channel of the sender's number. A `bearer` connection whose connector names its account by inputs alone now has that account. With connectors off, nothing changes: a put without `client_id` is still a 400 `validation_failed`. With connectors on, a put without `client_id` that the connector does not take as a provider app (`slack_bot`, `github`) is a 400 `invalid_request` rather than `validation_failed`, and one for an unknown connector is a 404 rather than a 400. The Go client and the JavaScript types are regenerated; Go's `ConnectorOAuthClientRequest.ClientId` is now a `*string`; other SDKs follow.
+
+### Episodes close and their cards hold a summary
+
+A text episode closes once its thread has had no message for `episodes.idle_after` (`ROUTER_EPISODES_IDLE_AFTER`, one hour unless set, refused at 24 hours or more); a call episode closes when the `call.session_ended` hook says its call ended (T55, AI-884). Closing sets the card's status to `ended`; the agent config's own LLM then writes a summary of the episode's lines into the card's text and sets `summarized`, or sets `summary_failed` and leaves the card's text and the thread channel as they were. Every card change is a partial update of the one card message, so nothing new reaches the message hook. Several routers close and summarize each episode once; a summary a stopped router left is taken again by the next sweep after five minutes. The idle sweeper starts only with connectors on or an agent config with `episode_cards` on; with neither, nothing is swept and nothing is written. A call under a config without `episode_cards` ends as before. The summary is not written to memory yet.
 
 ### Text and voice sessions start with the person's episode cards
 
@@ -791,6 +831,35 @@ trips one after the other. With `ROUTER_SPECULATIVE_REPLIES=true` the reply is a
 beside the ruling and held until it comes back: an answer for the same words speaks it, and
 anything else drops it unheard. It is off by default, because a dropped reply is still paid
 for, and on a pause-heavy call most of them are dropped.
+
+### A turn says when its reply could first be heard
+
+`roundtrip_ms` and `speech_end_to_audio_ms` end when publishing the first chunk of a reply
+returns. Publishing waits until no more than 400 ms of the speech is left in the queue to the
+outgoing track, so for a first chunk longer than that the return comes later than the reply
+began to be heard, by the part that did not fit. A voice call's turn now also carries
+`first_frame_queued_ms`, when the first frame of the reply was queued for the outgoing track,
+`first_audible_frame_ms`, when the track took the first frame that was not silence, and
+`speech_end_to_audible_ms`, which is `speech_end_to_audio_ms` measured to that moment. They
+are on the `turn` event of the session socket, in the turn log, in the `turns` table and in
+`GET /v1/agents/calls/{id}/timeline`, and absent where the edge does not report them. The
+older fields are unchanged.
+
+### A voice reply can show how fast its turn was: `ROUTER_CHAT_TIMINGS` and `-chat-timings`
+
+For development, a voice agent can write how long a turn took after its reply in the chat
+channel it writes its transcript to, so somebody talking to it in a call UI sees it without
+reading logs. It is off by default: `ROUTER_CHAT_TIMINGS=true` (`agent.chat_timings`) turns it on
+for the router's sessions and `cmd/agent -chat-timings` for the standalone agent. A reply gets
+one line after its text, such as
+`⏱ reply 1112 ms = eou 452 + llm 412 + tts 248 · ttft 731 · ttfb 120`: the wait from the end of
+the caller's speech to the first audible frame of the reply, split into end of utterance, model
+and voice stages that add up to it, then the providers' own first-token and first-byte waits. A
+figure that did not happen is left out, and a turn the caller talked over starts
+`⏱ interrupted ·`. The message also carries the same figures in whole milliseconds as a
+`timings` custom field. Reading a conversation back, as the transcript endpoint and the history a
+bound conversation gives the agent do, leaves the line out, so the agent never takes it for
+something it said.
 
 ### A session says whether the user wrote, spoke or showed video
 
@@ -1676,12 +1745,40 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A response with images is answered by an agent that has no `vision` skill, as long as its
+  conversation model accepts images. Images always went to the `vision` skill, and the
+  built-in skill set leaves it out, so every agent on the defaults, and every text session,
+  failed with `400 invalid_request` and `harness: skill "vision" is not available`. The
+  conversation model is now shown the images itself, for that one reply: they are not kept
+  in the conversation, so a later turn does not send them again. An agent with a `vision`
+  skill still hands images to it. An agent with neither answers `400 not_configured`.
 - Twilio numbers in a number search have a monthly price. Twilio's search does not send a
   price, so the dashboard showed each Twilio number as "Not quoted". The router now gets
   the price for each number type from Twilio's Pricing API (`current_price`, which
   includes the account's discounts), keeps it for 24 hours, and shows it with no change.
   If that call fails, the search still returns the numbers, with no price. A bought Twilio
   number still has no price (AI-931).
+- A voice agent with tools says what it is about to do before it does it, and the caller hears a
+  hold phrase as the wait begins. The instruction that has the reply model call a tool as soon as
+  it has what the tool requires also made it skip the read-back an operator's own instructions
+  ask for first, so the caller heard a half-second filler and then nothing while the tool ran.
+  Before calling a tool the model is now told to say one short sentence, what the instructions
+  ask to be said before acting, such as reading the caller's details back, or else what it is
+  doing, and to call the tool in the same turn: acting at once still holds, but a bare filler
+  never replaces a required read-back. That sentence opens with a brief hold phrase ("One
+  moment,") and runs straight on into the read-back with no full stop between, so the phrase is
+  said at the start of the wait rather than after a read-back that takes seconds to speak, and no
+  pause is left between the two for a caller's interruption to fall into. After a result the
+  model answers from it without another hold phrase.
+- A voice agent with tools acts on a request once it has what the tools require. The model that
+  answers a caller was given the tools and nothing about using them, so it kept collecting
+  optional details, asked for a first name when a surname was given, asked whether to do what the
+  caller had just asked for, and passed values dressed in words. Whenever tools are offered, the
+  reply now carries a short instruction after the agent's own: call a tool in
+  the same turn once every argument it requires is known, take a name, number or value as the
+  caller gave it, call the next tool a result calls for, pass arguments as bare values and omit
+  optional ones nobody gave, and follow the operator's instructions and a tool's approval
+  setting wherever confirmation comes first.
 - An `oauth2_code` or `oauth2_client_credentials` connection whose MCP server refuses its token
   with a bare 401 (a `WWW-Authenticate` that names `resource_metadata` and no `error`, as the
   MCP authorization spec answers an expired token) is renewed and the call sent once more. The

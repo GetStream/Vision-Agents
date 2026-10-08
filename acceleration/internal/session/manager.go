@@ -502,6 +502,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		connectors.next = runner
 		runner = connectors
 		connectors.askIn(conv, created.chose)
+		connectors.stepUps = newStepUps(m.options.Connectors.Consents, created.broadcast, m.logger)
 		created.connectors = connectors
 		created.closers = append(created.closers, connectors.Close, connectors.closeLogins)
 	}
@@ -513,6 +514,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	var toolStarted func(agent.ToolStarted)
 	if conv != nil {
 		toolStarted = func(event agent.ToolStarted) { conv.Observe(event) }
+	}
+	// Only a connector binding's policy names a phrase or lets a call go on after an
+	// interruption; a session without one runs its tools as it always has.
+	var toolPolicy func(string) agent.ToolPolicy
+	if connectors != nil {
+		toolPolicy = connectors.toolPolicy
 	}
 	screening, err := m.guardrail(ctx, spec, stream.Identity)
 	if err != nil {
@@ -528,6 +535,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	created.voiceAgent, err = agent.New(agent.Options{
 		OnToolStarted: toolStarted,
+		ToolPolicy:    toolPolicy,
 		Edge:          edge,
 		Text:          spec.Text,
 		Instructions:  spec.prompt(),

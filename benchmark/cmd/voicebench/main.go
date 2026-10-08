@@ -115,6 +115,7 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	skipSTT := fs.Bool("skip-stt", false, "skip Deepgram (fails the trial)")
 	skipJudge := fs.Bool("skip-judge", false, "skip LLM judge (fails the trial)")
 	frozen := fs.Bool("frozen", false, "run only the frozen scenario set used for the trend line")
+	short := fs.Bool("short", false, "run only the short scenario set, for quick iteration")
 	storeBaseline := fs.Bool("store-baseline", false, "copy summary.json and manifest.json to baselines/<target>/<commit>/")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -147,6 +148,7 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 		SkipSTT:           *skipSTT,
 		SkipJudge:         *skipJudge,
 		Frozen:            *frozen,
+		Short:             *short,
 		Logger:            slog.Default(),
 	})
 	if len(sum.Calls) > 0 {

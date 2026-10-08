@@ -457,6 +457,9 @@ components:
           description: 'The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place.'
           pattern: ^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$
           type: string
+        policy:
+          $ref: '#/components/schemas/ConnectorBindingPolicy'
+          description: How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs.
         required:
           default: false
           description: Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it.
@@ -2020,6 +2023,26 @@ components:
         - needs_reauthorization
         - disconnected
       type: string
+    ConnectionToken:
+      description: A connection's access credential, for the app's backend to call the provider with directly. It holds no refresh token.
+      properties:
+        connection_id:
+          type: string
+        expires_at:
+          description: When it stops working. Absent when the provider gave no expiry. Export again for a fresh one.
+          format: date-time
+          type: string
+        header:
+          description: 'The HTTP field to send it in: Authorization for an OAuth access token, the connection''s own header for an API key.'
+          type: string
+        value:
+          description: 'The whole field value: Bearer and the access token for an OAuth access token (RFC 6750 section 2.1), the key for an API key.'
+          type: string
+      required:
+        - connection_id
+        - header
+        - value
+      type: object
     ConnectionTool:
       properties:
         description:
@@ -2192,14 +2215,16 @@ components:
         - created_at
       type: object
     ConnectorAuditAction:
-      description: 'grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.'
+      description: 'grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app''s backend exported its access credential. proxy_call: a direct call went to the provider through the connection.'
       enum:
         - grant_created
         - grant_refreshed
         - grant_revoked
+        - token_export
+        - proxy_call
       type: string
     ConnectorAuditEvent:
-      description: One grant a connection got, renewed or lost, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
+      description: One grant a connection got, renewed or lost, one export of its access credential, or one direct call sent through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
       properties:
         action:
           $ref: '#/components/schemas/ConnectorAuditAction'
@@ -2216,6 +2241,10 @@ components:
           type: string
         id:
           type: string
+        latency_ms:
+          description: How long a proxy_call took until the provider's answer, in milliseconds. Absent for a grant.
+          format: int64
+          type: integer
         owner_type:
           $ref: '#/components/schemas/ConnectionOwnerType'
         reason:
@@ -2230,6 +2259,13 @@ components:
           type: integer
         session_id:
           description: The session whose tool call caused it. Absent for an incognito session, and once the connection's user was deleted.
+          type: string
+        status_code:
+          description: A proxy_call's status from the provider. Absent when no answer came, and for a grant.
+          format: int64
+          type: integer
+        target:
+          description: The host a proxy_call reached. Absent for a grant.
           type: string
       required:
         - id
@@ -2271,6 +2307,20 @@ components:
           type: string
       required:
         - event
+      type: object
+    ConnectorBindingPolicy:
+      description: How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
+      properties:
+        cancellable:
+          description: 'Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding''s timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption.'
+          type: boolean
+        on_interrupt:
+          $ref: '#/components/schemas/ConnectorOnInterrupt'
+          description: What an interruption of the turn does to a call in flight. Omitted is cancel.
+        pre_speech:
+          description: What the agent says while one of the binding's tools runs, such as "Let me pull up your calendar.", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started.
+          minLength: 1
+          type: string
       type: object
     ConnectorClient:
       additionalProperties: false
@@ -2414,11 +2464,12 @@ components:
         - name
       type: object
     ConnectorOAuthClient:
-      description: 'The OAuth client the app registered with a connector''s provider itself. The secret is write-only: no response carries it.'
+      description: 'The OAuth client the app registered with a connector''s provider itself. The client secret and the signing secret are write-only: no response carries them.'
       properties:
         auth_method:
           $ref: '#/components/schemas/ConnectorOAuthClientAuthMethod'
         client_id:
+          description: Empty for a provider app put without an OAuth client, such as a Linq account.
           type: string
         connector_id:
           readOnly: true
@@ -2427,12 +2478,15 @@ components:
           format: date-time
           readOnly: true
           type: string
+        provider_app_id:
+          description: The provider's id for the app the client belongs to, as put. Absent when none was put.
+          type: string
         registration:
           $ref: '#/components/schemas/ConnectorClientRegistrationMethod'
           description: 'customer: the app''s own client, which every consent and refresh of the connector''s connections then uses.'
           readOnly: true
         updated_at:
-          description: When the client, its secret or its method last changed.
+          description: When the client, its secrets or its method last changed.
           format: date-time
           readOnly: true
           type: string
@@ -2458,6 +2512,7 @@ components:
           $ref: '#/components/schemas/ConnectorOAuthClientAuthMethod'
           description: 'Overrides the connector''s own client.auth_method. Left out, the connector''s applies, and failing that the consent picks: none without a secret, else client_secret_basic where the provider accepts it.'
         client_id:
+          description: 'Required, unless the record is only a provider app: provider_app_id and signing_secret without client_secret or auth_method, for a connector whose connections are not consented through oauth2_code, such as linq.'
           maxLength: 2048
           minLength: 1
           pattern: ^[ -~]+$
@@ -2470,9 +2525,26 @@ components:
           patternDescription: printable ASCII, RFC 6749 Appendix A.2
           type: string
           writeOnly: true
-      required:
-        - client_id
+        provider_app_id:
+          description: 'The provider''s id for the app the client belongs to, such as a Slack app id (A012ABCD0A0). The app''s events then reach POST /v1/connectors/events/{id}/{provider_app_id}. An app serves one customer: another customer''s record naming it is a 409.'
+          maxLength: 2048
+          pattern: ^[A-Za-z0-9._~-]+$
+          patternDescription: RFC 3986 section 2.3 unreserved characters, not . or ..
+          type: string
+        signing_secret:
+          description: The secret the provider signs the app's events with, such as a Slack app's signing secret. Needs provider_app_id, and a connector whose events are verified with the app's own secret (channel.verifier.secret provider_app). Sealed at rest and never returned. Putting the client again without it removes it, as it does client_secret.
+          maxLength: 2048
+          pattern: ^[ -~]+$
+          patternDescription: printable ASCII
+          type: string
+          writeOnly: true
       type: object
+    ConnectorOnInterrupt:
+      description: cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
+      enum:
+        - cancel
+        - wait
+      type: string
     ConnectorPage:
       properties:
         has_more:
@@ -2753,6 +2825,7 @@ components:
           description: 'Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.'
           type: boolean
         instructions:
+          description: 'The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend''s to decide.'
           type: string
         keyterms:
           description: Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
@@ -3094,6 +3167,7 @@ components:
           description: Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
           type: boolean
         instructions:
+          description: 'Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession.'
           type: string
         messages:
           default: true
@@ -6631,6 +6705,16 @@ components:
           description: Stable turn to the main model request, including flow and queueing.
           format: double
           type: number
+        first_audible_frame_ms:
+          description: Last transcript revision to the outgoing track taking the first frame of the reply that was not silence, which is when it could first be heard. Unlike roundtrip_ms it does not include the wait for a long first chunk to be queued. Absent where the edge does not report it.
+          format: double
+          nullable: true
+          type: number
+        first_frame_queued_ms:
+          description: Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it.
+          format: double
+          nullable: true
+          type: number
         heard:
           description: What the caller said, when it can be matched to this exchange.
           type: string
@@ -6658,6 +6742,11 @@ components:
         said:
           description: What the agent answered.
           type: string
+        speech_end_to_audible_ms:
+          description: Last input audio to the outgoing track taking the first frame of the reply that was not silence, estimated like speech_end_to_audio_ms. It excludes network transport and playback.
+          format: double
+          nullable: true
+          type: number
         speech_end_to_audio_ms:
           description: Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback.
           format: double
@@ -9355,6 +9444,366 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: List a connection's tool calls
+  /v1/agents/connections/{id}/proxy/{path}:
+    delete:
+      description: |-
+        Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: proxyConnectionDelete
+      parameters:
+        - description: The connection.
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The provider's answer, as it came. It may have any status, a 401 or a 429 included.
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The connection is not connected
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The body is over 1 MiB
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'The provider asked to wait: retry after the Retry-After header''s seconds. A 429 the provider answered itself comes back as it came.'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The call did not reach the provider, or its answer did not come back
+      summary: Call a connection's provider directly (DELETE)
+    get:
+      description: |-
+        Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: proxyConnectionGet
+      parameters:
+        - description: The connection.
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The provider's answer, as it came. It may have any status, a 401 or a 429 included.
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The connection is not connected
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The body is over 1 MiB
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'The provider asked to wait: retry after the Retry-After header''s seconds. A 429 the provider answered itself comes back as it came.'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The call did not reach the provider, or its answer did not come back
+      summary: Call a connection's provider directly (GET)
+    patch:
+      description: |-
+        Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: proxyConnectionPatch
+      parameters:
+        - description: The connection.
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          '*/*':
+            schema:
+              format: binary
+              type: string
+              x-contentMediaType: application/octet-stream
+        description: The body for the provider, of any media type, at most 1 MiB.
+      responses:
+        "200":
+          description: The provider's answer, as it came. It may have any status, a 401 or a 429 included.
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The connection is not connected
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The body is over 1 MiB
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'The provider asked to wait: retry after the Retry-After header''s seconds. A 429 the provider answered itself comes back as it came.'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The call did not reach the provider, or its answer did not come back
+      summary: Call a connection's provider directly (PATCH)
+    post:
+      description: |-
+        Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: proxyConnectionPost
+      parameters:
+        - description: The connection.
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          '*/*':
+            schema:
+              format: binary
+              type: string
+              x-contentMediaType: application/octet-stream
+        description: The body for the provider, of any media type, at most 1 MiB.
+      responses:
+        "200":
+          description: The provider's answer, as it came. It may have any status, a 401 or a 429 included.
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The connection is not connected
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The body is over 1 MiB
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'The provider asked to wait: retry after the Retry-After header''s seconds. A 429 the provider answered itself comes back as it came.'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The call did not reach the provider, or its answer did not come back
+      summary: Call a connection's provider directly (POST)
+    put:
+      description: |-
+        Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: proxyConnectionPut
+      parameters:
+        - description: The connection.
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          '*/*':
+            schema:
+              format: binary
+              type: string
+              x-contentMediaType: application/octet-stream
+        description: The body for the provider, of any media type, at most 1 MiB.
+      responses:
+        "200":
+          description: The provider's answer, as it came. It may have any status, a 401 or a 429 included.
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The connection is not connected
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The body is over 1 MiB
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'The provider asked to wait: retry after the Retry-After header''s seconds. A 429 the provider answered itself comes back as it came.'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The call did not reach the provider, or its answer did not come back
+      summary: Call a connection's provider directly (PUT)
+  /v1/agents/connections/{id}/token:
+    post:
+      description: |-
+        The connection's current access credential, for the app's backend to call the provider with directly: an OAuth access token, renewed first when it is about to expire, or an API key. A refresh token is never exported. Only the customer's own provider app exports: an oauth2_code connection exports when its grant was issued to the client the app registered itself, and that client is still the connector's; a grant issued to Stream's app, or to one the router created, is refused with a 403. An api_key connection always exports, since the key is the app's own. Other schemes are refused. Each export is recorded in the connector audit as token_export. Who may export it is who may read it.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: exportConnectionToken
+      parameters:
+        - description: The connection, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connection, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionToken'
+          description: The access credential
+          headers:
+            Cache-Control:
+              schema:
+                description: 'Always no-store: keep the token out of every cache.'
+                type: string
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+      summary: Export a connection's access token
   /v1/agents/connections/{id}/tools:
     get:
       description: |-
@@ -9783,7 +10232,7 @@ paths:
       summary: Remove the app's own OAuth client for a connector
     put:
       description: |-
-        Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. The secret is sealed and never returned.
+        Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: setConnectorOAuthClient
@@ -9881,6 +10330,8 @@ paths:
     put:
       description: |-
         Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
+
+        When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: setConnectorProviderApp
@@ -11031,13 +11482,14 @@ paths:
         A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
         The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
         `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
-        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
+        `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
+        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id.
         A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
         An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `command_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
         A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
         Two frames are only sent when asked for, because they are far more frequent than the rest and most consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives rather than a settled turn. `decisions=false` drops `decision`.
         `replay_pending_tools=true` opts a durable tool host into replay of external tool calls still awaiting results in a live voice session. Completed, cancelled and timed-out requests are excluded at snapshot time. Replays retain their tool and turn IDs and may duplicate live delivery; the host must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers should leave this disabled. Persistent text command recovery is unchanged.
-        The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
+        The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the session. `instructions` is server-side only: from an end user's device it changes nothing and is answered with an `error` frame, `context` `command`, as `updateSession` refuses it. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
         A call to a tool declared with an `approval` waits for a person. The client reports their answer with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary` shown when they declined), before it answers the call with `tool_result`.
         `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.
         `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation receives the question and later the findings, without raw images. Video capture uses task-correlated `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically to conversational turns.
@@ -12024,7 +12476,7 @@ paths:
     get:
       description: |-
         A WebSocket, which OpenAPI cannot describe past the upgrade. Text frames are JSON objects carrying a `type`.
-        The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` is server-side only.
+        The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` and `instructions` are server-side only.
         The server answers `session`, with the `Session` and the `sample_rate` in use. Then binary frames are PCM16 mono at that rate in both directions: the caller's audio in, and the agent's speech out at the pace it would be heard on a call. A `cleared` frame says speech already sent was thrown away because the caller cut in. Tool calls and every other event go over the session's events socket, as they do for a call.
         A refused start is an `error` frame with `error`, the message, and the socket closes. An `error` frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type` that `createSession` answers the same field with.
         The session lasts as long as the socket. Closing the socket, or sending `stop`, ends the conversation. A conversation that ends closes the socket.
@@ -12551,6 +13003,52 @@ paths:
           description: The classifier is overloaded or could not be reached. Ask again after a wait.
       summary: Ask a classifier typed questions about a piece of text
   /v1/connectors/events/{connector_id}/{provider_app_id}:
+    get:
+      description: 'Where a provider checks a provider app''s events URL before it delivers to it: Meta''s Verify Token check of a customer''s WhatsApp webhook, for one. Unauthenticated because the provider is not a customer. Only a connector whose manifest declares channel.handshake answers it; the verify token is the provider app''s id, the one in the URL, so nothing is stored for it, and every delivery is still verified with the app''s own secret. With hub.mode subscribe, hub.verify_token the provider app''s id and hub.challenge digits only, the challenge is echoed as text/plain. Any other connector, an unknown provider app, or a deployment without connectors answers 405 as for any method a route does not serve. No SDK wraps it: only a provider calls it.'
+      operationId: answerProviderAppHandshake
+      parameters:
+        - description: The connector the provider app is of, such as whatsapp.
+          in: path
+          name: connector_id
+          required: true
+          schema:
+            type: string
+        - description: The provider's id for the app, such as a Meta app id.
+          in: path
+          name: provider_app_id
+          required: true
+          schema:
+            type: string
+        - description: subscribe.
+          in: query
+          name: hub.mode
+          schema:
+            type: string
+        - description: The provider app's id.
+          in: query
+          name: hub.verify_token
+          schema:
+            type: string
+        - description: Digits to echo.
+          in: query
+          name: hub.challenge
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: The challenge, echoed
+        "404":
+          description: 'The query is not this URL''s handshake: another mode or token, or a challenge that is not digits'
+        "405":
+          description: This connector, or this deployment, answers no handshake here
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Answer a provider app's handshake
     post:
       description: 'Where a provider delivers the events of one customer''s provider app: the Request URL of a customer''s Slack app, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector''s manifest names (channel.verifier) against that app''s own signing secret, so an event signed for another app is refused and changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves the app''s customer''s connections of that account to needs_reauthorization, unless they connected after the event. A message goes to the channel bridge, which writes it into the thread channel of its external thread in Stream Chat; a retried delivery is dropped. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.'
       operationId: receiveProviderAppEvent
@@ -12846,6 +13344,8 @@ paths:
       description: |-
         Records this deployment's own app for a built-in connector, as its environment holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and _MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that customer. One customer per app: another customer's record of it is a conflict.
 
+        When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
+
         Stream staff only: it needs the ops key.
       operationId: setOperatorProviderApp
       parameters:
@@ -12890,6 +13390,12 @@ paths:
           description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
       security:
         - OpsKey: []
       summary: Make Stream's own app a customer's provider app

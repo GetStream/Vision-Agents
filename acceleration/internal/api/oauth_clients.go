@@ -20,20 +20,33 @@ import (
 
 const noOAuthClient = "the app has no OAuth client of its own for this connector"
 
+// errClientIDRequired is what Huma answered for a put without client_id while the schema required
+// it. Without connectors no provider app exists, so the put keeps answering it.
+var errClientIDRequired = APIError{Type: ErrorTypeInvalidRequest, Code: codeValidationFailed,
+	Message: "validation failed: expected required property client_id to be present (body)"}
+
+// errProviderAppTaken is the answer to a record naming a provider app another customer's
+// record of the connector already names (store.ErrProviderAppTaken). 409: the request
+// conflicts with the state of the resource (RFC 9110 section 15.5.10).
+var errProviderAppTaken = conflict("another customer's record already names this provider app: an app serves one customer")
+
 // ConnectorOAuthClient is the OAuth client an app registered with a provider itself, as the
 // router keeps it for one connector. Its secret is never shown.
 type ConnectorOAuthClient struct {
 	ConnectorID  string                            `json:"connector_id" readOnly:"true"`
 	Registration ConnectorClientRegistrationMethod `json:"registration" readOnly:"true" doc:"customer: the app's own client, which every consent and refresh of the connector's connections then uses."`
-	ClientID     string                            `json:"client_id"`
+	ClientID     string                            `json:"client_id" doc:"Empty for a provider app put without an OAuth client, such as a Linq account."`
 	AuthMethod   ConnectorOAuthClientAuthMethod    `json:"auth_method,omitempty"`
-	CreatedAt    time.Time                         `json:"created_at" readOnly:"true"`
-	UpdatedAt    time.Time                         `json:"updated_at" readOnly:"true" doc:"When the client, its secret or its method last changed."`
+	// Left out when the record names no app, so the answer to a put without one is what it
+	// was before provider apps.
+	ProviderAppID string    `json:"provider_app_id,omitempty" doc:"The provider's id for the app the client belongs to, as put. Absent when none was put."`
+	CreatedAt     time.Time `json:"created_at" readOnly:"true"`
+	UpdatedAt     time.Time `json:"updated_at" readOnly:"true" doc:"When the client, its secrets or its method last changed."`
 }
 
 func (*ConnectorOAuthClient) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "The OAuth client the app registered with a connector's provider itself. " +
-		"The secret is write-only: no response carries it."
+		"The client secret and the signing secret are write-only: no response carries them."
 	return schema
 }
 
@@ -43,10 +56,23 @@ func (*ConnectorOAuthClient) TransformSchema(_ huma.Registry, schema *huma.Schem
 // pattern holds them to. Section 2.2 leaves the client identifier's size undefined; 2048 is
 // the bound CustomConnectorRequest.Endpoint already uses here, since a CIMD client_id is a
 // URL, and is not measured, nor is the same bound on the secret.
+//
+// ProviderAppID is one path segment of the app's events URL, so it is held to the store's RFC
+// 3986 section 2.3 unreserved characters (store.providerAppIDPattern). Slack publishes no
+// grammar for an app id, only examples such as A012ABCD0A0
+// (https://docs.slack.dev/reference/methods/apps.manifest.create), so no Slack-only pattern is
+// applied. No grammar is shared by the providers' signing secrets either; the three this repo
+// verifies are printable ASCII: Slack's is hex
+// (https://docs.slack.dev/authentication/verifying-requests-from-slack), Linq's whsec_ and
+// base64 (internal/channels/linq.go), Telnyx's a base64 Ed25519 public key
+// (internal/channels/telnyx.go). Both are bounded at client_id's 2048, which is not measured
+// for them either.
 type ConnectorOAuthClientRequest struct {
-	ClientID     string                         `json:"client_id" minLength:"1" maxLength:"2048" pattern:"^[ -~]+$" patternDescription:"printable ASCII, RFC 6749 Appendix A.1"`
-	ClientSecret string                         `json:"client_secret,omitempty" maxLength:"2048" pattern:"^[ -~]+$" patternDescription:"printable ASCII, RFC 6749 Appendix A.2" writeOnly:"true" doc:"Sealed at rest and never returned. Left out for a public client (auth_method none)."`
-	AuthMethod   ConnectorOAuthClientAuthMethod `json:"auth_method,omitempty" doc:"Overrides the connector's own client.auth_method. Left out, the connector's applies, and failing that the consent picks: none without a secret, else client_secret_basic where the provider accepts it."`
+	ClientID      string                         `json:"client_id,omitempty" minLength:"1" maxLength:"2048" pattern:"^[ -~]+$" patternDescription:"printable ASCII, RFC 6749 Appendix A.1" doc:"Required, unless the record is only a provider app: provider_app_id and signing_secret without client_secret or auth_method, for a connector whose connections are not consented through oauth2_code, such as linq."`
+	ClientSecret  string                         `json:"client_secret,omitempty" maxLength:"2048" pattern:"^[ -~]+$" patternDescription:"printable ASCII, RFC 6749 Appendix A.2" writeOnly:"true" doc:"Sealed at rest and never returned. Left out for a public client (auth_method none)."`
+	AuthMethod    ConnectorOAuthClientAuthMethod `json:"auth_method,omitempty" doc:"Overrides the connector's own client.auth_method. Left out, the connector's applies, and failing that the consent picks: none without a secret, else client_secret_basic where the provider accepts it."`
+	ProviderAppID string                         `json:"provider_app_id,omitempty" maxLength:"2048" pattern:"^[A-Za-z0-9._~-]+$" patternDescription:"RFC 3986 section 2.3 unreserved characters, not . or .." doc:"The provider's id for the app the client belongs to, such as a Slack app id (A012ABCD0A0). The app's events then reach POST /v1/connectors/events/{id}/{provider_app_id}. An app serves one customer: another customer's record naming it is a 409."`
+	SigningSecret string                         `json:"signing_secret,omitempty" maxLength:"2048" pattern:"^[ -~]+$" patternDescription:"printable ASCII" writeOnly:"true" doc:"The secret the provider signs the app's events with, such as a Slack app's signing secret. Needs provider_app_id, and a connector whose events are verified with the app's own secret (channel.verifier.secret provider_app). Sealed at rest and never returned. Putting the client again without it removes it, as it does client_secret."`
 }
 
 func (*ConnectorOAuthClientRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -98,8 +124,12 @@ func (s *Server) registerOAuthClients(api huma.API) {
 			"replaces it: a rotated secret is used from the next refresh of each connection. A " +
 			"new client_id makes the connections consented with the old one need a reconnect, " +
 			"since a refresh token is bound to the client it was issued to (RFC 6749 section 6). " +
-			"A connector whose client.registration does not list customer refuses it. The secret " +
-			"is sealed and never returned.\n\n" +
+			"A connector whose client.registration does not list customer refuses it. With " +
+			"provider_app_id and signing_secret it is also the app's own provider app: the " +
+			"provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, " +
+			"are verified with that secret and reach the app alone. Both secrets are sealed and " +
+			"never returned. A connector whose connections take no OAuth client, such as linq, " +
+			"takes the provider app alone: provider_app_id and signing_secret without client_id.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
 		// Huma describes the body of the default status (200) alone, so 201 names it here.
@@ -129,6 +159,9 @@ func (s *Server) registerOAuthClients(api huma.API) {
 
 // setConnectorOAuthClient stores the caller's own client for a connector that takes one.
 func (s *Server) setConnectorOAuthClient(ctx context.Context, request *oauthClientRequest) (*oauthClientResponse, error) {
+	if s.connectorSecrets == nil && request.Body.ClientID == "" {
+		return nil, errClientIDRequired
+	}
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
 		return nil, errMissingCustomer
@@ -152,11 +185,12 @@ func (s *Server) setConnectorOAuthClient(ctx context.Context, request *oauthClie
 	}
 
 	record := &store.ConnectorOAuthClient{
-		CustomerID:   customerID,
-		ConnectorID:  definition.ID,
-		Registration: core.ClientCustomer,
-		ClientID:     sent.ClientID,
-		AuthMethod:   core.ClientAuthMethod(sent.AuthMethod),
+		CustomerID:    customerID,
+		ConnectorID:   definition.ID,
+		Registration:  core.ClientCustomer,
+		ClientID:      sent.ClientID,
+		AuthMethod:    core.ClientAuthMethod(sent.AuthMethod),
+		ProviderAppID: sent.ProviderAppID,
 	}
 	// The app the customer acts in now is the record's pin when this put creates it; a put
 	// that replaces the record keeps the pin it has (store.PutConnectorOAuthClient).
@@ -173,10 +207,22 @@ func (s *Server) setConnectorOAuthClient(ctx context.Context, request *oauthClie
 		}
 		record.KEKVersion = s.connectorSecrets.CurrentVersion()
 	}
+	// Bound to the app it signs for, as sealProviderApp seals it and ProviderApp opens it.
+	if sent.SigningSecret != "" {
+		record.SigningSecretSealed, err = s.connectorSecrets.SealWithAAD(sent.SigningSecret,
+			providerAppAAD(customerID, definition.ID, sent.ProviderAppID))
+		if err != nil {
+			return nil, err
+		}
+		record.SigningKEKVersion = s.connectorSecrets.CurrentVersion()
+	}
 	created, err := s.store.PutConnectorOAuthClient(ctx, record)
 	// 409: the request conflicts with the state of the resource (RFC 9110 section 15.5.10).
 	if errors.Is(err, store.ErrOAuthClientRegistration) {
 		return nil, conflict("the connector's OAuth client for the app is one this deployment's operator registered or the router created, and it cannot be replaced through the API")
+	}
+	if errors.Is(err, store.ErrProviderAppTaken) {
+		return nil, errProviderAppTaken
 	}
 	if err != nil {
 		return nil, err
@@ -217,6 +263,15 @@ func checkOAuthClient(manifest core.Manifest, sent ConnectorOAuthClientRequest) 
 		return stack.Wrap(fmt.Errorf("%s does not take an app's own OAuth client: its client.registration is %v, which does not list customer",
 			manifest.ID, manifest.Client.Registration))
 	}
+	// A record without a client is only a provider app (AI-863), whose signing secret the events
+	// route reads. oauth2_code reads the client at every consent and refresh (ConnectorClients),
+	// so a connector that lists it needs one, and a client secret or a method is a client's.
+	if sent.ClientID == "" && (sent.SigningSecret == "" || sent.ClientSecret != "" || sent.AuthMethod != "" ||
+		slices.Contains(manifest.Schemes, oauth2code.Name)) {
+		return stack.Wrap(fmt.Errorf("client_id is required: %s takes a record without one only as a provider app, "+
+			"with provider_app_id and signing_secret and no client_secret or auth_method, and only when it does not list %s",
+			manifest.ID, oauth2code.Name))
+	}
 	method := core.ClientAuthMethod(sent.AuthMethod)
 	if method == "" {
 		method = manifest.Client.AuthMethod
@@ -235,6 +290,23 @@ func checkOAuthClient(manifest core.Manifest, sent ConnectorOAuthClientRequest) 
 	default:
 		return stack.Wrap(fmt.Errorf("the connector's client.auth_method %s needs a key or a certificate this client cannot hold: "+
 			"set auth_method to none, client_secret_basic or client_secret_post", method))
+	}
+	// RFC 3986 section 3.3: a dot segment would be removed from the events URL it is in. The
+	// store refuses it too (store.checkOAuthClient); checked here so it is a 400.
+	if sent.ProviderAppID == "." || sent.ProviderAppID == ".." {
+		return stack.Wrap(errors.New("provider_app_id is a dot segment, which an events URL cannot carry (RFC 3986 section 3.3)"))
+	}
+	if sent.SigningSecret == "" {
+		return nil
+	}
+	// The events route finds a signing secret by the app it signs for (ProviderApp).
+	if sent.ProviderAppID == "" {
+		return stack.Wrap(errors.New("signing_secret needs provider_app_id: an app's events are found, and verified, by the app their URL names"))
+	}
+	// Only a channel verified with the app's own secret reads it (receiveProviderAppEvent).
+	if manifest.Channel == nil || manifest.Channel.Verifier.Secret != core.SecretProviderApp {
+		return stack.Wrap(fmt.Errorf("%s does not verify its events with the app's own secret (channel.verifier.secret provider_app), so nothing would read signing_secret: leave it out",
+			manifest.ID))
 	}
 	return nil
 }
@@ -380,11 +452,12 @@ func SealConnectorOAuthClientSecret(secrets *auth.Sealer, customerID, connectorI
 
 func oauthClientOf(record store.ConnectorOAuthClient) ConnectorOAuthClient {
 	return ConnectorOAuthClient{
-		ConnectorID:  record.ConnectorID,
-		Registration: ConnectorClientRegistrationMethod(record.Registration),
-		ClientID:     record.ClientID,
-		AuthMethod:   ConnectorOAuthClientAuthMethod(record.AuthMethod),
-		CreatedAt:    record.CreatedAt,
-		UpdatedAt:    record.UpdatedAt,
+		ConnectorID:   record.ConnectorID,
+		Registration:  ConnectorClientRegistrationMethod(record.Registration),
+		ClientID:      record.ClientID,
+		AuthMethod:    ConnectorOAuthClientAuthMethod(record.AuthMethod),
+		ProviderAppID: record.ProviderAppID,
+		CreatedAt:     record.CreatedAt,
+		UpdatedAt:     record.UpdatedAt,
 	}
 }

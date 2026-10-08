@@ -418,6 +418,29 @@ func (s *StoreSuite) TestTurnStatsReportThePercentilesOfWhatCallersWaited() {
 	s.InDelta(250, *buckets[0].RoundtripP50Ms, 0.001, "the median of 100,200,300,400")
 }
 
+func (s *StoreSuite) TestWhenAReplyWasQueuedAndHeardIsReadBackWithItsTurn() {
+	queuedMs, audibleMs, speechEndMs := 880.0, 940.0, 1060.0
+	turn := s.turn("turn-1", s.base.Add(time.Minute), 1400)
+	turn.FirstFrameQueuedMs = &queuedMs
+	turn.FirstAudibleFrameMs = &audibleMs
+	turn.SpeechEndToAudibleMs = &speechEndMs
+	unreported := s.turn("turn-2", s.base.Add(2*time.Minute), 900)
+	s.Require().NoError(s.store.RecordTurn(s.ctx, turn))
+	s.Require().NoError(s.store.RecordTurn(s.ctx, unreported))
+
+	turns, err := s.store.CallTurns(s.ctx, "acme", "agent-1", s.base, nil)
+
+	s.Require().NoError(err)
+	s.Require().Len(turns, 2)
+	s.Require().NotNil(turns[0].FirstAudibleFrameMs)
+	s.InDelta(880, *turns[0].FirstFrameQueuedMs, 0.001)
+	s.InDelta(940, *turns[0].FirstAudibleFrameMs, 0.001)
+	s.InDelta(1060, *turns[0].SpeechEndToAudibleMs, 0.001)
+	s.InDelta(1400, *turns[0].RoundtripMs, 0.001, "the figure taken at the return is kept")
+	s.Nil(turns[1].FirstFrameQueuedMs, "an edge that does not report them leaves them out")
+	s.Nil(turns[1].FirstAudibleFrameMs)
+}
+
 func (s *StoreSuite) TestALegThatNeverHappenedIsNotCountedAsInstant() {
 	// A realtime model that hears and speaks for itself has no transcription leg, and
 	// counting that as zero would flatter the percentiles.
@@ -852,4 +875,73 @@ func (s *StoreSuite) TestAgentLogProviderFailureDetails() {
 	s.NotContains(detail.Details["error_message"], "private-key-value")
 	_, err = s.store.AgentLog(s.ctx, "another-customer", rows[0].ID)
 	s.Require().Error(err)
+}
+
+// recordCancelled stores a request its caller gave up on after it had generated something.
+func (s *StoreSuite) recordCancelled(at time.Time, latencyMs *float64) {
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "stt", CustomerID: "acme", Provider: "deepgram", Model: "flux-general-en",
+		Tags: map[string]string{"project": "support"}, StartedAt: at,
+		AudioMs: 700, CostMicros: 50, LatencyMs: latencyMs,
+		Success: false, ErrorCode: ErrorCancelled,
+	}))
+}
+
+func (s *StoreSuite) TestACancelledRequestIsSpendButNeitherAnErrorNorALatency() {
+	for index, latency := range []float64{100, 200} {
+		s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+			Modality: "stt", CustomerID: "acme", Provider: "deepgram", Model: "flux-general-en",
+			Tags: map[string]string{"project": "support"}, StartedAt: s.base.Add(time.Duration(index+1) * time.Minute),
+			AudioMs: 1000, CostMicros: 100, LatencyMs: &latency, Success: true,
+		}))
+	}
+	failedLatency := 900.0
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "stt", CustomerID: "acme", Provider: "deepgram", Model: "flux-general-en",
+		Tags: map[string]string{"project": "support"}, StartedAt: s.base.Add(3 * time.Minute),
+		AudioMs: 500, CostMicros: 60, LatencyMs: &failedLatency, Success: false, ErrorCode: "upstream_error",
+	}))
+	// Closed after a first token, and so with a latency, and closed before one, with none.
+	cancelledLatency := 5.0
+	s.recordCancelled(s.base.Add(4*time.Minute), &cancelledLatency)
+	s.recordCancelled(s.base.Add(5*time.Minute), nil)
+
+	_, err := s.store.Rollup(s.ctx, Hourly, s.base, s.base.Add(time.Hour))
+	s.Require().NoError(err)
+
+	check := func(name string, requests, errors, audio, cost int64, p50 *float64, uptime *float64) {
+		s.EqualValues(5, requests, name+": a cancelled request is still a request")
+		s.EqualValues(1, errors, name+": and is no error")
+		s.EqualValues(3900, audio, name+": what it generated is still counted")
+		s.EqualValues(360, cost, name+": and still billed")
+		s.Require().NotNil(p50, name)
+		s.InDelta(200.0, *p50, 0.001, name+": its latency is not one the provider had")
+		s.Require().NotNil(uptime, name)
+		s.InDelta(4.0/5.0, *uptime, 0.001, name+": nor is it downtime")
+	}
+
+	byProvider, err := s.store.CustomerStats(s.ctx, "stt", "acme", Hourly, s.base, s.base.Add(time.Hour), nil)
+	s.Require().NoError(err)
+	s.Require().Len(byProvider, 1)
+	bucket := byProvider[0]
+	check("rollup", bucket.RequestCount, bucket.ErrorCount, bucket.AudioMsTotal, bucket.CostMicrosTotal,
+		bucket.LatencyP50Ms, bucket.Uptime)
+
+	byTag, err := s.store.CustomerTagStats(s.ctx, "stt", "acme", "project", Hourly, s.base, s.base.Add(time.Hour))
+	s.Require().NoError(err)
+	s.Require().Len(byTag, 1)
+	tag := byTag[0]
+	s.EqualValues(5, tag.RequestCount, "tag rollup: a cancelled request is still a request")
+	s.EqualValues(1, tag.ErrorCount, "tag rollup: and is no error")
+	s.EqualValues(360, tag.CostMicrosTotal, "tag rollup: and still billed")
+	s.Require().NotNil(tag.LatencyP50Ms)
+	s.InDelta(200.0, *tag.LatencyP50Ms, 0.001, "tag rollup: its latency is not one the provider had")
+
+	filtered, err := s.store.CustomerStats(s.ctx, "stt", "acme", Hourly, s.base, s.base.Add(time.Hour),
+		map[string]string{"project": "support"})
+	s.Require().NoError(err)
+	s.Require().Len(filtered, 1)
+	bucket = filtered[0]
+	check("raw rows", bucket.RequestCount, bucket.ErrorCount, bucket.AudioMsTotal, bucket.CostMicrosTotal,
+		bucket.LatencyP50Ms, bucket.Uptime)
 }

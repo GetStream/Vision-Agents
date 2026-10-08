@@ -194,7 +194,7 @@ func (c *Cards) tell(ctx context.Context, contact store.ContactMapEntry, card st
 			return out, nil
 		}
 	}
-	out.Lines, err = linesOf(ctx, bound, card)
+	out.Lines, err = linesOf(ctx, bound, card, maxCardLines, false)
 	return out, err
 }
 
@@ -213,8 +213,10 @@ func summaryOf(ctx context.Context, bound streamapp.Bound, contact store.Contact
 	return strings.TrimSpace(message.Text), nil
 }
 
-// linesOf is the last lines of a card's thread channel said during its episode: before Until,
-// and for a call not before it started, since a call channel can hold other callers' calls.
+// linesOf is the last lines, at most most, of a card's thread channel said during its
+// episode: before Until, and for a call not before it started, since a call channel can hold
+// other callers' calls. fromStart bounds a thread's lines by its start too, as the summary
+// reads them (Closer): a thread channel holds every episode of its thread, one after another.
 // A channel that is not the customer's has none, and so has a call card whose window holds a
 // person's line by anybody but the card's caller: two callers on one call id at once, or a
 // line written late at the window's edge, are never handed to either.
@@ -229,17 +231,17 @@ func summaryOf(ctx context.Context, bound streamapp.Bound, contact store.Contact
 // ConversationID). That channel holds one call at a time, so the window separates the calls
 // in it. A channel the session named can hold another call going on at the same time, and
 // the agent's lines there name nobody they answer, so no time window or speaker check keeps
-// its replies to another caller out: such a card gives no lines, and waits for its summary
-// (T55). Example: two calls with agent_id "front-desk" both write into agent:front-desk; the
+// its replies to another caller out: such a card gives no lines, to a session or to its
+// summary, which therefore fails (Closer, summary_failed). Example: two calls with agent_id "front-desk" both write into agent:front-desk; the
 // agent's «Thanks Alice» lands inside Bob's call.
-func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard) ([]line, error) {
+func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard, most int, fromStart bool) ([]line, error) {
 	call := card.Source == store.EpisodeCall
 	if call && (card.CallID == "" || card.ThreadChannel != chatlog.ChannelType+":"+card.CallID) {
 		return nil, nil
 	}
 	channelType, channelID, _ := strings.Cut(card.ThreadChannel, ":")
 	state := true
-	limit := maxCardLines
+	limit := most
 	params := &getstream.MessagePaginationParams{Limit: &limit}
 	if card.Until != nil {
 		params.CreatedAtBeforeOrEqual = &getstream.Timestamp{Time: card.Until}
@@ -269,7 +271,7 @@ func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard)
 	var lines []line
 	for _, message := range messages {
 		at := message.CreatedAt.Time
-		if at == nil || (card.Until != nil && at.After(*card.Until)) || (call && at.Before(card.StartedAt)) {
+		if at == nil || (card.Until != nil && at.After(*card.Until)) || ((call || fromStart) && at.Before(card.StartedAt)) {
 			continue
 		}
 		from, ok := lineOf(message)
@@ -285,7 +287,7 @@ func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard)
 		}
 		lines = append(lines, said)
 	}
-	return lines[max(0, len(lines)-maxCardLines):], nil
+	return lines[max(0, len(lines)-most):], nil
 }
 
 // callerOf reports whether a call channel's participant is the card's caller: the SIP

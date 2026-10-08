@@ -53,6 +53,10 @@ func NewStream(options StreamOptions) (*Stream, error) {
 	return &Stream{client: client}, nil
 }
 
+// StreamOf configures the hooks of the app a client already acts in, such as a customer's
+// own app the router resolved, rather than the app the environment names.
+func StreamOf(client *getstream.Stream) *Stream { return &Stream{client: client} }
+
 // PointMessageHook makes the app deliver new messages to a url, leaving every other hook
 // alone.
 //

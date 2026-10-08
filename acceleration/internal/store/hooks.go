@@ -36,6 +36,19 @@ func (a AppScope) where(query bun.QueryBuilder) bun.QueryBuilder {
 	})
 }
 
+// clause is the scope's condition as where writes it, for a raw statement.
+func (a AppScope) clause() bun.Safe {
+	switch {
+	case a.App != 0 && a.Unpinned:
+		return bun.Safe(fmt.Sprintf("stream_app_pk = %d OR stream_app_pk IS NULL", a.App))
+	case a.App != 0:
+		return bun.Safe(fmt.Sprintf("stream_app_pk = %d", a.App))
+	case a.Unpinned:
+		return bun.Safe("stream_app_pk IS NULL")
+	}
+	return bun.Safe("false")
+}
+
 // ErrAmbiguousHook is a hook that matches rows of more than one customer in its app, which
 // is acted on for nobody rather than for whichever came first.
 var ErrAmbiguousHook = errors.New("store: more than one customer holds what that hook names")

@@ -80,6 +80,11 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	if request.Body != nil {
 		body = *request.Body
 	}
+	// A fork opens a session as createSession does, so a device is refused there what it is
+	// refused here.
+	if body.Instructions != nil && !ServerSideFrom(ctx) {
+		return nil, errDeviceInstructions
+	}
 
 	// A named agent on the fork replaces the parent's config wholesale, which is the point:
 	// asking the same question of a different agent is the reason to fork.
@@ -1258,7 +1263,7 @@ type ForkSessionRequest struct {
 	Custom          *map[string]interface{} `json:"custom,omitempty"`
 	Description     *string                 `json:"description,omitempty"`
 	Incognito       *bool                   `json:"incognito,omitempty" doc:"Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept."`
-	Instructions    *string                 `json:"instructions,omitempty"`
+	Instructions    *string                 `json:"instructions,omitempty" doc:"Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession."`
 	Messages        *bool                   `json:"messages,omitempty" doc:"Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants." default:"true"`
 	ModelOverwrites *ModelOverwrites        `json:"model_overwrites,omitempty"`
 	ProjectId       *string                 `json:"project_id,omitempty"`

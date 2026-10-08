@@ -134,7 +134,7 @@ func (s *ChannelSuite) TestASubscriptionListedTwiceIsRefused() {
 
 func (s *ChannelSuite) TestAnUnknownVerifierKindIsRefusedWithItsField() {
 	err := s.variant("kind: secret_header", "kind: jwt_set")
-	s.ErrorContains(err, `channel.verifier.kind: "jwt_set" is not one of [hmac_header secret_header standard_webhooks]`)
+	s.ErrorContains(err, `channel.verifier.kind: "jwt_set" is not one of [hmac_header secret_header standard_webhooks ed25519]`)
 }
 
 func (s *ChannelSuite) TestAReplyBodyNamingAnUndeclaredInputIsRefused() {
@@ -213,9 +213,84 @@ func (s *ChannelSuite) TestASignedTimestampNeedsItsHeaderAndAnAge() {
 	s.ErrorContains(err, "channel.verifier.max_age: is set exactly when timestamp_header is")
 }
 
+// AI-881: ed25519 reads hmac_header's header, signed template and timestamp, and fixes the
+// rest: Telnyx's signature is «Base64-encoded Ed25519»
+// (https://developers.telnyx.com/docs/messaging/messages/receiving-webhooks).
+func (s *ChannelSuite) TestAnEd25519VerifierTakesAHeaderASignedTemplateAndATimestamp() {
+	secretHeader := "kind: secret_header\n    secret: provider_app\n    header: X-Secret\n"
+	ed := "kind: ed25519\n    secret: provider_app\n    header: Telnyx-Signature-Ed25519\n"
+	_, err := ParseManifest(minimal(strings.Replace(baseChannel, secretHeader,
+		ed+"    signed: \"{timestamp}|{body}\"\n    timestamp_header: Telnyx-Timestamp\n    max_age: 5m\n", 1)))
+	s.Require().NoError(err)
+
+	err = s.variant(secretHeader, "kind: ed25519\n    secret: provider_app\n    signed: \"{body}\"\n")
+	s.ErrorContains(err, "channel.verifier.header: is empty")
+
+	err = s.variant(secretHeader, ed+"    signed: \"{timestamp}\"\n")
+	s.ErrorContains(err, "channel.verifier.signed: \"{timestamp}\" must name {body} once")
+
+	err = s.variant(secretHeader, ed+"    signed: \"{timestamp}|{body}\"\n")
+	s.ErrorContains(err, "channel.verifier.signed: {timestamp} and timestamp_header go together")
+
+	for _, parameter := range []string{"algorithm: sha256", "encoding: hex", "prefix: v1="} {
+		err = s.variant(secretHeader, ed+"    signed: \"{body}\"\n    "+parameter+"\n")
+		s.ErrorContains(err, "channel.verifier."+strings.Split(parameter, ":")[0]+": is not read by ed25519")
+	}
+}
+
 func (s *ChannelSuite) TestAnOperatorSecretNeedsClientEnv() {
 	err := s.variant("secret: provider_app", "secret: operator")
 	s.ErrorContains(err, "channel.verifier.secret: operator needs client.env")
+}
+
+// AI-879: a handshake is one of the closed list, named with its field.
+func (s *ChannelSuite) TestAnUnknownHandshakeIsRefusedWithItsField() {
+	err := s.variant("  format: json", "  handshake: crc_token\n  format: json")
+	s.ErrorContains(err, `channel.handshake: "crc_token" is not one of [hub_challenge]`)
+}
+
+// AI-879: the verify token is the provider app's id, so an operator's secret has no handshake.
+func (s *ChannelSuite) TestAHandshakeNeedsAProviderAppSecret() {
+	s.Require().NoError(s.variant("  format: json", "  handshake: hub_challenge\n  format: json"))
+
+	err := s.variant("    secret: provider_app\n    header: X-Secret\n",
+		"    secret: operator\n    header: X-Secret\n  handshake: hub_challenge\n")
+
+	s.ErrorContains(err, "channel.handshake: needs a provider_app secret")
+}
+
+// hubQuery is a hub_challenge handshake's query (PubSubHubbub 0.3, 6.2.1; Meta's webhooks).
+func hubQuery(mode, token, challenge string) url.Values {
+	return url.Values{"hub.mode": {mode}, "hub.verify_token": {token}, "hub.challenge": {challenge}}
+}
+
+// AI-879: the challenge is echoed only for subscribe, the URL's own verify token, and digits.
+func (s *ChannelSuite) TestAHubChallengeIsEchoedOnlyWhenItsQueryAgrees() {
+	block := ChannelRule{Handshake: HandshakeHubChallenge}
+
+	challenge, ok := block.AnswerHandshake(hubQuery("subscribe", "1234", "1158201444"), "1234")
+	s.True(ok)
+	s.Equal("1158201444", challenge)
+
+	for name, query := range map[string]url.Values{
+		"unsubscribe":      hubQuery("unsubscribe", "1234", "1158201444"),
+		"another token":    hubQuery("subscribe", "12345", "1158201444"),
+		"no token":         {"hub.mode": {"subscribe"}, "hub.challenge": {"1158201444"}},
+		"no challenge":     hubQuery("subscribe", "1234", ""),
+		"markup":           hubQuery("subscribe", "1234", "<script>1</script>"),
+		"a signed integer": hubQuery("subscribe", "1234", "-1"),
+	} {
+		_, ok := block.AnswerHandshake(query, "1234")
+		s.False(ok, name)
+	}
+	_, ok = block.AnswerHandshake(hubQuery("subscribe", "", "1"), "")
+	s.False(ok, "an empty verify token agrees with nothing")
+}
+
+// AI-879: a block that declares no handshake echoes nothing, whatever the query says.
+func (s *ChannelSuite) TestABlockWithoutAHandshakeEchoesNothing() {
+	_, ok := ChannelRule{}.AnswerHandshake(hubQuery("subscribe", "1234", "1"), "1234")
+	s.False(ok)
 }
 
 func (s *ChannelSuite) TestAPathWhoseWildcardIsNotEachsIsRefused() {
@@ -381,7 +456,7 @@ func (s *ChannelSuite) TestAWhatsAppReplyInsideTheWindowIsText() {
 	})
 	s.Require().NoError(err)
 	s.Equal("https://graph.facebook.com/v25.0/200000000000001/messages", url)
-	s.JSONEq(`{"messaging_product":"whatsapp","recipient_type":"individual","to":"15550001111","type":"text","text":{"body":"Blue and red"}}`, string(body))
+	s.JSONEq(`{"messaging_product":"whatsapp","recipient_type":"individual","to":"+15550001111","type":"text","text":{"body":"Blue and red"}}`, string(body))
 }
 
 func (s *ChannelSuite) TestAWhatsAppReplyAfterTheWindowIsTheTemplate() {
@@ -394,7 +469,7 @@ func (s *ChannelSuite) TestAWhatsAppReplyAfterTheWindowIsTheTemplate() {
 		SinceInbound: 24 * time.Hour,
 	})
 	s.Require().NoError(err)
-	s.JSONEq(`{"messaging_product":"whatsapp","recipient_type":"individual","to":"15550001111","type":"template","template":{"name":"follow_up","language":{"code":"en_US"}}}`, string(body))
+	s.JSONEq(`{"messaging_product":"whatsapp","recipient_type":"individual","to":"+15550001111","type":"template","template":{"name":"follow_up","language":{"code":"en_US"}}}`, string(body))
 }
 
 // A thread key part goes into the reply URL as an input does, so a value from a message

@@ -205,6 +205,13 @@ func (e *Edge) Attendance() <-chan agent.Attendance { return e.attending.Events(
 // PublishAudio sends a chunk of the agent's speech to the call.
 func (e *Edge) PublishAudio(pcm audio.PcmData) error { return e.speaker.Write(pcm) }
 
+// PublishAudioMarked sends a chunk of speech like PublishAudio, and tells marks when its first
+// frame was queued and when the call took the first one that was not silence, satisfying
+// agent.MarkedPlayout.
+func (e *Edge) PublishAudioMarked(pcm audio.PcmData, marks agent.PlayoutMarks) error {
+	return e.speaker.WriteMarked(pcm, marks)
+}
+
 // SpeechPending reports whether published speech is still waiting to go out, satisfying
 // agent.Playout.
 func (e *Edge) SpeechPending() bool { return e.speaker.pending() }

@@ -63,16 +63,25 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 var errDeviceHistory = forbidden("history is sent server-side: an assistant message in it is " +
 	"what the agent said, which a device cannot vouch for")
 
+// errDeviceInstructions refuses instructions sent by an end user's device: on create, on the
+// session socket, on a fork and in the events socket's instructions command.
+var errDeviceInstructions = forbidden("a session's instructions are changed server-side, never " +
+	"by a device: what the agent is told to be is the backend's to decide")
+
 // refuseServerSideFields reports the failure a new session is refused with when an end user's
 // device sent a field only the backend may send. createSession and the session socket both
 // call it, so a field one of them refuses from a device the other refuses too, with the same
 // error.
 //
-// What the model is told is the backend's to decide, as instructions are on an update: an
-// assistant message in a device's history would be the agent having said it.
+// What the model is told is the backend's to decide, as instructions are on an update: a
+// device's instructions would rewrite the agent, and an assistant message in a device's
+// history would be the agent having said it.
 func refuseServerSideFields(ctx context.Context, request CreateSessionRequest) (APIError, bool) {
 	if request.History != nil && !ServerSideFrom(ctx) {
 		return errDeviceHistory, true
+	}
+	if request.Instructions != nil && !ServerSideFrom(ctx) {
+		return errDeviceInstructions, true
 	}
 	return APIError{}, false
 }

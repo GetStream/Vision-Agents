@@ -375,3 +375,40 @@ func (s *StoreSuite) TestARewrapOfAnOAuthClientAppliesOnlyToTheSecretItRead() {
 	s.Equal([]byte("client under v2"), found.SecretSealed)
 	s.Equal(2, found.KEKVersion)
 }
+
+// AI-863: a provider app with no OAuth client, such as the customer's Linq account, whose
+// events are signed with a secret of its own and whose messages go out with a bearer token.
+func (s *StoreSuite) TestAProviderAppWithASigningSecretAndNoClientIDIsStored() {
+	stored := s.oauthClient("acme-app", "acme_line", func(c *ConnectorOAuthClient) {
+		c.ClientID, c.AuthMethod, c.SecretSealed, c.KEKVersion = "", "", nil, 0
+		c.ProviderAppID = "line-" + newID()
+		c.SigningSecretSealed, c.SigningKEKVersion = []byte("sealed signing secret"), 1
+	})
+
+	found, err := s.store.ConnectorOAuthClientByProviderApp(s.ctx, "acme_line", stored.ProviderAppID)
+	s.Require().NoError(err)
+	s.Empty(found.ClientID)
+	s.Equal([]byte("sealed signing secret"), found.SigningSecretSealed)
+}
+
+func (s *StoreSuite) TestARecordWithNeitherAClientIDNorASigningSecretIsRefused() {
+	s.oauthConnector("acme_line", everyPreregistration)
+
+	_, err := s.store.PutConnectorOAuthClient(s.ctx, &ConnectorOAuthClient{
+		CustomerID: "acme-app", ConnectorID: "acme_line", Registration: core.ClientCustomer, ProviderAppID: "line-" + newID(),
+	})
+
+	s.ErrorContains(err, "needs a signing secret")
+	_, err = s.store.ConnectorOAuthClient(s.ctx, "acme-app", "acme_line")
+	s.ErrorIs(err, ErrNoConnectorOAuthClient, "nothing was stored")
+}
+
+// The CHECK holds what the store checks for a writer that skips it, such as a later
+// migration's backfill (20261009130000_connector_oauth_clients_provider_app_only.sql).
+func (s *StoreSuite) TestTheTableRefusesARowWithNeitherAClientIDNorASigningSecret() {
+	_, err := s.store.DB().ExecContext(s.ctx, `INSERT INTO connector_oauth_clients
+    (customer_id, connector_id, registration, client_id, provider_app_id) VALUES (?, 'acme_line', 'customer', '', ?)`,
+		"acme-"+newID(), "line-"+newID())
+
+	s.ErrorContains(err, "connector_oauth_clients_client_or_signing_secret")
+}

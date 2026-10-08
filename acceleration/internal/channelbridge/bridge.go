@@ -30,6 +30,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -68,10 +69,62 @@ const sendTimeout = 20 * time.Second
 const maxAnswerBytes = 1 << 20
 
 // episodeSources is the episode card source of each connector whose threads get a card in the
-// person's omni-channel (T41). The manifest's channel block does not say what its threads
-// are to the contact map, so each channel adds its connector here: slack_bot is Slack (T35);
-// iMessage (T36), WhatsApp (T51) and SMS (T53) add theirs, keyed by the author's number.
-var episodeSources = map[string]string{"slack_bot": store.EpisodeSlack}
+// person's omni-channel (T41), and how the contact map keys the author of a message in the
+// provider unit. The manifest's channel block does not say what its threads are to the
+// contact map, so each channel adds its connector here: slack_bot is Slack (T35), keyed by
+// the workspace and the user; linq is iMessage (T36), keyed by the sender's number, so an
+// author Linq names by an email address gets no card; telnyx is SMS (T53), keyed by the
+// sender's number, with the carriers' keywords (keywords.go); whatsapp is WhatsApp (T51),
+// keyed by the sender's number with a +, with the same keywords, which Meta answers none of.
+var episodeSources = map[string]episodeSource{
+	"slack_bot": {source: store.EpisodeSlack, person: omnichannel.SlackUser},
+	"linq":      {source: store.EpisodeIMessage, person: byNumber},
+	"telnyx":    {source: store.EpisodeSMS, person: byNumber, optOuts: dlc.SMS, answered: telnyxAnswered},
+	"whatsapp":  {source: store.EpisodeWhatsApp, person: byWhatsAppNumber, optOuts: dlc.WhatsApp, recipient: whatsAppNumber},
+}
+
+// episodeSource is one connector's card source and the person its message's author is.
+type episodeSource struct {
+	source string
+	person func(providerUnitID, authorID string) (omnichannel.Person, error)
+	// optOuts is the opt-out channel (dlc.OptOutChannels) whose carrier keywords the bridge
+	// answers before the agent and whose opted-out people it neither hands to the agent nor
+	// replies to (keywords.go). Empty for a connector whose messages carry no such keywords.
+	optOuts string
+	// answered is whether the provider answered a keyword itself, read from the raw event, so
+	// the bridge records it without answering it again (keywords.go). Nil is never.
+	answered func(raw []byte) bool
+	// recipient is the opt-out recipient an author id, or the thread key a reply goes to, is:
+	// the number in E.164, the shape the opt-out API names (api.OptOut, «The number, in
+	// E.164»). Nil is the id as the provider wrote it.
+	recipient func(id string) string
+}
+
+// recipientOf is the opt-out recipient an author id or a thread key is.
+func (source episodeSource) recipientOf(id string) string {
+	if source.recipient == nil {
+		return id
+	}
+	return source.recipient(id)
+}
+
+// byNumber is the person an author's E.164 number is to the contact map.
+func byNumber(_, author string) (omnichannel.Person, error) {
+	return omnichannel.Phone(author)
+}
+
+// whatsAppNumber is a WhatsApp author's number in E.164. Meta writes messages[].from as the
+// digits of the international number with no + («"from": "16505551234"»,
+// https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/payload-examples, opened
+// October 8, 2026), the rule internal/channels' e164 follows too.
+func whatsAppNumber(from string) string {
+	return "+" + from
+}
+
+// byWhatsAppNumber is the person a WhatsApp author's number is to the contact map.
+func byWhatsAppNumber(_, author string) (omnichannel.Person, error) {
+	return omnichannel.Phone(whatsAppNumber(author))
+}
 
 // Options configures a Bridge.
 type Options struct {
@@ -183,6 +236,15 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		if !fresh {
 			continue
 		}
+		// After the claim, so a retried keyword is answered once; before the episode, so a
+		// keyword opens no card.
+		handled, err := b.keyword(ctx, thread, message)
+		if err != nil {
+			return false, err
+		}
+		if handled {
+			continue
+		}
 		// After the claim, so a retried delivery opens nothing. A store that fails here
 		// costs the card, not the message: the claim is taken, so the provider's next
 		// delivery would be dropped.
@@ -235,6 +297,11 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 	if thread.CustomerID != reply.Customer {
 		return stack.Wrap(fmt.Errorf("channelbridge: %s is another customer's thread channel", reply.CID))
 	}
+	// Nothing follows an opt-out's confirmation (keywords.go), not even a reply the agent
+	// was writing when the person texted STOP.
+	if optedOut, err := b.optedOut(ctx, thread); err != nil || optedOut {
+		return err
+	}
 	fresh, err := b.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, store.ClaimReply, reply.MessageID)
 	if err != nil || !fresh {
 		return err
@@ -251,6 +318,14 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 			break
 		}
 		time.Sleep(b.retries[attempt])
+		// Nor after a STOP that came in during the wait.
+		checking, done := context.WithTimeout(context.Background(), sendTimeout)
+		optedOut, checked := b.optedOut(checking, thread)
+		done()
+		if checked != nil || optedOut {
+			err = checked
+			break
+		}
 	}
 	// Not sent, so not claimed: whoever hands it over next sends it.
 	releasing, done := context.WithTimeout(context.Background(), sendTimeout)
@@ -333,7 +408,7 @@ func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config
 	if !carded {
 		return omnichannel.Opened{}, nil
 	}
-	person, err := omnichannel.SlackUser(message.ProviderUnitID, message.AuthorID)
+	person, err := source.person(message.ProviderUnitID, message.AuthorID)
 	if err != nil {
 		b.logger.Info("no episode card for a message whose author the contact map cannot key",
 			"connector", message.ConnectorID, "channel", thread.ChannelID)
@@ -344,7 +419,7 @@ func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config
 		AgentConfigID: config.ID,
 		AgentName:     config.Name,
 		Person:        person,
-		Source:        source,
+		Source:        source.source,
 		ThreadChannel: chatlog.ChannelType + ":" + thread.ChannelID,
 		StreamAppPK:   thread.StreamAppPK,
 	})

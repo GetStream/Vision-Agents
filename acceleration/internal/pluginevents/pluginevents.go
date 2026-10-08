@@ -339,6 +339,7 @@ func (s *Service) connection(ctx context.Context, config store.AgentConfig, logi
 		PluginID:    login.PluginID,
 		Endpoint:    endpoint,
 		AccessToken: session.FreshToken(ctx, s.store, s.auth, &login, s.logger),
+		Renew:       session.Renewal(s.store, s.auth, &login, s.logger),
 	}, nil
 }
 

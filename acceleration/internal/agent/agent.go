@@ -130,6 +130,9 @@ type Options struct {
 	// which is how a caller outside this process owns its own tools.
 	ToolRunner    ToolRunner
 	OnToolStarted func(ToolStarted)
+	// ToolPolicy is what the tool named asks of the agent (its connector binding's policy).
+	// Nil, or the zero ToolPolicy for a tool, is how every tool has always run.
+	ToolPolicy func(tool string) ToolPolicy
 	// Tools are what the voice model may do rather than say. Each is only offered when
 	// something on this call can run it: the telephony pair needs Telephony, and every
 	// other tool needs a ToolRunner.
@@ -300,6 +303,9 @@ type Agent struct {
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
+	// lateResults are lateResult messages held back while the history ends in a call not
+	// yet answered (callsOpen), in the order they came.
+	lateResults []llm.Message
 	// listeners holds one transcription session per participant, because a speech-to-text
 	// stream is bound to a single speaker.
 	listeners map[string]*sttrouter.Session
@@ -551,6 +557,9 @@ func (a *Agent) finishTurn(turn Turn) {
 		"text_to_tts_ms", turn.TextToTTSMs, "tts_to_audio_ms", turn.TTSToAudioMs,
 		"transcript_to_audio_ms", turn.RoundtripMs,
 		"speech_end_to_audio_ms", turn.SpeechEndToAudioMs,
+		"first_frame_queued_ms", turn.FirstFrameQueuedMs,
+		"first_audible_frame_ms", turn.FirstAudibleFrameMs,
+		"speech_end_to_audible_ms", turn.SpeechEndToAudibleMs,
 		"interrupted", turn.Interrupted)
 	a.emitter.Send(turn)
 	if a.turnStore != nil {
@@ -644,35 +653,50 @@ func (a *Agent) SimpleResponse(ctx context.Context, text string) error {
 // particular reply: every event of it carries the id, and it is what a session records the
 // turn under. A native agent returns an empty one, because a speech-to-speech model decides
 // for itself what counts as a turn and there is nothing here to name.
+//
+// Images go to the vision skill when the agent has one, and to the conversation model
+// itself when it has none but the model can see. With neither the turn is refused with
+// ErrCannotSeeImages rather than answered blind.
 func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePart) (string, error) {
 	if a.native() {
 		return "", a.respondNative(text, images)
 	}
 	if len(images) > 0 {
 		a.mu.Lock()
-		current := a.harness
+		current, model := a.harness, a.llm
 		a.mu.Unlock()
 		if current == nil {
 			return "", stack.Wrap(errors.New("agent: not joined"))
 		}
 		id := replyPrefix + turnStamp()
-		parts := llm.TextParts(text)
-		for index, image := range images {
+		attached := make([]llm.ImagePart, 0, len(images))
+		for _, image := range images {
 			if err := image.Validate(); err != nil {
 				return "", err
 			}
 			image.Data = append([]byte(nil), image.Data...)
-			described := map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()}
-			if image.Caption != "" {
-				described["caption"] = image.Caption
+			attached = append(attached, image)
+		}
+		switch {
+		case current.Offers(visionSkill):
+			parts := llm.TextParts(text)
+			for index, image := range attached {
+				described := map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()}
+				if image.Caption != "" {
+					described["caption"] = image.Caption
+				}
+				metadata, _ := json.Marshal(described)
+				parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
 			}
-			metadata, _ := json.Marshal(described)
-			parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
+			if _, err := current.Delegate(visionSkill, text, id, parts, nil); err != nil {
+				return "", err
+			}
+			return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
+		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
+			return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "", attached)
+		default:
+			return "", stack.Wrap(ErrCannotSeeImages)
 		}
-		if _, err := current.Delegate("vision", text, id, parts, nil); err != nil {
-			return "", err
-		}
-		return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
 	}
 	id := replyPrefix + turnStamp()
 	return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "", nil)
@@ -680,6 +704,13 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 
 // VideoFramesTool is the caller's tool the agent reads frames of the user's video through.
 const VideoFramesTool = "get_video_frames"
+
+// visionSkill is the skill images are handed to when the agent has one.
+const visionSkill = "vision"
+
+// ErrCannotSeeImages is a turn carrying images for an agent with nothing that can look at
+// them: no vision skill, and a conversation model that takes text alone.
+var ErrCannotSeeImages = errors.New("agent: images need a vision skill or a conversation model that accepts images, and this agent has neither")
 
 func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest) ([]llm.ContentPart, error) {
 	if a.options.ToolRunner == nil {
@@ -1489,6 +1520,7 @@ func (a *Agent) respondTurn(
 		Instructions: instructions,
 		History:      history,
 		Note:         joinNotes(note, a.duplex.Note(listened.confidence)),
+		Images:       images,
 	}, text)
 }
 
@@ -1915,7 +1947,10 @@ func (a *Agent) finish(response llm.Response) {
 		// been cut off. Prompting for it is not enough: the models that do it reliably
 		// are not the ones fast enough to hold a conversation.
 		if fillsPause(response.ID, calls) && strings.TrimSpace(a.spoken.String()) == "" {
-			filler := a.duplex.Working()
+			filler := a.preSpeech(calls)
+			if filler == "" {
+				filler = a.duplex.Working()
+			}
 			a.spoken.WriteString(filler)
 			if err := a.speakSentence(response.ID, filler); err != nil {
 				a.fail(err, "tts")
@@ -1995,6 +2030,20 @@ func (a *Agent) finish(response llm.Response) {
 	a.followUp()
 }
 
+// preSpeech is what the first of calls that names one asks to be said while it runs
+// (ToolPolicy.PreSpeech), or empty for none.
+func (a *Agent) preSpeech(calls []llm.ToolCall) string {
+	if a.options.ToolPolicy == nil {
+		return ""
+	}
+	for _, call := range calls {
+		if phrase := a.options.ToolPolicy(call.Name).PreSpeech; phrase != "" {
+			return phrase
+		}
+	}
+	return ""
+}
+
 // fillsPause reports whether a turn that said nothing should say something before the
 // tools it asked for are run.
 func fillsPause(completionID string, calls []llm.ToolCall) bool {
@@ -2037,7 +2086,15 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				}
 				continue
 			}
-			if err := a.options.Edge.PublishAudio(typed.Audio); err != nil {
+			var err error
+			if marked, ok := a.options.Edge.(MarkedPlayout); ok {
+				// Publishing returns once the chunk is queued, which for a long one is well
+				// after the participants could have heard it begin, so the edge says when.
+				err = marked.PublishAudioMarked(typed.Audio, a.turns.marksFor(turnOf(typed.SynthesisID)))
+			} else {
+				err = a.options.Edge.PublishAudio(typed.Audio)
+			}
+			if err != nil {
 				a.fail(err, "edge")
 			}
 			a.mu.Lock()

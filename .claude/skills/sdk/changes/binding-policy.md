@@ -1,0 +1,5 @@
+---
+pending: [python, dotnet, ruby, rust, php]
+---
+
+`AgentConnectorBinding` gains `policy`, a `ConnectorBindingPolicy` `{pre_speech, on_interrupt, cancellable}` (T30, AI-857), every field optional and read back as written. `on_interrupt` is a `ConnectorOnInterrupt` of `cancel` (the default, as before) or `wait` (the call finishes after an interruption, and its result goes into the conversation); `cancellable`, default true, false leaving a cancelled call running at the provider. The session socket's `tool_started` frame gains `pre_speech`, only when the tool's binding sets one; every other `tool_started` is unchanged. Go and JavaScript have the regenerated client and types. Python (`plugins/stream`, whose generated client is behind the spec on base already), .NET, Ruby, Rust and PHP need their generated clients regenerated and `policy` on their binding models. Swift, Kotlin and Dart need nothing for `policy`, since agent configs are server-side only; a client that shows `tool_started` may show `pre_speech`.

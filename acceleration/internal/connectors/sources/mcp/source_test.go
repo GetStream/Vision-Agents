@@ -131,6 +131,23 @@ func (s *SourceSuite) TestACredentialNothingRenewsIsInvalidatedAndDiscoverFails(
 	s.True(s.resolver.invalidated())
 }
 
+// TestARefusedCallLeavesTheSessionOpenForTheNext: the provider refuses token-1 in the middle
+// of a session, so that call fails. Once the connection holds a credential the provider takes
+// again (a reconnect, or a step-up that granted a scope), the next call runs on the same
+// session: the SDK does not end it on a 401 or a 403 (refuseAuthorization).
+func (s *SourceSuite) TestARefusedCallLeavesTheSessionOpenForTheNext() {
+	set := s.open(contracttest.ToolEcho)
+	s.provider.accept("token-2")
+	_, refused := set.Call(s.ctx, llm.ToolCall{Name: "crm__echo", Arguments: `{"text":"hi"}`})
+
+	s.resolver.reconnect("token-2")
+	result, err := set.Call(s.ctx, llm.ToolCall{Name: "crm__echo", Arguments: `{"text":"again"}`})
+
+	s.ErrorContains(refused, "the server refused the request with 401 Unauthorized")
+	s.Require().NoError(err)
+	s.Equal("again", llm.TextOf(result.Parts))
+}
+
 func (s *SourceSuite) TestAResolverRefusalSendsNothing() {
 	s.resolver.disconnect()
 
@@ -523,6 +540,13 @@ func (r *memoryResolver) renewTo(token string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.next = token
+}
+
+// reconnect is a new grant: the connection is connected again, holding token.
+func (r *memoryResolver) reconnect(token string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.token, r.revision, r.connected = token, r.revision+1, true
 }
 
 func (r *memoryResolver) disconnect() {

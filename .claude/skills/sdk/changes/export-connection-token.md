@@ -1,0 +1,5 @@
+---
+pending: [js, python, dotnet, ruby, rust, php]
+---
+
+`exportConnectionToken` (`POST /v1/agents/connections/{id}/token`, AI-874) is new and server-side only: it answers a `ConnectionToken` `{connection_id, header, value, expires_at}`, the connection's current access credential for the app's backend to call the provider itself, `value` being the whole field value (`Bearer <token>` for an OAuth access token, the key for an API key). It never carries a refresh token, and the answer is `Cache-Control: no-store`. An `oauth2_code` grant issued to Stream's client or one the router created is a 403, as is a scheme other than `oauth2_code` and `api_key`; a connection with no credential is a 409. `ConnectorAuditAction` gains `token_export`, one row per export. Name the method `connections.exportToken(id)`, and never log `value`. Go has the regenerated client (`ExportConnectionToken`) and JavaScript the regenerated types; neither has the resource method yet. Python (`plugins/stream`), .NET, Ruby, Rust and PHP need their generated clients regenerated and the method added. Swift, Kotlin and Dart need nothing, since the operation is not client-accessible.

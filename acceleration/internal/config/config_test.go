@@ -166,6 +166,30 @@ func (s *ConfigSuite) TestConnectorsAreOffUnlessAskedFor() {
 	s.True(config.Connectors.Enabled)
 }
 
+func (s *ConfigSuite) TestAnEpisodeIsIdleAfterAnHourUnlessAskedFor() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(time.Hour, config.Episodes.IdleAfter)
+
+	s.T().Setenv("ROUTER_EPISODES_IDLE_AFTER", "30m")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(30*time.Minute, config.Episodes.IdleAfter)
+}
+
+// WhatsApp's window is 24 hours from the person's last message, so an episode closes inside
+// it; and an episode that closes at once would summarize every message alone.
+func (s *ConfigSuite) TestAnEpisodeIdlePeriodOfADayOrOfNothingIsRefused() {
+	for _, idle := range []string{"24h", "0s"} {
+		s.T().Setenv("ROUTER_EPISODES_IDLE_AFTER", idle)
+		_, _, err := Load("")
+		s.ErrorContains(err, "episodes.idle_after", idle)
+	}
+	s.T().Setenv("ROUTER_EPISODES_IDLE_AFTER", "23h59m")
+	_, _, err := Load("")
+	s.NoError(err)
+}
+
 func (s *ConfigSuite) TestTheProxyDeclaresNoKindUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
@@ -302,6 +326,28 @@ func (s *ConfigSuite) TestALimitThatIsNotANumberIsRefused() {
 	s.Error(err)
 }
 
+func (s *ConfigSuite) TestALateReplyIsAskedOfAnotherCandidateAfterTheHedgeUnlessTurnedOff() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(1200*time.Millisecond, config.Agent.ReplyHedge)
+
+	s.T().Setenv("ROUTER_REPLY_HEDGE", "800ms")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(800*time.Millisecond, config.Agent.ReplyHedge)
+
+	s.T().Setenv("ROUTER_REPLY_HEDGE", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Agent.ReplyHedge, "zero asks once rather than falling back to the default")
+	s.Equal("0s", os.Getenv("ROUTER_REPLY_HEDGE"), "what is exported says the same")
+
+	s.T().Setenv("ROUTER_REPLY_HEDGE", "-1s")
+	_, _, err = Load("")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "agent.reply_hedge")
+}
+
 func (s *ConfigSuite) TestRegistrationSettingsAreOffAndEmptyUnlessSet() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
@@ -314,4 +360,16 @@ func (s *ConfigSuite) TestRegistrationSettingsAreOffAndEmptyUnlessSet() {
 	s.Require().NoError(err)
 	s.True(config.Stream.TrustAPIKeyHeader)
 	s.Equal([]string{"11", "22"}, config.Stream.DenyRegistration)
+}
+
+func (s *ConfigSuite) TestChatTimingsAreOffUnlessTurnedOn() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.False(config.Agent.ChatTimings)
+
+	s.T().Setenv("ROUTER_CHAT_TIMINGS", "true")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.True(config.Agent.ChatTimings)
+	s.Equal("true", os.Getenv("ROUTER_CHAT_TIMINGS"), "what is exported says the same")
 }

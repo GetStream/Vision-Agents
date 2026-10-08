@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
@@ -103,6 +104,22 @@ func (s *ConnectorLoginSuite) TestOnlyAnOptionalBindingOfTheCallersOwnWaitsForAL
 	}
 	_, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(required(s.chosen("crm", "whoami"))), "alice", nil)))
 	s.ErrorContains(err, `required connector "crm" cannot be used: no_selection`, "a required binding still fails the session")
+}
+
+// TestABindingWaitingForALoginKeepsItsPolicy: the two tools a binding offers until its person
+// logs in are its own, so its pre_speech and on_interrupt apply to them as to the tools the
+// login opens.
+func (s *ConnectorLoginSuite) TestABindingWaitingForALoginKeepsItsPolicy() {
+	binding := s.chosen("crm", "whoami")
+	binding.Policy = &store.BindingPolicy{PreSpeech: "Let me open the CRM.", OnInterrupt: store.InterruptWait}
+
+	d, tools, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(binding), "alice", nil)))
+
+	s.Require().NoError(err)
+	s.Equal([]string{"crm__list_tools", "crm__call_tool"}, names(tools))
+	for _, name := range names(tools) {
+		s.Equal(agent.ToolPolicy{PreSpeech: "Let me open the CRM.", Waits: true}, d.toolPolicy(name), name)
+	}
 }
 
 // TestALoginOpensTheBindingOnlyForTheConsentItBegan: before the login the tools ask for it;
