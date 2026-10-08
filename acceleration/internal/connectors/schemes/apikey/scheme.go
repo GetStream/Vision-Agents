@@ -52,7 +52,10 @@ var errNoKey = errors.New("apikey: the credential is not an api_key credential")
 // Scheme is the api_key scheme. It holds no state and is safe for concurrent use.
 type Scheme struct{}
 
-var _ core.Scheme = (*Scheme)(nil)
+var (
+	_ core.Scheme   = (*Scheme)(nil)
+	_ core.Exporter = (*Scheme)(nil)
+)
 
 // New returns the scheme. It takes no configuration: the header is the connection's, and
 // supplied with the key.
@@ -113,6 +116,16 @@ func (*Scheme) Wrap(base http.RoundTripper, c core.AccessCredential) http.RoundT
 		return refuse{}
 	}
 	return header{base: base, name: p.Header, value: p.Key}
+}
+
+// Export is the key in its header, as Wrap sends it. No OAuth client issued it: the customer
+// supplied it. A credential this scheme did not issue is refused.
+func (*Scheme) Export(c core.AccessCredential) (core.ExportedCredential, error) {
+	var p payload
+	if c.Scheme != Name || json.Unmarshal(c.Secret(), &p) != nil || p.check() != nil {
+		return core.ExportedCredential{}, errNoKey
+	}
+	return core.ExportedCredential{Header: p.Header, Value: p.Key, ExpiresAt: c.ExpiresAt}, nil
 }
 
 // Classify is oauth2code.ClassifyStatic: oauth2code's reading of a provider's answer, and a

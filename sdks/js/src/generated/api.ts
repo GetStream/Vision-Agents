@@ -812,6 +812,28 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/connections/{id}/token": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Export a connection's access token
+         * @description The connection's current access credential, for the app's backend to call the provider with directly: an OAuth access token, renewed first when it is about to expire, or an API key. A refresh token is never exported. Only the customer's own provider app exports: an oauth2_code connection exports when its grant was issued to the client the app registered itself, and that client is still the connector's; a grant issued to Stream's app, or to one the router created, is refused with a 403. An api_key connection always exports, since the key is the app's own. Other schemes are refused. Each export is recorded in the connector audit as token_export. Who may export it is who may read it.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["exportConnectionToken"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/connections/{id}/tools": {
         readonly parameters: {
             readonly query?: never;
@@ -4591,6 +4613,19 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectionStatus: "pending" | "connected" | "needs_reauthorization" | "disconnected";
+        /** @description A connection's access credential, for the app's backend to call the provider with directly. It holds no refresh token. */
+        readonly ConnectionToken: {
+            readonly connection_id: string;
+            /**
+             * Format: date-time
+             * @description When it stops working. Absent when the provider gave no expiry. Export again for a fresh one.
+             */
+            readonly expires_at?: string;
+            /** @description The HTTP field to send it in: Authorization for an OAuth access token, the connection's own header for an API key. */
+            readonly header: string;
+            /** @description The whole field value: Bearer and the access token for an OAuth access token (RFC 6750 section 2.1), the key for an API key. */
+            readonly value: string;
+        };
         readonly ConnectionTool: {
             readonly description: string;
             /** @description The JSON Schema of its arguments. */
@@ -4680,11 +4715,11 @@ export type components = {
             readonly setup?: components["schemas"]["ConnectorSetup"];
         };
         /**
-         * @description grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.
+         * @description grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential.
          * @enum {string}
          */
-        readonly ConnectorAuditAction: "grant_created" | "grant_refreshed" | "grant_revoked";
-        /** @description One grant a connection got, renewed or lost, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted. */
+        readonly ConnectorAuditAction: "grant_created" | "grant_refreshed" | "grant_revoked" | "token_export";
+        /** @description One grant a connection got, renewed or lost, or one export of its access credential, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted. */
         readonly ConnectorAuditEvent: {
             readonly action: components["schemas"]["ConnectorAuditAction"];
             /** @description The authorization attempt a consent finished. Absent once the connection's user was deleted. */
@@ -9411,6 +9446,53 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly exportConnectionToken: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The access credential */
+            readonly 200: {
+                headers: {
+                    readonly "Cache-Control"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionToken"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly listConnectionTools: {
