@@ -4060,7 +4060,9 @@ type CreateSessionRequest struct {
 	Id *string `json:"id,omitempty"`
 
 	// Incognito Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
-	Incognito    *bool   `json:"incognito,omitempty"`
+	Incognito *bool `json:"incognito,omitempty"`
+
+	// Instructions The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to decide.
 	Instructions *string `json:"instructions,omitempty"`
 
 	// Keyterms Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
@@ -4287,7 +4289,9 @@ type ForkSessionRequest struct {
 	Description *string                 `json:"description,omitempty"`
 
 	// Incognito Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
-	Incognito    *bool   `json:"incognito,omitempty"`
+	Incognito *bool `json:"incognito,omitempty"`
+
+	// Instructions Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession.
 	Instructions *string `json:"instructions,omitempty"`
 
 	// Messages Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
