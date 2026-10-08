@@ -193,6 +193,10 @@ type Agent struct {
 	// answer. It saves the ruling's round trip on every answered turn and pays for the
 	// replies a ruling throws away. Off by default.
 	SpeculativeReplies bool `koanf:"speculative_replies"`
+	// ChatTimings shows how long each stage of a turn took after the agent's reply in its
+	// chat channel, for a developer talking to the agent. Off by default: it is not something a
+	// caller should read.
+	ChatTimings bool `koanf:"chat_timings"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -261,6 +265,7 @@ var variables = map[string]string{
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
 
 	"agent.speculative_replies": "ROUTER_SPECULATIVE_REPLIES",
+	"agent.chat_timings":        "ROUTER_CHAT_TIMINGS",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
@@ -481,6 +486,7 @@ func (c Config) export() error {
 		"rate_limit.messages_per_day":   fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":     fmt.Sprint(c.RateLimit.TokensPerDay),
 		"agent.speculative_replies":     fmt.Sprint(c.Agent.SpeculativeReplies),
+		"agent.chat_timings":            fmt.Sprint(c.Agent.ChatTimings),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
 		"episodes.idle_after":           c.Episodes.IdleAfter.String(),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),

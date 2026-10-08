@@ -339,3 +339,15 @@ func (s *ConfigSuite) TestRegistrationSettingsAreOffAndEmptyUnlessSet() {
 	s.True(config.Stream.TrustAPIKeyHeader)
 	s.Equal([]string{"11", "22"}, config.Stream.DenyRegistration)
 }
+
+func (s *ConfigSuite) TestChatTimingsAreOffUnlessTurnedOn() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.False(config.Agent.ChatTimings)
+
+	s.T().Setenv("ROUTER_CHAT_TIMINGS", "true")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.True(config.Agent.ChatTimings)
+	s.Equal("true", os.Getenv("ROUTER_CHAT_TIMINGS"), "what is exported says the same")
+}

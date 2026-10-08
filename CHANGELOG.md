@@ -825,6 +825,22 @@ are on the `turn` event of the session socket, in the turn log, in the `turns` t
 `GET /v1/agents/calls/{id}/timeline`, and absent where the edge does not report them. The
 older fields are unchanged.
 
+### A voice reply can show how fast its turn was: `ROUTER_CHAT_TIMINGS` and `-chat-timings`
+
+For development, a voice agent can write how long a turn took after its reply in the chat
+channel it writes its transcript to, so somebody talking to it in a call UI sees it without
+reading logs. It is off by default: `ROUTER_CHAT_TIMINGS=true` (`agent.chat_timings`) turns it on
+for the router's sessions and `cmd/agent -chat-timings` for the standalone agent. A reply gets
+one line after its text, such as
+`⏱ reply 1112 ms = eou 452 + llm 412 + tts 248 · ttft 731 · ttfb 120`: the wait from the end of
+the caller's speech to the first audible frame of the reply, split into end of utterance, model
+and voice stages that add up to it, then the providers' own first-token and first-byte waits. A
+figure that did not happen is left out, and a turn the caller talked over starts
+`⏱ interrupted ·`. The message also carries the same figures in whole milliseconds as a
+`timings` custom field. Reading a conversation back, as the transcript endpoint and the history a
+bound conversation gives the agent do, leaves the line out, so the agent never takes it for
+something it said.
+
 ### A session says whether the user wrote, spoke or showed video
 
 Every session now has a `modality`: `text` for a conversation held in writing, `voice` for a

@@ -113,6 +113,7 @@ the other commands that read them there.
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off |
 | `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
+| `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long its turn took, and the same figures as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
 | `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
@@ -1216,6 +1217,22 @@ relevant transcript committed by the flow controller and every reply into the St
 channel `agent:{agentID}`, off
 the event stream rather than from inside the conversation loop. A voice call otherwise leaves
 nothing behind, and any Stream Chat client can already read a channel.
+
+For development, `ROUTER_CHAT_TIMINGS=true` (or `cmd/agent -chat-timings`) shows how fast each turn
+was on the agent's reply, so somebody talking to the agent in a call UI sees it without reading
+logs. Each reply gets a line after its text, such as
+`⏱ reply 1112 ms = eou 452 + llm 412 + tts 248 · ttft 731 · ttfb 120`.
+`reply` is the wait the caller felt, from the end of their speech to the first audible frame of the
+reply (the first audio published, where the edge does not say when that was heard), and the three
+stages add up to it: `eou` from the end of their speech until the turn was committed to
+(transcription settling, cadence wait and end-of-turn decision), `llm` from then to the reply's
+first text (absent when a reply started beside the decision was ready by then), and `tts` from the
+first text to the first audible frame. The providers' own `ttft` and `ttfb` follow, because work
+started early hides them inside the stages. A figure that did not happen is left out, and a turn
+the caller talked over starts `⏱ interrupted ·`. The same figures, in whole milliseconds, are on
+the message as the `timings` custom field (`reply_ms`, `eou_ms`, `llm_ms`, `tts_ms`, and the parts
+and provider waits). Reading the conversation back, in a transcript or as the history of a bound
+conversation, leaves the line out, so the agent never takes it for something said. Off by default.
 
 **Memory.** With `MEM0_API_KEY` set, an agent recalls what it knows about the customer on
 join and prepends it to its instructions, then hands each finished exchange over to be
