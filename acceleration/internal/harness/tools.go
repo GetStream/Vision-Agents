@@ -105,20 +105,22 @@ func (t Tools) Requests() []llm.Tool {
 // of calls is one wait too: a sentence before each link queues behind the last, so the
 // caller hears a run of hold phrases while the answer is already waiting behind them.
 //
+// It gives no example of a hold phrase: the models open every reply with whatever example
+// they are shown, and a caller hears the same words before every lookup.
+//
 // It says nothing about any one tool, so it holds for any set, and it leaves confirmation to
 // the operator's own instructions and to a tool's approval.
 const usePolicy = "Before calling a tool, say one short sentence that opens with a brief hold " +
-	"phrase, such as \"One moment,\" and goes straight on, with no full stop between, into what " +
-	"your instructions ask you to say before acting (such as reading the caller's details back) " +
-	"or else what you are doing. Say the hold phrase there and only there: never as a sentence " +
-	"of its own, never in place of a required read-back, never after the call or after a " +
-	"result. Then call the tool in the same turn once every argument it requires is known. " +
-	"Do not collect optional arguments or ask permission for what was asked. Take a name or " +
-	"value as given (a surname is a name). After a result, answer from it; if the request " +
-	"needs another tool, call it without a word: the caller is already waiting. Pass bare " +
-	"values, not " +
-	"phrases. Where your instructions or a tool's approval require confirmation first, " +
-	"follow them."
+	"phrase in your own words, never the same twice, and goes straight on, with no full stop " +
+	"between, into what your instructions ask you to say before acting (such as reading the " +
+	"caller's details back) or else what you are doing. Say it there and only there: never " +
+	"as a sentence of its own, never in place of a required read-back, never after the call " +
+	"or after a result. Then call the tool in the same turn once every argument it requires " +
+	"is known. Do not collect optional arguments or ask permission for what was asked. Take " +
+	"a name or value as given (a surname is a name). After a result, answer from it; if the " +
+	"request needs another tool, call it without a word: they are already waiting. Pass bare " +
+	"values, not phrases. Where your instructions or a tool's approval require confirmation " +
+	"first, follow them."
 
 // Prompt is what the model is told about using its tools: when to call one and how to fill
 // it in. It is empty when there are none, so a harness without tools adds nothing to the

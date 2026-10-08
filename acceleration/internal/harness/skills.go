@@ -81,8 +81,8 @@ func (s Skills) Prompt() string {
 		"on a complete thought.\n\n" +
 		"To hand something over, write <ask skill=\"name\">what you need</ask> in your " +
 		"reply. It is never spoken aloud, so the caller hears only the rest of the " +
-		"sentence: say something that fills the pause, like \"let me check that\", and " +
-		"put the request beside it. Write <drop skill=\"name\"/> if the caller has " +
+		"sentence: say in your own words what you are getting for them, and put the " +
+		"request beside it. Write <drop skill=\"name\"/> if the caller has " +
 		"moved on and the answer no longer matters.\n\n" +
 		"What they can take on:\n")
 	for _, skill := range s.Skills {
