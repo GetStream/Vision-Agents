@@ -240,7 +240,7 @@ type windowTranscript struct {
 func (w *windowTranscript) update(transcript Transcript, endMS int64) string {
 	keep := 0
 	cutoff := w.endMS - 1000
-	if endMS-w.turnStart*1000/SampleRate <= MaxSamples*1000/SampleRate {
+	if len(w.words) == 0 || endMS-int64(w.words[0].StartMS) <= MaxSamples*1000/SampleRate {
 		cutoff = -1
 	}
 	w.endMS = int(endMS)

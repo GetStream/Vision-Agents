@@ -203,6 +203,17 @@ func (s *AudioTurnSuite) TestSilenceDoesNotCreateUtterances() {
 	}
 }
 
+func (s *AudioTurnSuite) TestAQuietGapDoesNotFreezeAShortUtterancesWords() {
+	var words windowTranscript
+	s.Equal("May", words.update(Transcript{Words: []Word{
+		{Text: "May", StartMS: -2000, EndMS: -1600},
+	}}, 17000))
+	s.Equal("Maya Chen", words.update(Transcript{Words: []Word{
+		{Text: "Maya", StartMS: -3000, EndMS: -2600},
+		{Text: "Chen", StartMS: -2500, EndMS: -2100},
+	}}, 18000))
+}
+
 func (s *AudioTurnSuite) TestAudioArrivingDuringInferenceKeepsTheWordsInFlight() {
 	s.start()
 	s.feed(1)
