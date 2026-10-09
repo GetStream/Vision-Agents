@@ -53,7 +53,7 @@ func (s *OpenAIIntegrationSuite) TestACallLeavesOutTheOptionalArgumentsItDoesNot
 	s.Require().NoError(err)
 
 	called, _ := s.AskOn(provider, llm.ResponseParams{
-		Input:      []llm.Message{{Role: llm.User, Content: "Post 'hello from the e2e' to Slack channel C0C8MKNUNBA."}},
+		Input:      []llm.Message{{Role: llm.User, Content: "Post 'hello from the e2e' to Slack channel C0123456789."}},
 		Tools:      []llm.Tool{sendMessage},
 		ToolChoice: "required",
 	})
