@@ -454,6 +454,24 @@ func (s *PluginMigrateSuite) TestAMovedGrantIsAuditedAndLoggedByItsTokens() {
 	s.NotContains(logged.String(), refresh)
 }
 
+// TestAMovedGrantIsAuditedWithItsOwner: one audit row per moved connection, naming the owner
+// the connection has, the app for an app login and the user for a person's.
+func (s *PluginMigrateSuite) TestAMovedGrantIsAuditedWithItsOwner() {
+	config := s.config([]store.PluginEntry{{Name: movedPlugin}}, nil)
+	s.pluginClient(config, s.provider.ClientID, s.provider.ClientSecret)
+	app := pluginmigrate.MovedConnectionID(s.login(config, "", s.provider.ClientID))
+	mine := pluginmigrate.MovedConnectionID(s.login(config, s.client.userID, s.provider.ClientID))
+
+	s.run(true)
+
+	appRows := s.audit(app)
+	s.Require().Len(appRows, 1)
+	s.Equal(ConnectionOwnerType(store.OwnerApp), appRows[0].OwnerType)
+	userRows := s.audit(mine)
+	s.Require().Len(userRows, 1)
+	s.Equal(ConnectionOwnerType(store.OwnerUser), userRows[0].OwnerType)
+}
+
 // TestASessionBindingGrantsByNameAndAFixedOneByDigest: a session binding's tools are granted by
 // name, not at the digests one person's login listed, so each person's connection pins its own
 // on first use (#826) (AI-994 F45). A fixed binding has one connection and keeps the digests

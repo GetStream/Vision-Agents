@@ -1151,6 +1151,20 @@ func (s *ConfigsSuite) TestABindingCalledWhatAPluginOfTheConfigIsIsRefused() {
 	s.Contains(failure, "plugin")
 }
 
+// The plugin entry the binding shares its name with must be the binding's own connector: a
+// binding called linear to the connector slack leaves both offering linear__<tool>.
+func (s *ConfigsSuite) TestABindingCalledWhatAPluginIsToAnotherConnectorIsRefusedWhenThePluginIsNotItsConnector() {
+	binding := sessionSlack("linear")
+	binding["connector_id"] = "slack"
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "support", "agent_plugins": []string{"linear", "slack"}, "connectors": []map[string]any{binding},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `plugin "linear"`)
+}
+
 func (s *ConfigsSuite) TestABindingCalledWhatAUserPluginOfTheConfigIsIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
 		"name": "support", "user_plugins": []string{"linear"}, "connectors": []map[string]any{sessionSlack("linear")},
