@@ -8,6 +8,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -105,6 +106,49 @@ func (s *ResolverSuite) TestARevokedGrantIsLoggedByTheTokensThatEnded() {
 	s.Contains(line, " reason=revoked")
 	s.Contains(line, " access_fingerprint="+core.Fingerprint(access))
 	s.Contains(line, " refresh_fingerprint="+core.Fingerprint(refresh))
+	s.noTokenLogged(access, refresh)
+}
+
+// TestAProvidersRejectionOfAnAccessTokenIsLoggedByTheTokensItEnded: a resource server's 401
+// ends the grant through Invalidate, and the line and the audit row name the tokens it ended.
+func (s *ResolverSuite) TestAProvidersRejectionOfAnAccessTokenIsLoggedByTheTokensItEnded() {
+	ref := s.f.connected()
+	access, refresh := s.f.tokens(ref)
+	r := s.f.router(s.f.srv.Client())
+	rejected, err := r.Resolve(s.f.ctx, ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+
+	s.Require().NoError(r.Invalidate(s.f.ctx, ref, rejected, core.Outcome{Kind: core.OutcomeInvalidGrant}))
+
+	line := s.line("event=grant_revoked")
+	s.Contains(line, " reason=invalid_grant")
+	s.Contains(line, " access_fingerprint="+core.Fingerprint(access))
+	s.Contains(line, " refresh_fingerprint="+core.Fingerprint(refresh))
+	row := s.audited(ref, 1)[0]
+	s.Equal(store.AuditGrantRevoked, row.Action)
+	s.Require().NotNil(row.Credential)
+	s.Equal(core.Fingerprint(access), row.Credential.AccessFingerprint)
+	s.Equal(core.Fingerprint(refresh), row.Credential.RefreshFingerprint)
+	s.noTokenLogged(access, refresh)
+}
+
+// TestAProviderThatIsDownIsLoggedAsAFailedRefreshAndNotAsARevokedGrant: the connection stays
+// connected, so the one line says what the provider answered and no grant ended.
+func (s *ResolverSuite) TestAProviderThatIsDownIsLoggedAsAFailedRefreshAndNotAsARevokedGrant() {
+	ref := s.f.connected()
+	access, refresh := s.f.tokens(ref)
+	s.f.srv.Use(fakeprovider.Unavailable)
+	s.f.due()
+
+	_, err := s.f.router(s.f.srv.Client()).Resolve(s.f.ctx, ref, core.CredentialRequest{})
+
+	s.Require().ErrorIs(err, resolver.ErrTemporarilyUnavailable)
+	failed := s.line("event=refresh_failed")
+	s.Contains(failed, " outcome=transient")
+	s.Contains(failed, " status=connected")
+	s.Contains(failed, " refresh_fingerprint="+core.Fingerprint(refresh))
+	s.NotContains(s.f.logs.String(), "event=grant_revoked")
+	s.Empty(s.audited(ref, 0))
 	s.noTokenLogged(access, refresh)
 }
 
