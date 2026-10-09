@@ -3,6 +3,7 @@ package bandwidth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -297,6 +298,89 @@ func (s *BandwidthSuite) TestAFailureFromBandwidthSaysWhatBandwidthSaid() {
 
 	s.ErrorContains(err, "400")
 	s.ErrorContains(err, "invalid area code")
+}
+
+func (s *BandwidthSuite) TestANumbersRefusalIsAVendorError() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(" invalid area code \n"))
+	}
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", AreaCode: "000"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("bandwidth", vendorErr.Vendor)
+	s.Equal(http.StatusBadRequest, vendorErr.Status)
+	s.Equal("invalid area code", vendorErr.Message)
+}
+
+func (s *BandwidthSuite) TestAVoiceRefusalIsAVendorError() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("not allowed"))
+	}
+
+	_, err := s.provider.Dial(s.ctx, s.outbound())
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("bandwidth", vendorErr.Vendor)
+	s.Equal(http.StatusForbidden, vendorErr.Status)
+	s.Equal("not allowed", vendorErr.Message)
+}
+
+func (s *BandwidthSuite) TestBandwidthNotAnsweringTheNumbersAPIIsAVendorError() {
+	s.server.Close()
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", AreaCode: "719"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Zero(vendorErr.Status)
+	s.Error(vendorErr.Cause)
+}
+
+func (s *BandwidthSuite) TestBandwidthNotAnsweringTheVoiceAPIIsAVendorError() {
+	s.server.Close()
+
+	_, err := s.provider.Dial(s.ctx, s.outbound())
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Zero(vendorErr.Status)
+	s.Error(vendorErr.Cause)
+}
+
+func (s *BandwidthSuite) TestANumbersAnswerThatIsNotXMLIsAVendorError() {
+	s.answer("<SearchResult>")
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", AreaCode: "719"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal(http.StatusOK, vendorErr.Status)
+	s.Equal("could not read the answer", vendorErr.Message)
+}
+
+func (s *BandwidthSuite) TestAVoiceAnswerThatIsNotJSONIsAVendorError() {
+	s.answer("not json")
+
+	_, err := s.provider.Dial(s.ctx, s.outbound())
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal(http.StatusOK, vendorErr.Status)
+	s.Equal("could not read the answer", vendorErr.Message)
+}
+
+func (s *BandwidthSuite) outbound() phone.Outbound {
+	return phone.Outbound{
+		From:      "+17195551234",
+		To:        "+13035559876",
+		Bridge:    phone.Bridge{URI: "sip:trunk@sip.stream-io-api.com"},
+		AnswerURL: "https://router.example.com/v1/phone/answer/tok-1",
+	}
 }
 
 func (s *BandwidthSuite) answer(body string) {
