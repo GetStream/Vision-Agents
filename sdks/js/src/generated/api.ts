@@ -4777,6 +4777,29 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectorAuditAction: "grant_created" | "grant_refreshed" | "grant_revoked" | "token_export" | "proxy_call";
+        /** @description The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown. */
+        readonly ConnectorAuditCredential: {
+            /**
+             * Format: date-time
+             * @description When the access token expires. Absent when the provider did not say.
+             */
+            readonly access_expires_at?: string;
+            /** @description The access token the grant left, by fingerprint. */
+            readonly access_fingerprint?: string;
+            /** @description The access token before it, by fingerprint. Absent for a first grant. */
+            readonly previous_access_fingerprint?: string;
+            /** @description The refresh token before it, by fingerprint. Absent for a first grant, or when there was none. */
+            readonly previous_refresh_fingerprint?: string;
+            /**
+             * Format: date-time
+             * @description When the refresh token expires, by the connector's refresh_ttl. Absent when it does not say.
+             */
+            readonly refresh_expires_at?: string;
+            /** @description The refresh token the grant left, by fingerprint. Absent when there is none. */
+            readonly refresh_fingerprint?: string;
+            /** @description The refresh token the connection already had was replaced, as a provider that rotates refresh tokens does on every refresh. */
+            readonly rotated: boolean;
+        };
         /** @description One grant a connection got, renewed or lost, one export of its access credential, or one direct call sent through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted. */
         readonly ConnectorAuditEvent: {
             readonly action: components["schemas"]["ConnectorAuditAction"];
@@ -4787,6 +4810,8 @@ export type components = {
             readonly connector_id: string;
             /** Format: date-time */
             readonly created_at: string;
+            /** @description The tokens a grant row left, by fingerprint. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens. */
+            readonly credential?: components["schemas"]["ConnectorAuditCredential"];
             readonly id: string;
             /**
              * Format: int64

@@ -3,10 +3,12 @@
 package resolver_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -73,6 +75,8 @@ type fixture struct {
 	// clientRemoved makes the operator's client lookup find nothing, as after its record
 	// or variables are gone.
 	clientRemoved atomic.Bool
+	// logs is what every router's resolver logged.
+	logs *lockedBuffer
 }
 
 // database is the resolver's own test database, emptied and migrated, as the store suite
@@ -109,7 +113,7 @@ func newFixture(tb testing.TB, dsn string, db *store.Store) *fixture {
 	definition, err := db.CreateConnectorDefinition(ctx, customer, parsed)
 	require.NoError(tb, err)
 	return &fixture{tb: tb, ctx: ctx, dsn: dsn, db: db, sealer: sealer, srv: srv,
-		clock: &clock{now: time.Now()}, connector: definition.ID, revision: definition.Revision}
+		clock: &clock{now: time.Now()}, connector: definition.ID, revision: definition.Revision, logs: &lockedBuffer{}}
 }
 
 // router is another router: a pool of its own, connected before it is used, and a resolver
@@ -122,7 +126,8 @@ func (f *fixture) router(client *http.Client) *resolver.Resolver {
 	credentials, err := pgsealed.New(db, f.sealer)
 	require.NoError(f.tb, err)
 	r, err := resolver.New(resolver.Config{Store: db, Credentials: credentials,
-		Schemes: map[string]core.Scheme{oauth2code.Name: f.scheme(client), oauth2cc.Name: f.clientCredentials(client)}, Now: f.clock.Now})
+		Schemes: map[string]core.Scheme{oauth2code.Name: f.scheme(client), oauth2cc.Name: f.clientCredentials(client)}, Now: f.clock.Now,
+		Logger: slog.New(slog.NewTextHandler(f.logs, nil))})
 	require.NoError(f.tb, err)
 	return r
 }
@@ -248,6 +253,22 @@ func (f *fixture) hold(ref core.ConnectionRef) (release func()) {
 	return release
 }
 
+// tokens are the access and refresh tokens ref's stored credentials hold now, unsealed, so a
+// test can look for them where they must not be. Compare them with ==, not Equal, so a
+// failure prints no token.
+func (f *fixture) tokens(ref core.ConnectionRef) (access, refresh string) {
+	credentials, err := pgsealed.New(f.db, f.sealer)
+	require.NoError(f.tb, err)
+	var payload struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	require.NoError(f.tb, credentials.Update(f.ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		return false, json.Unmarshal(state.Credentials.Payload, &payload)
+	}))
+	return payload.AccessToken, payload.RefreshToken
+}
+
 func (f *fixture) stored(ref core.ConnectionRef) store.ConnectorConnection {
 	connection, err := f.db.ConnectorConnection(f.ctx, ref.CustomerID, ref.ConnectionID)
 	require.NoError(f.tb, err)
@@ -313,6 +334,24 @@ func (i *interposer) RoundTrip(r *http.Request) (*http.Response, error) {
 		r.Body = io.NopCloser(strings.NewReader(string(body)))
 	}
 	return i.base.RoundTrip(r)
+}
+
+// lockedBuffer is a log routers on several goroutines write to and a test reads.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // clock is the time the schemes and the resolvers read, moved by the test.

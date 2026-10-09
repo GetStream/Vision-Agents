@@ -119,6 +119,7 @@ from .connection_validation_request import ConnectionValidationRequest
 from .connection_validation_status import ConnectionValidationStatus
 from .connector import Connector
 from .connector_audit_action import ConnectorAuditAction
+from .connector_audit_credential import ConnectorAuditCredential
 from .connector_audit_event import ConnectorAuditEvent
 from .connector_audit_page import ConnectorAuditPage
 from .connector_binding_event import ConnectorBindingEvent
@@ -538,6 +539,7 @@ __all__ = (
     "ConnectionValidationStatus",
     "Connector",
     "ConnectorAuditAction",
+    "ConnectorAuditCredential",
     "ConnectorAuditEvent",
     "ConnectorAuditPage",
     "ConnectorBindingEvent",
