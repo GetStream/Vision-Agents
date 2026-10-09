@@ -298,6 +298,46 @@ func (s *PluginMigrateSuite) TestAGrantWhoseRotationIsUnknownIsSkippedUnlessAske
 	s.Equal(pluginmigrate.Written, s.row(asked, pluginmigrate.KindConnection, login).Action)
 }
 
+// TestOnlyTheNamedPluginsRowsMove: --plugin moves one plugin's login and binding and leaves
+// another plugin's rows out of the report and unwritten, so a first step can move Slack alone;
+// a later run naming the other plugin moves it.
+func (s *PluginMigrateSuite) TestOnlyTheNamedPluginsRowsMove() {
+	config := s.config([]store.PluginEntry{{Name: movedPlugin}, {Name: rotatingPlugin}}, []store.PluginEntry{{Name: rotatingPlugin}})
+	moved := s.login(config, "", s.provider.ClientID)
+	later := s.loginTo(config, "", rotatingPlugin, s.provider.ClientID, s.provider.URL+fakeprovider.PathToken, store.PluginConnected)
+
+	report := s.runOnly(true, movedPlugin)
+
+	s.Equal(pluginmigrate.Written, s.row(report, pluginmigrate.KindConnection, moved).Action)
+	for _, row := range report.Rows {
+		s.NotContains(row.Source, later, "a login of a plugin not named is not read")
+		s.NotContains(row.Source, " "+rotatingPlugin, "an entry of a plugin not named is not read")
+	}
+	s.Equal(1, s.count("SELECT count(*) FROM connector_connections WHERE customer_id = ?", s.customerID()))
+	bindings := s.storedConfig(config).Connectors
+	s.Require().Len(bindings, 1)
+	s.Equal(movedPlugin, bindings[0].Name)
+
+	next := s.runOnly(true, rotatingPlugin)
+
+	s.Equal(pluginmigrate.Written, s.row(next, pluginmigrate.KindConnection, later).Action)
+	s.Len(s.storedConfig(config).Connectors, 2)
+}
+
+// TestAPluginTheCatalogDoesNotKnowIsRefused: a typo in --plugin is an error, never a run over
+// every plugin.
+func (s *PluginMigrateSuite) TestAPluginTheCatalogDoesNotKnowIsRefused() {
+	config := s.config([]store.PluginEntry{{Name: movedPlugin}}, nil)
+	s.login(config, "", s.provider.ClientID)
+	opts := s.options(false)
+	opts.Plugins = []string{"slak"}
+
+	_, err := pluginmigrate.Run(context.Background(), opts, true)
+
+	s.Require().ErrorContains(err, `plugin "slak" is not in the catalog`)
+	s.Zero(s.count("SELECT count(*) FROM connector_connections WHERE customer_id = ?", s.customerID()))
+}
+
 // credentialsAfterAnotherRun is the credential store with another run's save landing just
 // before this run's: its first Update runs fn twice, under the lock each time, the first time
 // as the other run. Two real pgsealed writers, nothing faked.
@@ -579,6 +619,15 @@ func (s *PluginMigrateSuite) run(apply bool) pluginmigrate.Report {
 // runWith is run, moving grants of rotating connectors when includeRotating.
 func (s *PluginMigrateSuite) runWith(apply, includeRotating bool) pluginmigrate.Report {
 	report, err := pluginmigrate.Run(context.Background(), s.options(includeRotating), apply)
+	s.Require().NoError(err)
+	return report
+}
+
+// runOnly is a run that moves only the named plugins' rows, rotating ones included.
+func (s *PluginMigrateSuite) runOnly(apply bool, plugins ...string) pluginmigrate.Report {
+	opts := s.options(true)
+	opts.Plugins = plugins
+	report, err := pluginmigrate.Run(context.Background(), opts, apply)
 	s.Require().NoError(err)
 	return report
 }
