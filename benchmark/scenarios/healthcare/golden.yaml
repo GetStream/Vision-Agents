@@ -14,6 +14,10 @@ turns:
   - id: insurance
     text: "New member ID is XYZ987654, Blue Ridge Health. Pharmacy is Oak Street Pharmacy."
     trigger: {kind: after_agent_turn, delay_ms: 400}
+  # The agent may confirm before it acts, as it should with a real caller; this is the yes.
+  - id: go_ahead
+    text: "Yes, that's right. Please go ahead."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
 seed:
   patients:
     - {id: p1, name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456, phone: "512-555-0100", pharmacy: "Oak Street Pharmacy"}

@@ -6,6 +6,19 @@ use crate::types;
 use reqwest::Method;
 use serde::Serialize;
 impl Client {
+    /// The router's OAuth client metadata
+    ///
+    /// `GET /.well-known/oauth-client-metadata` (`getConnectorClientMetadata`).
+    pub async fn get_connector_client_metadata(&self) -> Result<serde_json::Value> {
+        self.send(
+            Method::GET,
+            "/.well-known/oauth-client-metadata",
+            None::<&()>,
+            None::<&()>,
+            "getConnectorClientMetadata",
+        )
+        .await
+    }
     /// Liveness and dependency check
     ///
     /// `GET /health` (`getHealth`).
@@ -89,6 +102,19 @@ impl Client {
             None::<&()>,
             body,
             "createCallToken",
+        )
+        .await
+    }
+    /// What a call's models read and wrote, and what their prompts were made of
+    ///
+    /// `GET /v1/agents/calls/{id}/tokens` (`getCallTokens`).
+    pub async fn get_call_tokens(&self, id: &str) -> Result<types::CallTokens> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/calls/{id}/tokens", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getCallTokens",
         )
         .await
     }
@@ -200,6 +226,77 @@ impl Client {
         )
         .await
     }
+    /// List channel lines
+    ///
+    /// `GET /v1/agents/channels` (`listChannelAccounts`).
+    pub async fn list_channel_accounts(&self) -> Result<Vec<types::ChannelAccount>> {
+        self.send(
+            Method::GET,
+            "/v1/agents/channels",
+            None::<&()>,
+            None::<&()>,
+            "listChannelAccounts",
+        )
+        .await
+    }
+    /// Connect a channel line
+    ///
+    /// `POST /v1/agents/channels` (`connectChannel`).
+    pub async fn connect_channel(
+        &self,
+        body: Option<&types::ConnectChannelRequest>,
+    ) -> Result<types::ChannelAccount> {
+        self.send(
+            Method::POST,
+            "/v1/agents/channels",
+            None::<&()>,
+            body,
+            "connectChannel",
+        )
+        .await
+    }
+    /// Receive a message on a channel
+    ///
+    /// `POST /v1/agents/channels/hooks/{token}` (`receiveChannelMessage`).
+    pub async fn receive_channel_message(&self, token: &str) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/channels/hooks/{token}", token = segment(token)),
+            None::<&()>,
+            None::<&()>,
+            "receiveChannelMessage",
+        )
+        .await
+    }
+    /// Mint a code to claim a number
+    ///
+    /// `POST /v1/agents/channels/links` (`linkChannelNumber`).
+    pub async fn link_channel_number(
+        &self,
+        body: Option<&types::LinkChannelRequest>,
+    ) -> Result<types::ChannelLink> {
+        self.send(
+            Method::POST,
+            "/v1/agents/channels/links",
+            None::<&()>,
+            body,
+            "linkChannelNumber",
+        )
+        .await
+    }
+    /// Disconnect a channel line
+    ///
+    /// `DELETE /v1/agents/channels/{id}` (`disconnectChannel`).
+    pub async fn disconnect_channel(&self, id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/agents/channels/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "disconnectChannel",
+        )
+        .await
+    }
     /// What a browser needs to read an agent's conversation
     ///
     /// `POST /v1/agents/chat-token` (`createChatToken`).
@@ -308,6 +405,19 @@ impl Client {
         )
         .await
     }
+    /// What was changed about an agent since its directory was last synced
+    ///
+    /// `GET /v1/agents/configs/{id}/changes` (`getAgentChanges`).
+    pub async fn get_agent_changes(&self, id: &str) -> Result<types::AgentChanges> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/configs/{id}/changes", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getAgentChanges",
+        )
+        .await
+    }
     /// The plugin logins this agent holds
     ///
     /// `GET /v1/agents/configs/{id}/plugins` (`listConfigPlugins`).
@@ -357,6 +467,528 @@ impl Client {
             None::<&()>,
             body,
             "authorizePlugin",
+        )
+        .await
+    }
+    /// Set the OAuth client an agent logs a plugin in with
+    ///
+    /// `PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client` (`setPluginClient`).
+    pub async fn set_plugin_client(
+        &self,
+        id: &str,
+        plugin_id: &str,
+        body: &types::SetPluginClientRequest,
+    ) -> Result<types::PluginClient> {
+        self.send(
+            Method::PUT,
+            &format!(
+                "/v1/agents/configs/{id}/plugins/{plugin_id}/client",
+                id = segment(id),
+                plugin_id = segment(plugin_id)
+            ),
+            None::<&()>,
+            Some(body),
+            "setPluginClient",
+        )
+        .await
+    }
+    /// Drop the OAuth client an agent logs a plugin in with
+    ///
+    /// `DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client` (`deletePluginClient`).
+    pub async fn delete_plugin_client(&self, id: &str, plugin_id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!(
+                "/v1/agents/configs/{id}/plugins/{plugin_id}/client",
+                id = segment(id),
+                plugin_id = segment(plugin_id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "deletePluginClient",
+        )
+        .await
+    }
+    /// List connections
+    ///
+    /// `GET /v1/agents/connections` (`listConnections`).
+    pub async fn list_connections(
+        &self,
+        query: &ListConnectionsQuery,
+    ) -> Result<types::ConnectionPage> {
+        self.send(
+            Method::GET,
+            "/v1/agents/connections",
+            Some(query),
+            None::<&()>,
+            "listConnections",
+        )
+        .await
+    }
+    /// Create a connection
+    ///
+    /// `POST /v1/agents/connections` (`createConnection`).
+    pub async fn create_connection(
+        &self,
+        body: &types::ConnectionRequest,
+    ) -> Result<types::Connection> {
+        self.send(
+            Method::POST,
+            "/v1/agents/connections",
+            None::<&()>,
+            Some(body),
+            "createConnection",
+        )
+        .await
+    }
+    /// Read a connection
+    ///
+    /// `GET /v1/agents/connections/{id}` (`getConnection`).
+    pub async fn get_connection(&self, id: &str) -> Result<types::Connection> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/connections/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getConnection",
+        )
+        .await
+    }
+    /// Delete a connection
+    ///
+    /// `DELETE /v1/agents/connections/{id}` (`deleteConnection`).
+    pub async fn delete_connection(&self, id: &str, query: &DeleteConnectionQuery) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/agents/connections/{id}", id = segment(id)),
+            Some(query),
+            None::<&()>,
+            "deleteConnection",
+        )
+        .await
+    }
+    /// Start a consent
+    ///
+    /// `POST /v1/agents/connections/{id}/authorizations` (`createAuthorization`).
+    pub async fn create_authorization(&self, id: &str) -> Result<types::Authorization> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/agents/connections/{id}/authorizations",
+                id = segment(id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "createAuthorization",
+        )
+        .await
+    }
+    /// Set a connection's credentials
+    ///
+    /// `PUT /v1/agents/connections/{id}/credentials` (`putConnectionCredentials`).
+    pub async fn put_connection_credentials(
+        &self,
+        id: &str,
+        body: &types::ConnectionCredentials,
+    ) -> Result<types::Connection> {
+        self.send(
+            Method::PUT,
+            &format!("/v1/agents/connections/{id}/credentials", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "putConnectionCredentials",
+        )
+        .await
+    }
+    /// List a connection's tool calls
+    ///
+    /// `GET /v1/agents/connections/{id}/invocations` (`listConnectionInvocations`).
+    pub async fn list_connection_invocations(
+        &self,
+        id: &str,
+        query: &ListConnectionInvocationsQuery,
+    ) -> Result<types::ConnectionInvocationPage> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/connections/{id}/invocations", id = segment(id)),
+            Some(query),
+            None::<&()>,
+            "listConnectionInvocations",
+        )
+        .await
+    }
+    /// Call a connection's provider directly (GET)
+    ///
+    /// `GET /v1/agents/connections/{id}/proxy/{path}` (`proxyConnectionGet`).
+    pub async fn proxy_connection_get(&self, id: &str, path: &str) -> Result<()> {
+        self.send(
+            Method::GET,
+            &format!(
+                "/v1/agents/connections/{id}/proxy/{path}",
+                id = segment(id),
+                path = segment(path)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "proxyConnectionGet",
+        )
+        .await
+    }
+    /// Call a connection's provider directly (POST)
+    ///
+    /// `POST /v1/agents/connections/{id}/proxy/{path}` (`proxyConnectionPost`).
+    pub async fn proxy_connection_post(
+        &self,
+        id: &str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/agents/connections/{id}/proxy/{path}",
+                id = segment(id),
+                path = segment(path)
+            ),
+            None::<&()>,
+            body,
+            "proxyConnectionPost",
+        )
+        .await
+    }
+    /// Call a connection's provider directly (PUT)
+    ///
+    /// `PUT /v1/agents/connections/{id}/proxy/{path}` (`proxyConnectionPut`).
+    pub async fn proxy_connection_put(
+        &self,
+        id: &str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        self.send(
+            Method::PUT,
+            &format!(
+                "/v1/agents/connections/{id}/proxy/{path}",
+                id = segment(id),
+                path = segment(path)
+            ),
+            None::<&()>,
+            body,
+            "proxyConnectionPut",
+        )
+        .await
+    }
+    /// Call a connection's provider directly (PATCH)
+    ///
+    /// `PATCH /v1/agents/connections/{id}/proxy/{path}` (`proxyConnectionPatch`).
+    pub async fn proxy_connection_patch(
+        &self,
+        id: &str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        self.send(
+            Method::PATCH,
+            &format!(
+                "/v1/agents/connections/{id}/proxy/{path}",
+                id = segment(id),
+                path = segment(path)
+            ),
+            None::<&()>,
+            body,
+            "proxyConnectionPatch",
+        )
+        .await
+    }
+    /// Call a connection's provider directly (DELETE)
+    ///
+    /// `DELETE /v1/agents/connections/{id}/proxy/{path}` (`proxyConnectionDelete`).
+    pub async fn proxy_connection_delete(&self, id: &str, path: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!(
+                "/v1/agents/connections/{id}/proxy/{path}",
+                id = segment(id),
+                path = segment(path)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "proxyConnectionDelete",
+        )
+        .await
+    }
+    /// Export a connection's access token
+    ///
+    /// `POST /v1/agents/connections/{id}/token` (`exportConnectionToken`).
+    pub async fn export_connection_token(&self, id: &str) -> Result<types::ConnectionToken> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/connections/{id}/token", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "exportConnectionToken",
+        )
+        .await
+    }
+    /// List a connection's tools
+    ///
+    /// `GET /v1/agents/connections/{id}/tools` (`listConnectionTools`).
+    pub async fn list_connection_tools(&self, id: &str) -> Result<types::ConnectionTools> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/connections/{id}/tools", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "listConnectionTools",
+        )
+        .await
+    }
+    /// Validate a connection
+    ///
+    /// `POST /v1/agents/connections/{id}/validate` (`validateConnection`).
+    pub async fn validate_connection(
+        &self,
+        id: &str,
+        body: Option<&types::ConnectionValidationRequest>,
+    ) -> Result<types::ConnectionValidation> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/connections/{id}/validate", id = segment(id)),
+            None::<&()>,
+            body,
+            "validateConnection",
+        )
+        .await
+    }
+    /// List the connector audit
+    ///
+    /// `GET /v1/agents/connector-audit` (`listConnectorAudit`).
+    pub async fn list_connector_audit(
+        &self,
+        query: &ListConnectorAuditQuery,
+    ) -> Result<types::ConnectorAuditPage> {
+        self.send(
+            Method::GET,
+            "/v1/agents/connector-audit",
+            Some(query),
+            None::<&()>,
+            "listConnectorAudit",
+        )
+        .await
+    }
+    /// List or search connectors
+    ///
+    /// `GET /v1/agents/connectors` (`listConnectors`).
+    pub async fn list_connectors(
+        &self,
+        query: &ListConnectorsQuery,
+    ) -> Result<types::ConnectorPage> {
+        self.send(
+            Method::GET,
+            "/v1/agents/connectors",
+            Some(query),
+            None::<&()>,
+            "listConnectors",
+        )
+        .await
+    }
+    /// Add a custom MCP connector
+    ///
+    /// `POST /v1/agents/connectors` (`createConnector`).
+    pub async fn create_connector(
+        &self,
+        body: &types::CustomConnectorRequest,
+    ) -> Result<types::Connector> {
+        self.send(
+            Method::POST,
+            "/v1/agents/connectors",
+            None::<&()>,
+            Some(body),
+            "createConnector",
+        )
+        .await
+    }
+    /// Finish a consent
+    ///
+    /// `GET /v1/agents/connectors/oauth/callback` (`finishConnectorConsent`).
+    pub async fn finish_connector_consent(
+        &self,
+        query: &FinishConnectorConsentQuery,
+    ) -> Result<()> {
+        self.send(
+            Method::GET,
+            "/v1/agents/connectors/oauth/callback",
+            Some(query),
+            None::<&()>,
+            "finishConnectorConsent",
+        )
+        .await
+    }
+    /// Bind a consent to this browser
+    ///
+    /// `POST /v1/agents/connectors/oauth/launch/{id}` (`handOffConnectorLaunch`).
+    pub async fn hand_off_connector_launch(&self, id: &str) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/connectors/oauth/launch/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "handOffConnectorLaunch",
+        )
+        .await
+    }
+    /// Read a connector
+    ///
+    /// `GET /v1/agents/connectors/{id}` (`getConnector`).
+    pub async fn get_connector(&self, id: &str) -> Result<types::Connector> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/connectors/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getConnector",
+        )
+        .await
+    }
+    /// List a connector's event destinations
+    ///
+    /// `GET /v1/agents/connectors/{id}/event-destinations` (`listConnectorEventDestinations`).
+    pub async fn list_connector_event_destinations(
+        &self,
+        id: &str,
+        query: &ListConnectorEventDestinationsQuery,
+    ) -> Result<types::ConnectorEventDestinationPage> {
+        self.send(
+            Method::GET,
+            &format!(
+                "/v1/agents/connectors/{id}/event-destinations",
+                id = segment(id)
+            ),
+            Some(query),
+            None::<&()>,
+            "listConnectorEventDestinations",
+        )
+        .await
+    }
+    /// Forward a connector's provider events to a URL
+    ///
+    /// `POST /v1/agents/connectors/{id}/event-destinations` (`createConnectorEventDestination`).
+    pub async fn create_connector_event_destination(
+        &self,
+        id: &str,
+        body: &types::ConnectorEventDestinationRequest,
+    ) -> Result<types::ConnectorEventDestinationSecret> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/agents/connectors/{id}/event-destinations",
+                id = segment(id)
+            ),
+            None::<&()>,
+            Some(body),
+            "createConnectorEventDestination",
+        )
+        .await
+    }
+    /// Stop forwarding to an event destination
+    ///
+    /// `DELETE /v1/agents/connectors/{id}/event-destinations/{destination_id}` (`deleteConnectorEventDestination`).
+    pub async fn delete_connector_event_destination(
+        &self,
+        id: &str,
+        destination_id: &str,
+    ) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!(
+                "/v1/agents/connectors/{id}/event-destinations/{destination_id}",
+                id = segment(id),
+                destination_id = segment(destination_id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "deleteConnectorEventDestination",
+        )
+        .await
+    }
+    /// Rotate an event destination's signing secret
+    ///
+    /// `POST /v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret` (`rotateConnectorEventDestinationSecret`).
+    pub async fn rotate_connector_event_destination_secret(
+        &self,
+        id: &str,
+        destination_id: &str,
+    ) -> Result<types::ConnectorEventDestinationSecret> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/agents/connectors/{id}/event-destinations/{destination_id}/rotate-secret",
+                id = segment(id),
+                destination_id = segment(destination_id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "rotateConnectorEventDestinationSecret",
+        )
+        .await
+    }
+    /// Set the app's own OAuth client for a connector
+    ///
+    /// `PUT /v1/agents/connectors/{id}/oauth-client` (`setConnectorOAuthClient`).
+    pub async fn set_connector_o_auth_client(
+        &self,
+        id: &str,
+        body: &types::ConnectorOAuthClientRequest,
+    ) -> Result<types::ConnectorOAuthClient> {
+        self.send(
+            Method::PUT,
+            &format!("/v1/agents/connectors/{id}/oauth-client", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "setConnectorOAuthClient",
+        )
+        .await
+    }
+    /// Remove the app's own OAuth client for a connector
+    ///
+    /// `DELETE /v1/agents/connectors/{id}/oauth-client` (`deleteConnectorOAuthClient`).
+    pub async fn delete_connector_o_auth_client(&self, id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/agents/connectors/{id}/oauth-client", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "deleteConnectorOAuthClient",
+        )
+        .await
+    }
+    /// Create or update the app the router keeps at the connector's provider
+    ///
+    /// `PUT /v1/agents/connectors/{id}/provider-app` (`setConnectorProviderApp`).
+    pub async fn set_connector_provider_app(
+        &self,
+        id: &str,
+        body: &types::ConnectorProviderAppRequest,
+    ) -> Result<types::ConnectorProviderApp> {
+        self.send(
+            Method::PUT,
+            &format!("/v1/agents/connectors/{id}/provider-app", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "setConnectorProviderApp",
+        )
+        .await
+    }
+    /// Delete the app the router keeps at the connector's provider
+    ///
+    /// `DELETE /v1/agents/connectors/{id}/provider-app` (`deleteConnectorProviderApp`).
+    pub async fn delete_connector_provider_app(&self, id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/agents/connectors/{id}/provider-app", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "deleteConnectorProviderApp",
         )
         .await
     }
@@ -650,6 +1282,19 @@ impl Client {
             Some(query),
             None::<&()>,
             "pluginOAuthCallback",
+        )
+        .await
+    }
+    /// Receive a plugin's MCP event
+    ///
+    /// `POST /v1/agents/plugins/events/{token}` (`receivePluginEvent`).
+    pub async fn receive_plugin_event(&self, token: &str) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/plugins/events/{token}", token = segment(token)),
+            None::<&()>,
+            None::<&()>,
+            "receivePluginEvent",
         )
         .await
     }
@@ -954,6 +1599,19 @@ impl Client {
         )
         .await
     }
+    /// List the tools a session's model is offered
+    ///
+    /// `GET /v1/agents/sessions/{id}/tools` (`listSessionTools`).
+    pub async fn list_session_tools(&self, id: &str) -> Result<types::OfferedTools> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/sessions/{id}/tools", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "listSessionTools",
+        )
+        .await
+    }
     /// What the simulations have come to, newest first
     ///
     /// `GET /v1/agents/simulation-runs` (`listSimulationRuns`).
@@ -1162,6 +1820,22 @@ impl Client {
         )
         .await
     }
+    /// Delete every connection of one user
+    ///
+    /// `DELETE /v1/agents/users/{user_id}/connections` (`deleteUserConnections`).
+    pub async fn delete_user_connections(&self, user_id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!(
+                "/v1/agents/users/{user_id}/connections",
+                user_id = segment(user_id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "deleteUserConnections",
+        )
+        .await
+    }
     /// Delete everything remembered about one user
     ///
     /// `DELETE /v1/agents/users/{user_id}/memories` (`truncateMemories`).
@@ -1344,6 +2018,19 @@ impl Client {
         )
         .await
     }
+    /// List the changes made to the app's configuration
+    ///
+    /// `POST /v1/audit/query` (`queryAudit`).
+    pub async fn query_audit(&self, body: Option<&types::AuditQuery>) -> Result<types::AuditPage> {
+        self.send(
+            Method::POST,
+            "/v1/audit/query",
+            None::<&()>,
+            body,
+            "queryAudit",
+        )
+        .await
+    }
     /// Ask a classifier typed questions about a piece of text
     ///
     /// `POST /v1/classify` (`classify`).
@@ -1354,6 +2041,19 @@ impl Client {
             None::<&()>,
             Some(body),
             "classify",
+        )
+        .await
+    }
+    /// Receive a connection's MCP event
+    ///
+    /// `POST /v1/connectors/mcp-events/{token}` (`receiveConnectionEvent`).
+    pub async fn receive_connection_event(&self, token: &str) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!("/v1/connectors/mcp-events/{token}", token = segment(token)),
+            None::<&()>,
+            None::<&()>,
+            "receiveConnectionEvent",
         )
         .await
     }
@@ -1399,6 +2099,119 @@ impl Client {
             None::<&()>,
             Some(body),
             "generateImage",
+        )
+        .await
+    }
+    /// Make Stream's own app a customer's provider app
+    ///
+    /// `PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app` (`setOperatorProviderApp`).
+    pub async fn set_operator_provider_app(
+        &self,
+        customer_id: &str,
+        id: &str,
+    ) -> Result<types::ConnectorProviderApp> {
+        self.send(
+            Method::PUT,
+            &format!(
+                "/v1/ops/customers/{customer_id}/connectors/{id}/provider-app",
+                customer_id = segment(customer_id),
+                id = segment(id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "setOperatorProviderApp",
+        )
+        .await
+    }
+    /// Stop Stream's own app being a customer's provider app
+    ///
+    /// `DELETE /v1/ops/customers/{customer_id}/connectors/{id}/provider-app` (`deleteOperatorProviderApp`).
+    pub async fn delete_operator_provider_app(&self, customer_id: &str, id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!(
+                "/v1/ops/customers/{customer_id}/connectors/{id}/provider-app",
+                customer_id = segment(customer_id),
+                id = segment(id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "deleteOperatorProviderApp",
+        )
+        .await
+    }
+    /// List use cases waiting on Stream
+    ///
+    /// `GET /v1/ops/use-cases` (`listUseCasesForReview`).
+    pub async fn list_use_cases_for_review(
+        &self,
+        query: &ListUseCasesForReviewQuery,
+    ) -> Result<types::ReviewQueue> {
+        self.send(
+            Method::GET,
+            "/v1/ops/use-cases",
+            Some(query),
+            None::<&()>,
+            "listUseCasesForReview",
+        )
+        .await
+    }
+    /// Get a use case to review
+    ///
+    /// `GET /v1/ops/use-cases/{id}` (`getUseCaseForReview`).
+    pub async fn get_use_case_for_review(&self, id: &str) -> Result<types::UseCaseForReview> {
+        self.send(
+            Method::GET,
+            &format!("/v1/ops/use-cases/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getUseCaseForReview",
+        )
+        .await
+    }
+    /// Review a submitted use case
+    ///
+    /// `POST /v1/ops/use-cases/{id}/review` (`reviewUseCase`).
+    pub async fn review_use_case(
+        &self,
+        id: &str,
+        body: Option<&types::ReviewUseCaseRequest>,
+    ) -> Result<types::UseCaseForReview> {
+        self.send(
+            Method::POST,
+            &format!("/v1/ops/use-cases/{id}/review", id = segment(id)),
+            None::<&()>,
+            body,
+            "reviewUseCase",
+        )
+        .await
+    }
+    /// Get the business profile
+    ///
+    /// `GET /v1/phone/business-profile` (`getBusinessProfile`).
+    pub async fn get_business_profile(&self) -> Result<types::BusinessProfile> {
+        self.send(
+            Method::GET,
+            "/v1/phone/business-profile",
+            None::<&()>,
+            None::<&()>,
+            "getBusinessProfile",
+        )
+        .await
+    }
+    /// Save the business profile
+    ///
+    /// `PUT /v1/phone/business-profile` (`saveBusinessProfile`).
+    pub async fn save_business_profile(
+        &self,
+        body: Option<&types::BusinessProfileRequest>,
+    ) -> Result<types::BusinessProfile> {
+        self.send(
+            Method::PUT,
+            "/v1/phone/business-profile",
+            None::<&()>,
+            body,
+            "saveBusinessProfile",
         )
         .await
     }
@@ -1451,6 +2264,19 @@ impl Client {
             None::<&()>,
             Some(body),
             "pressPhoneDigits",
+        )
+        .await
+    }
+    /// Receive a 10DLC registration report
+    ///
+    /// `POST /v1/phone/hooks/10dlc` (`receiveDLCReport`).
+    pub async fn receive_dlc_report(&self) -> Result<()> {
+        self.send(
+            Method::POST,
+            "/v1/phone/hooks/10dlc",
+            None::<&()>,
+            None::<&()>,
+            "receiveDLCReport",
         )
         .await
     }
@@ -1529,6 +2355,268 @@ impl Client {
             None::<&()>,
             body,
             "attachPhoneNumber",
+        )
+        .await
+    }
+    /// List opt-outs
+    ///
+    /// `GET /v1/phone/opt-outs` (`listOptOuts`).
+    pub async fn list_opt_outs(&self, query: &ListOptOutsQuery) -> Result<types::OptOutPage> {
+        self.send(
+            Method::GET,
+            "/v1/phone/opt-outs",
+            Some(query),
+            None::<&()>,
+            "listOptOuts",
+        )
+        .await
+    }
+    /// Record an opt-out
+    ///
+    /// `POST /v1/phone/opt-outs` (`createOptOut`).
+    pub async fn create_opt_out(
+        &self,
+        body: Option<&types::CreateOptOutRequest>,
+    ) -> Result<types::OptOut> {
+        self.send(
+            Method::POST,
+            "/v1/phone/opt-outs",
+            None::<&()>,
+            body,
+            "createOptOut",
+        )
+        .await
+    }
+    /// Revoke an opt-out
+    ///
+    /// `DELETE /v1/phone/opt-outs/{id}` (`revokeOptOut`).
+    pub async fn revoke_opt_out(&self, id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/phone/opt-outs/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "revokeOptOut",
+        )
+        .await
+    }
+    /// Get the sandbox
+    ///
+    /// `GET /v1/phone/sandbox` (`getPhoneSandbox`).
+    pub async fn get_phone_sandbox(&self) -> Result<types::PhoneSandbox> {
+        self.send(
+            Method::GET,
+            "/v1/phone/sandbox",
+            None::<&()>,
+            None::<&()>,
+            "getPhoneSandbox",
+        )
+        .await
+    }
+    /// Set the sandbox recipients
+    ///
+    /// `PUT /v1/phone/sandbox/recipients` (`setSandboxRecipients`).
+    pub async fn set_sandbox_recipients(
+        &self,
+        body: Option<&types::SetSandboxRecipientsRequest>,
+    ) -> Result<types::PhoneSandbox> {
+        self.send(
+            Method::PUT,
+            "/v1/phone/sandbox/recipients",
+            None::<&()>,
+            body,
+            "setSandboxRecipients",
+        )
+        .await
+    }
+    /// The calling customer's own SIP trunks
+    ///
+    /// `GET /v1/phone/trunks` (`listSipTrunks`).
+    pub async fn list_sip_trunks(&self) -> Result<Vec<types::SipTrunk>> {
+        self.send(
+            Method::GET,
+            "/v1/phone/trunks",
+            None::<&()>,
+            None::<&()>,
+            "listSipTrunks",
+        )
+        .await
+    }
+    /// Add one of the customer's own SIP trunks
+    ///
+    /// `POST /v1/phone/trunks` (`createSipTrunk`).
+    pub async fn create_sip_trunk(
+        &self,
+        body: &types::CreateSipTrunkRequest,
+    ) -> Result<types::SipTrunk> {
+        self.send(
+            Method::POST,
+            "/v1/phone/trunks",
+            None::<&()>,
+            Some(body),
+            "createSipTrunk",
+        )
+        .await
+    }
+    /// One of the customer's own SIP trunks
+    ///
+    /// `GET /v1/phone/trunks/{id}` (`getSipTrunk`).
+    pub async fn get_sip_trunk(&self, id: &str) -> Result<types::SipTrunk> {
+        self.send(
+            Method::GET,
+            &format!("/v1/phone/trunks/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getSipTrunk",
+        )
+        .await
+    }
+    /// Change a SIP trunk
+    ///
+    /// `PATCH /v1/phone/trunks/{id}` (`updateSipTrunk`).
+    pub async fn update_sip_trunk(
+        &self,
+        id: &str,
+        body: &types::UpdateSipTrunkRequest,
+    ) -> Result<types::SipTrunk> {
+        self.send(
+            Method::PATCH,
+            &format!("/v1/phone/trunks/{id}", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "updateSipTrunk",
+        )
+        .await
+    }
+    /// Remove a SIP trunk with no numbers on it
+    ///
+    /// `DELETE /v1/phone/trunks/{id}` (`deleteSipTrunk`).
+    pub async fn delete_sip_trunk(&self, id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/phone/trunks/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "deleteSipTrunk",
+        )
+        .await
+    }
+    /// Add a number that is on this SIP trunk
+    ///
+    /// `POST /v1/phone/trunks/{id}/numbers` (`addTrunkNumber`).
+    pub async fn add_trunk_number(
+        &self,
+        id: &str,
+        body: &types::AddTrunkNumberRequest,
+    ) -> Result<types::PhoneNumber> {
+        self.send(
+            Method::POST,
+            &format!("/v1/phone/trunks/{id}/numbers", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "addTrunkNumber",
+        )
+        .await
+    }
+    /// List 10DLC use cases
+    ///
+    /// `GET /v1/phone/use-cases` (`listUseCases`).
+    pub async fn list_use_cases(&self, query: &ListUseCasesQuery) -> Result<types::UseCasePage> {
+        self.send(
+            Method::GET,
+            "/v1/phone/use-cases",
+            Some(query),
+            None::<&()>,
+            "listUseCases",
+        )
+        .await
+    }
+    /// Create a 10DLC use case
+    ///
+    /// `POST /v1/phone/use-cases` (`createUseCase`).
+    pub async fn create_use_case(
+        &self,
+        body: Option<&types::UseCaseRequest>,
+    ) -> Result<types::UseCase> {
+        self.send(
+            Method::POST,
+            "/v1/phone/use-cases",
+            None::<&()>,
+            body,
+            "createUseCase",
+        )
+        .await
+    }
+    /// Get a 10DLC use case
+    ///
+    /// `GET /v1/phone/use-cases/{id}` (`getUseCase`).
+    pub async fn get_use_case(&self, id: &str) -> Result<types::UseCase> {
+        self.send(
+            Method::GET,
+            &format!("/v1/phone/use-cases/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getUseCase",
+        )
+        .await
+    }
+    /// Update a 10DLC use case
+    ///
+    /// `PUT /v1/phone/use-cases/{id}` (`updateUseCase`).
+    pub async fn update_use_case(
+        &self,
+        id: &str,
+        body: Option<&types::UseCaseRequest>,
+    ) -> Result<types::UseCase> {
+        self.send(
+            Method::PUT,
+            &format!("/v1/phone/use-cases/{id}", id = segment(id)),
+            None::<&()>,
+            body,
+            "updateUseCase",
+        )
+        .await
+    }
+    /// Delete a 10DLC use case
+    ///
+    /// `DELETE /v1/phone/use-cases/{id}` (`deleteUseCase`).
+    pub async fn delete_use_case(&self, id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/phone/use-cases/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "deleteUseCase",
+        )
+        .await
+    }
+    /// List a use case's review history
+    ///
+    /// `GET /v1/phone/use-cases/{id}/reviews` (`listUseCaseReviews`).
+    pub async fn list_use_case_reviews(
+        &self,
+        id: &str,
+        query: &ListUseCaseReviewsQuery,
+    ) -> Result<types::ReviewPage> {
+        self.send(
+            Method::GET,
+            &format!("/v1/phone/use-cases/{id}/reviews", id = segment(id)),
+            Some(query),
+            None::<&()>,
+            "listUseCaseReviews",
+        )
+        .await
+    }
+    /// Submit a 10DLC use case for review
+    ///
+    /// `POST /v1/phone/use-cases/{id}/submit` (`submitUseCase`).
+    pub async fn submit_use_case(&self, id: &str) -> Result<types::UseCase> {
+        self.send(
+            Method::POST,
+            &format!("/v1/phone/use-cases/{id}/submit", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "submitUseCase",
         )
         .await
     }
@@ -1679,6 +2767,48 @@ impl Client {
             None::<&()>,
             Some(body),
             "search",
+        )
+        .await
+    }
+    /// What the router does for the calling app
+    ///
+    /// `GET /v1/settings/app` (`getAppSettings`).
+    pub async fn get_app_settings(&self) -> Result<types::AppSettings> {
+        self.send(
+            Method::GET,
+            "/v1/settings/app",
+            None::<&()>,
+            None::<&()>,
+            "getAppSettings",
+        )
+        .await
+    }
+    /// Check the calling app's own Stream app
+    ///
+    /// `POST /v1/settings/app/stream/check` (`checkAppStreamCredentials`).
+    pub async fn check_app_stream_credentials(&self) -> Result<types::StreamCheck> {
+        self.send(
+            Method::POST,
+            "/v1/settings/app/stream/check",
+            None::<&()>,
+            None::<&()>,
+            "checkAppStreamCredentials",
+        )
+        .await
+    }
+    /// Register the calling app's own Stream app
+    ///
+    /// `PUT /v1/settings/app/stream/credentials` (`updateAppStreamCredentials`).
+    pub async fn update_app_stream_credentials(
+        &self,
+        body: &types::StreamCredentials,
+    ) -> Result<types::AppSettings> {
+        self.send(
+            Method::PUT,
+            "/v1/settings/app/stream/credentials",
+            None::<&()>,
+            Some(body),
+            "updateAppStreamCredentials",
         )
         .await
     }
@@ -1894,23 +3024,23 @@ impl Client {
 /// The query string `listCalls` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ListCallsQuery {
+    /// Only calls that have not ended.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub running: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
     /// Narrow to one agent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
     /// Narrow to the calls one campaign placed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub campaign_id: Option<String>,
-    /// Only calls that have not ended.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub running: Option<bool>,
     /// Only calls that started at or after this, inclusive.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
     /// Only calls that started before this, exclusive.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<i64>,
 }
 /// The query string `getCallEvents` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -1925,6 +3055,87 @@ pub struct ListAgentConfigsQuery {
     /// Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+}
+/// The query string `listConnections` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListConnectionsQuery {
+    /// app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_type: Option<String>,
+    /// Keeps one connector's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connector_id: Option<String>,
+    /// Up to 200. Omitted is 25.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `deleteConnection` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct DeleteConnectionQuery {
+    /// Delete it even while an agent config binds it as its fixed connection. The binding is left in place, naming a connection that no longer exists.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
+}
+/// The query string `listConnectionInvocations` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListConnectionInvocationsQuery {
+    /// Up to 200. Omitted is 25.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `listConnectorAudit` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListConnectorAuditQuery {
+    /// Keeps one connection's rows, deleted or not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
+    /// Up to 200. Omitted is 25.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `listConnectors` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListConnectorsQuery {
+    /// Keeps the connectors whose id, name, category or description holds this, ignoring case.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+    /// Up to 200. Omitted is 25.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `finishConnectorConsent` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct FinishConnectorConsentQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iss: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+/// The query string `listConnectorEventDestinations` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListConnectorEventDestinationsQuery {
+    /// Up to 200. Omitted is 25.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 /// The query string `getConversationCommand` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -1963,6 +3174,7 @@ pub struct ListAgentLogsQuery {
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
+    /// The least serious level to show, not the only one: warn is warnings and errors.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub severity: Option<String>,
     /// Comma-separated user/agent/tool/system sources.
@@ -2052,6 +3264,19 @@ pub struct ListDataChangesQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
 }
+/// The query string `listUseCasesForReview` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListUseCasesForReviewQuery {
+    /// Omitted is submitted: what waits on Stream.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Up to 200. Omitted is 50.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page, sent with the same status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
 /// The query string `listPhoneNumbers` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ListPhoneNumbersQuery {
@@ -2062,6 +3287,8 @@ pub struct ListPhoneNumbersQuery {
 /// The query string `searchPhoneNumbers` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct SearchPhoneNumbersQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
     /// One vendor to search. Absent searches every usable vendor.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vendor: Option<String>,
@@ -2087,8 +3314,36 @@ pub struct SearchPhoneNumbersQuery {
     /// Capabilities every number must have. Repeat the parameter to require several. A vendor that cannot filter on one still reports what its numbers carry, so these are checked on the results either way.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub features: Option<String>,
+}
+/// The query string `listOptOuts` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListOptOutsQuery {
+    /// Up to 200. Omitted is 50.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// The next_cursor of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `listUseCases` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListUseCasesQuery {
+    /// Up to 200. Omitted is 50.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `listUseCaseReviews` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListUseCaseReviewsQuery {
+    /// Up to 200. Omitted is 50.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 /// The query string `getActivity` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -2108,6 +3363,9 @@ pub struct GetSpendQuery {
     /// "modality", or the cost label to group by.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_by: Option<String>,
+    /// How many values keep a series of their own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub granularity: Option<String>,
     /// Start of the window, inclusive.
@@ -2116,9 +3374,6 @@ pub struct GetSpendQuery {
     /// End of the window, exclusive.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
-    /// How many values keep a series of their own.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<i64>,
     /// Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,

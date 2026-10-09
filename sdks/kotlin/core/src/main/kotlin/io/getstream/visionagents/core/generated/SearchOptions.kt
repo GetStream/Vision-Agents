@@ -37,15 +37,15 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * How this config finds out today's answers.
  *
- * @param category The kind of source to prefer - news, papers, company, github - for the providers that classify their index. 
+ * @param category The kind of source to prefer - news, papers, company, github - for the providers that classify their index.
  * @param contents What to return alongside each hit.
  * @param depth 
  * @param excludeDomains 
  * @param includeDomains Only answer from these domains.
  * @param location Country or region to answer from, for queries whose answer depends on where.
- * @param maxAgeHours How stale a cached page may be. Zero forces a live crawl, which is slower and costs more. 
- * @param outputSchema A JSON schema the answer must fit, for the providers that can be asked to structure what they found. 
- * @param providers A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it. 
+ * @param maxAgeHours How stale a cached page may be. Zero forces a live crawl, which is slower and costs more.
+ * @param outputSchema A JSON schema the answer must fit, for the providers that can be asked to structure what they found.
+ * @param providers A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it.
  * @param results How many hits to return.
  * @param target A provider/model or a capability shortcut.
  */
@@ -53,7 +53,7 @@ import kotlinx.serialization.encoding.Encoder
 
 internal data class SearchOptions (
 
-    /* The kind of source to prefer - news, papers, company, github - for the providers that classify their index.  */
+    /* The kind of source to prefer - news, papers, company, github - for the providers that classify their index. */
     @SerialName(value = "category")
     val category: kotlin.String? = null,
 
@@ -75,15 +75,15 @@ internal data class SearchOptions (
     @SerialName(value = "location")
     val location: kotlin.String? = null,
 
-    /* How stale a cached page may be. Zero forces a live crawl, which is slower and costs more.  */
+    /* How stale a cached page may be. Zero forces a live crawl, which is slower and costs more. */
     @SerialName(value = "max_age_hours")
     val maxAgeHours: kotlin.Int? = null,
 
-    /* A JSON schema the answer must fit, for the providers that can be asked to structure what they found.  */
+    /* A JSON schema the answer must fit, for the providers that can be asked to structure what they found. */
     @Contextual @SerialName(value = "output_schema")
     val outputSchema: kotlin.collections.Map<kotlin.String, kotlinx.serialization.json.JsonElement>? = null,
 
-    /* A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it.  */
+    /* A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it. */
     @SerialName(value = "providers")
     val providers: kotlin.collections.List<kotlin.String>? = null,
 

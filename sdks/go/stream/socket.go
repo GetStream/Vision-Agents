@@ -85,12 +85,12 @@ func NewSocket(url string, headers http.Header, client *http.Client, logger *slo
 	return &Socket{url: url, headers: headers, dialer: &dialer, logger: logger}
 }
 
-// Open dials the router, returning what it said if it refuses the upgrade.
+// Open dials the router, returning what it said as a RouterError if it refuses the upgrade.
 func (s *Socket) Open(ctx context.Context) error {
 	connection, response, err := s.dialer.DialContext(ctx, s.url, s.headers)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("stream: the router refused the socket with %s: %w", response.Status, err)
+			return refusedSocket(response, err)
 		}
 		return fmt.Errorf("stream: dialling %s: %w", s.url, err)
 	}

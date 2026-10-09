@@ -35,19 +35,19 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model. 
+ * Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
  *
  * @param agent 
- * @param callId The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not. 
+ * @param callId The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not.
  * @param configId 
  * @param custom 
  * @param description 
- * @param incognito Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept. 
- * @param instructions 
- * @param messages Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants. 
+ * @param incognito Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
+ * @param instructions Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession.
+ * @param messages Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
  * @param modelOverwrites 
  * @param projectId 
- * @param responseId Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false. 
+ * @param responseId Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false.
  * @param title 
  */
 @Serializable
@@ -57,7 +57,7 @@ internal data class ForkSessionRequest (
     @SerialName(value = "agent")
     val agent: kotlin.String? = null,
 
-    /* The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not.  */
+    /* The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not. */
     @SerialName(value = "call_id")
     val callId: kotlin.String? = null,
 
@@ -70,14 +70,15 @@ internal data class ForkSessionRequest (
     @SerialName(value = "description")
     val description: kotlin.String? = null,
 
-    /* Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.  */
+    /* Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept. */
     @SerialName(value = "incognito")
     val incognito: kotlin.Boolean? = null,
 
+    /* Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession. */
     @SerialName(value = "instructions")
     val instructions: kotlin.String? = null,
 
-    /* Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.  */
+    /* Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants. */
     @SerialName(value = "messages")
     val messages: kotlin.Boolean? = null,
 
@@ -87,7 +88,7 @@ internal data class ForkSessionRequest (
     @SerialName(value = "project_id")
     val projectId: kotlin.String? = null,
 
-    /* Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false.  */
+    /* Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false. */
     @SerialName(value = "response_id")
     val responseId: kotlin.String? = null,
 

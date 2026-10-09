@@ -5,18 +5,17 @@ from pathlib import Path
 
 from vision_agents.plugins import openai, stream
 
-# As-shipped acceleration pipeline, matching examples/voice_agents/customer_support.
-# The skills its subagent may run live under agents/accelerated/{pack}/skills/.
-DEFAULT_ACCELERATED_STT = "gemini/gemini-3.5-transcribe-live"
-DEFAULT_ACCELERATED_TTS = "inworld/inworld-tts-2-flash"
-DEFAULT_ACCELERATED_MODEL = "gemini/gemini-3.8-flash"
-DEFAULT_ACCELERATED_SUBAGENT = "openai/gpt-5.6-sol"
+# The acceleration pipeline the bench runs by default. The subagent and the skills it may
+# run live under agents/accelerated/{pack}/.
+DEFAULT_ACCELERATED_STT = "deepgram/flux-general-en"
+DEFAULT_ACCELERATED_TTS = "elevenlabs/eleven_v4_turbo"
+DEFAULT_ACCELERATED_MODEL = "gemma/gemma-4-26B-A4B-it"
 DEFAULT_CUSTOMER_ID = "voicebench"
 
 ACCELERATED_AGENTS = Path(__file__).resolve().parent.parent / "accelerated"
 
-# Names, IDs and addresses the frozen scenarios use. Without them Gemini hears Alvarez as
-# Arborists and last-four 9821 as 9822.
+# Names, IDs and addresses the frozen scenarios use. Without them a transcriber hears
+# Alvarez as Arborists and last-four 9821 as 9822.
 PACK_KEYTERMS: dict[str, list[str]] = {
     "restaurant": ["Alvarez", "Patel", "512-555-0142"],
     "healthcare": [
@@ -77,9 +76,9 @@ def build_llm(kind: str, pack: str):
     """Return a realtime OpenAI LLM or an acceleration bundle.
 
     Accelerated modality names come from VOICEBENCH_MODEL / _STT / _TTS /
-    _SUBAGENT / _VOICE. Unset names use the as-shipped customer_support triple.
-    Accelerated also names the stored pack config, so the skills
-    sync_accelerated_pack wrote are the ones its subagent may run.
+    _VOICE. Unset names use the bench's default pipeline.
+    Accelerated also names the stored pack config, so the subagent and skills
+    sync_accelerated_pack wrote are the ones the harness runs.
     """
     if kind == "accelerated":
         return stream.Accelerated(
@@ -87,7 +86,6 @@ def build_llm(kind: str, pack: str):
             model=_env("VOICEBENCH_MODEL", DEFAULT_ACCELERATED_MODEL),
             stt=_env("VOICEBENCH_STT", DEFAULT_ACCELERATED_STT),
             tts=_env("VOICEBENCH_TTS", DEFAULT_ACCELERATED_TTS),
-            subagent=_env("VOICEBENCH_SUBAGENT", DEFAULT_ACCELERATED_SUBAGENT),
             voice=os.environ.get("VOICEBENCH_VOICE", "").strip(),
             customer_id=_customer_id(),
             keyterms=PACK_KEYTERMS.get(pack, []),

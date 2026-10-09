@@ -74,7 +74,7 @@ channel:
     body:
       messaging_product: whatsapp
       recipient_type: individual
-      to: "{thread.from}"
+      to: "+{thread.from}"
       type: text
       text:
         body: "{text}"
@@ -86,7 +86,7 @@ channel:
     after_window:
       messaging_product: whatsapp
       recipient_type: individual
-      to: "{thread.from}"
+      to: "+{thread.from}"
       type: template
       template:
         name: "{reopen_template}"

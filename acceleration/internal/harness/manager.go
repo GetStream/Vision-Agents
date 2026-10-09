@@ -109,6 +109,8 @@ type task struct {
 	messages     []llm.Message
 	// rounds is how many times this task has run code.
 	rounds int
+	// broken is what went wrong with the last code it ran, empty once code runs cleanly.
+	broken string
 	// files are what its code handed back and was published, the latest of each name.
 	files []sandbox.Attachment
 	// stream is what the subagent is answering on, and closing it is what abandons the
@@ -398,6 +400,21 @@ func (m *manager) RunningPublic() int {
 	return live
 }
 
+// RunningSkills names the skills of the public tasks still expected to answer.
+func (m *manager) RunningSkills() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var skills []string
+	for _, running := range m.running {
+		if running.live() && !running.private && !slices.Contains(skills, running.skill) {
+			skills = append(skills, running.skill)
+		}
+	}
+	slices.Sort(skills)
+	return skills
+}
+
 // Results carries finished tasks. It is closed by Close.
 func (m *manager) Results() <-chan Result { return m.results.Events() }
 
@@ -530,7 +547,7 @@ func (m *manager) advance(running *task, response llm.Response) (*llm.Stream, bo
 		m.mu.Unlock()
 		return m.resume(running, response)
 	}
-	reason, failure := running.reason, running.failure
+	reason, failure, broken := running.reason, running.failure, running.broken
 	m.mu.Unlock()
 
 	var result Result
@@ -548,6 +565,17 @@ func (m *manager) advance(running *task, response llm.Response) (*llm.Stream, bo
 	default:
 		result.State = Done
 		result.Text, result.Question = answer(response.OutputText)
+	}
+	// An empty answer, or one still asking to run code it has run out of rounds for, is
+	// work that never finished, and the caller was promised it would.
+	if result.State == Done && result.Question == "" && (result.Text == "" || len(response.ToolCalls) > 0) {
+		result.State = Failed
+		result.Err = fmt.Errorf("harness: %s did not finish", running.skill)
+		if broken != "" {
+			result.Err = fmt.Errorf("harness: %s did not finish: %s", running.skill, broken)
+		}
+	} else if result.State == Done && broken != "" {
+		result.Err = errors.New(broken)
 	}
 
 	m.report(running, result)
@@ -649,11 +677,14 @@ func (m *manager) ran(running *task, call llm.ToolCall) string {
 	result, err := m.box.Run(running.ctx, arguments.Code, arguments.Files)
 	if err != nil {
 		m.logger.Error("could not run code", "error", err)
+		m.setBroken(running, "the code could not be run: "+err.Error())
 		return "The code could not be run: " + err.Error()
 	}
+	m.setBroken(running, "")
 	var said string
 	switch {
 	case result.ExitCode != 0:
+		m.setBroken(running, fmt.Sprintf("the code exited with %d", result.ExitCode))
 		said = fmt.Sprintf("The code exited with %d and printed:\n%s", result.ExitCode, result.Output)
 	case strings.TrimSpace(result.Output) == "":
 		said = "The code ran and printed nothing."
@@ -667,6 +698,12 @@ func (m *manager) ran(running *task, call llm.ToolCall) string {
 		said += "\n\nThese files were not written, or were too large to return: " + strings.Join(result.Missing, ", ")
 	}
 	return said
+}
+
+func (m *manager) setBroken(running *task, broken string) {
+	m.mu.Lock()
+	running.broken = broken
+	m.mu.Unlock()
 }
 
 // handBack publishes the files a run returned and says what became of them.

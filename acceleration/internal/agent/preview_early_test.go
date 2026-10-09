@@ -972,15 +972,20 @@ func (s *AgentSuite) TestAnEarlyPreviewThatFailedLeavesNothingHeld() {
 	s.join(true)
 	s.model.refuses = errors.New("the model is down")
 	s.slowGap(300 * time.Millisecond)
+	clock := s.controlsTimers()
 	alice := stt.Participant{ID: "alice"}
 	s.speak(alice)
 
 	s.mutters(alice, "please find a table")
+	s.cadenceHolds(alice, "please find a table")
+	clock.advance(defaultPreviewDebounce)
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "no reply was started for the words")
 	s.Empty(s.flow.requests(), "the reply was started before the words were put to a ruling")
+	s.Empty(s.voice.spoken(), "a failed preview must stay silent until the caller is answered")
+	clock.advance(300*time.Millisecond - defaultPreviewDebounce)
 	s.eventually(func() bool { return countOf[Error](s.reported()) > 0 }, "the failure was never reported")
 	s.eventually(func() bool { return s.previewsHeld() == 0 && s.keptPreviews() == 0 },
 		"a reply that failed was left held")
-	s.Empty(s.voice.spoken())
+	s.eventually(func() bool { return s.spokenText(lostReply) }, "the caller was not told their reply failed")
 }

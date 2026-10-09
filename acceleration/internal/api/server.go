@@ -243,6 +243,10 @@ type Options struct {
 	// The validate endpoint lists a connection's tools through it. Absent when connectors are
 	// off, in which case no connection can be validated.
 	ConnectorTransports *core.Transports
+	// ConnectorLimiter holds a connection's direct calls after its provider answered 429, until
+	// the Retry-After it asked for (core.Limiter). Absent, which it is with connectors off or
+	// without Redis, nothing is held and the provider limits alone.
+	ConnectorLimiter *core.Limiter
 	// ConnectorEventSecrets finds the secret a connector's events are verified with
 	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
 	// endpoint takes no events.
@@ -341,6 +345,8 @@ type Server struct {
 
 	// connectorTransports is what the validate endpoint reaches a connection's tools through.
 	connectorTransports *core.Transports
+	// connectorLimiter holds the proxy's calls after a provider's 429; nil holds none.
+	connectorLimiter *core.Limiter
 
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -483,6 +489,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		server.connectorSecrets, server.credentials = options.ConnectorSecrets, credentials
 	}
 	server.connectorTransports = options.ConnectorTransports
+	server.connectorLimiter = options.ConnectorLimiter
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}
 	}
@@ -506,6 +513,11 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	return server, nil
 }
 
+// methodNotAllowed is the answer to a method a route does not serve.
+func methodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	writeError(w, newAPIError(ErrorTypeMethodNotAllowed, r.Method+" is not served on this route"))
+}
+
 // Handler returns the HTTP handler for the whole API.
 //
 // The routes served by hand are registered first, on the router the Huma operations are then
@@ -519,9 +531,7 @@ func (s *Server) Handler() http.Handler {
 	mux.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, notFound("no such route"))
 	})
-	mux.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, newAPIError(ErrorTypeMethodNotAllowed, r.Method+" is not served on this route"))
-	})
+	mux.MethodNotAllowed(methodNotAllowed)
 	mux.HandleFunc("GET /v1/agents/logs", s.listAgentLogs)
 	mux.HandleFunc("GET /v1/agents/logs/stream", s.streamAgentLogs)
 	mux.HandleFunc("GET /v1/agents/logs/{id}", s.getAgentLog)
@@ -545,6 +555,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+ConnectorClientMetadataPath, s.serveConnectorClientMetadata)
 	mux.HandleFunc("POST "+connectorEventsPath+"{connector_id}", s.receiveConnectorEvent)
 	mux.HandleFunc("POST "+providerAppEventsPath+"{connector_id}/{provider_app_id}", s.receiveProviderAppEvent)
+	mux.HandleFunc("GET "+providerAppEventsPath+"{connector_id}/{provider_app_id}", s.answerProviderAppHandshake)
+	// With connectors off (no transports) the proxy is no route at all, as before it existed.
+	if s.connectorTransports != nil {
+		for _, method := range proxyMethods {
+			mux.HandleFunc(method+" "+connectionProxyPath+"*", s.proxyConnection)
+		}
+	}
 	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
 	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
 	mux.HandleFunc("POST "+mcpevents.Path+"{token}", s.receiveConnectionEvent)
@@ -607,8 +624,20 @@ func withSentry(handler http.Handler) http.Handler {
 // the policies as well as the handler: all of it is time the caller waited.
 func withTiming(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(&timedResponse{ResponseWriter: w, started: time.Now()}, r)
+		timed := &timedResponse{ResponseWriter: w, started: time.Now()}
+		next.ServeHTTP(timed, r.WithContext(context.WithValue(r.Context(), timedResponseKey{}, timed)))
 	})
+}
+
+// timedResponseKey holds the request's timedResponse, for leaveUntimed.
+type timedResponseKey struct{}
+
+// leaveUntimed has the answer written as the handler writes it, with no Server-Timing and no
+// duration field: for an answer that is somebody else's, as the connection proxy's is.
+func leaveUntimed(ctx context.Context) {
+	if timed, ok := ctx.Value(timedResponseKey{}).(*timedResponse); ok {
+		timed.stamped, timed.opened = true, true
+	}
 }
 
 // timedResponse stamps the header and names the duration in the body, both at the moment
@@ -860,7 +889,9 @@ func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
 	routes := http.NewServeMux()
 	nothing := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	for _, operation := range operations {
-		if operation.public || operation.open {
+		// The connection proxy refuses a client-side caller itself (proxyConnection), on every
+		// path; with connectors off it is no route, and a 403 here would answer for it.
+		if operation.public || operation.open || strings.HasPrefix(operation.path, connectionProxyPath) {
 			continue
 		}
 		routes.Handle(operation.method+" "+operation.path, nothing)

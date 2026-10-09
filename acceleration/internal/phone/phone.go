@@ -38,6 +38,44 @@ const maxInitialDigits = 32
 // think a number was bought when it was not.
 var ErrNotImplemented = errors.New("phone: not implemented for this vendor")
 
+// ErrAddressRequired is a number the vendor sells only with a verified address, which is not
+// supported: numbers outside the US and Canada.
+var ErrAddressRequired = errors.New("phone: this number needs a verified address")
+
+// VendorError is a vendor's API refusing a request or not answering it. It carries what
+// debugging needs, so it is logged in full, and none of it is shown to a client: the path can
+// hold an account id and the message is the vendor's own words.
+type VendorError struct {
+	// Vendor is who failed, e.g. "twilio".
+	Vendor string
+	// Path is the request path, for the log only.
+	Path string
+	// Status is the HTTP status, 0 when no answer came.
+	Status int
+	// Code is the vendor's own error code, empty when it sent none.
+	Code string
+	// Message is the vendor's message, or what went wrong before an answer came.
+	Message string
+	// Cause is the transport error, nil for an HTTP answer.
+	Cause error
+}
+
+func (e *VendorError) Error() string {
+	if e.Status == 0 {
+		if e.Cause == nil {
+			return fmt.Sprintf("%s: %s: %s", e.Vendor, e.Path, e.Message)
+		}
+		return fmt.Sprintf("%s: %s: %s: %v", e.Vendor, e.Path, e.Message, e.Cause)
+	}
+	status := fmt.Sprintf("%d %s", e.Status, http.StatusText(e.Status))
+	if e.Code != "" {
+		status += " " + e.Code
+	}
+	return fmt.Sprintf("%s: %s: %s: %s", e.Vendor, e.Path, status, e.Message)
+}
+
+func (e *VendorError) Unwrap() error { return e.Cause }
+
 // Capability is what a number can carry.
 //
 // The names are Telnyx's feature names, because they are the widest vocabulary any of these
@@ -214,6 +252,21 @@ func (b Bridge) Validate() error {
 		return stack.Wrap(fmt.Errorf("phone: %q is not a sip uri", b.URI))
 	}
 	return nil
+}
+
+// WithNumber is the bridge with the number as the user part of its URI. Stream finds the
+// trunk and its routing rule by the number in the To user, so a URI without it reaches
+// nothing.
+func (b Bridge) WithNumber(e164 string) (Bridge, error) {
+	scheme, rest, ok := strings.Cut(b.URI, ":")
+	if !ok || (scheme != "sip" && scheme != "sips") || rest == "" {
+		return Bridge{}, stack.Wrap(fmt.Errorf("phone: %q is not a sip uri", b.URI))
+	}
+	if _, host, hasUser := strings.Cut(rest, "@"); hasUser {
+		rest = host
+	}
+	b.URI = scheme + ":" + e164 + "@" + rest
+	return b, nil
 }
 
 // Inbound points a number at the bridge, so calling it reaches an agent.

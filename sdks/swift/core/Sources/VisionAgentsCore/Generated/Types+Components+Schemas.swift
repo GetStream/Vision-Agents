@@ -354,6 +354,8 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/incognito`.
             internal var incognito: Swift.Bool?
+            /// The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to decide.
+            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/instructions`.
             internal var instructions: Swift.String?
             /// Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
@@ -472,7 +474,7 @@ extension Components {
             ///   - history: The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
             ///   - id: The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
             ///   - incognito: Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
-            ///   - instructions:
+            ///   - instructions: The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to decide.
             ///   - keyterms: Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
             ///   - languages: Language hints, which narrow the candidates in every modality.
             ///   - llm: A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured.
@@ -795,6 +797,8 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/incognito`.
             internal var incognito: Swift.Bool?
+            /// Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession.
+            ///
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/instructions`.
             internal var instructions: Swift.String?
             /// Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
@@ -820,7 +824,7 @@ extension Components {
             ///   - custom:
             ///   - description:
             ///   - incognito: Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
-            ///   - instructions:
+            ///   - instructions: Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession.
             ///   - messages: Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
             ///   - modelOverwrites:
             ///   - projectId:

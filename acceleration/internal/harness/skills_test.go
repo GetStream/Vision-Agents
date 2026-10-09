@@ -2,6 +2,7 @@ package harness
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,6 +69,9 @@ func (s *SkillsSuite) TestTheModelIsToldWhatEachSkillIsForAndHowToAsk() {
 		"a complete read-back is the fast model's, not a three-second colleague")
 	s.NotContains(prompt, "think it through",
 		"the fast model is told what a skill is for, never how the subagent does it")
+	s.Contains(prompt, "in your own words")
+	s.NotContains(strings.ToLower(prompt), "let me check",
+		"an example phrase is the one every hand-over opens with")
 }
 
 func (s *SkillsSuite) TestNoSkillsMeansNothingIsAddedToThePrompt() {

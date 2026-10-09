@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -52,10 +53,15 @@ type Config struct {
 	WorldURL          string
 	NetworkProfile    string
 	Frozen            bool
+	Short             bool
+	Extended          bool
 	Target            benchtarget.Target
 	SkipSTT           bool
 	SkipJudge         bool
 	Logger            *slog.Logger
+	// Progress gets one line per call as it starts and as it finishes, prefixed "voicebench: ",
+	// so a long run can be followed without its logs. Nil prints nothing.
+	Progress io.Writer
 }
 
 // Run executes a pack and writes a report.
@@ -103,8 +109,24 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 		}
 		scenarios = filtered
 	}
-	if cfg.Frozen {
-		ids, err := scenario.LoadIDList(scenario.FrozenPath(cfg.Root))
+	sets := 0
+	for _, picked := range []bool{cfg.Frozen, cfg.Short, cfg.Extended} {
+		if picked {
+			sets++
+		}
+	}
+	if sets > 1 {
+		return report.Summary{}, fmt.Errorf("run: --frozen, --short and --extended are separate scenario sets, pick one")
+	}
+	if sets == 1 {
+		list := scenario.FrozenPath(cfg.Root)
+		switch {
+		case cfg.Short:
+			list = scenario.ShortPath(cfg.Root)
+		case cfg.Extended:
+			list = scenario.ExtendedPath(cfg.Root)
+		}
+		ids, err := scenario.LoadIDList(list)
 		if err != nil {
 			return report.Summary{}, err
 		}
@@ -160,8 +182,10 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 	}
 
 	var calls []report.CallResult
+	total := len(scenarios) * cfg.K
 	for _, sc := range scenarios {
 		for trial := 1; trial <= cfg.K; trial++ {
+			progress(cfg.Progress, len(calls)+1, total, sc.ID, trial, cfg.K, "started")
 			res, err := runOnce(ctx, cfg, worldSrv, sc, trial, out)
 			if err != nil {
 				res.Error = err.Error()
@@ -184,6 +208,7 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 				res.InvalidReason = append(res.InvalidReason, persistErr.Error())
 			}
 			calls = append(calls, res)
+			progress(cfg.Progress, len(calls), total, sc.ID, trial, cfg.K, callProgress(res))
 		}
 	}
 	sum := report.BuildSummary(cfg.System, runID, cfg.K, calls)
@@ -207,15 +232,20 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 
 	audioMap := map[string][]int16{}
 	for _, text := range sc.SpeechTexts() {
-		pcm, err := synth.LoadOrSynth(cfg.Root, "", text)
+		pcm, err := synth.LoadOrSynth(cfg.Root, sc.VoiceOf(text), text)
 		if err != nil {
 			return result, fmt.Errorf("run: tts required for caller speech: %w", err)
 		}
 		audioMap[text] = pcm
 	}
+	for _, turn := range sc.Turns {
+		if len(turn.Segments) > 0 {
+			audioMap[turn.Text] = longTurnAudio(turn, audioMap)
+		}
+	}
 
 	callID := webrtcCallID(cfg, sc, trial)
-	rec, callErr := runWebRTC(ctx, cfg, sc, audioMap, trial, callID)
+	rec, callErr := runWebRTC(ctx, cfg, sc, audioMap, trial, callID, worldSrv.ToolActivity)
 	if rec.Rate > 0 {
 		if err := audio.WriteWAV(filepath.Join(callDir, "caller.wav"), audio.PCM{Rate: rec.Rate, Samples: rec.Caller}); err != nil {
 			return result, err
@@ -255,6 +285,7 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 	metrics.BargeInStopMS = score.BargeInStopMS(rec)
 	metrics.OverlapChecks = score.ScoreOverlaps(rec)
 	metrics.SelectivityHold = score.SelectivityHold(metrics.OverlapChecks)
+	metrics.CheckInFail = score.CheckInFail(rec.Events)
 	metrics.HoldThroughOverlap = score.HoldThroughOverlap(metrics.OverlapChecks)
 	metrics.FalseCutoff = score.FalseCutoff(rec)
 	result.Metrics = metrics
@@ -404,4 +435,51 @@ func randomToken() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// progress writes one line about the call'th of total, naming the trial only when there are
+// several of each scenario.
+func progress(w io.Writer, call, total int, id string, trial, k int, what string) {
+	if w == nil {
+		return
+	}
+	if k > 1 {
+		id = fmt.Sprintf("%s #%d", id, trial)
+	}
+	fmt.Fprintf(w, "voicebench: [%d/%d] %s: %s\n", call, total, id, what)
+}
+
+// callProgress is how a finished call reads in a progress line: its outcome, its reply time
+// and tools, and what failed it.
+func callProgress(res report.CallResult) string {
+	parts := []string{res.Outcome}
+	if res.Metrics.V2VP50 > 0 {
+		parts = append(parts, fmt.Sprintf("reply P50 %.2f s", float64(res.Metrics.V2VP50)/1000))
+	}
+	tools := fmt.Sprintf("%d tools", res.Metrics.ToolCount)
+	if res.Metrics.ToolCount == 1 {
+		tools = "1 tool"
+	}
+	parts = append(parts, tools)
+	out := strings.Join(parts, " · ")
+	if res.Outcome != report.OutcomePass {
+		if why := report.CallFailures(res); len(why) > 0 {
+			out += " — " + why[0]
+		}
+	}
+	return out
+}
+
+// longTurnAudio is a long turn as the caller plays it: its sentences with the caller's pauses
+// between them. The turn ends with its last word: a pause after it would be the agent's floor,
+// and an agent taking it would be counted as cutting the caller off.
+func longTurnAudio(turn scenario.Turn, clips map[string][]int16) []int16 {
+	var pcm []int16
+	for i, segment := range turn.Segments {
+		pcm = append(pcm, clips[segment.Text]...)
+		if i < len(turn.Segments)-1 {
+			pcm = append(pcm, audio.Silence(segment.PauseAfterMS*audio.Rate/1000)...)
+		}
+	}
+	return pcm
 }

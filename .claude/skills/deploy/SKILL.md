@@ -28,7 +28,7 @@ mkdir -p /tmp/router-release
 docker run --rm --platform linux/arm64 \
   -v "$PWD":/src:ro -v "$(go env GOMODCACHE)":/go/pkg/mod -v /tmp/router-release:/out \
   -e GOWORK=off -e GOPROXY=off -e GOTOOLCHAIN=local \
-  -w /src/acceleration golang:1.26-bookworm bash -c '
+  -w /src/acceleration golang:1.27-bookworm bash -c '
     apt-get -qq update && apt-get -qq install -y --no-install-recommends \
       pkg-config libopus-dev libopusfile-dev libsoxr-dev >/dev/null
     CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/router-linux-arm64 ./cmd/router'

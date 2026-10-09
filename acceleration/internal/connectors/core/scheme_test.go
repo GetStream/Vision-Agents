@@ -50,6 +50,34 @@ func (s *AccessCredentialSuite) TestALogLineLeavesTheSecretOut() {
 	s.Contains(text.String(), "bearer")
 }
 
+type ExportedCredentialSuite struct {
+	suite.Suite
+	exported ExportedCredential
+}
+
+func TestExportedCredentialSuite(t *testing.T) {
+	suite.Run(t, new(ExportedCredentialSuite))
+}
+
+func (s *ExportedCredentialSuite) SetupTest() {
+	s.exported = ExportedCredential{Header: "Authorization", Value: "Bearer tok-very-secret", Client: ClientCustomer}
+}
+
+func (s *ExportedCredentialSuite) TestNoFormatVerbPrintsTheValue() {
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+		s.NotContains(fmt.Sprintf(verb, s.exported), "tok-very-secret", verb)
+	}
+}
+
+func (s *ExportedCredentialSuite) TestALogLineLeavesTheValueOut() {
+	var text, structured strings.Builder
+	slog.New(slog.NewTextHandler(&text, nil)).Info("exported", "credential", s.exported)
+	slog.New(slog.NewJSONHandler(&structured, nil)).Info("exported", "credential", s.exported)
+	s.NotContains(text.String(), "tok-very-secret")
+	s.NotContains(structured.String(), "tok-very-secret")
+	s.Contains(text.String(), "Authorization")
+}
+
 type StoredCredentialsSuite struct {
 	suite.Suite
 	stored StoredCredentials

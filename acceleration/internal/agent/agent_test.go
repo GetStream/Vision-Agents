@@ -3,10 +3,12 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -189,6 +191,19 @@ type stubLLM struct {
 	// a test can write one as it goes and see which were abandoned.
 	scripts map[string]*llmtest.Script
 	order   []string
+
+	// composes are the lines the model writes when the agent asks it for one (compose),
+	// one per request and the last again after that. Empty writes nothing, so a test that
+	// is not about those lines hears none.
+	composes []string
+	// composeFails, if set, is what a request for a line fails with.
+	composeFails error
+	// holdCompose, if set, is waited on before a line is handed back, so a test can let the
+	// moment it was asked for pass first.
+	holdCompose <-chan struct{}
+	// composed are the requests for a line, kept apart from asked so a test counting the
+	// turns the model was asked for is not thrown by them.
+	composed []llm.ResponseParams
 }
 
 func newStubLLM() *stubLLM { return &stubLLM{scripts: map[string]*llmtest.Script{}} }
@@ -196,6 +211,9 @@ func newStubLLM() *stubLLM { return &stubLLM{scripts: map[string]*llmtest.Script
 func (s *stubLLM) Start(context.Context) error { return nil }
 
 func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	if strings.HasPrefix(params.ID, composePrefix) {
+		return s.compose(params)
+	}
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
 	hold, refuses, delay := s.holdCreate, s.refuses, s.delay
@@ -259,6 +277,37 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	script.Usage(llm.Usage{InputTokens: 12, OutputTokens: 8})
 	script.Done()
 	return script.Stream(), nil
+}
+
+func (s *stubLLM) compose(params llm.ResponseParams) (*llm.Stream, error) {
+	s.mu.Lock()
+	s.composed = append(s.composed, params)
+	var line string
+	if len(s.composes) > 0 {
+		line = s.composes[min(len(s.composed), len(s.composes))-1]
+	}
+	fails, hold := s.composeFails, s.holdCompose
+	s.mu.Unlock()
+
+	if hold != nil {
+		<-hold
+	}
+	if fails != nil {
+		return nil, fails
+	}
+	script := llmtest.New(llm.StreamOptions{ResponseID: params.ID, Provider: s.Provider(), Model: s.Model()})
+	if line != "" {
+		script.OutputText(line)
+	}
+	script.Done()
+	return script.Stream(), nil
+}
+
+// composeRequests are the requests the agent made for a line of its own.
+func (s *stubLLM) composeRequests() []llm.ResponseParams {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]llm.ResponseParams(nil), s.composed...)
 }
 
 // writes streams a piece of a response the test is writing itself.
@@ -1886,23 +1935,30 @@ func (s *AgentSuite) TestARequestForHelpIsHandedOverRatherThanSpoken() {
 	s.Equal("Let me check that.", s.voice.spoken()[0].Text)
 }
 
-func (s *AgentSuite) TestLongThinkingWorkConfirmsTheAgentIsStillListening() {
+func (s *AgentSuite) TestLongThinkingWorkTellsTheCallerWhatIsStillGoing() {
 	s.delegates()
-	s.duplex = DuplexOptions{
-		Backchannel:      true,
-		BackchannelWords: 100,
-		BackchannelGap:   10 * time.Millisecond,
-	}
+	s.duplex = DuplexOptions{updateGaps: []time.Duration{10 * time.Millisecond}}
 	s.join(true)
 	s.model.reply = []string{`<ask skill="think">work through the itinerary</ask>`}
+	s.model.composes = []string{"Still mapping out your itinerary."}
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 
 	s.says(participant, "please work through the itinerary")
 
 	s.eventually(func() bool { return s.agent.delegating() }, "the thinking task never started")
-	s.eventually(func() bool { return countOf[Backchannel](s.reported()) == 1 },
+	s.eventually(func() bool { return s.spokenText("Still mapping out your itinerary.") },
 		"a long thinking gap sounded like a dead call")
+	composed := s.model.composeRequests()
+	s.Require().Len(composed, 1)
+	update := composed[0].Input
+	s.Equal(fmt.Sprintf(composeNote, updatePurpose), update[len(update)-1].Content)
+	s.True(slices.ContainsFunc(update, func(m llm.Message) bool {
+		return m.Content == "please work through the itinerary"
+	}), "the model writes the update knowing what the caller asked for")
+	s.True(slices.ContainsFunc(s.agent.History(), func(m llm.Message) bool {
+		return m.Content == "Still mapping out your itinerary."
+	}), "the update is something the agent said, so the model can see it said it")
 }
 
 func (s *AgentSuite) TestDelegatedWorkIsReported() {
@@ -2110,11 +2166,11 @@ func (s *AgentSuite) TestClosingAbandonsWorkNobodyWillHear() {
 	s.Equal(harness.ReasonClosed, cancelled.Reason)
 }
 
-func (s *AgentSuite) TestARelevantNewCandidateCancelsWorkFromTheOldPremise() {
+func (s *AgentSuite) TestWorkTheCallerWithdrewIsDroppedByTheModel() {
 	s.delegates()
 	s.join(true)
 	s.model.reply = []string{`<ask skill="think">15% of 84.20</ask>`}
-	s.model.then = []string{"Okay."}
+	s.model.then = []string{`<drop skill="think"/>Okay, 20 percent then.`}
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 	s.says(participant, "what is 15% of 84.20")
@@ -2125,8 +2181,29 @@ func (s *AgentSuite) TestARelevantNewCandidateCancelsWorkFromTheOldPremise() {
 	s.eventually(func() bool { return countOf[TaskCancelled](s.reported()) == 1 },
 		"work based on the old premise was not cancelled")
 	cancelled, _ := firstOf[TaskCancelled](s.reported())
-	s.Equal(harness.ReasonSuperseded, cancelled.Reason)
+	s.Equal(harness.ReasonDropped, cancelled.Reason)
 	s.Equal(1, s.subagent.interrupted())
+	s.model.mu.Lock()
+	defer s.model.mu.Unlock()
+	s.Contains(s.model.asked[len(s.model.asked)-1].Instructions, "still working on the think",
+		"the model cannot drop work it was never told is running")
+}
+
+func (s *AgentSuite) TestAQuestionAboutWorkStillRunningLeavesItRunning() {
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`One moment. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"Still on it."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool { return s.agent.delegating() }, "the task never started")
+
+	s.says(participant, "is it done yet?")
+
+	s.eventually(func() bool { return s.spokenText("Still on it.") }, "the question was not answered")
+	s.True(s.agent.delegating(), "asking how it is going is not withdrawing the request")
+	s.Zero(countOf[TaskCancelled](s.reported()))
 }
 
 func (s *AgentSuite) TestTheAgentMurmursWhileSomeoneIsStillTalking() {
@@ -2150,18 +2227,76 @@ func (s *AgentSuite) TestAskingWhetherAnythingElseIsNeededIsSomethingTheAgentSai
 	// The model has to see the question in the history, or the "no, that was everything"
 	// that comes back is answering something it has no record of asking.
 	s.join(true)
+	s.model.composes = []string{"Anything else on the booking?"}
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 
-	s.agent.checkIn(participant, "Is there anything else I can help with?")
+	s.agent.checkIn(participant, idlePurpose)
 
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
 		"the question was never reported as speech")
 	history := s.agent.History()
 	s.Require().Len(history, 1)
 	s.Equal(llm.Assistant, history[0].Role)
-	s.Equal("Is there anything else I can help with?", history[0].Content)
+	s.Equal("Anything else on the booking?", history[0].Content)
 	s.eventually(func() bool { return len(s.edge.heard()) == 1 }, "the question never reached the call")
+	composed := s.model.composeRequests()
+	s.Require().Len(composed, 1)
+	s.Equal(fmt.Sprintf(composeNote, idlePurpose), composed[0].Input[len(composed[0].Input)-1].Content)
+	s.Empty(composed[0].Tools, "a line to say is written, not acted on")
+	s.Empty(s.model.requests(), "asking for a line is not a turn")
+}
+
+func (s *AgentSuite) TestALineWrittenAfterTheCallerSpokeIsNotSaid() {
+	s.join(true)
+	written := make(chan struct{})
+	s.model.holdCompose = written
+	s.model.composes = []string{"Anything else on the booking?"}
+	s.model.reply = []string{"Sure, what is it?"}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.agent.checkIn(participant, idlePurpose)
+	s.eventually(func() bool { return len(s.model.composeRequests()) == 1 }, "no line was asked for")
+	s.says(participant, "actually, one more thing")
+	s.eventually(func() bool { return s.spokenText("what is it") }, "the caller was never answered")
+	close(written)
+
+	s.eventually(func() bool { return !s.agent.floor().Composing }, "the line was never settled")
+	s.False(s.spokenText("Anything else on the booking?"), "the agent asked over a caller who had moved on")
+	s.False(slices.ContainsFunc(s.agent.History(), func(m llm.Message) bool {
+		return m.Content == "Anything else on the booking?"
+	}), "a line nobody heard is in the history")
+}
+
+func (s *AgentSuite) TestALineThatCannotBeWrittenSaysNothingAndFailsNothing() {
+	s.join(true)
+	s.model.composeFails = errors.New("rate limited")
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.agent.checkIn(participant, idlePurpose)
+
+	s.eventually(func() bool { return len(s.model.composeRequests()) == 1 }, "no line was asked for")
+	s.eventually(func() bool { return !s.agent.floor().Composing }, "the failure was never settled")
+	s.Empty(s.voice.spoken(), "a line that was never written was said anyway")
+	s.Zero(countOf[Error](s.reported()), "a missing status line failed the turn the caller is waiting on")
+	s.Empty(s.agent.History())
+}
+
+func (s *AgentSuite) TestALineCarryingASkillTagIsNotReadOut() {
+	// A line is spoken as written, past the filter that acts on a reply's tags, so one
+	// that asks for work would have the caller hear the request itself.
+	s.join(true)
+	s.model.composes = []string{`Let me look. <ask skill="think">the booking</ask>`}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.agent.checkIn(participant, idlePurpose)
+
+	s.eventually(func() bool { return len(s.model.composeRequests()) == 1 }, "no line was asked for")
+	s.eventually(func() bool { return !s.agent.floor().Composing }, "the line was never settled")
+	s.Empty(s.voice.spoken(), "the caller heard a skill tag read out")
 }
 
 func (s *AgentSuite) TestATranscriberThatDiesIsReplacedOnTheNextAudio() {
@@ -2903,9 +3038,9 @@ func (s *AgentSuite) TestTheToolThatReturnedFirstDoesNotAnswerAgainWhatTheLastAn
 	s.agent.pendingTools = 2
 	s.agent.mu.Unlock()
 	s.agent.owesToolReply(s.ctx)
-	s.agent.noteToolDone()
+	s.agent.noteToolDone(nil)
 	s.agent.owesToolReply(s.ctx)
-	s.agent.noteToolDone()
+	s.agent.noteToolDone(nil)
 
 	s.agent.queueToolReply()
 	s.eventually(func() bool { return len(s.model.requests()) == 1 && !s.agent.Busy() },
@@ -3089,6 +3224,22 @@ func (s *AgentSuite) TestAProviderFailureIsReportedWithoutEndingTheCall() {
 	// The conversation carries on: one bad turn is a lost reply, not a lost call.
 	s.says(participant, "hello")
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the agent stopped answering")
+}
+
+func (s *AgentSuite) TestACallerIsToldWhenTheReplyIsLost() {
+	s.join(false)
+	s.model.refuses = errors.New("400 Bad Request")
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is our forecast")
+
+	s.eventually(func() bool { return s.spokenText("went wrong") },
+		"the caller was left in silence by a reply that failed")
+	s.eventually(func() bool { return countOf[Error](s.reported()) == 1 }, "the failure was never reported")
+	history := s.history()
+	s.Require().NotEmpty(history)
+	s.Equal(lostReply, history[len(history)-1].Content, "the model is shown what the caller heard")
 }
 
 func (s *AgentSuite) TestClosingLeavesTheCall() {

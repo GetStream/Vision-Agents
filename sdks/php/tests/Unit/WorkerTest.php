@@ -393,7 +393,12 @@ final class WorkerTest extends TestCase
             self::fail('a refused handshake was taken as open');
         } catch (RouterException $refused) {
             self::assertSame(403, $refused->status);
+            self::assertSame('GET /v1/dispatch', $refused->operation);
             self::assertSame('not for you', $refused->said);
+            self::assertSame('permission', $refused->type);
+            self::assertSame('permission', $refused->errorCode);
+            self::assertSame('https://getstream.io/agents/docs/api/errors/#permission', $refused->docUrl);
+            self::assertSame('req_socket', $refused->requestId);
         }
     }
 

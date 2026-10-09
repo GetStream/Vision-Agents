@@ -605,11 +605,18 @@ impl Agent {
             speed: (settings.speed != 0.0).then_some(settings.speed),
             llm: text(&settings.llm),
             harness: harness.or(settings.harness),
-            subagent: subagent.or_else(|| text(&settings.subagent)),
+            thinking_llm: subagent.or_else(|| text(&settings.thinking_llm)),
             search: text(&settings.search),
             greeting: text(&settings.greeting),
             sandbox: sandbox.or(settings.sandbox),
-            plugins: (!settings.plugins.is_empty()).then(|| settings.plugins.clone()),
+            agent_plugins: (!settings.plugins.is_empty()).then(|| {
+                settings
+                    .plugins
+                    .iter()
+                    .cloned()
+                    .map(types::PluginEntry::String)
+                    .collect()
+            }),
             keyterms: (!settings.keyterms.is_empty()).then(|| settings.keyterms.clone()),
             tags,
             video: settings.video.as_ref().map(|video| types::SessionVideo {
@@ -617,6 +624,7 @@ impl Agent {
                 source: text(&video.source),
             }),
             dispatch: settings.dispatch.clone(),
+            ..Default::default()
         };
         let synced = client.sync_agent(&body).await?;
         folder::write_stamp(&folder.path, &hash)?;
@@ -648,7 +656,7 @@ impl Agent {
             instructions: text(&self.instructions),
             guardrail: text(&self.guardrail),
             harness,
-            subagent,
+            thinking_llm: subagent,
             sandbox,
             tags: self.cost_tracking.clone(),
             skills: (!skills.is_empty())

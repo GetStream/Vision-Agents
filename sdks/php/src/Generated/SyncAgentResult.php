@@ -14,6 +14,9 @@ final readonly class SyncAgentResult
         public AgentConfig $config,
         // True when the hash matched and nothing was written.
         public bool $unchanged,
+        // What was stored but will not work yet, such as a channel line the app has not connected.
+        /** @var list<string>|null */
+        public ?array $warnings = null,
     ) {
     }
 
@@ -25,6 +28,7 @@ final readonly class SyncAgentResult
         return new self(
             config: AgentConfig::fromArray(Json::object($data, 'config')),
             unchanged: Json::bool($data, 'unchanged'),
+            warnings: array_key_exists('warnings', $data) && $data['warnings'] !== null ? Json::strings($data, 'warnings') : null,
         );
     }
 
@@ -38,6 +42,9 @@ final readonly class SyncAgentResult
         $out = [];
         $out['config'] = $this->config->toArray();
         $out['unchanged'] = $this->unchanged;
+        if ($this->warnings !== null) {
+            $out['warnings'] = $this->warnings;
+        }
         return $out;
     }
 }

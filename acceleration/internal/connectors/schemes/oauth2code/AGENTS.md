@@ -81,6 +81,9 @@ ClassifyStatic(resp, body, err)  Classify, then a 401 it found nothing in -> Inv
                                  api_key, bearer and none, whose credential nothing renews
 
 Wrap(base, AccessCredential) Authorization: Bearer on a clone of each request; no access token -> every request fails
+Export(AccessCredential)    -> ExportedCredential{Authorization, Bearer <access token>, expiry, the client's registration}:
+                            the AccessCredential carries the registration of the client the grant was issued to,
+                            never the refresh token; one that names no client, or another scheme's, is refused
 Revoke(stored, m)           endpoints.revoke or the discovered revocation_endpoint (else ErrNoRevocationEndpoint),
                             RFC 7009 with the refresh token (else the access token); unsupported_token_type ->
                             ErrTokenTypeNotRevocable; 200 -> nil, not proof, and the access token may work until

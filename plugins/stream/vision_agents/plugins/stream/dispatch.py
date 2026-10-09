@@ -324,7 +324,7 @@ class Dispatch:
                     try:
                         socket = await self._connect()
                         break
-                    except aiohttp.ClientError as exc:
+                    except (aiohttp.ClientError, RouterError) as exc:
                         logger.warning(
                             "could not reach the router, retrying in %.1fs: %s",
                             retry,
@@ -347,7 +347,7 @@ class Dispatch:
         socket = Socket(address, self.backend.headers)
         try:
             await socket.connect()
-        except aiohttp.ClientError:
+        except (aiohttp.ClientError, RouterError):
             await socket.close()
             raise
         return socket

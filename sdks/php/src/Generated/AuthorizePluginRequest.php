@@ -11,7 +11,7 @@ use GetStream\VisionAgents\Json;
 final readonly class AuthorizePluginRequest
 {
     public function __construct(
-        // The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL.
+        // The shop hostname. Required for plugins that have no single global URL.
         public ?string $instanceUrl = null,
     ) {
     }

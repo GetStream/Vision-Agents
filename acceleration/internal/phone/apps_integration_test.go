@@ -5,6 +5,7 @@ package phone
 import (
 	"context"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ type AppsSuite struct {
 	own        *chattest.Server
 	apps       *testApps
 	service    *Service
+	vendor     *stub
 	customer   string
 	e164       string
 }
@@ -57,6 +59,7 @@ func (s *AppsSuite) SetupTest() {
 	s.e164 = "+1512" + uuid.NewString()[:7]
 
 	vendor := &stub{vendor: "twilio"}
+	s.vendor = vendor
 	registry := NewRegistry(s.config())
 	registry.Register(vendor.vendor, func() (Provider, error) { return vendor, nil })
 	for _, name := range s.credentials(vendor.vendor) {
@@ -275,4 +278,62 @@ func (a *testApps) ForAppRemoving(_ context.Context, customer string, app int64)
 		return NewStreamFromClient(server.Client), nil
 	}
 	return NewStreamFromClient(a.deployment.Client), nil
+}
+
+func (s *AppsSuite) TestTheVendorIsGivenATrunkAddressStreamCanFindByTheCallingNumber() {
+	_, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",
+	})
+	s.Require().NoError(err)
+
+	trunks := s.deployment.Trunks()
+	s.Require().Len(trunks, 1)
+	s.Equal("sip:"+s.e164+"@sip.example.test", s.vendor.dialed.Bridge.URI)
+}
+
+func (s *AppsSuite) TestATransferGivesTheVendorATrunkAddressStreamCanFindByTheCallingNumber() {
+	_, err := s.service.Transfer(s.ctx, TransferRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550002222", CallID: "call-1",
+	})
+	s.Require().NoError(err)
+
+	s.Equal("sip:"+s.e164+"@sip.example.test", s.vendor.dialed.Bridge.URI)
+}
+
+func (s *AppsSuite) TestAttachingGivesTheVendorATrunkAddressStreamCanFindByTheNumber() {
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	want := "sip:" + s.e164 + "@sip.example.test"
+	s.Equal(want, s.vendor.inbound.Bridge.URI)
+	s.Equal(want, attached.Bridge.URI, "the api shows the address the vendor was given")
+}
+
+func (s *AppsSuite) TestAnAttachedNumbersCallIsNamedWithoutThePlus() {
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	want := "phone-" + strings.TrimPrefix(s.e164, "+")
+	s.Equal(want, attached.CallID, "stream allows only a-z, 0-9, _ and - in a call id")
+	s.Equal(want, s.number().StreamCallID)
+}
+
+func (s *AppsSuite) TestAnAttachedNumbersCallKeepsTheIdItWasGiven() {
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164, CallID: "front-desk"})
+	s.Require().NoError(err)
+
+	s.Equal("front-desk", attached.CallID)
+	s.Equal("front-desk", s.number().StreamCallID)
+}
+
+func (s *AppsSuite) TestReattachingANumberMovesItToTheNewCallName() {
+	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	second, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	s.NotEqual(first.TrunkID, second.TrunkID)
+	s.Equal([]string{second.TrunkID}, s.deployment.Trunks(), "the first trunk is removed")
+	s.Equal("phone-"+strings.TrimPrefix(s.e164, "+"), s.number().StreamCallID)
+	s.Equal("sip:"+s.e164+"@sip.example.test", s.vendor.inbound.Bridge.URI)
 }

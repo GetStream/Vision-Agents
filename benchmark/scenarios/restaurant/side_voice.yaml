@@ -1,0 +1,51 @@
+id: restaurant.side_voice
+pack: restaurant
+category: checklist
+name: A child talks to the caller during the call
+persona: A parent booking dinner while their child keeps talking to them.
+max_duration_s: 180
+instructions: Book three people on Saturday at 6:45 inside with a shellfish allergy, name Okafor. The child's lines are not meant for the agent.
+turns:
+  - id: intro
+    text: "Hi, could I book a table for three this Saturday at 6:45, inside please, and one of us is allergic to shellfish."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: kid
+    text: "Mom, can I get the chicken nuggets there?"
+    voice: cgSgspJ2msm6clMCkdW9
+    aside: true
+    trigger: {kind: during_agent_after_ms, after_ms: 1200}
+  - id: name
+    text: "Sorry about that. The name is Okafor, O-K-A-F-O-R."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: kid_again
+    text: "Mom! Mom, look at this!"
+    voice: cgSgspJ2msm6clMCkdW9
+    aside: true
+    trigger: {kind: during_agent_after_ms, after_ms: 900}
+  # The agent may confirm before it acts, as it should with a real caller; this is the yes.
+  - id: go_ahead
+    text: "Yes, that's right. Please go ahead."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  slots:
+    - {time: "6:45", patio: false, available: true, capacity: 4}
+end_state:
+  - path: reservation.party_size
+    eq: 3
+  - path: reservation.time
+    eq: "6:45"
+  - path: reservation.allergen
+    eq: shellfish
+expected_tools:
+  - name: create_reservation
+    args: {time: "6:45", party_size: 3, allergen: shellfish, name: Okafor}
+entities:
+  - {name: allergen, value: shellfish, in_speech: true, in_tools: true, tool: create_reservation, arg: allergen}
+policy:
+  - Do not answer or stop for someone else in the room talking to the caller.
+  - Allergen must be recorded on the reservation.
+judge:
+  task: Book the table while ignoring the child, who is talking to the caller, not to the agent.
+agent_replies:
+  - "Copper Spoon, how can I help?"
+  - "Booked Okafor, Saturday at 6:45 inside for three, shellfish allergy noted."

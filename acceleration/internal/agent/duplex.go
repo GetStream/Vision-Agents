@@ -44,30 +44,14 @@ const (
 // short on purpose: anything longer is a turn, and taking a turn is interrupting.
 var defaultPhrases = []string{"Mhm.", "Okay.", "Right.", "I see."}
 
-// workingPhrases are what the agent says when it has gone off to do something and would
-// otherwise leave the caller listening to nothing. They are rotated so a caller who asks
-// twice is not answered with the same words.
-var workingPhrases = []string{
-	"One moment.",
-	"Let me check that.",
-	"One second, looking that up.",
-	"Bear with me a moment.",
-}
+// lostReply is what the agent says when the model fails before it has said anything, so
+// a caller waiting on an answer hears that it is not coming rather than nothing at all.
+const lostReply = "Sorry, something went wrong on my side. Could you ask me that again?"
 
-// idlePhrases are what the agent says to a call nobody is talking on, so a silence ends
-// in an invitation rather than in the caller wondering whether anyone is still there.
-//
-// They rotate across the whole call rather than restarting with each silence. A caller
-// who pauses several times over a long call would otherwise be asked the same opening
-// question every time, which is the point at which a stock phrase starts to grate.
-var idlePhrases = []string{
-	"Is there anything else I can help with?",
-	"Anything else on your mind?",
-	"Was there anything else?",
-	"What else can I do for you?",
-	"Happy to keep going if there is more.",
-	"Anything else you wanted to look at?",
-}
+// updateGaps are how long a caller waiting on work hears nothing before being told it is
+// still going, one per update. After the last one the agent waits quietly: a status read
+// out every few seconds is nagging, and the answer is what they are waiting for.
+var updateGaps = []time.Duration{10 * time.Second, 15 * time.Second}
 
 // uncertainNote is what the model is told about a turn the transcriber was doubtful
 // about. Checking is cheaper than confidently answering the wrong question.
@@ -96,6 +80,9 @@ type DuplexOptions struct {
 	// as though it heard it properly. Below it the agent checks what they meant instead.
 	// Zero turns this off.
 	MinConfidence float64
+	// updateGaps is how long a caller waiting on work hears nothing before each update.
+	// Empty means the built-in ones.
+	updateGaps []time.Duration
 }
 
 // duplex tracks acknowledgements and confidence for each participant.
@@ -108,15 +95,13 @@ type duplex struct {
 	speakers map[string]*speaker
 	// phrase rotates the murmurs, so the agent does not say "mhm" four times running.
 	phrase int
-	// working rotates what is said while a tool runs, separately from the murmurs so
-	// that using one does not skip the other along.
-	working int
 	// asked counts how often the silence in hand has been asked about, and is cleared
 	// when somebody speaks. It caps the nagging without deciding the words.
 	asked int
-	// idle rotates what is said to a call that has gone quiet. It runs on across the
-	// whole call, so a later silence does not open with the same question as the first.
-	idle int
+	// updating is the work the caller was last told is still running, and updates how
+	// often they were told about it since they last spoke.
+	updating string
+	updates  int
 }
 
 // speaker is what one participant is in the middle of.
@@ -135,6 +120,9 @@ func newDuplex(options DuplexOptions) *duplex {
 	if len(options.Phrases) == 0 {
 		options.Phrases = defaultPhrases
 	}
+	if len(options.updateGaps) == 0 {
+		options.updateGaps = updateGaps
+	}
 	return &duplex{options: options, speakers: map[string]*speaker{}}
 }
 
@@ -146,9 +134,9 @@ func (d *duplex) Heard(participant stt.Participant, text string, quiet bool) str
 	defer d.mu.Unlock()
 
 	// Somebody is talking, so a silence that had been given up on is over and a later
-	// one is worth asking about again. Only the count is cleared: the rotation carries
-	// on, so the next silence is not opened with the same question as the last.
+	// one is worth asking about again.
 	d.asked = 0
+	d.updates = 0
 	current := d.speakerFor(participant)
 
 	if !d.options.Backchannel || !quiet {
@@ -181,41 +169,45 @@ func (d *duplex) Presence(participant stt.Participant, lastSpokeAt time.Time, qu
 	return d.nextPhraseLocked()
 }
 
-// Idle returns a question to put to a call nobody has said anything on for a while, or
-// empty when it has not been quiet for long enough. A call where nothing has happened at
-// all is not idle yet: the agent has not so much as greeted anyone.
+// Idle reports whether a call nobody has said anything on for a while is due a question,
+// so a silence ends in an invitation rather than in the caller wondering whether anyone
+// is still there. A call where nothing has happened at all is not idle yet: the agent has
+// not so much as greeted anyone.
 //
-// Like Working, and unlike a murmur, it is not tied to the backchannel option: leaving
+// Like Update, and unlike a murmur, it is not tied to the backchannel option: leaving
 // somebody in silence until they hang up is never what was wanted.
-func (d *duplex) Idle(lastActivity time.Time, quiet bool) string {
+func (d *duplex) Idle(lastActivity time.Time, quiet bool) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	if d.options.DisableIdleCheckIn || !quiet || lastActivity.IsZero() || time.Since(lastActivity) < defaultIdleGap {
-		return ""
+		return false
 	}
 	if d.asked >= idleAsks {
-		return ""
+		return false
 	}
-	phrase := idlePhrases[d.idle%len(idlePhrases)]
 	d.asked++
-	d.idle++
-	return phrase
+	return true
 }
 
-// Working returns something to say while a tool runs, for a turn where the model reached
-// for one without a word to the caller.
-//
-// It is not tied to the backchannel option: murmuring over someone who is still talking
-// is a judgement call, but going quiet on somebody who asked a question is never what
-// was wanted.
-func (d *duplex) Working() string {
+// Update reports whether a caller who has heard nothing for a while is due word that the
+// work they are waiting on is still going. Work names what is running, so new work starts
+// its updates over.
+func (d *duplex) Update(work string, lastSpokeAt time.Time) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	phrase := workingPhrases[d.working%len(workingPhrases)]
-	d.working++
-	return phrase
+	if work != d.updating {
+		d.updating = work
+		d.updates = 0
+	}
+	gaps := d.options.updateGaps
+	if work == "" || lastSpokeAt.IsZero() || d.updates >= len(gaps) ||
+		time.Since(lastSpokeAt) < gaps[d.updates] {
+		return false
+	}
+	d.updates++
+	return true
 }
 
 // Note is what the model should know about a turn beyond its words, which for now is

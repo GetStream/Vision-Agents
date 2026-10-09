@@ -1,2 +1,3 @@
 name: telecom
 description: The skills the telecom pack's subagent may run.
+thinking_llm: openai/gpt-6.1-sol

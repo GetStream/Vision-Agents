@@ -1,6 +1,5 @@
 package io.getstream.visionagents.core
 
-import io.getstream.visionagents.core.generated.Error
 import io.ktor.client.request.header
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
@@ -8,12 +7,15 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import java.io.IOException
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * The one JSON configuration, for requests and frames alike.
@@ -28,7 +30,7 @@ internal val wire = Json {
     encodeDefaults = true
 }
 
-/** How much of a body that is not JSON is kept for the error it becomes. */
+/** How much of a body that is not the router's error is kept for the error it becomes. */
 private const val MAX_ERROR_BODY = 512
 
 /**
@@ -56,11 +58,7 @@ internal suspend fun <T> Backend.send(
         throw AgentsException.Transport(e)
     }
     if (!response.status.isSuccess()) {
-        throw AgentsException.Http(
-            status = response.status.value,
-            reason = reason(text),
-            retryAfterSeconds = response.headers["Retry-After"]?.toLongOrNull(),
-        )
+        throw refusal(response.status.value, text) { response.headers[it] }
     }
     if (answer == null) return null
     return try {
@@ -106,17 +104,46 @@ private suspend fun Backend.attempt(
     }
 }
 
-/** What the router said went wrong, which is `{"error": "..."}` from every handler. */
-private fun reason(text: String): String {
-    val decoded = try {
-        wire.decodeFromString(Error.serializer(), text).error
-    } catch (_: SerializationException) {
-        null
-    } catch (_: IllegalArgumentException) {
-        null
-    }
-    return decoded ?: text.take(MAX_ERROR_BODY)
+/**
+ * The error a refusal is, whether a request or a socket's handshake was refused.
+ *
+ * Every failure the router answers is `{"error": {"message", "type", "code", "doc_url"}}`. A
+ * body that is not, such as a proxy's page, an empty one or an older router's `{"error": "..."}`,
+ * keeps its text as the reason with no type or code, since a parse error in its place would hide
+ * what went wrong. The request id is read either way, since a proxy may pass it on.
+ */
+internal fun refusal(status: Int, body: String, header: (String) -> String?): AgentsException.Http {
+    val error = envelope(body)
+    return AgentsException.Http(
+        status = status,
+        reason = error?.text("message")
+            ?: body.trim().take(MAX_ERROR_BODY).ifEmpty { HttpStatusCode.fromValue(status).description },
+        retryAfterSeconds = header("Retry-After")?.toLongOrNull(),
+        type = error?.text("type"),
+        code = error?.text("code"),
+        docUrl = error?.text("doc_url"),
+        requestId = header("X-Request-Id")?.ifEmpty { null },
+    )
 }
+
+/**
+ * The envelope's `error`, or null when the body is anything else.
+ *
+ * Read as JSON rather than through the generated `ErrorResponse`, so that a type this SDK never
+ * heard of is kept as it came rather than folded into unknown.
+ */
+private fun envelope(body: String): JsonObject? {
+    val parsed = try {
+        wire.parseToJsonElement(body)
+    } catch (_: SerializationException) {
+        return null
+    }
+    val error = (parsed as? JsonObject)?.get("error") as? JsonObject ?: return null
+    return error.takeIf { it.text("message") != null }
+}
+
+private fun JsonObject.text(key: String): String? =
+    (get(key) as? JsonPrimitive)?.takeIf { it.isString }?.content?.ifEmpty { null }
 
 /** The optional query parameters that were set, as the wire spells them. */
 internal fun queryOf(vararg pairs: Pair<String, Any?>): List<Pair<String, String>> =

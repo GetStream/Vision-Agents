@@ -169,21 +169,10 @@ module GetStream
       def answer(operation, response)
         status = response.code.to_i
         text = response.body.to_s
-        if status.between?(200, 299)
-          return nil if text.strip.empty?
+        raise RouterError.answered(status, operation[:id], text, response) unless status.between?(200, 299)
+        return nil if text.strip.empty?
 
-          return JSON.parse(text)
-        end
-
-        said = begin
-          JSON.parse(text)
-        rescue JSON::ParserError
-          nil
-        end
-        message = said.is_a?(Hash) && said["error"] ? said["error"] : text.strip
-        message = "the router answered #{status}" if message.empty?
-        retry_after = response["Retry-After"]&.to_i
-        raise RouterError.new(status, operation[:id], message, body: said, retry_after: retry_after)
+        JSON.parse(text)
       end
 
       def operation_for(method, template)

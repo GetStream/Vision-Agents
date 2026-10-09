@@ -2,6 +2,7 @@ package caller
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -383,5 +384,142 @@ func TestMidCallSettleWaitsOutTheReplyAfterFiller(t *testing.T) {
 		if s.StartMs < start && s.EndMs > start {
 			t.Fatalf("second turn at %dms landed inside agent speech %+v", start, s)
 		}
+	}
+}
+
+// A filler longer than a substantive reply, said while a slow tool runs, used to end the call:
+// the caller took the filler as the answer and hung up before the agent could act on the
+// result. restaurant.tool_filler was cut off this way at 19 s.
+func TestFinalWaitWaitsForTheAnswerToASlowTool(t *testing.T) {
+	play := func(t *testing.T, withTools bool) int {
+		loop := transport.NewLoopback()
+		defer loop.Close()
+
+		var mu sync.Mutex
+		inFlight, lastEnded := 0, time.Time{}
+		go func() {
+			_ = loop.SendAgent(audio.Tone(audio.Rate/5, 220, 10000))
+			heard := false
+			for frame := range loop.AgentRecv {
+				if heard || audio.FrameEnergy(frame.PCM) < audio.DefaultSpeechThreshold {
+					continue
+				}
+				heard = true
+				mu.Lock()
+				inFlight = 1
+				mu.Unlock()
+				// "One moment, checking the book" runs past the 2.5 s a substantive reply needs.
+				_ = loop.SendAgent(audio.Tone(3*audio.Rate, 240, 12000))
+				time.Sleep(2 * time.Second)
+				mu.Lock()
+				inFlight, lastEnded = 0, time.Now()
+				mu.Unlock()
+				time.Sleep(time.Second)
+				_ = loop.SendAgent(audio.Tone(audio.Rate, 260, 12000))
+			}
+		}()
+
+		text := "check saturday"
+		eng := Engine{
+			Audio:          map[string][]int16{text: audio.Tone(audio.Rate/4, 180, 10000)},
+			TurnHangoverMS: 500,
+			ClosingGraceMS: 2000,
+		}
+		if withTools {
+			eng.ToolActivity = func() (int, time.Time) {
+				mu.Lock()
+				defer mu.Unlock()
+				return inFlight, lastEnded
+			}
+		}
+		sc := scenario.Scenario{Turns: []scenario.Turn{
+			{ID: "intro", Text: text, Trigger: scenario.Trigger{Kind: scenario.TriggerAfterAgent, DelayMS: 20}},
+		}}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		got, err := eng.Play(ctx, sc, loop)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(audio.DetectSpeech(got.Agent, got.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs))
+	}
+
+	if spans := play(t, false); spans != 2 {
+		t.Fatalf("without tool activity the call should end after the filler, as it did: spans=%d", spans)
+	}
+	if spans := play(t, true); spans < 3 {
+		t.Fatalf("the answer after the tool should be recorded: spans=%d, want greeting, filler and answer", spans)
+	}
+}
+
+// A check-in turn holds the caller back after the agent's question. An agent that speaks into
+// the silence has checked in; one that waits has not.
+func TestACheckInTurnNotesWhetherTheAgentCheckedIn(t *testing.T) {
+	play := func(t *testing.T, checksIn bool) Event {
+		loop := transport.NewLoopback()
+		defer loop.Close()
+		go func() {
+			_ = loop.SendAgent(audio.Tone(audio.Rate/5, 220, 10000))
+			heard := false
+			for frame := range loop.AgentRecv {
+				if heard || audio.FrameEnergy(frame.PCM) < audio.DefaultSpeechThreshold {
+					continue
+				}
+				heard = true
+				// A question long enough to be a reply in its own right, then the silence. Sending
+				// is paced, so the check-in comes 2 s into the caller's 4 s of silence.
+				_ = loop.SendAgent(audio.Tone(3*audio.Rate, 240, 12000))
+				if checksIn {
+					time.Sleep(2 * time.Second)
+					_ = loop.SendAgent(audio.Tone(audio.Rate/2, 260, 12000))
+				}
+			}
+		}()
+		eng := Engine{
+			Audio:          map[string][]int16{"hi": audio.Tone(audio.Rate/4, 180, 10000), "here": audio.Tone(audio.Rate/4, 190, 10000)},
+			TurnHangoverMS: 500,
+			ClosingGraceMS: 1000,
+		}
+		sc := scenario.Scenario{Turns: []scenario.Turn{
+			{ID: "intro", Text: "hi", Trigger: scenario.Trigger{Kind: scenario.TriggerAfterAgent, DelayMS: 20}},
+			{ID: "back", Text: "here", CheckIn: true, Trigger: scenario.Trigger{Kind: scenario.TriggerAfterAgent, DelayMS: 4000}},
+		}}
+		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+		defer cancel()
+		got, err := eng.Play(ctx, sc, loop)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.Events[len(got.Events)-1]
+	}
+	if event := play(t, true); !event.CheckIn || !event.CheckedIn {
+		t.Fatalf("an agent that spoke into the silence checked in: %+v", event)
+	}
+	if event := play(t, false); !event.CheckIn || event.CheckedIn {
+		t.Fatalf("an agent that waited did not check in: %+v", event)
+	}
+}
+
+// Someone else in the room is scored like an overlap sound: the line is not the caller's turn.
+func TestAnAsideIsMarkedLikeAnOverlapSound(t *testing.T) {
+	loop := transport.NewLoopback()
+	defer loop.Close()
+	go func() {
+		_ = loop.SendAgent(audio.Tone(2*audio.Rate, 220, 10000))
+		for range loop.AgentRecv {
+		}
+	}()
+	eng := Engine{ClosingGraceMS: 300, Audio: map[string][]int16{"Mom, look!": audio.Tone(audio.Rate/2, 300, 9000)}}
+	sc := scenario.Scenario{Turns: []scenario.Turn{
+		{ID: "kid", Text: "Mom, look!", Aside: true, Trigger: scenario.Trigger{Kind: scenario.TriggerDuringAgent, AfterMS: 200}},
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	got, err := eng.Play(ctx, sc, loop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Events) != 1 || got.Events[0].OverlapSound != "aside" || !got.Events[0].BargeIn || !got.Events[0].Text {
+		t.Fatalf("aside event = %+v", got.Events)
 	}
 }

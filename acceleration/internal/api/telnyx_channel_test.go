@@ -35,6 +35,12 @@ import (
 // https://developers.telnyx.com/docs/messaging/messages/receiving-webhooks (webhooks) and
 // https://developers.telnyx.com/docs/messaging/messages/send-message (send).
 type TelnyxChannelSuite struct {
+	telnyxLine
+}
+
+// telnyxLine is a Telnyx number connected and bound to an agent, with the test's Telnyx and
+// the helpers that deliver its events, which TelnyxChannelSuite and TelnyxSandboxSuite share.
+type telnyxLine struct {
 	RouterSuite
 
 	telnyx *fakeTelnyx
@@ -63,7 +69,7 @@ func TestTelnyxChannelSuite(t *testing.T) {
 
 // SetupSuite registers ed25519 and the real bearer scheme, whose Wrap puts the API key on a
 // reply, and the real channel bridge.
-func (s *TelnyxChannelSuite) SetupSuite() {
+func (s *telnyxLine) SetupSuite() {
 	verifier := ed25519header.New()
 	s.connectors = core.Registry{
 		Schemes:   map[string]core.Scheme{bearer.Name: bearer.New()},
@@ -74,7 +80,7 @@ func (s *TelnyxChannelSuite) SetupSuite() {
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
 
-func (s *TelnyxChannelSuite) SetupTest() {
+func (s *telnyxLine) SetupTest() {
 	s.useApp(s.data.createApp())
 	s.telnyx = newFakeTelnyx(s.T())
 	public, private, err := ed25519.GenerateKey(rand.Reader)
@@ -402,7 +408,7 @@ func (s *TelnyxChannelSuite) TestTheNumbersOwnSentMessageIsNotWritten() {
 
 // received is a message.received shaped as the example in webhooks: to the customer's number,
 // from the person, with text.
-func (s *TelnyxChannelSuite) received(line, person, text string) []byte {
+func (s *telnyxLine) received(line, person, text string) []byte {
 	raw, err := json.Marshal(map[string]any{
 		"data": map[string]any{
 			"event_type": "message.received", "id": s.utils.uuid(), "record_type": "event",
@@ -420,20 +426,20 @@ func (s *TelnyxChannelSuite) received(line, person, text string) []byte {
 
 // autoAnswered is a received message Telnyx answered itself: its payload carries
 // autoresponse_type (advanced-opt-in-out, «Track opt-out behavior via webhooks»).
-func (s *TelnyxChannelSuite) autoAnswered(line, person, text, autoresponse string) []byte {
+func (s *telnyxLine) autoAnswered(line, person, text, autoresponse string) []byte {
 	body := s.received(line, person, text)
 	answered := bytes.Replace(body, []byte(`"payload":{`), []byte(`"payload":{"autoresponse_type":"`+autoresponse+`",`), 1)
 	s.Require().NotEqual(body, answered)
 	return answered
 }
 
-func (s *TelnyxChannelSuite) deliver(body []byte, at time.Time) int {
+func (s *telnyxLine) deliver(body []byte, at time.Time) int {
 	return s.deliverSigned(body, at, s.private)
 }
 
 // deliverSigned posts body to the app's events URL as Telnyx does, signed at at with key: the
 // base64 Ed25519 signature of {timestamp}|{body} (webhooks).
-func (s *TelnyxChannelSuite) deliverSigned(body []byte, at time.Time, key ed25519.PrivateKey) int {
+func (s *telnyxLine) deliverSigned(body []byte, at time.Time, key ed25519.PrivateKey) int {
 	timestamp := strconv.FormatInt(at.Unix(), 10)
 	signature := ed25519.Sign(key, append([]byte(timestamp+"|"), body...))
 	request, err := http.NewRequest(http.MethodPost, s.server.URL+providerAppEventsPath+"telnyx/"+s.app, bytes.NewReader(body))
@@ -450,7 +456,7 @@ func (s *TelnyxChannelSuite) deliverSigned(body []byte, at time.Time, key ed2551
 
 // threadChannel is the thread channel the test's customer has for a person's number, once the
 // bridge linked it.
-func (s *TelnyxChannelSuite) threadChannel(person string) string {
+func (s *telnyxLine) threadChannel(person string) string {
 	var channel string
 	s.Require().Eventually(func() bool {
 		return s.store.DB().QueryRowContext(context.Background(),
@@ -462,7 +468,7 @@ func (s *TelnyxChannelSuite) threadChannel(person string) string {
 
 // omniChannel is the id of the omni-channel the contact map gives a phone number, for the
 // test's agent.
-func (s *TelnyxChannelSuite) omniChannel(number string) string {
+func (s *telnyxLine) omniChannel(number string) string {
 	var cid string
 	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
 		"SELECT conversation_id FROM contact_map WHERE customer_id = ? AND agent_config_id = ? AND kind = 'phone' AND address = ?",
@@ -471,7 +477,7 @@ func (s *TelnyxChannelSuite) omniChannel(number string) string {
 }
 
 // liveOptOuts counts the person's SMS opt-outs not revoked.
-func (s *TelnyxChannelSuite) liveOptOuts(person string) int {
+func (s *telnyxLine) liveOptOuts(person string) int {
 	var count int
 	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
 		"SELECT count(*) FROM opt_outs WHERE customer_id = ? AND recipient = ? AND channel = 'sms' AND source = 'keyword' AND revoked_at IS NULL",
@@ -480,7 +486,7 @@ func (s *TelnyxChannelSuite) liveOptOuts(person string) int {
 }
 
 // episodes counts the test's customer's episode cards.
-func (s *TelnyxChannelSuite) episodes() int {
+func (s *telnyxLine) episodes() int {
 	var count int
 	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
 		"SELECT count(*) FROM episodes WHERE customer_id = ?", s.customerID()).Scan(&count))
@@ -488,7 +494,7 @@ func (s *TelnyxChannelSuite) episodes() int {
 }
 
 // nothingLinked fails when the test's customer has a thread channel by the time a drop shows.
-func (s *TelnyxChannelSuite) nothingLinked() {
+func (s *telnyxLine) nothingLinked() {
 	s.Never(func() bool {
 		var count int
 		s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
@@ -499,7 +505,7 @@ func (s *TelnyxChannelSuite) nothingLinked() {
 
 // written waits until a channel holds count messages, written off the request, and returns
 // them.
-func (s *TelnyxChannelSuite) written(channel string, count int) []map[string]any {
+func (s *telnyxLine) written(channel string, count int) []map[string]any {
 	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) >= count }, settleFor, 10*time.Millisecond,
 		"%s holds %d messages, not %d", channel, len(s.chat.Stored(channel)), count)
 	return s.chat.Stored(channel)
@@ -507,7 +513,7 @@ func (s *TelnyxChannelSuite) written(channel string, count int) []map[string]any
 
 // streamDelivers delivers the message.new Stream Chat sends for the index-th message of a
 // thread channel, as Stream holds it, signed with the app's secret.
-func (s *TelnyxChannelSuite) streamDelivers(channel string, index int) int {
+func (s *telnyxLine) streamDelivers(channel string, index int) int {
 	stored := s.chat.Stored(channel)[index]
 	data, _ := s.chat.Channel(channel)
 	payload, err := json.Marshal(map[string]any{
@@ -522,7 +528,7 @@ func (s *TelnyxChannelSuite) streamDelivers(channel string, index int) int {
 }
 
 // took waits until the test's Telnyx took count messages, and returns them.
-func (s *TelnyxChannelSuite) took(count int) []telnyxMessage {
+func (s *telnyxLine) took(count int) []telnyxMessage {
 	s.Require().Eventually(func() bool { return len(s.telnyx.sent()) >= count }, settleFor, 10*time.Millisecond,
 		"Telnyx took %d messages, not %d", len(s.telnyx.sent()), count)
 	return s.telnyx.sent()

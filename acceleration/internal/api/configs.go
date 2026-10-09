@@ -492,6 +492,11 @@ func connectorBindingsComplaint(bindings *[]AgentConnectorBinding) (string, bool
 			if tools[tool.Name] {
 				return fmt.Sprintf("connector binding %q grants %q twice", alias, tool.Name), false
 			}
+			if tool.SchemaDigest == "" && binding.Connection.Type != AgentConnectorSelectionTypeSession {
+				return fmt.Sprintf("connector binding %q grants %q with no schema_digest, and only a session binding "+
+					"may: a fixed binding's connection is the app's own, so grant the digest GET "+
+					"/v1/agents/connections/{id}/tools lists for it", alias, tool.Name), false
+			}
 			tools[tool.Name] = true
 		}
 	}
@@ -1629,7 +1634,7 @@ type AgentConnectorBinding struct {
 	Name        string                   `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place."`
 	ConnectorId string                   `json:"connector_id" doc:"A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_."`
 	Connection  AgentConnectorSelection  `json:"connection"`
-	Tools       []ConnectorToolGrant     `json:"tools" maxItems:"128" nullable:"false" doc:"The exact tools allowed, each named once. There is no wildcard, and an empty list grants none."`
+	Tools       []ConnectorToolGrant     `json:"tools" maxItems:"128" nullable:"false" doc:"The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use."`
 	Required    *bool                    `json:"required,omitempty" default:"false" doc:"Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it."`
 	TimeoutMs   *int                     `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
 	Events      *[]ConnectorBindingEvent `json:"events,omitempty" maxItems:"32" doc:"MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open."`
@@ -1639,8 +1644,8 @@ type AgentConnectorBinding struct {
 // ConnectorBindingPolicy is a binding's policy envelope, read back as it was written.
 type ConnectorBindingPolicy struct {
 	PreSpeech   *string               `json:"pre_speech,omitempty" minLength:"1" doc:"What the agent says while one of the binding's tools runs, such as \"Let me pull up your calendar.\", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started."`
-	OnInterrupt *ConnectorOnInterrupt `json:"on_interrupt,omitempty" doc:"What an interruption of the turn does to a call in flight. Omitted is cancel."`
-	Cancellable *bool                 `json:"cancellable,omitempty" doc:"Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption."`
+	OnInterrupt *ConnectorOnInterrupt `json:"on_interrupt,omitempty" doc:"What an interruption of the turn does to a call in flight. Omitted, the call goes on and the caller is told its result when it comes, unless they withdraw what they asked for, which stops it."`
+	Cancellable *bool                 `json:"cancellable,omitempty" doc:"Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running once the session stops waiting, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It does not matter with on_interrupt wait, whose call the session always waits for."`
 }
 
 func (*ConnectorBindingPolicy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -1681,7 +1686,8 @@ func (*ConnectorBindingEvent) TransformSchema(_ huma.Registry, schema *huma.Sche
 
 func (*AgentConnectorBinding) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "A connector whose tools an agent config may call, under an alias. The binding is " +
-		"the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against."
+		"the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against, or " +
+		"for a tool a session binding grants by name alone, to the schema its connection first offered it with."
 	return schema
 }
 
@@ -1715,9 +1721,15 @@ func (AgentConnectorSelectionType) Schema(registry huma.Registry) *huma.Schema {
 // lowercase hex, which is what the prototype took of a tool's name, description and input
 // schema (ToolSchemaDigest, internal/mcp/mcp.go:172-184 at cf62af0d) and checked a grant's
 // digest against (connectorToolDigestPattern, internal/api/connectors.go:56).
+//
+// A session binding may leave the digest out (Kanat's decision of 2026-10-08, AI-816): its
+// connection is each person's own, and a provider may write the person into a tool's
+// description, as Slack does with the signed-in user's id, so no one digest fits everyone.
+// The session that first opens a connection pins the digest it lists then
+// (session.Manager.pinGrants, store.ConnectorToolPin).
 type ConnectorToolGrant struct {
 	Name         string `json:"name" minLength:"1" doc:"The tool as the connector names it."`
-	SchemaDigest string `json:"schema_digest" pattern:"^[a-f0-9]{64}$" doc:"The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered."`
+	SchemaDigest string `json:"schema_digest,omitempty" pattern:"^[a-f0-9]{64}$" doc:"The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered. Required on a fixed binding. A session binding may leave it out: the first session that opens a person's connection pins the digest the provider lists then, later sessions offer the tool only while it still matches, and a reconnect pins again."`
 }
 
 func (*ConnectorToolGrant) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

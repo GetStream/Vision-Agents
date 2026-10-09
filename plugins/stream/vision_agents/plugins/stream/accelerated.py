@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 from typing import Any, AsyncIterator, Optional
@@ -23,12 +24,12 @@ from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 from ._backend import Backend
+from ._errors import RouterError
 from ._latency import render_turn
 from ._generated.api.default import create_session, list_agent_configs, stop_session
 from ._generated.models import (
     CreateSessionRequest,
     CreateSessionRequestTags,
-    ErrorResponse,
     Session,
     SessionMemory,
     SessionMemoryFilter,
@@ -180,12 +181,13 @@ class Accelerated(OmniLLM):
             )
             request.config_id = await self._config_id(self.config)
 
-        created = await create_session.asyncio(
-            client=self.backend.client(), body=request
-        )
-        if isinstance(created, ErrorResponse):
-            raise RemotePipelineError(created.error.message)
-        if created is None:
+        try:
+            created = await create_session.asyncio(
+                client=self.backend.client(), body=request
+            )
+        except RouterError as refused:
+            raise RemotePipelineError(str(refused)) from refused
+        if not isinstance(created, Session):
             raise RemotePipelineError("the router did not answer with a session")
 
         self.session = created
@@ -261,9 +263,10 @@ class Accelerated(OmniLLM):
         if self._socket is not None and self._socket.open:
             await self._socket.send({"type": "close"})
         else:
-            await stop_session.asyncio_detailed(
-                session.id, client=self.backend.client()
-            )
+            with contextlib.suppress(RouterError):
+                await stop_session.asyncio_detailed(
+                    session.id, client=self.backend.client()
+                )
         await self._stop_watching()
 
     async def interrupt(self) -> None:
@@ -297,10 +300,11 @@ class Accelerated(OmniLLM):
         A config is named when it is defined and identified by id everywhere after, so the
         lookup happens here rather than making the caller carry an id around.
         """
-        listed = await list_agent_configs.asyncio(client=self.backend.client())
-        if isinstance(listed, ErrorResponse):
-            raise RemotePipelineError(listed.error.message)
-        if listed is None:
+        try:
+            listed = await list_agent_configs.asyncio(client=self.backend.client())
+        except RouterError as refused:
+            raise RemotePipelineError(str(refused)) from refused
+        if not isinstance(listed, list):
             raise RemotePipelineError(
                 "the router did not answer with any agent configs"
             )

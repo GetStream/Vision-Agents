@@ -91,6 +91,15 @@ public actor SessionSocket {
                 // A cancelled read is a close we asked for, not a failure to report.
                 if Task.isCancelled {
                     continuation.finish()
+                } else if let refused = task.response as? HTTPURLResponse, refused.statusCode != 101 {
+                    // URLSession hands over a refused upgrade's status and headers, never its
+                    // body, so the router's envelope cannot be read here.
+                    continuation.finish(
+                        throwing: AgentsError.http(
+                            HTTPFailure(
+                                status: refused.statusCode,
+                                requestID: refused.value(forHTTPHeaderField: "X-Request-Id") ?? "",
+                                body: Data())))
                 } else {
                     continuation.finish(
                         throwing: AgentsError.socketClosed(

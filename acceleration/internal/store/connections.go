@@ -559,9 +559,9 @@ const boundByConfig = `EXISTS (
       AND ac.connectors @> jsonb_build_array(jsonb_build_object(
           'connection', jsonb_build_object('type', 'fixed', 'connection_id', cc.id))))`
 
-// softDeleteConnection marks a live connection deleted and drops its credentials in one
-// statement, and when unbound is set only if no config binds it. It returns the rows it
-// changed: one, or none.
+// softDeleteConnection marks a live connection deleted and drops its credentials and its tool
+// pins in one statement, and when unbound is set only if no config binds it. It returns the
+// rows it changed: one, or none.
 func softDeleteConnection(ctx context.Context, db bun.IDB, customerID, id string, unbound bool) (int64, error) {
 	if customerID == "" || id == "" {
 		return 0, stack.Wrap(errors.New("store: a customer and a connection id are required"))
@@ -580,11 +580,14 @@ func softDeleteConnection(ctx context.Context, db bun.IDB, customerID, id string
 	if unbound {
 		query = query.Where("NOT " + boundByConfig)
 	}
-	result, err := query.Exec(ctx)
-	if err != nil {
-		return 0, stack.Wrap(fmt.Errorf("store: delete connector connection: %w", err))
-	}
-	affected, err := result.RowsAffected()
+	// The connection's tool pins go in the same statement, and only with a connection it
+	// deleted (ConnectorToolPin).
+	var affected int64
+	err := db.NewSelect().
+		With("deleted", query.Returning("cc.id")).
+		With("dropped", db.NewDelete().Model((*ConnectorToolPin)(nil)).Where("ctp.connection_id IN (SELECT id FROM deleted)")).
+		TableExpr("deleted").ColumnExpr("count(*)").
+		Scan(ctx, &affected)
 	if err != nil {
 		return 0, stack.Wrap(fmt.Errorf("store: delete connector connection: %w", err))
 	}

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -35,7 +36,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: voicebench <synth|run|report|calibrate|compare|digest|stt|tts> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: voicebench <synth|run|report|calibrate|compare|noise|digest|stt|tts> [flags]")
 }
 
 func dispatch(cmd string, args []string) error {
@@ -54,12 +55,14 @@ func dispatch(cmd string, args []string) error {
 		return cmdCalibrate(root, args)
 	case "compare":
 		return cmdCompare(root, args)
+	case "noise":
+		return cmdNoise(root, args)
 	case "digest":
-		return cmdDigest(ctx, args)
+		return cmdDigest(ctx, root, args)
 	case "stt":
-		return cmdSTT(args)
+		return cmdSTT(ctx, root, args)
 	case "tts":
-		return cmdTTS(args)
+		return cmdTTS(ctx, root, args)
 	default:
 		usage()
 		return fmt.Errorf("unknown command %s", cmd)
@@ -115,6 +118,8 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	skipSTT := fs.Bool("skip-stt", false, "skip Deepgram (fails the trial)")
 	skipJudge := fs.Bool("skip-judge", false, "skip LLM judge (fails the trial)")
 	frozen := fs.Bool("frozen", false, "run only the frozen scenario set used for the trend line")
+	short := fs.Bool("short", false, "run only the short scenario set, for quick iteration")
+	extended := fs.Bool("extended", false, "run only the extended scenario set, outside the frozen one")
 	storeBaseline := fs.Bool("store-baseline", false, "copy summary.json and manifest.json to baselines/<target>/<commit>/")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -147,7 +152,10 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 		SkipSTT:           *skipSTT,
 		SkipJudge:         *skipJudge,
 		Frozen:            *frozen,
+		Short:             *short,
+		Extended:          *extended,
 		Logger:            slog.Default(),
+		Progress:          os.Stderr,
 	})
 	if len(sum.Calls) > 0 {
 		report.FprintTable(os.Stdout, sum)
@@ -241,7 +249,7 @@ func cmdReport(root string, args []string) error {
 func cmdCompare(root string, args []string) error {
 	fs := flag.NewFlagSet("compare", flag.ExitOnError)
 	baseline := fs.String("baseline", "", "run directory or stored target name (baselines/<target>/<commit>)")
-	mde := fs.Int("mde-v2v-ms", 0, "flag V2V P50 changes at least this many milliseconds")
+	mde := fs.String("mde", "", "noise floor from voicebench noise; flags changes bigger than it")
 	out := fs.String("out", "", "write the comparison markdown here")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -257,7 +265,14 @@ func cmdCompare(root string, args []string) error {
 	if len(dirs) < 2 {
 		return fmt.Errorf("compare: need at least two run directories")
 	}
-	cfg := report.CompareConfig{Baseline: -1, MDEV2VMS: *mde}
+	cfg := report.CompareConfig{Baseline: -1}
+	if *mde != "" {
+		noise, err := report.LoadNoiseFloor(*mde)
+		if err != nil {
+			return fmt.Errorf("compare: %w", err)
+		}
+		cfg.MDE = &noise
+	}
 	if *baseline != "" {
 		cfg.Baseline = 0
 	}
@@ -283,7 +298,41 @@ func cmdCompare(root string, args []string) error {
 	return nil
 }
 
-func cmdDigest(ctx context.Context, args []string) error {
+func cmdNoise(root string, args []string) error {
+	fs := flag.NewFlagSet("noise", flag.ExitOnError)
+	out := fs.String("out", "", "write the noise floor here (default baselines/<target>/noise-<packs>.json)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	var runs []report.LabeledRun
+	for _, dir := range fs.Args() {
+		sum, err := report.LoadSummary(dir)
+		if err != nil {
+			return fmt.Errorf("noise: %s: %w", dir, err)
+		}
+		runs = append(runs, report.LabeledRun{Label: dir, Summary: sum})
+	}
+	noise, err := report.MeasureNoise(runs)
+	if err != nil {
+		return err
+	}
+	fmt.Print(report.NoiseMarkdown(noise))
+	path := *out
+	if path == "" {
+		path = filepath.Join(root, "baselines", noise.Target, "noise-"+strings.Join(noise.Packs, "+")+".json")
+	}
+	raw, err := json.MarshalIndent(noise, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	fmt.Printf("\nwrote %s\n", path)
+	return os.WriteFile(path, append(raw, '\n'), 0o644)
+}
+
+func cmdDigest(ctx context.Context, root string, args []string) error {
 	fs := flag.NewFlagSet("digest", flag.ExitOnError)
 	title := fs.String("title", "Voicebench", "headline of the card and the message")
 	out := fs.String("out", "", "directory to write voicebench.png and voicebench.html into")
@@ -304,10 +353,28 @@ func cmdDigest(ctx context.Context, args []string) error {
 		if label == "" {
 			label = filepath.Base(dir)
 		}
+		// A call's artifacts sit beside its summary, wherever the run directory has moved to
+		// since: a downloaded CI artifact keeps the runner's paths in summary.json.
+		for i := range sum.Calls {
+			if sum.Calls[i].Dir != "" {
+				sum.Calls[i].Dir = filepath.Join(dir, filepath.Base(sum.Calls[i].Dir))
+			}
+		}
 		runs = append(runs, report.LabeledRun{Label: label, Summary: sum})
 	}
 	runs = report.MergeRuns(runs)
 	digest := report.BuildDigest(runs)
+	digest.Scenarios = map[string]scenario.Scenario{}
+	for _, pack := range scenario.Packs() {
+		scenarios, err := scenario.LoadPack(filepath.Join(root, "scenarios", pack))
+		if err != nil {
+			return fmt.Errorf("digest: %w", err)
+		}
+		for _, sc := range scenarios {
+			digest.Scenarios[sc.ID] = sc
+		}
+	}
+	digest.ReadCauses(runs)
 	card, err := digest.PNG(*title)
 	if err != nil {
 		return fmt.Errorf("digest: draw card: %w", err)
@@ -339,94 +406,106 @@ func cmdDigest(ctx context.Context, args []string) error {
 	})
 }
 
-func cmdSTT(args []string) error {
+func cmdSTT(ctx context.Context, root string, args []string) error {
 	fs := flag.NewFlagSet("stt", flag.ExitOnError)
-	manifest := fs.String("manifest", "", "JSONL of id, reference, hypothesis")
+	manifest := fs.String("manifest", "", "JSONL of id, reference, and audio (a WAV to stream) or hypothesis (to score as given)")
+	var targets stringList
+	fs.Var(&targets, "target", "provider/model or shortcut to stream each clip to through the router; repeat for several")
+	out := fs.String("out", "", "output directory (default out/stt-<time>)")
+	networkProfile := fs.String("network-profile", os.Getenv("VOICEBENCH_NETWORK_PROFILE"), "stable label for the runner region and network setup")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *manifest == "" {
 		return fmt.Errorf("stt: --manifest is required")
 	}
-	raw, err := os.ReadFile(*manifest)
+	dir := *out
+	if dir == "" {
+		dir = filepath.Join(root, "out", "stt-"+time.Now().UTC().Format("20060102T150405Z"))
+	}
+	sum, err := run.STT(ctx, run.STTConfig{
+		Root:           root,
+		Manifest:       *manifest,
+		Targets:        targets,
+		Out:            dir,
+		NetworkProfile: *networkProfile,
+		Logger:         slog.Default(),
+	})
 	if err != nil {
 		return err
 	}
-	type row struct {
-		ID         string `json:"id"`
-		Reference  string `json:"reference"`
-		Hypothesis string `json:"hypothesis"`
-	}
-	var refWords, errRaw, errNorm int
-	perfect := 0
-	n := 0
-	for i, line := range splitLines(string(raw)) {
-		var rec row
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			return fmt.Errorf("stt: line %d: %w", i+1, err)
+	fmt.Print(report.STTMarkdown(sum))
+	fmt.Printf("\nresults in %s\n", dir)
+	for _, target := range sum.STT {
+		if target.Failed > 0 {
+			return fmt.Errorf("stt: %d clip(s) for %s ended in an error, see clips.jsonl", target.Failed, target.Target)
 		}
-		rawAlign := score.ScoreWER(rec.Reference, rec.Hypothesis, false)
-		normAlign := score.ScoreWER(rec.Reference, rec.Hypothesis, true)
-		n++
-		refWords += rawAlign.Reference
-		errRaw += rawAlign.Errors()
-		errNorm += normAlign.Errors()
-		if normAlign.WER == 0 {
-			perfect++
-		}
-		id := rec.ID
-		if id == "" {
-			id = fmt.Sprintf("%d", i+1)
-		}
-		fmt.Printf("%s\traw=%.3f\tnorm=%.3f\tsub=%d\tins=%d\tdel=%d\n",
-			id, rawAlign.WER, normAlign.WER, normAlign.Substitutions, normAlign.Insertions, normAlign.Deletions)
 	}
-	if n == 0 {
-		return fmt.Errorf("stt: empty manifest")
-	}
-	pooledRaw := 0.0
-	pooledNorm := 0.0
-	if refWords > 0 {
-		pooledRaw = float64(errRaw) / float64(refWords)
-		pooledNorm = float64(errNorm) / float64(refWords)
-	}
-	fmt.Printf("clips=%d perfect_norm=%d pooled_raw=%.3f pooled_norm=%.3f normalizer=%s\n",
-		n, perfect, pooledRaw, pooledNorm, score.NormalizerVersion)
 	return nil
 }
 
-func cmdTTS(args []string) error {
+// stringList is a flag that may be given more than once.
+type stringList []string
+
+func (l *stringList) String() string { return strings.Join(*l, ",") }
+
+func (l *stringList) Set(value string) error {
+	*l = append(*l, value)
+	return nil
+}
+
+func cmdTTS(ctx context.Context, root string, args []string) error {
 	fs := flag.NewFlagSet("tts", flag.ExitOnError)
-	wav := fs.String("wav", "", "16-bit PCM wav to score for clipping and silence")
+	wav := fs.String("wav", "", "16-bit PCM wav to score for clipping and silence, without synthesizing anything")
+	var targets stringList
+	fs.Var(&targets, "target", "provider/model or shortcut to speak the corpus with through the router; repeat for several")
+	corpus := fs.String("corpus", "", "JSONL of id and text (default every scenario's agent reply lines)")
+	voice := fs.String("voice", "", "voice for every target, when the target's default is not wanted")
+	out := fs.String("out", "", "output directory (default out/tts-<time>)")
+	networkProfile := fs.String("network-profile", os.Getenv("VOICEBENCH_NETWORK_PROFILE"), "stable label for the runner region and network setup")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *wav == "" {
-		return fmt.Errorf("tts: --wav is required")
-	}
-	pcm, err := audio.ReadWAV(*wav)
-	if err != nil {
-		return err
-	}
-	health := audio.MeasureHealth(pcm.Samples, pcm.Rate)
-	out, err := json.MarshalIndent(health, "", "  ")
-	if err != nil {
-		return err
-	}
-	fmt.Println(string(out))
-	return nil
-}
-
-func splitLines(raw string) []string {
-	var lines []string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	if *wav != "" {
+		pcm, err := audio.ReadWAV(*wav)
+		if err != nil {
+			return err
 		}
-		lines = append(lines, line)
+		health := audio.MeasureHealth(pcm.Samples, pcm.Rate)
+		raw, err := json.MarshalIndent(health, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(raw))
+		return nil
 	}
-	return lines
+	if len(targets) == 0 {
+		return fmt.Errorf("tts: --target or --wav is required")
+	}
+	dir := *out
+	if dir == "" {
+		dir = filepath.Join(root, "out", "tts-"+time.Now().UTC().Format("20060102T150405Z"))
+	}
+	sum, err := run.TTS(ctx, run.TTSConfig{
+		Root:           root,
+		Corpus:         *corpus,
+		Targets:        targets,
+		Voice:          *voice,
+		Out:            dir,
+		NetworkProfile: *networkProfile,
+		Logger:         slog.Default(),
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Print(report.TTSMarkdown(sum))
+	fmt.Printf("\nresults in %s\n", dir)
+	for _, target := range sum.TTS {
+		if target.Failed > 0 {
+			return fmt.Errorf("tts: %d line(s) for %s ended in an error, see clips.jsonl", target.Failed, target.Target)
+		}
+	}
+	return nil
 }
 
 func loadDotEnv(root string) {

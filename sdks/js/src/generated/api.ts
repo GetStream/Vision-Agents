@@ -757,7 +757,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Start a consent
-         * @description Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+         * @description Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -806,6 +806,74 @@ export type paths = {
         readonly get: operations["listConnectionInvocations"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/proxy/{path}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Call a connection's provider directly (GET)
+         * @description Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["proxyConnectionGet"];
+        /**
+         * Call a connection's provider directly (PUT)
+         * @description Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["proxyConnectionPut"];
+        /**
+         * Call a connection's provider directly (POST)
+         * @description Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["proxyConnectionPost"];
+        /**
+         * Call a connection's provider directly (DELETE)
+         * @description Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["proxyConnectionDelete"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Call a connection's provider directly (PATCH)
+         * @description Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly patch: operations["proxyConnectionPatch"];
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/connections/{id}/token": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Export a connection's access token
+         * @description The connection's current access credential, for the app's backend to call the provider with directly: an OAuth access token, renewed first when it is about to expire, or an API key. A refresh token is never exported. Only the customer's own provider app exports: an oauth2_code connection exports when its grant was issued to the client the app registered itself, and that client is still the connector's; a grant issued to Stream's app, or to one the router created, is refused with a 403. An api_key connection always exports, since the key is the app's own. Other schemes are refused. Each export is recorded in the connector audit as token_export. Who may export it is who may read it.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["exportConnectionToken"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2425,7 +2493,11 @@ export type paths = {
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
+        /**
+         * Answer a provider app's handshake
+         * @description Where a provider checks a provider app's events URL before it delivers to it: Meta's Verify Token check of a customer's WhatsApp webhook, for one. Unauthenticated because the provider is not a customer. Only a connector whose manifest declares channel.handshake answers it; the verify token is the provider app's id, the one in the URL, so nothing is stored for it, and every delivery is still verified with the app's own secret. With hub.mode subscribe, hub.verify_token the provider app's id and hub.challenge digits only, the challenge is echoed as text/plain. Any other connector, an unknown provider app, or a deployment without connectors answers 405 as for any method a route does not serve. No SDK wraps it: only a provider calls it.
+         */
+        readonly get: operations["answerProviderAppHandshake"];
         readonly put?: never;
         /**
          * Receive a provider app's event
@@ -3721,7 +3793,7 @@ export type components = {
             /** @description Provider-specific voice id. */
             readonly voice?: string;
         };
-        /** @description A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against. */
+        /** @description A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with. */
         readonly AgentConnectorBinding: {
             readonly connection: components["schemas"]["AgentConnectorSelection"];
             /** @description A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_. */
@@ -3742,7 +3814,7 @@ export type components = {
              * @description How long one tool call may take, in milliseconds. Omitted, the session's default applies.
              */
             readonly timeout_ms?: number;
-            /** @description The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. */
+            /** @description The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use. */
             readonly tools: readonly components["schemas"]["ConnectorToolGrant"][];
         };
         /** @description Which connection a binding's tools are called through. */
@@ -3849,7 +3921,7 @@ export type components = {
         };
         readonly AttachedNumber: {
             readonly route_id: string;
-            /** @description Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com. */
+            /** @description Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com. */
             readonly sip_uri: string;
             readonly trunk_id: string;
         };
@@ -4481,11 +4553,14 @@ export type components = {
             readonly connector_id: string;
             /** Format: date-time */
             readonly created_at: string;
+            /** @description Why the connector marked definition_revision broken. Present only when definition_status is broken. */
+            readonly definition_broken_reason?: string;
             /**
              * Format: int64
-             * @description The connector's revision when the connection was made, which it keeps reading until it is reconnected.
+             * @description The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there; until then it keeps this one.
              */
             readonly definition_revision: number;
+            readonly definition_status: components["schemas"]["ConnectionDefinitionStatus"];
             /**
              * Format: date-time
              * @description When the current credential expires. Absent when there is none or it does not.
@@ -4526,6 +4601,11 @@ export type components = {
                 readonly [key: string]: string;
             };
         };
+        /**
+         * @description current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until a consent connects it again, on the latest revision.
+         * @enum {string}
+         */
+        readonly ConnectionDefinitionStatus: "current" | "outdated" | "broken";
         /** @description One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept. */
         readonly ConnectionInvocation: {
             /** @description The alias the config binds the connector under. */
@@ -4591,6 +4671,19 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectionStatus: "pending" | "connected" | "needs_reauthorization" | "disconnected";
+        /** @description A connection's access credential, for the app's backend to call the provider with directly. It holds no refresh token. */
+        readonly ConnectionToken: {
+            readonly connection_id: string;
+            /**
+             * Format: date-time
+             * @description When it stops working. Absent when the provider gave no expiry. Export again for a fresh one.
+             */
+            readonly expires_at?: string;
+            /** @description The HTTP field to send it in: Authorization for an OAuth access token, the connection's own header for an API key. */
+            readonly header: string;
+            /** @description The whole field value: Bearer and the access token for an OAuth access token (RFC 6750 section 2.1), the key for an API key. */
+            readonly value: string;
+        };
         readonly ConnectionTool: {
             readonly description: string;
             /** @description The JSON Schema of its arguments. */
@@ -4680,11 +4773,11 @@ export type components = {
             readonly setup?: components["schemas"]["ConnectorSetup"];
         };
         /**
-         * @description grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.
+         * @description grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection.
          * @enum {string}
          */
-        readonly ConnectorAuditAction: "grant_created" | "grant_refreshed" | "grant_revoked";
-        /** @description One grant a connection got, renewed or lost, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted. */
+        readonly ConnectorAuditAction: "grant_created" | "grant_refreshed" | "grant_revoked" | "token_export" | "proxy_call";
+        /** @description One grant a connection got, renewed or lost, one export of its access credential, or one direct call sent through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted. */
         readonly ConnectorAuditEvent: {
             readonly action: components["schemas"]["ConnectorAuditAction"];
             /** @description The authorization attempt a consent finished. Absent once the connection's user was deleted. */
@@ -4695,6 +4788,11 @@ export type components = {
             /** Format: date-time */
             readonly created_at: string;
             readonly id: string;
+            /**
+             * Format: int64
+             * @description How long a proxy_call took until the provider's answer, in milliseconds. Absent for a grant.
+             */
+            readonly latency_ms?: number;
             readonly owner_type: components["schemas"]["ConnectionOwnerType"];
             /** @description Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked. */
             readonly reason?: string;
@@ -4707,6 +4805,13 @@ export type components = {
             readonly revision?: number;
             /** @description The session whose tool call caused it. Absent for an incognito session, and once the connection's user was deleted. */
             readonly session_id?: string;
+            /**
+             * Format: int64
+             * @description A proxy_call's status from the provider. Absent when no answer came, and for a grant.
+             */
+            readonly status_code?: number;
+            /** @description The host a proxy_call reached. Absent for a grant. */
+            readonly target?: string;
         };
         readonly ConnectorAuditPage: {
             readonly has_more: boolean;
@@ -4727,9 +4832,9 @@ export type components = {
         };
         /** @description How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour. */
         readonly ConnectorBindingPolicy: {
-            /** @description Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption. */
+            /** @description Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running once the session stops waiting, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It does not matter with on_interrupt wait, whose call the session always waits for. */
             readonly cancellable?: boolean;
-            /** @description What an interruption of the turn does to a call in flight. Omitted is cancel. */
+            /** @description What an interruption of the turn does to a call in flight. Omitted, the call goes on and the caller is told its result when it comes, unless they withdraw what they asked for, which stops it. */
             readonly on_interrupt?: components["schemas"]["ConnectorOnInterrupt"];
             /** @description What the agent says while one of the binding's tools runs, such as "Let me pull up your calendar.", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started. */
             readonly pre_speech?: string;
@@ -4895,8 +5000,8 @@ export type components = {
         readonly ConnectorToolGrant: {
             /** @description The tool as the connector names it. */
             readonly name: string;
-            /** @description The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered. */
-            readonly schema_digest: string;
+            /** @description The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered. Required on a fixed binding. A session binding may leave it out: the first session that opens a person's connection pins the digest the provider lists then, later sessions offer the tool only while it still matches, and a reconnect pins again. */
+            readonly schema_digest?: string;
         };
         readonly Contact: {
             readonly attempts: number;
@@ -9418,6 +9523,388 @@ export interface operations {
             readonly 500: components["responses"]["InternalError"];
         };
     };
+    readonly proxyConnectionGet: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection. */
+                readonly id: string;
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
+                readonly path: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The connection is not connected */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The body is over 1 MiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The call did not reach the provider, or its answer did not come back */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly proxyConnectionPut: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection. */
+                readonly id: string;
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
+                readonly path: string;
+            };
+            readonly cookie?: never;
+        };
+        /** @description The body for the provider, of any media type, at most 1 MiB. */
+        readonly requestBody?: {
+            readonly content: {
+                readonly "*/*": string;
+            };
+        };
+        readonly responses: {
+            /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The connection is not connected */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The body is over 1 MiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The call did not reach the provider, or its answer did not come back */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly proxyConnectionPost: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection. */
+                readonly id: string;
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
+                readonly path: string;
+            };
+            readonly cookie?: never;
+        };
+        /** @description The body for the provider, of any media type, at most 1 MiB. */
+        readonly requestBody?: {
+            readonly content: {
+                readonly "*/*": string;
+            };
+        };
+        readonly responses: {
+            /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The connection is not connected */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The body is over 1 MiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The call did not reach the provider, or its answer did not come back */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly proxyConnectionDelete: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection. */
+                readonly id: string;
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
+                readonly path: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The connection is not connected */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The body is over 1 MiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The call did not reach the provider, or its answer did not come back */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly proxyConnectionPatch: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection. */
+                readonly id: string;
+                /** @description The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL. */
+                readonly path: string;
+            };
+            readonly cookie?: never;
+        };
+        /** @description The body for the provider, of any media type, at most 1 MiB. */
+        readonly requestBody?: {
+            readonly content: {
+                readonly "*/*": string;
+            };
+        };
+        readonly responses: {
+            /** @description The provider's answer, as it came. It may have any status, a 401 or a 429 included. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The connection is not connected */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The body is over 1 MiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came. */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The call did not reach the provider, or its answer did not come back */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly exportConnectionToken: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The access credential */
+            readonly 200: {
+                headers: {
+                    readonly "Cache-Control"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionToken"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly listConnectionTools: {
         readonly parameters: {
             readonly query?: never;
@@ -12295,6 +12782,53 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+        };
+    };
+    readonly answerProviderAppHandshake: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Digits to echo. */
+                readonly "hub.challenge"?: string;
+                /** @description subscribe. */
+                readonly "hub.mode"?: string;
+                /** @description The provider app's id. */
+                readonly "hub.verify_token"?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector the provider app is of, such as whatsapp. */
+                readonly connector_id: string;
+                /** @description The provider's id for the app, such as a Meta app id. */
+                readonly provider_app_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The challenge, echoed */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "text/plain": string;
+                };
+            };
+            /** @description The query is not this URL's handshake: another mode or token, or a challenge that is not digits */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description This connector, or this deployment, answers no handshake here */
+            readonly 405: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly receiveProviderAppEvent: {

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -105,7 +106,7 @@ func (s *Server) searchPhoneNumbers(ctx context.Context, request *searchPhoneNum
 		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 
 	result := NumberSearchResult{
@@ -138,7 +139,7 @@ func (s *Server) searchPhoneNumbers(ctx context.Context, request *searchPhoneNum
 	for _, skipped := range offers.Skipped {
 		result.Skipped = append(result.Skipped, SkippedVendor{
 			Vendor: skipped.Vendor,
-			Reason: skipped.Reason,
+			Reason: skipReason(s.logger, skipped),
 		})
 	}
 	return &searchPhoneNumbersResponse{Body: result}, nil
@@ -174,7 +175,7 @@ func (s *Server) listPhoneNumbers(ctx context.Context, request *listPhoneNumbers
 	includeReleased := request.IncludeReleased.ptr() != nil && *request.IncludeReleased.ptr()
 	held, err := s.phone.Numbers(ctx, customerID, includeReleased)
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 
 	numbers := make([]PhoneNumber, 0, len(held))
@@ -216,7 +217,7 @@ func (s *Server) buyPhoneNumber(ctx context.Context, request *buyPhoneNumberRequ
 		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 	return &buyPhoneNumberResponse{Body: phoneNumber(bought)}, nil
 }
@@ -232,11 +233,11 @@ func (s *Server) releasePhoneNumber(ctx context.Context, request *releasePhoneNu
 	}
 
 	err := s.phone.Release(ctx, customerID, request.E164)
-	if err != nil && strings.Contains(err.Error(), "is not a number") {
+	if isNumberNotHeld(err) {
 		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 	return nil, nil
 }
@@ -265,14 +266,14 @@ func (s *Server) attachPhoneNumber(ctx context.Context, request *attachPhoneNumb
 	}
 
 	attached, err := s.phone.Attach(ctx, attachment)
-	if err != nil && strings.Contains(err.Error(), "is not a number") {
+	if isNumberNotHeld(err) {
 		return nil, notFound(err.Error())
 	}
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
 		return nil, err
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 
 	return &attachPhoneNumberResponse{Body: AttachedNumber{TrunkId: attached.TrunkID,
@@ -329,14 +330,14 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 	if errors.Is(err, dlc.ErrRefused) {
 		return nil, forbidden(err.Error())
 	}
-	if err != nil && strings.Contains(err.Error(), "is not a number") {
+	if isNumberNotHeld(err) {
 		return nil, notFound(err.Error())
 	}
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
 		return nil, err
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, callFailure(s.logger, err)
 	}
 
 	return &placePhoneCallResponse{Body: PlacedCall{VendorCallId: placed.VendorCallID,
@@ -408,14 +409,14 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 	transfer.StreamApp = app
 
 	placed, err := s.phone.Transfer(ctx, transfer)
-	if err != nil && strings.Contains(err.Error(), "is not a number") {
+	if isNumberNotHeld(err) {
 		return nil, notFound(err.Error())
 	}
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
 		return nil, err
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, callFailure(s.logger, err)
 	}
 
 	return &transferPhoneCallResponse{Body: PlacedCall{VendorCallId: placed.VendorCallID,
@@ -439,7 +440,7 @@ func (s *Server) pressPhoneDigits(ctx context.Context, request *pressPhoneDigits
 		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 	return nil, nil
 }
@@ -453,6 +454,63 @@ func sipTrunk(trunk store.SIPTrunk) SipTrunk {
 		Codecs: trunk.Codecs, HasPassword: trunk.HasPassword(),
 		CreatedAt: trunk.CreatedAt, UpdatedAt: trunk.UpdatedAt,
 	}
+}
+
+var (
+	errNumberNeedsAddress = APIError{Type: ErrorTypeInvalidRequest, Code: codePhoneNumberNeedsAddress,
+		Message: "This number needs a verified address, which is not supported. Choose a number in the US or Canada, or contact support."}
+	errPhoneVendorFailed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
+		Message: "The phone vendor could not complete the request. Try again, or contact support if it keeps failing."}
+	errCallNotConfirmed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
+		Message: "The phone vendor did not confirm the call, so it can still ring. Do not place it again at once. Contact support if this keeps happening."}
+)
+
+// phoneFailure is the answer to a phone operation that failed. A vendor's own error is logged
+// in full and answered without its words, which can hold an account id. Anything else is the
+// router's or Stream's and says what the client can fix.
+func phoneFailure(logger *slog.Logger, err error) error {
+	if errors.Is(err, phone.ErrAddressRequired) {
+		logger.Info("a phone number needs an address", "error", err)
+		return errNumberNeedsAddress
+	}
+	if refused, ok := errors.AsType[*phone.VendorError](err); ok {
+		logger.Error("a phone vendor failed", "vendor", refused.Vendor, "path", refused.Path,
+			"status", refused.Status, "code", refused.Code, "message", refused.Message, "error", err)
+		return errPhoneVendorFailed
+	}
+	return invalidRequest(err.Error())
+}
+
+// callFailure is phoneFailure for an operation that starts a call: the vendor may have
+// placed it before its answer was lost, so the client is not told to try again.
+func callFailure(logger *slog.Logger, err error) error {
+	failure := phoneFailure(logger, err)
+	if failure == error(errPhoneVendorFailed) {
+		return errCallNotConfirmed
+	}
+	return failure
+}
+
+// isNumberNotHeld is the store's answer for a number the customer does not hold. A vendor's
+// error is never one, whatever its words, because those are not ours to show.
+func isNumberNotHeld(err error) bool {
+	if err == nil {
+		return false
+	}
+	if _, vendor := errors.AsType[*phone.VendorError](err); vendor {
+		return false
+	}
+	return strings.Contains(err.Error(), "is not a number")
+}
+
+// skipReason is why a vendor is missing from a search, in words a client may see.
+func skipReason(logger *slog.Logger, skip phone.Skip) string {
+	if refused, ok := errors.AsType[*phone.VendorError](skip.Err); ok {
+		logger.Error("a phone vendor failed", "vendor", refused.Vendor, "path", refused.Path,
+			"status", refused.Status, "code", refused.Code, "message", refused.Message, "error", skip.Err)
+		return "The phone vendor could not complete the request."
+	}
+	return skip.Reason
 }
 
 // sipTrunkFailure turns what the phone service said into the status a caller can act on.
@@ -1014,7 +1072,7 @@ type AttachNumberRequest struct {
 // AttachedNumber is the AttachedNumber schema.
 type AttachedNumber struct {
 	RouteId string `json:"route_id"`
-	SipUri  string `json:"sip_uri" doc:"Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com."`
+	SipUri  string `json:"sip_uri" doc:"Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com."`
 	TrunkId string `json:"trunk_id"`
 }
 

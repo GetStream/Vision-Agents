@@ -23,6 +23,8 @@ final readonly class Policy
         public ?DataPolicy $dataPolicy = null,
         // Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any to...
         public ?bool $promptInjection = null,
+        // Keep the app out of the router's own Stream app: in app mode it is never written there for want of a regist...
+        public ?bool $requireOwnStreamApp = null,
         // Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed w...
         /** @var array<string, string>|null */
         public ?array $tags = null,
@@ -39,6 +41,7 @@ final readonly class Policy
             budget: array_key_exists('budget', $data) && $data['budget'] !== null ? Budget::fromArray(Json::object($data, 'budget')) : null,
             dataPolicy: array_key_exists('data_policy', $data) && $data['data_policy'] !== null ? DataPolicy::fromArray(Json::object($data, 'data_policy')) : null,
             promptInjection: array_key_exists('prompt_injection', $data) && $data['prompt_injection'] !== null ? Json::bool($data, 'prompt_injection') : null,
+            requireOwnStreamApp: array_key_exists('require_own_stream_app', $data) && $data['require_own_stream_app'] !== null ? Json::bool($data, 'require_own_stream_app') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
         );
     }
@@ -62,6 +65,9 @@ final readonly class Policy
         }
         if ($this->promptInjection !== null) {
             $out['prompt_injection'] = $this->promptInjection;
+        }
+        if ($this->requireOwnStreamApp !== null) {
+            $out['require_own_stream_app'] = $this->requireOwnStreamApp;
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;

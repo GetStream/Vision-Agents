@@ -19,6 +19,8 @@ final readonly class PhoneNumber
         public \DateTimeImmutable $purchasedAt,
         public string $vendor,
         public ?\DateTimeImmutable $releasedAt = null,
+        // The customer's own SIP trunk calls from this number are dialled through. Present only for vendor sip_trunk.
+        public ?string $sipTrunkId = null,
         // The SIP trunk calls to this number arrive on. Absent until attached.
         public ?string $streamTrunkId = null,
         // The customer's own cost labels.
@@ -40,6 +42,7 @@ final readonly class PhoneNumber
             purchasedAt: Json::date($data, 'purchased_at'),
             vendor: Json::string($data, 'vendor'),
             releasedAt: array_key_exists('released_at', $data) && $data['released_at'] !== null ? Json::date($data, 'released_at') : null,
+            sipTrunkId: array_key_exists('sip_trunk_id', $data) && $data['sip_trunk_id'] !== null ? Json::string($data, 'sip_trunk_id') : null,
             streamTrunkId: array_key_exists('stream_trunk_id', $data) && $data['stream_trunk_id'] !== null ? Json::string($data, 'stream_trunk_id') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
         );
@@ -61,6 +64,9 @@ final readonly class PhoneNumber
         $out['vendor'] = $this->vendor;
         if ($this->releasedAt !== null) {
             $out['released_at'] = Json::dateValue($this->releasedAt);
+        }
+        if ($this->sipTrunkId !== null) {
+            $out['sip_trunk_id'] = $this->sipTrunkId;
         }
         if ($this->streamTrunkId !== null) {
             $out['stream_trunk_id'] = $this->streamTrunkId;

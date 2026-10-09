@@ -1,0 +1,63 @@
+id: telecom.monologue
+pack: telecom
+category: checklist
+name: A minute of outage details, with thinking pauses
+persona: A frustrated subscriber who describes the whole outage before the agent can ask.
+max_duration_s: 240
+instructions: Verify with PIN 4471, last four 9821, 14 Cedar Lane; internet down since 6 with gateway error 840; reboot then ticket.
+hold_floor: true
+turns:
+  - id: request
+    segments:
+      - text: "Hi, my internet has been down since about six this morning, and I work from home, so this is a real problem."
+        pause_after_ms: 1200
+      - text: "Let me give you my details first. The PIN on the account is 4471."
+        pause_after_ms: 900
+      - text: "The last four of the card are, one second, 9821."
+        pause_after_ms: 1800
+      - text: "And the service address is 14 Cedar Lane."
+        pause_after_ms: 1100
+      - text: "The light on the gateway is blinking orange, and the screen says error 840, if that means anything to you."
+        pause_after_ms: 1500
+      - text: "I already checked the cables behind the TV, they're all plugged in properly, and the power light is on."
+        pause_after_ms: 1000
+      - text: "I haven't restarted it yet, because last time someone told me not to touch it, so I'll do whatever you tell me."
+        pause_after_ms: 800
+      - text: "If it can't be fixed over the phone, I'd like a technician, mornings are best for me."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: reboot
+    text: "Okay, I restarted it like you said. It's still blinking orange and still no internet."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  # The agent may confirm before it acts, as it should with a real caller; this is the yes.
+  - id: go_ahead
+    text: "Yes, that's right. Please go ahead."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  outage: false
+  reboot_succeeds: false
+  gateway_error: "840"
+  accounts:
+    - {id: acc1, pin: "4471", last4: "9821", address: "14 Cedar Lane", plan: "fiber-500"}
+end_state:
+  - path: reboot_attempted
+    eq: true
+  - path: ticket.id
+    exists: true
+expected_tools:
+  - name: verify_account
+    args: {pin: "4471", last4: "9821", address: "14 Cedar Lane"}
+  - name: walk_reboot
+    args: {}
+  - name: create_ticket
+    args: {}
+entities:
+  - {name: last4, value: "9821", in_tools: true, in_speech: false, tool: verify_account, arg: last4}
+policy:
+  - Let the caller finish. Do not speak while they are still giving details, pauses included.
+  - Reboot before a truck roll.
+judge:
+  task: The agent waits for the whole description, verifies the account, walks the reboot, then opens a ticket.
+agent_replies:
+  - "Internet support, how can I help?"
+  - "Verified 14 Cedar Lane. Let's restart the gateway first."
+  - "Still down after the restart, so I've opened ticket T-1842 for a morning technician."

@@ -35,7 +35,8 @@ const (
 	ActShorten ActionKind = "shorten"
 	// ActBackchannel makes a short listening noise.
 	ActBackchannel ActionKind = "backchannel"
-	// ActCheckIn asks a caller who has gone quiet whether they need anything else.
+	// ActCheckIn speaks to a caller who has heard nothing for a while: whether they need
+	// anything else, or that the work they are waiting on is still going.
 	ActCheckIn ActionKind = "checkin"
 	// ActSupersede abandons a ruling asked for about words that have since changed.
 	ActSupersede ActionKind = "supersede"
@@ -102,11 +103,11 @@ type Action struct {
 	Participant stt.Participant
 	// Text is what was heard, or the murmur to make.
 	Text string
+	// Compose is what the model is asked to write a line for, when the words are only
+	// settled at the moment they are said.
+	Compose string
 	// TurnID is the reply being interrupted, shortened or abandoned.
 	TurnID string
-	// Supersede names an earlier turn whose delegated work is no longer wanted, because
-	// the caller has moved on from what asked for it.
-	Supersede string
 	// Clarify is what the model is told when the turn is owed a short question rather than
 	// an answer. Empty on a turn that is simply answered.
 	Clarify string
@@ -134,8 +135,17 @@ type floor struct {
 	// so there is nothing for them to hear finished or to echo, and what they say meanwhile
 	// replaces it.
 	Unheard bool
-	// Delegating reports whether the subagent is still working on something.
-	Delegating bool
+	// Talking reports whether the agent is writing or saying a reply, which Quiet cannot
+	// say on its own because a tool that is running also leaves the agent not quiet.
+	Talking bool
+	// Working names the work the caller is waiting on, a tool or the subagent, empty
+	// when nothing is running.
+	Working string
+	// Owed reports whether something came back that the caller has not been told yet.
+	Owed bool
+	// Composing reports whether a line the agent chose to say is still being written, which
+	// another would only repeat.
+	Composing bool
 	// LastSpokeAt is when the agent last published audio.
 	LastSpokeAt time.Time
 	// LastHeardAt is when anyone on the call was last transcribed.
@@ -180,8 +190,6 @@ type converse struct {
 	candidates map[string]candidate
 	// queued is a relevant turn heard while the agent chose to finish speaking.
 	queued *queuedCandidate
-	// lastCandidate owns delegated work from the last relevant caller turn.
-	lastCandidate string
 	// delegated is the turn each piece of delegated work was asked for in, so what comes
 	// back lands against the exchange that wanted it. A subagent's result names the task
 	// and not the turn, and by the time it arrives the conversation has usually moved on.
@@ -642,21 +650,12 @@ func (c *converse) ruled(ruling harness.Decided, state floor, primary bool) []Ac
 		Language:    ready.Language,
 	})
 
-	c.mu.Lock()
-	previous := c.lastCandidate
-	c.lastCandidate = ready.ID
-	c.mu.Unlock()
-	if previous == ready.ID {
-		previous = ""
-	}
-
 	answer := Action{
 		Kind:        ActAnswer,
 		Reason:      "a complete thought addressed to the agent",
 		Candidate:   ready,
 		Participant: ready.Participant,
 		Text:        ready.Text,
-		Supersede:   previous,
 		Clarify:     clarify,
 		LatencyMs:   ruling.TookMs,
 	}
@@ -800,15 +799,31 @@ func (c *converse) overlapRuled(ruling harness.Decided, seen overlapState, state
 // idle invites a caller who has gone quiet back into the conversation, because a silence
 // that nobody breaks is how a call ends by accident rather than because it was over.
 func (c *converse) idle(state floor, participant stt.Participant) []Action {
-	phrase := c.duplex.Idle(state.active(), state.Quiet)
-	if phrase == "" {
+	if !c.duplex.Idle(state.active(), state.Quiet) {
 		return nil
 	}
 	return []Action{c.decide(Action{
 		Kind:        ActCheckIn,
 		Reason:      "nobody has said anything for a while, asking whether there is anything else",
 		Participant: participant,
-		Text:        phrase,
+		Compose:     idlePurpose,
+	})}
+}
+
+// update tells a caller waiting on work that it is still going, once they have heard
+// nothing for long enough to wonder.
+func (c *converse) update(state floor, participant stt.Participant) []Action {
+	if state.Talking {
+		return nil
+	}
+	if !c.duplex.Update(state.Working, state.LastSpokeAt) {
+		return nil
+	}
+	return []Action{c.decide(Action{
+		Kind:        ActCheckIn,
+		Reason:      "work the caller was promised is still running and they have heard nothing for a while",
+		Participant: participant,
+		Compose:     updatePurpose,
 	})}
 }
 
@@ -818,8 +833,16 @@ func (c *converse) Tick(state floor) []Action {
 	participant, _, hearing := c.cadence.Active()
 	if !hearing {
 		participant = state.LastParticipant
-	}
-	if !hearing && !state.Delegating {
+		switch {
+		case state.Composing:
+			return nil
+		case state.Owed:
+			// The answer is on its way to them, and asking whether there is anything
+			// else would talk over the thing they asked for.
+			return nil
+		case state.Working != "":
+			return c.update(state, participant)
+		}
 		return c.idle(state, participant)
 	}
 
@@ -828,13 +851,9 @@ func (c *converse) Tick(state floor) []Action {
 		return nil
 	}
 
-	reason := "the caller has been talking a while without hearing anything back"
-	if !hearing {
-		reason = "work the caller was promised is still running and they have heard nothing for a while"
-	}
 	return []Action{c.decide(Action{
 		Kind:        ActBackchannel,
-		Reason:      reason,
+		Reason:      "the caller has been talking a while without hearing anything back",
 		Participant: participant,
 		Text:        phrase,
 	})}

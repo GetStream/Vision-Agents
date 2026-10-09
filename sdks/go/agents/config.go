@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"net/http"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
 // Sync stores the agent's configuration in the backend, along with its skills and whatever
@@ -136,7 +138,7 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 	if err != nil {
 		return nil, fmt.Errorf("agents: syncing %s: %w", a.options.Name, err)
 	}
-	result, err := answer(synced.JSON200, synced.JSON400, synced.JSON401, nil, synced.Status())
+	result, err := answer(synced.JSON200, synced.HTTPResponse, synced.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +297,7 @@ func storedConfig(ctx context.Context, client *acceleration.ClientWithResponses,
 	if err != nil {
 		return nil, fmt.Errorf("agents: listing configs: %w", err)
 	}
-	stored, err := answer(listed.JSON200, listed.JSON400, listed.JSON401, nil, listed.Status())
+	stored, err := answer(listed.JSON200, listed.HTTPResponse, listed.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +335,7 @@ func DefineAgent(
 	if err != nil {
 		return nil, fmt.Errorf("agents: listing configs: %w", err)
 	}
-	stored, err := answer(listed.JSON200, listed.JSON400, listed.JSON401, nil, listed.Status())
+	stored, err := answer(listed.JSON200, listed.HTTPResponse, listed.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -346,14 +348,14 @@ func DefineAgent(
 		if err != nil {
 			return nil, fmt.Errorf("agents: updating config %s: %w", config.Id, err)
 		}
-		return answer(updated.JSON200, updated.JSON400, updated.JSON401, updated.JSON404, updated.Status())
+		return answer(updated.JSON200, updated.HTTPResponse, updated.Body)
 	}
 
 	created, err := client.CreateAgentConfigWithResponse(ctx, wanted)
 	if err != nil {
 		return nil, fmt.Errorf("agents: creating config %s: %w", wanted.Name, err)
 	}
-	return answer(created.JSON201, created.JSON400, created.JSON401, nil, created.Status())
+	return answer(created.JSON201, created.HTTPResponse, created.Body)
 }
 
 // DefineSkills stores skills, editing whichever is already under each name.
@@ -362,7 +364,7 @@ func DefineSkills(ctx context.Context, client *acceleration.ClientWithResponses,
 	if err != nil {
 		return fmt.Errorf("agents: listing skills: %w", err)
 	}
-	stored, err := answer(listed.JSON200, listed.JSON400, listed.JSON401, nil, listed.Status())
+	stored, err := answer(listed.JSON200, listed.HTTPResponse, listed.Body)
 	if err != nil {
 		return err
 	}
@@ -379,7 +381,7 @@ func DefineSkills(ctx context.Context, client *acceleration.ClientWithResponses,
 			if err != nil {
 				return fmt.Errorf("agents: updating skill %s: %w", skill.Name, err)
 			}
-			if _, err := answer(updated.JSON200, updated.JSON400, updated.JSON401, updated.JSON404, updated.Status()); err != nil {
+			if _, err := answer(updated.JSON200, updated.HTTPResponse, updated.Body); err != nil {
 				return err
 			}
 			continue
@@ -389,7 +391,7 @@ func DefineSkills(ctx context.Context, client *acceleration.ClientWithResponses,
 		if err != nil {
 			return fmt.Errorf("agents: creating skill %s: %w", skill.Name, err)
 		}
-		if _, err := answer(created.JSON201, created.JSON400, created.JSON401, nil, created.Status()); err != nil {
+		if _, err := answer(created.JSON201, created.HTTPResponse, created.Body); err != nil {
 			return err
 		}
 	}
@@ -469,7 +471,7 @@ func IngestKnowledge(
 	if err != nil {
 		return fmt.Errorf("agents: filling %s: %w", namespace, err)
 	}
-	_, err = answer(written.JSON200, written.JSON400, written.JSON401, nil, written.Status())
+	_, err = answer(written.JSON200, written.HTTPResponse, written.Body)
 	return err
 }
 
@@ -495,7 +497,7 @@ func SubscribeKnowledgeURLs(
 		if err != nil {
 			return fmt.Errorf("agents: reading %s: %w", page.URL, err)
 		}
-		if _, err := answer(added.JSON201, added.JSON400, added.JSON401, added.JSON403, added.Status()); err != nil {
+		if _, err := answer(added.JSON201, added.HTTPResponse, added.Body); err != nil {
 			return err
 		}
 	}
@@ -503,16 +505,11 @@ func SubscribeKnowledgeURLs(
 }
 
 // answer returns what the router sent, raising what it said went wrong instead.
-func answer[T any](ok *T, bad, unauthorized, missing *acceleration.ErrorResponse, status string) (*T, error) {
+func answer[T any](ok *T, response *http.Response, body []byte) (*T, error) {
 	if ok != nil {
 		return ok, nil
 	}
-	for _, failure := range []*acceleration.ErrorResponse{bad, unauthorized, missing} {
-		if failure != nil {
-			return nil, fmt.Errorf("agents: %s", failure.Error.Message)
-		}
-	}
-	return nil, fmt.Errorf("agents: the router answered %s", status)
+	return nil, stream.NewRouterError(response, body, "agents", "", "the router answered "+response.Status)
 }
 
 // deref is what a field holds, or its zero value when it holds nothing.

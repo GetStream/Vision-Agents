@@ -2,6 +2,8 @@ package io.getstream.visionagents.core
 
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.EmbeddedServer
@@ -40,6 +42,11 @@ data class Arrived(
 /** What the router answers one request with. */
 data class Reply(val status: Int = 200, val body: String = "", val headers: Map<String, String> = emptyMap())
 
+/** A failure as the router answers every one. */
+fun envelope(type: String, code: String, message: String) =
+    """{"error":{"message":"$message","type":"$type","code":"$code",""" +
+        """"doc_url":"https://getstream.io/agents/docs/api/errors/#$code"}}"""
+
 /** Something the test tells the socket to do. */
 sealed interface Script {
     data class Send(val frame: String) : Script
@@ -63,10 +70,21 @@ class TestRouter : AutoCloseable {
     /** What the socket does next, in order. */
     val script = Channel<Script>(Channel.UNLIMITED)
 
-    @Volatile var answer: (Arrived) -> Reply = { Reply(404, """{"error":"nothing scripted"}""") }
+    @Volatile var answer: (Arrived) -> Reply = { Reply(404, envelope("not_found", "not_found", "nothing scripted")) }
+
+    /** What the socket's handshake is answered with in place of the upgrade, or null to upgrade. */
+    @Volatile var refuseHandshake: Reply? = null
 
     private val server: EmbeddedServer<*, *> = embeddedServer(CIO, port = 0, host = "127.0.0.1") {
         install(WebSockets)
+        intercept(ApplicationCallPipeline.Plugins) {
+            val refusal = refuseHandshake
+            if (refusal != null && call.request.path().endsWith("/events")) {
+                refusal.headers.forEach { (name, value) -> call.response.header(name, value) }
+                call.respondText(refusal.body, ContentType.Application.Json, HttpStatusCode.fromValue(refusal.status))
+                finish()
+            }
+        }
         routing {
             webSocket("/v1/agents/sessions/{id}/events") {
                 handshakes += Arrived(

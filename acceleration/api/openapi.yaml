@@ -440,7 +440,7 @@ components:
         - name
       type: object
     AgentConnectorBinding:
-      description: 'A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against.'
+      description: 'A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with.'
       properties:
         connection:
           $ref: '#/components/schemas/AgentConnectorSelection'
@@ -471,7 +471,7 @@ components:
           minimum: 1
           type: integer
         tools:
-          description: The exact tools allowed, each named once. There is no wildcard, and an empty list grants none.
+          description: The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use.
           items:
             $ref: '#/components/schemas/ConnectorToolGrant'
           maxItems: 128
@@ -717,7 +717,7 @@ components:
         route_id:
           type: string
         sip_uri:
-          description: Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com.
+          description: 'Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com.'
           type: string
         trunk_id:
           type: string
@@ -1811,11 +1811,18 @@ components:
           format: date-time
           readOnly: true
           type: string
+        definition_broken_reason:
+          description: Why the connector marked definition_revision broken. Present only when definition_status is broken.
+          readOnly: true
+          type: string
         definition_revision:
-          description: The connector's revision when the connection was made, which it keeps reading until it is reconnected.
+          description: 'The connector''s revision the connection reads: the one its grant was made on. Every consent runs on the connector''s latest revision, and one that connects the connection moves it there; until then it keeps this one.'
           format: int64
           readOnly: true
           type: integer
+        definition_status:
+          $ref: '#/components/schemas/ConnectionDefinitionStatus'
+          readOnly: true
         expires_at:
           description: When the current credential expires. Absent when there is none or it does not.
           format: date-time
@@ -1867,6 +1874,7 @@ components:
         - id
         - connector_id
         - definition_revision
+        - definition_status
         - owner
         - auth_scheme
         - inputs
@@ -1895,6 +1903,13 @@ components:
       required:
         - expected_revision
       type: object
+    ConnectionDefinitionStatus:
+      description: 'current when the connection reads its connector''s latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until a consent connects it again, on the latest revision.'
+      enum:
+        - current
+        - outdated
+        - broken
+      type: string
     ConnectionInvocation:
       description: 'One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept.'
       properties:
@@ -2023,6 +2038,26 @@ components:
         - needs_reauthorization
         - disconnected
       type: string
+    ConnectionToken:
+      description: A connection's access credential, for the app's backend to call the provider with directly. It holds no refresh token.
+      properties:
+        connection_id:
+          type: string
+        expires_at:
+          description: When it stops working. Absent when the provider gave no expiry. Export again for a fresh one.
+          format: date-time
+          type: string
+        header:
+          description: 'The HTTP field to send it in: Authorization for an OAuth access token, the connection''s own header for an API key.'
+          type: string
+        value:
+          description: 'The whole field value: Bearer and the access token for an OAuth access token (RFC 6750 section 2.1), the key for an API key.'
+          type: string
+      required:
+        - connection_id
+        - header
+        - value
+      type: object
     ConnectionTool:
       properties:
         description:
@@ -2195,14 +2230,16 @@ components:
         - created_at
       type: object
     ConnectorAuditAction:
-      description: 'grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted.'
+      description: 'grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app''s backend exported its access credential. proxy_call: a direct call went to the provider through the connection.'
       enum:
         - grant_created
         - grant_refreshed
         - grant_revoked
+        - token_export
+        - proxy_call
       type: string
     ConnectorAuditEvent:
-      description: One grant a connection got, renewed or lost, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
+      description: One grant a connection got, renewed or lost, one export of its access credential, or one direct call sent through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
       properties:
         action:
           $ref: '#/components/schemas/ConnectorAuditAction'
@@ -2219,6 +2256,10 @@ components:
           type: string
         id:
           type: string
+        latency_ms:
+          description: How long a proxy_call took until the provider's answer, in milliseconds. Absent for a grant.
+          format: int64
+          type: integer
         owner_type:
           $ref: '#/components/schemas/ConnectionOwnerType'
         reason:
@@ -2233,6 +2274,13 @@ components:
           type: integer
         session_id:
           description: The session whose tool call caused it. Absent for an incognito session, and once the connection's user was deleted.
+          type: string
+        status_code:
+          description: A proxy_call's status from the provider. Absent when no answer came, and for a grant.
+          format: int64
+          type: integer
+        target:
+          description: The host a proxy_call reached. Absent for a grant.
           type: string
       required:
         - id
@@ -2279,11 +2327,11 @@ components:
       description: How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
       properties:
         cancellable:
-          description: 'Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding''s timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption.'
+          description: Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running once the session stops waiting, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It does not matter with on_interrupt wait, whose call the session always waits for.
           type: boolean
         on_interrupt:
           $ref: '#/components/schemas/ConnectorOnInterrupt'
-          description: What an interruption of the turn does to a call in flight. Omitted is cancel.
+          description: What an interruption of the turn does to a call in flight. Omitted, the call goes on and the caller is told its result when it comes, unless they withdraw what they asked for, which stops it.
         pre_speech:
           description: What the agent says while one of the binding's tools runs, such as "Let me pull up your calendar.", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started.
           minLength: 1
@@ -2621,12 +2669,11 @@ components:
           minLength: 1
           type: string
         schema_digest:
-          description: The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered.
+          description: 'The SHA-256 of the tool''s name, description and input schema, as 64 lowercase hex characters. A tool whose schema has changed since no longer matches and is not offered. Required on a fixed binding. A session binding may leave it out: the first session that opens a person''s connection pins the digest the provider lists then, later sessions offer the tool only while it still matches, and a reconnect pins again.'
           pattern: ^[a-f0-9]{64}$
           type: string
       required:
         - name
-        - schema_digest
       type: object
     Contact:
       properties:
@@ -9291,7 +9338,7 @@ paths:
   /v1/agents/connections/{id}/authorizations:
     post:
       description: |-
-        Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
+        Starts the provider's consent for a connection: a consent for a pending one, a reconnect for one connected before. Open launch_url in a popup from the dashboard and post it handoff_token when it says it is ready; the browser then goes to the provider and comes back to the router, which stores the grant and sends the browser to the dashboard with connection_id and status (connected, denied, failed or account_mismatch). A reconnect that comes back with another provider account keeps the old grant. The consent runs on the connector's latest revision, and the connection reads that revision once the consent connects it. Who may start it is who may read the connection. Needs ROUTER_PUBLIC_URL, where the provider sends the browser back to.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: createAuthorization
@@ -9416,6 +9463,366 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: List a connection's tool calls
+  /v1/agents/connections/{id}/proxy/{path}:
+    delete:
+      description: |-
+        Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: proxyConnectionDelete
+      parameters:
+        - description: The connection.
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The provider's answer, as it came. It may have any status, a 401 or a 429 included.
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The connection is not connected
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The body is over 1 MiB
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'The provider asked to wait: retry after the Retry-After header''s seconds. A 429 the provider answered itself comes back as it came.'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The call did not reach the provider, or its answer did not come back
+      summary: Call a connection's provider directly (DELETE)
+    get:
+      description: |-
+        Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: proxyConnectionGet
+      parameters:
+        - description: The connection.
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The provider's answer, as it came. It may have any status, a 401 or a 429 included.
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The connection is not connected
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The body is over 1 MiB
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'The provider asked to wait: retry after the Retry-After header''s seconds. A 429 the provider answered itself comes back as it came.'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The call did not reach the provider, or its answer did not come back
+      summary: Call a connection's provider directly (GET)
+    patch:
+      description: |-
+        Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: proxyConnectionPatch
+      parameters:
+        - description: The connection.
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          '*/*':
+            schema:
+              format: binary
+              type: string
+              x-contentMediaType: application/octet-stream
+        description: The body for the provider, of any media type, at most 1 MiB.
+      responses:
+        "200":
+          description: The provider's answer, as it came. It may have any status, a 401 or a 429 included.
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The connection is not connected
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The body is over 1 MiB
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'The provider asked to wait: retry after the Retry-After header''s seconds. A 429 the provider answered itself comes back as it came.'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The call did not reach the provider, or its answer did not come back
+      summary: Call a connection's provider directly (PATCH)
+    post:
+      description: |-
+        Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: proxyConnectionPost
+      parameters:
+        - description: The connection.
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          '*/*':
+            schema:
+              format: binary
+              type: string
+              x-contentMediaType: application/octet-stream
+        description: The body for the provider, of any media type, at most 1 MiB.
+      responses:
+        "200":
+          description: The provider's answer, as it came. It may have any status, a 401 or a 429 included.
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The connection is not connected
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The body is over 1 MiB
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'The provider asked to wait: retry after the Retry-After header''s seconds. A 429 the provider answered itself comes back as it came.'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The call did not reach the provider, or its answer did not come back
+      summary: Call a connection's provider directly (POST)
+    put:
+      description: |-
+        Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: proxyConnectionPut
+      parameters:
+        - description: The connection.
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          '*/*':
+            schema:
+              format: binary
+              type: string
+              x-contentMediaType: application/octet-stream
+        description: The body for the provider, of any media type, at most 1 MiB.
+      responses:
+        "200":
+          description: The provider's answer, as it came. It may have any status, a 401 or a 429 included.
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The connection is not connected
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The body is over 1 MiB
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'The provider asked to wait: retry after the Retry-After header''s seconds. A 429 the provider answered itself comes back as it came.'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The call did not reach the provider, or its answer did not come back
+      summary: Call a connection's provider directly (PUT)
+  /v1/agents/connections/{id}/token:
+    post:
+      description: |-
+        The connection's current access credential, for the app's backend to call the provider with directly: an OAuth access token, renewed first when it is about to expire, or an API key. A refresh token is never exported. Only the customer's own provider app exports: an oauth2_code connection exports when its grant was issued to the client the app registered itself, and that client is still the connector's; a grant issued to Stream's app, or to one the router created, is refused with a 403. An api_key connection always exports, since the key is the app's own. Other schemes are refused. Each export is recorded in the connector audit as token_export. Who may export it is who may read it.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: exportConnectionToken
+      parameters:
+        - description: The connection, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connection, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionToken'
+          description: The access credential
+          headers:
+            Cache-Control:
+              schema:
+                description: 'Always no-store: keep the token out of every cache.'
+                type: string
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+      summary: Export a connection's access token
   /v1/agents/connections/{id}/tools:
     get:
       description: |-
@@ -12615,6 +13022,52 @@ paths:
           description: The classifier is overloaded or could not be reached. Ask again after a wait.
       summary: Ask a classifier typed questions about a piece of text
   /v1/connectors/events/{connector_id}/{provider_app_id}:
+    get:
+      description: 'Where a provider checks a provider app''s events URL before it delivers to it: Meta''s Verify Token check of a customer''s WhatsApp webhook, for one. Unauthenticated because the provider is not a customer. Only a connector whose manifest declares channel.handshake answers it; the verify token is the provider app''s id, the one in the URL, so nothing is stored for it, and every delivery is still verified with the app''s own secret. With hub.mode subscribe, hub.verify_token the provider app''s id and hub.challenge digits only, the challenge is echoed as text/plain. Any other connector, an unknown provider app, or a deployment without connectors answers 405 as for any method a route does not serve. No SDK wraps it: only a provider calls it.'
+      operationId: answerProviderAppHandshake
+      parameters:
+        - description: The connector the provider app is of, such as whatsapp.
+          in: path
+          name: connector_id
+          required: true
+          schema:
+            type: string
+        - description: The provider's id for the app, such as a Meta app id.
+          in: path
+          name: provider_app_id
+          required: true
+          schema:
+            type: string
+        - description: subscribe.
+          in: query
+          name: hub.mode
+          schema:
+            type: string
+        - description: The provider app's id.
+          in: query
+          name: hub.verify_token
+          schema:
+            type: string
+        - description: Digits to echo.
+          in: query
+          name: hub.challenge
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: The challenge, echoed
+        "404":
+          description: 'The query is not this URL''s handshake: another mode or token, or a challenge that is not digits'
+        "405":
+          description: This connector, or this deployment, answers no handshake here
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Answer a provider app's handshake
     post:
       description: 'Where a provider delivers the events of one customer''s provider app: the Request URL of a customer''s Slack app, for one. Unauthenticated because the provider is not a customer: each request is checked by the verifier the connector''s manifest names (channel.verifier) against that app''s own signing secret, so an event signed for another app is refused and changes nothing. A URL verification is answered with its challenge as text/plain. A signal that a grant ended moves the app''s customer''s connections of that account to needs_reauthorization, unless they connected after the event. A message goes to the channel bridge, which writes it into the thread channel of its external thread in Stream Chat; a retried delivery is dropped. The body is at most 256 KiB. No SDK wraps it: only a provider calls it.'
       operationId: receiveProviderAppEvent

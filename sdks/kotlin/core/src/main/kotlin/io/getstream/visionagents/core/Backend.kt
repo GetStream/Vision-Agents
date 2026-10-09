@@ -56,11 +56,14 @@ public class Backend(
     /** The router's base URL, with no trailing slash. */
     public val url: String = url.trimEnd('/')
 
-    internal val http: HttpClient = HttpClient(OkHttp) {
-        expectSuccess = false
-        install(WebSockets)
-        engine {
-            if (okHttpClient != null) preconfigured = okHttpClient
+    internal val http: HttpClient = (okHttpClient ?: OkHttpClient()).let { client ->
+        HttpClient(OkHttp) {
+            expectSuccess = false
+            install(WebSockets)
+            engine {
+                preconfigured = client
+                webSocketFactory = Handshakes(client)
+            }
         }
     }
 

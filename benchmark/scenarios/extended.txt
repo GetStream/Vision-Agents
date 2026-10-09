@@ -1,0 +1,12 @@
+# Extended Voicebench scenario set: scenarios outside the frozen one, run by hand with
+# --extended (or set=extended on Run workflow) until a methodology bump takes them in.
+# One id per line.
+restaurant.correction
+restaurant.terse
+restaurant.side_voice
+healthcare.silence
+healthcare.tv
+healthcare.accent
+telecom.dictation
+telecom.angry
+telecom.music

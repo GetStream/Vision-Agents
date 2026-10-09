@@ -9,19 +9,31 @@ namespace GetStream\VisionAgents\Generated;
 use GetStream\VisionAgents\Json;
 
 /**
- * A catalog plugin as this agent has it, including whether it is logged in.
+ * A catalog plugin as this agent has it, including whether it is logged in. A plugin the
+ * config names that nobody has logged into yet is not_connected, which is what a dashboard
+ * reminds the app to finish, unless it has user, when each end user connects it in the
+ * conversation.
  */
 final readonly class PluginConnection
 {
     public function __construct(
+        // Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an MCP server na...
+        public string $logoUrl,
         public string $name,
         public string $pluginId,
+        // The app's login. Always not_connected for a plugin with user, which the app does not log into.
         public string $status,
         public ?string $category = null,
+        // The OAuth client the config set for the plugin. Absent when it set none.
+        public ?PluginClient $client = null,
+        // True when nobody can connect the plugin until the config has a client of the app's own, set with setPluginC...
+        public ?bool $clientRequired = null,
         public ?string $description = null,
         public ?string $instanceHint = null,
         public ?bool $instanceRequired = null,
         public ?string $instanceUrl = null,
+        // True when the config names the plugin under user_plugins only: each end user connects their own account in...
+        public ?bool $user = null,
     ) {
     }
 
@@ -31,14 +43,18 @@ final readonly class PluginConnection
     public static function fromArray(array $data): self
     {
         return new self(
+            logoUrl: Json::string($data, 'logo_url'),
             name: Json::string($data, 'name'),
             pluginId: Json::string($data, 'plugin_id'),
             status: Json::string($data, 'status'),
             category: array_key_exists('category', $data) && $data['category'] !== null ? Json::string($data, 'category') : null,
+            client: array_key_exists('client', $data) && $data['client'] !== null ? PluginClient::fromArray(Json::object($data, 'client')) : null,
+            clientRequired: array_key_exists('client_required', $data) && $data['client_required'] !== null ? Json::bool($data, 'client_required') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             instanceHint: array_key_exists('instance_hint', $data) && $data['instance_hint'] !== null ? Json::string($data, 'instance_hint') : null,
             instanceRequired: array_key_exists('instance_required', $data) && $data['instance_required'] !== null ? Json::bool($data, 'instance_required') : null,
             instanceUrl: array_key_exists('instance_url', $data) && $data['instance_url'] !== null ? Json::string($data, 'instance_url') : null,
+            user: array_key_exists('user', $data) && $data['user'] !== null ? Json::bool($data, 'user') : null,
         );
     }
 
@@ -50,11 +66,18 @@ final readonly class PluginConnection
     public function toArray(): array
     {
         $out = [];
+        $out['logo_url'] = $this->logoUrl;
         $out['name'] = $this->name;
         $out['plugin_id'] = $this->pluginId;
         $out['status'] = $this->status;
         if ($this->category !== null) {
             $out['category'] = $this->category;
+        }
+        if ($this->client !== null) {
+            $out['client'] = $this->client->toArray();
+        }
+        if ($this->clientRequired !== null) {
+            $out['client_required'] = $this->clientRequired;
         }
         if ($this->description !== null) {
             $out['description'] = $this->description;
@@ -67,6 +90,9 @@ final readonly class PluginConnection
         }
         if ($this->instanceUrl !== null) {
             $out['instance_url'] = $this->instanceUrl;
+        }
+        if ($this->user !== null) {
+            $out['user'] = $this->user;
         }
         return $out;
     }

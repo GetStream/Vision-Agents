@@ -463,10 +463,11 @@ type ConnectorBinding struct {
 	Policy *BindingPolicy `json:"policy,omitempty"`
 }
 
-// The values of BindingPolicy.OnInterrupt. Empty is InterruptCancel.
+// The values of BindingPolicy.OnInterrupt. Empty lets the call outlive an interruption, and
+// leaves it to be stopped when the caller withdraws what it was asked.
 const (
-	// InterruptCancel stops waiting for the call when the turn is interrupted: today's
-	// behaviour, and Pipecat's default (cancel_on_interruption=True).
+	// InterruptCancel stops waiting for the call when the turn is interrupted, as Pipecat
+	// does by default (cancel_on_interruption=True).
 	InterruptCancel = "cancel"
 	// InterruptWait lets the call finish after an interruption, as LiveKit does for a tool
 	// not flagged CANCELLABLE; its result goes into the history.
@@ -479,7 +480,7 @@ type BindingPolicy struct {
 	// PreSpeech is what the agent says while one of the binding's tools runs, in place of
 	// the phrase it would pick itself. Empty leaves the agent's own.
 	PreSpeech string `json:"pre_speech,omitempty"`
-	// OnInterrupt is InterruptCancel or InterruptWait. Empty is InterruptCancel.
+	// OnInterrupt is InterruptCancel, InterruptWait, or empty for neither.
 	OnInterrupt string `json:"on_interrupt,omitempty"`
 	// Cancellable is whether the provider is told to stop a call the session stopped
 	// waiting for. Nil is true.

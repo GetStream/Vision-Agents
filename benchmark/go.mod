@@ -3,6 +3,7 @@ module github.com/GetStream/Vision-Agents/benchmark
 go 1.27.0
 
 require (
+	github.com/GetStream/Vision-Agents/sdks/go v0.0.0
 	github.com/GetStream/getstream-go-webrtc v0.0.0-20260923215301-80daf64c2fc1
 	github.com/GetStream/protocol v1.49.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
@@ -79,7 +80,6 @@ require (
 	github.com/pion/sctp v1.11.1 // indirect
 	github.com/pion/sdp/v3 v3.0.19 // indirect
 	github.com/pion/srtp/v3 v3.0.13 // indirect
-	github.com/pion/stun/v3 v3.1.6 // indirect
 	github.com/pion/stun/v4 v4.0.0 // indirect
 	github.com/pion/transport/v4 v4.1.0 // indirect
 	github.com/pion/turn/v5 v5.1.0 // indirect
@@ -117,3 +117,5 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302 // indirect
 )
+
+replace github.com/GetStream/Vision-Agents/sdks/go => ../sdks/go

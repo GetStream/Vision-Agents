@@ -45,14 +45,8 @@ public struct Router: Sendable {
         switch output {
         case .ok(let response):
             return SearchAnswer(try response.body.json)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
+        default:
+            throw AgentsError.undescribedSuccess
         }
     }
 

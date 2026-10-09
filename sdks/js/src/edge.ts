@@ -1,5 +1,5 @@
 import { API_KEY_ENV, API_SECRET_ENV, env, signToken } from "./backend.js";
-import { ConfigurationError, RouterError } from "./errors.js";
+import { ConfigurationError, errorOf } from "./errors.js";
 
 /** Where Stream's API is. The video paths are served from the same host as chat's. */
 const STREAM_API = "https://chat.stream-io-api.com";
@@ -95,12 +95,7 @@ export class Edge {
       body: JSON.stringify({ data: { created_by_id: createdBy.id } }),
     });
     if (!response.ok) {
-      const said = await response.text().catch(() => "");
-      throw new RouterError(
-        response.status,
-        `POST /video/call/${named.type}/${named.id}`,
-        said.trim() || `Stream answered ${response.status}`,
-      );
+      throw await errorOf(response, `POST /video/call/${named.type}/${named.id}`, "Stream");
     }
     return named;
   }

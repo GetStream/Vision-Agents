@@ -15,7 +15,7 @@ import (
 
 const SchemaVersion = 3
 const BenchmarkVersion = "0.4.0"
-const MethodologyVersion = "voicebench-live-v3"
+const MethodologyVersion = "voicebench-live-v5"
 
 const KindAgent = "agent"
 const KindSTT = "stt"
@@ -44,9 +44,12 @@ type CallResult struct {
 
 // RunManifest identifies the code, inputs, and runtime configuration behind a result.
 type RunManifest struct {
-	GitCommit                string            `json:"git_commit"`
-	GitDirty                 bool              `json:"git_dirty"`
-	ScenarioHash             string            `json:"scenario_hash"`
+	GitCommit    string `json:"git_commit"`
+	GitDirty     bool   `json:"git_dirty"`
+	ScenarioHash string `json:"scenario_hash"`
+	// DatasetHash fingerprints the clip manifest and its audio for an STT run, and the text
+	// corpus for a TTS run.
+	DatasetHash              string            `json:"dataset_hash,omitempty"`
 	ContractHash             string            `json:"contract_hash"`
 	Transport                string            `json:"transport"`
 	Target                   string            `json:"target"`
@@ -82,6 +85,10 @@ type Summary struct {
 	K                  int               `json:"k"`
 	Packs              []PackSummary     `json:"packs"`
 	Calls              []CallResult      `json:"calls"`
+	// STT is one row per target, for a run of kind stt.
+	STT []STTSummary `json:"stt,omitempty"`
+	// TTS is one row per target, for a run of kind tts.
+	TTS []TTSSummary `json:"tts,omitempty"`
 }
 
 // PackSummary is one vertical column.
@@ -788,6 +795,12 @@ func gateDetails(m score.Metrics) []gateDetail {
 	}
 	if containsNote(m.GateNotes, "hold") {
 		add("hold", []string{"agent did not continue through mid-speech overlap"})
+	}
+	if containsNote(m.GateNotes, "check_in") {
+		add("check_in", []string{"agent stayed silent while the caller went quiet: " + strings.Join(m.CheckInFail, ", ")})
+	}
+	if containsNote(m.GateNotes, "false_cutoff") {
+		add("false_cutoff", []string{fmt.Sprintf("agent started talking %d time(s) while the caller was still in a turn", m.FalseCutoff)})
 	}
 	return out
 }

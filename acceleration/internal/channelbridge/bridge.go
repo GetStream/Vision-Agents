@@ -32,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -74,11 +75,15 @@ const maxAnswerBytes = 1 << 20
 // contact map, so each channel adds its connector here: slack_bot is Slack (T35), keyed by
 // the workspace and the user; linq is iMessage (T36), keyed by the sender's number, so an
 // author Linq names by an email address gets no card; telnyx is SMS (T53), keyed by the
-// sender's number, with the carriers' keywords (keywords.go). WhatsApp (T51) adds its own.
+// sender's number, with the carriers' keywords (keywords.go); whatsapp is WhatsApp (T51),
+// keyed by the sender's number with a +, with the same keywords, which Meta answers none of.
+// linq has them too since T62a (AI-921), as internal/channels' iMessage lines do; Linq answers
+// none of them itself (keywords.go).
 var episodeSources = map[string]episodeSource{
 	"slack_bot": {source: store.EpisodeSlack, person: omnichannel.SlackUser},
-	"linq":      {source: store.EpisodeIMessage, person: byNumber},
+	"linq":      {source: store.EpisodeIMessage, person: byNumber, optOuts: dlc.IMessage, chats: true},
 	"telnyx":    {source: store.EpisodeSMS, person: byNumber, optOuts: dlc.SMS, answered: telnyxAnswered},
+	"whatsapp":  {source: store.EpisodeWhatsApp, person: byWhatsAppNumber, optOuts: dlc.WhatsApp, recipient: whatsAppNumber},
 }
 
 // episodeSource is one connector's card source and the person its message's author is.
@@ -92,11 +97,39 @@ type episodeSource struct {
 	// answered is whether the provider answered a keyword itself, read from the raw event, so
 	// the bridge records it without answering it again (keywords.go). Nil is never.
 	answered func(raw []byte) bool
+	// recipient is the opt-out recipient an author id, or the thread key a reply goes to, is:
+	// the number in E.164, the shape the opt-out API names (api.OptOut, «The number, in
+	// E.164»). Nil is the id as the provider wrote it.
+	recipient func(id string) string
+	// chats is a thread key that is a chat, not the person a reply reaches: a Linq chat id
+	// (linq.yaml). Its replies reach the person who started the thread (replyTo).
+	chats bool
+}
+
+// recipientOf is the opt-out recipient an author id or a thread key is.
+func (source episodeSource) recipientOf(id string) string {
+	if source.recipient == nil {
+		return id
+	}
+	return source.recipient(id)
 }
 
 // byNumber is the person an author's E.164 number is to the contact map.
 func byNumber(_, author string) (omnichannel.Person, error) {
 	return omnichannel.Phone(author)
+}
+
+// whatsAppNumber is a WhatsApp author's number in E.164. Meta writes messages[].from as the
+// digits of the international number with no + («"from": "16505551234"»,
+// https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/payload-examples, opened
+// October 8, 2026), the rule internal/channels' e164 follows too.
+func whatsAppNumber(from string) string {
+	return "+" + from
+}
+
+// byWhatsAppNumber is the person a WhatsApp author's number is to the contact map.
+func byWhatsAppNumber(_, author string) (omnichannel.Person, error) {
+	return omnichannel.Phone(whatsAppNumber(author))
 }
 
 // Options configures a Bridge.
@@ -116,7 +149,12 @@ type Options struct {
 	// RetryBackoff is how long to wait before each send of a reply again after one that
 	// failed for a reason a later send can get past. Nil is defaultRetryBackoff.
 	RetryBackoff []time.Duration
-	Logger       *slog.Logger
+	// Gate is the sandbox and opt-out gate every text passes (dlc.Gate). A message on a
+	// texting connector, one whose episode source names an opt-out channel, passes it before
+	// it reaches the agent, and each reply before it is sent, as on internal/channels' lines
+	// (T62a, AI-921). Nil lets everything through, as a nil *dlc.Gate does.
+	Gate   *dlc.Gate
+	Logger *slog.Logger
 }
 
 // defaultRetryBackoff is a choice, not a vendor's figure: three more sends within about 45 s,
@@ -138,6 +176,7 @@ type Bridge struct {
 	cards *omnichannel.Cards
 	// retries are the waits before each send of a reply again (Options.RetryBackoff).
 	retries []time.Duration
+	gate    *dlc.Gate
 	logger  *slog.Logger
 
 	working sync.WaitGroup
@@ -170,6 +209,7 @@ func New(options Options) (*Bridge, error) {
 		resolver:   options.Resolver,
 		cards:      cards,
 		retries:    retries,
+		gate:       options.Gate,
 		logger:     logger,
 		turns:      map[string]*holder{},
 	}, nil
@@ -216,6 +256,15 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 			return false, err
 		}
 		if handled {
+			continue
+		}
+		// After the keywords, which reach a person whatever the sandbox says; before the
+		// episode, so a message the gate holds back opens no card and reaches no agent.
+		allowed, err := b.allowed(ctx, thread.CustomerID, message.ConnectorID, episodeSources[message.ConnectorID].recipientOf(message.AuthorID))
+		if err != nil {
+			return false, b.unclaim(ctx, thread, message, err)
+		}
+		if !allowed {
 			continue
 		}
 		// After the claim, so a retried delivery opens nothing. A store that fails here
@@ -271,31 +320,36 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 		return stack.Wrap(fmt.Errorf("channelbridge: %s is another customer's thread channel", reply.CID))
 	}
 	// Nothing follows an opt-out's confirmation (keywords.go), not even a reply the agent
-	// was writing when the person texted STOP.
-	if optedOut, err := b.optedOut(ctx, thread); err != nil || optedOut {
+	// was writing when the person texted STOP; nor a reply past the sandbox's daily limit.
+	if may, err := b.mayReply(ctx, thread); err != nil || !may {
 		return err
 	}
+	text := withFiles(reply.Text, reply.Files)
 	fresh, err := b.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, store.ClaimReply, reply.MessageID)
 	if err != nil || !fresh {
 		return err
 	}
 	for attempt := 0; ; attempt++ {
 		sending, done := context.WithTimeout(context.Background(), sendTimeout)
-		err = b.send(sending, thread, reply.Text)
+		err = b.send(sending, thread, text)
 		done()
+		if err == nil {
+			b.sent(thread)
+			return nil
+		}
 		var again retryable
-		if err == nil || !errors.As(err, &again) {
+		if !errors.As(err, &again) {
 			return err
 		}
 		if attempt == len(b.retries) {
 			break
 		}
 		time.Sleep(b.retries[attempt])
-		// Nor after a STOP that came in during the wait.
+		// Nor after a STOP that came in during the wait, or the limit another reply reached.
 		checking, done := context.WithTimeout(context.Background(), sendTimeout)
-		optedOut, checked := b.optedOut(checking, thread)
+		may, checked := b.mayReply(checking, thread)
 		done()
-		if checked != nil || optedOut {
+		if checked != nil || !may {
 			err = checked
 			break
 		}
@@ -482,6 +536,28 @@ func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, conf
 		Message: getstream.MessageRequest{Text: &message.Text, UserID: &author},
 	})
 	return stack.Wrap(err)
+}
+
+// withFiles is a reply's text with the links of the files the agent made for it, one a line
+// after a blank one, so they reach the external thread on every provider: the manifests' reply
+// templates carry text alone (slack_bot.yaml, linq.yaml, telnyx.yaml, whatsapp.yaml), and a
+// link is what internal/channels sends where a provider takes no media. The links are where
+// the conversation stored them in Stream Chat (conversation.Publish). Native media per
+// provider is a later ticket.
+func withFiles(text string, files []sandbox.Attachment) string {
+	links := make([]string, 0, len(files))
+	for _, file := range files {
+		if file.URL != "" {
+			links = append(links, file.URL)
+		}
+	}
+	if len(links) == 0 {
+		return text
+	}
+	if text == "" {
+		return strings.Join(links, "\n")
+	}
+	return text + "\n\n" + strings.Join(links, "\n")
 }
 
 // send posts one reply through the connection's manifest reply template and transport.

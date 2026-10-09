@@ -73,6 +73,7 @@ export {
   HostingRefusedError,
   RouterError,
   SocketClosedError,
+  type RouterErrorType,
 } from "./errors.js";
 
 export type { components, operations, paths } from "./generated/api.js";

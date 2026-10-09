@@ -11,6 +11,10 @@ turns:
   - id: identity
     text: "Name is Priyanka Radhakrishnan, R-A-D-H-A-K-R-I-S-H-N-A-N. Date of birth 1991-11-02. Member ID QW4T9-8821. Pharmacy Westlake Compounding."
     trigger: {kind: after_agent_turn, delay_ms: 400}
+  # The agent may confirm before it acts, as it should with a real caller; this is the yes.
+  - id: go_ahead
+    text: "Yes, that's right. Please go ahead."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
 seed:
   patients:
     - {id: p3, name: "Priyanka Radhakrishnan", dob: "1991-11-02", member_id: "QW4T9-8821", pharmacy: "Westlake Compounding"}

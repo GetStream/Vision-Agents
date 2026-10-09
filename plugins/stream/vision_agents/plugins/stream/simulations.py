@@ -43,39 +43,47 @@ class Simulations:
 
     async def create(self, simulation: SimulationRequest) -> Simulation:
         """Write a simulation down. Nothing is run until ``run`` is called."""
-        created = await create_simulation.asyncio(
-            client=self._backend.client(), body=simulation
+        return await _unwrapped(
+            create_simulation.asyncio(client=self._backend.client(), body=simulation),
+            f"creating the simulation {simulation.name}",
         )
-        return _unwrapped(created, f"creating the simulation {simulation.name}")
 
     async def get(self, id: str) -> Simulation:
-        got = await get_simulation.asyncio(id, client=self._backend.client())
-        return _unwrapped(got, f"reading the simulation {id}")
+        return await _unwrapped(
+            get_simulation.asyncio(id, client=self._backend.client()),
+            f"reading the simulation {id}",
+        )
 
     async def list(self) -> list[Simulation]:
-        listed = await list_simulations.asyncio(client=self._backend.client())
-        return _unwrapped(listed, "listing the simulations")
+        return await _unwrapped(
+            list_simulations.asyncio(client=self._backend.client()),
+            "listing the simulations",
+        )
 
     async def update(self, id: str, simulation: SimulationRequest) -> Simulation:
         """Replace a simulation: every field is written, so pass what it now asks rather
         than what changed. The runs it already has keep their own copy of what they tested."""
-        updated = await update_simulation.asyncio(
-            id, client=self._backend.client(), body=simulation
+        return await _unwrapped(
+            update_simulation.asyncio(
+                id, client=self._backend.client(), body=simulation
+            ),
+            f"updating the simulation {id}",
         )
-        return _unwrapped(updated, f"updating the simulation {id}")
 
     async def delete(self, id: str) -> None:
         """Delete a simulation. The runs that named it are kept."""
-        deleted = await delete_simulation.asyncio_detailed(
-            id, client=self._backend.client()
+        await _deleted(
+            delete_simulation.asyncio_detailed(id, client=self._backend.client()),
+            f"deleting the simulation {id}",
         )
-        _deleted(deleted, f"deleting the simulation {id}")
 
     async def run(self, id: str) -> SimulationRun:
         """Start a run. It answers once the run is written rather than once it is over, so
         read it again with ``runs.get`` until its state is no longer ``running``."""
-        started = await run_simulation.asyncio(id, client=self._backend.client())
-        return _unwrapped(started, f"running the simulation {id}")
+        return await _unwrapped(
+            run_simulation.asyncio(id, client=self._backend.client()),
+            f"running the simulation {id}",
+        )
 
 
 class SimulationRuns:
@@ -86,8 +94,10 @@ class SimulationRuns:
 
     async def get(self, id: str) -> SimulationRun:
         """One run, with the conversations it had."""
-        got = await get_simulation_run.asyncio(id, client=self._backend.client())
-        return _unwrapped(got, f"reading the simulation run {id}")
+        return await _unwrapped(
+            get_simulation_run.asyncio(id, client=self._backend.client()),
+            f"reading the simulation run {id}",
+        )
 
     async def list(
         self, simulation_id: str = "", state: str = "", limit: int = 0
@@ -96,14 +106,14 @@ class SimulationRuns:
         narrowed = _set(simulation_id=simulation_id, limit=limit)
         if state:
             narrowed["state"] = ListSimulationRunsState(state)
-        listed = await list_simulation_runs.asyncio(
-            client=self._backend.client(), **narrowed
+        return await _unwrapped(
+            list_simulation_runs.asyncio(client=self._backend.client(), **narrowed),
+            "listing the simulation runs",
         )
-        return _unwrapped(listed, "listing the simulation runs")
 
     async def cancel(self, id: str) -> SimulationRun:
         """Stop a run in progress, ending the conversations still in flight."""
-        cancelled = await cancel_simulation_run.asyncio(
-            id, client=self._backend.client()
+        return await _unwrapped(
+            cancel_simulation_run.asyncio(id, client=self._backend.client()),
+            f"cancelling the simulation run {id}",
         )
-        return _unwrapped(cancelled, f"cancelling the simulation run {id}")

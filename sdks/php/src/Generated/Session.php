@@ -49,10 +49,10 @@ final readonly class Session
         public ?string $sts = null,
         // The provider and model transcribing, once somebody has been heard.
         public ?string $stt = null,
-        // The provider and model delegated work runs on.
-        public ?string $subagent = null,
         // The conversation is held in writing rather than on a call.
         public ?bool $text = null,
+        // The provider and model delegated work runs on.
+        public ?string $thinkingLlm = null,
         public ?string $title = null,
         // The provider and model speaking.
         public ?string $tts = null,
@@ -93,8 +93,8 @@ final readonly class Session
             projectId: array_key_exists('project_id', $data) && $data['project_id'] !== null ? Json::string($data, 'project_id') : null,
             sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
             stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
-            subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
             text: array_key_exists('text', $data) && $data['text'] !== null ? Json::bool($data, 'text') : null,
+            thinkingLlm: array_key_exists('thinking_llm', $data) && $data['thinking_llm'] !== null ? Json::string($data, 'thinking_llm') : null,
             title: array_key_exists('title', $data) && $data['title'] !== null ? Json::string($data, 'title') : null,
             tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
@@ -169,11 +169,11 @@ final readonly class Session
         if ($this->stt !== null) {
             $out['stt'] = $this->stt;
         }
-        if ($this->subagent !== null) {
-            $out['subagent'] = $this->subagent;
-        }
         if ($this->text !== null) {
             $out['text'] = $this->text;
+        }
+        if ($this->thinkingLlm !== null) {
+            $out['thinking_llm'] = $this->thinkingLlm;
         }
         if ($this->title !== null) {
             $out['title'] = $this->title;

@@ -1,5 +1,5 @@
 import { Backend, type BackendOptions, type StreamUser, type TokenSource } from "./backend.js";
-import { RouterError } from "./errors.js";
+import { errorOf, RouterError } from "./errors.js";
 import type { components, paths } from "./generated/api.js";
 import {
   claimGuestUser,
@@ -260,7 +260,7 @@ export class Client {
     }
 
     if (!response.ok) {
-      throw new RouterError(response.status, operation, await complaint(response));
+      throw await errorOf(response, operation);
     }
     if (response.status === 204 || response.headers.get("Content-Length") === "0") {
       return undefined as T;
@@ -278,24 +278,4 @@ function fill(template: string, path: Record<string, string | number> | undefine
     }
     return encodeURIComponent(String(value));
   });
-}
-
-/**
- * What the router said went wrong.
- *
- * Every failure in the spec is `{"error": {"message": "...", ...}}`, but a 502 from something
- * in front of the router is not, so the status is the fallback rather than a parse failure.
- */
-async function complaint(response: Response): Promise<string> {
-  const text = await response.text().catch(() => "");
-  try {
-    const parsed = JSON.parse(text) as { error?: { message?: unknown } };
-    const message = parsed.error?.message;
-    if (typeof message === "string" && message) {
-      return message;
-    }
-  } catch {
-    // Not JSON, so the body is the best there is.
-  }
-  return text.trim() || `the router answered ${response.status}`;
 }

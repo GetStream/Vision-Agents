@@ -1,4 +1,5 @@
-from typing import Any, AsyncIterator
+import json
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 import pytest
 from aiohttp import web
@@ -27,9 +28,12 @@ class Router:
         self.sessions: list[dict[str, Any]] = []
         # pages of response items, each found by the cursor it was handed out under.
         self.pages: list[list[dict[str, Any]]] = []
+        # refusals answers a "METHOD /path" with a web.Response built from these keywords
+        # instead of its handler, as the router or a proxy in front of it would refuse it.
+        self.refusals: dict[str, dict[str, Any]] = {}
 
     def app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[self._refuse])
         app.router.add_get("/v1/agents/configs", self._configs)
         app.router.add_patch("/v1/agents/configs/{id}", self._patch_config)
         app.router.add_post("/v1/agents/sessions", self._create)
@@ -57,6 +61,17 @@ class Router:
         app.router.add_get("/v1/agents/simulation-runs/{id}", self._run)
         app.router.add_post("/v1/agents/simulation-runs/{id}/cancel", self._run)
         return app
+
+    @web.middleware
+    async def _refuse(
+        self,
+        request: web.Request,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+    ) -> web.StreamResponse:
+        refusal = self.refusals.get(f"{request.method} {request.path}")
+        if refusal is not None:
+            return web.Response(**refusal)
+        return await handler(request)
 
     async def _configs(self, request: web.Request) -> web.Response:
         await self._record(request)
@@ -906,6 +921,100 @@ class TestGuests:
         with pytest.raises(stream.RouterError, match="needs the guest"):
             await api.claim_guest_user("guest-1", "")
         assert router.requests("POST", "/v1/agents/guests/claim") == 0
+
+
+class TestRouterError:
+    async def test_a_refusal_carries_the_envelope_and_the_request_id(
+        self, api: stream.Client, router: Router
+    ):
+        router.refusals["POST /v1/agents/sessions/query"] = {
+            "status": 400,
+            "content_type": "application/json",
+            "headers": {"X-Request-Id": "request-1"},
+            "text": json.dumps(
+                {
+                    "error": {
+                        "message": "limit must be at most 200",
+                        "type": "invalid_request",
+                        "code": "validation_failed",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#validation_failed",
+                    }
+                }
+            ),
+        }
+
+        with pytest.raises(stream.RouterError) as raised:
+            await api.agent("docs").sessions.query()
+
+        refused = raised.value
+        assert str(refused) == "listing the sessions of docs: limit must be at most 200"
+        assert refused.status == 400
+        assert refused.type == "invalid_request"
+        assert refused.code == "validation_failed"
+        assert (
+            refused.doc_url
+            == "https://getstream.io/agents/docs/api/errors/#validation_failed"
+        )
+        assert refused.request_id == "request-1"
+
+    @pytest.mark.parametrize(
+        "status, body, message",
+        [
+            (502, "<html>bad gateway</html>\n", "<html>bad gateway</html>"),
+            (500, '{"error": "the old shape"}', '{"error": "the old shape"}'),
+            (503, "", "the router answered 503 Service Unavailable"),
+        ],
+    )
+    async def test_a_body_that_is_not_the_envelope_is_kept_as_the_message(
+        self,
+        api: stream.Client,
+        router: Router,
+        status: int,
+        body: str,
+        message: str,
+    ):
+        router.refusals["POST /v1/agents/sessions/query"] = {
+            "status": status,
+            "text": body,
+            "headers": {"X-Request-Id": "request-2"},
+        }
+
+        with pytest.raises(stream.RouterError) as raised:
+            await api.agent("docs").sessions.query()
+
+        refused = raised.value
+        assert str(refused) == f"listing the sessions of docs: {message}"
+        assert refused.status == status
+        assert (refused.type, refused.code, refused.doc_url) == (None, None, None)
+        assert refused.request_id == "request-2"
+
+    async def test_a_refused_socket_carries_the_status_and_the_request_id(
+        self, api: stream.Client, router: Router
+    ):
+        router.refusals["GET /v1/agents/sessions/session-1/events"] = {
+            "status": 403,
+            "content_type": "application/json",
+            "headers": {"X-Request-Id": "request-3"},
+            "text": json.dumps(
+                {
+                    "error": {
+                        "message": "that session belongs to somebody else",
+                        "type": "permission",
+                        "code": "forbidden",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#forbidden",
+                    }
+                }
+            ),
+        }
+
+        with pytest.raises(stream.RouterError) as raised:
+            await api.agent("docs").sessions.create()
+
+        refused = raised.value
+        assert str(refused) == "the router answered 403 Forbidden"
+        assert refused.status == 403
+        assert refused.request_id == "request-3"
+        assert refused.type is None, "aiohttp drops a refused upgrade's body unread"
 
 
 class TestBackendCredentials:

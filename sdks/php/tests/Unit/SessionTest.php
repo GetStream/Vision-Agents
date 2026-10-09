@@ -66,7 +66,7 @@ final class SessionTest extends TestCase
 
     public function testRewindOfAPersistedConversationIsRefused(): void
     {
-        $this->router->answer('POST', '/v1/agents/sessions/ses_1/rewind', 400, ['error' => 'this conversation is persisted; fork it instead']);
+        $this->router->answer('POST', '/v1/agents/sessions/ses_1/rewind', 400, Rows::failure('invalid_request', 'this conversation is persisted; fork it instead'));
 
         try {
             $this->session->responses->rewind('resp_1');
@@ -118,7 +118,7 @@ final class SessionTest extends TestCase
 
     public function testCloseStopsIsIdempotentAndIgnoresAGoneSession(): void
     {
-        $this->router->answer('POST', '/v1/agents/sessions/ses_1/stop', 404, ['error' => 'gone']);
+        $this->router->answer('POST', '/v1/agents/sessions/ses_1/stop', 404, Rows::failure('not_found', 'no session ses_1', 'session_not_found'));
 
         $this->session->close();
         $this->session->close();

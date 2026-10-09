@@ -340,7 +340,7 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, payload)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("telnyx: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "could not build the request", Cause: err})
 	}
 	request.Header.Set("Authorization", "Bearer "+p.apiKey)
 	request.Header.Set("Accept", "application/json")
@@ -350,22 +350,45 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("telnyx: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "no answer", Cause: err})
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return stack.Wrap(fmt.Errorf("telnyx: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
+		return stack.Wrap(refusal(p.Vendor(), path, response.StatusCode, detail))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("telnyx: decode %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
 	}
 	return nil
+}
+
+// refusal is Telnyx's error answer: the first error's code, and its detail or else its title,
+// when the body is Telnyx's JSON, and the body as it came otherwise.
+func refusal(vendor, path string, status int, body []byte) *phone.VendorError {
+	refused := &phone.VendorError{Vendor: vendor, Path: path, Status: status, Message: strings.TrimSpace(string(body))}
+	var answer struct {
+		Errors []struct {
+			Code   string `json:"code"`
+			Title  string `json:"title"`
+			Detail string `json:"detail"`
+		} `json:"errors"`
+	}
+	if json.Unmarshal(body, &answer) == nil && len(answer.Errors) > 0 {
+		first := answer.Errors[0]
+		refused.Code = first.Code
+		refused.Message = first.Detail
+		if refused.Message == "" {
+			refused.Message = first.Title
+		}
+	}
+	return refused
 }
 
 // features maps Telnyx's feature names onto capabilities, ignoring the ones that do not

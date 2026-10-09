@@ -2,15 +2,18 @@ package score
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 )
 
 // NormalizerVersion pins the WER fold and the structured matcher used for tool
-// arguments. v2 adds date-form equivalence (1987-03-04 = 03/04/1987).
-const NormalizerVersion = "english-basic-v2"
+// arguments. v2 adds date-form equivalence (1987-03-04 = 03/04/1987). v3 reads clock
+// times as spoken (7:30 = seven thirty) and matches plain plurals (peanuts = peanut).
+const NormalizerVersion = "english-basic-v3"
 
 var (
+	clock    = regexp.MustCompile(`\b(\d{1,2}):(\d{2})\b`)
 	currency = regexp.MustCompile(`\$([0-9]+(?:\.[0-9]+)?)`)
 	fillers  = regexp.MustCompile(`\b(?:um+|uh+|er+|ah+)\b`)
 )
@@ -106,11 +109,12 @@ func ScoreWER(reference, heard string, normalize bool) Alignment {
 	return out
 }
 
-// Normalize is the english-basic-v2 preset: casefold, contractions, currency,
+// Normalize is the english-basic-v3 preset: casefold, clock times as spoken, contractions, currency,
 // fillers, then punctuation dropped. Date-form equivalence for tool arguments
 // lives in scenario.MatchStructuredValue and is pinned by the same version.
 func Normalize(text string) string {
 	text = strings.ToLower(text)
+	text = clock.ReplaceAllStringFunc(text, spokenClock)
 	text = currency.ReplaceAllString(text, "$1 dollars")
 	fields := strings.Fields(text)
 	var expanded []string
@@ -181,4 +185,41 @@ func minWER(options ...werCounts) werCounts {
 		}
 	}
 	return best
+}
+
+var (
+	onesWords = []string{"", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+		"ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"}
+	tensWords = []string{"", "", "twenty", "thirty", "forty", "fifty"}
+)
+
+// spokenClock says a clock time the way a caller does: 7:30 is "seven thirty", 7:05 "seven oh
+// five", 7:00 "seven", and 19:30, as speech-to-text sometimes writes it, "seven thirty".
+func spokenClock(match string) string {
+	parts := clock.FindStringSubmatch(match)
+	hour, _ := strconv.Atoi(parts[1])
+	minute, _ := strconv.Atoi(parts[2])
+	if hour > 23 || minute > 59 {
+		return match
+	}
+	if hour > 12 {
+		hour -= 12
+	}
+	if hour == 0 {
+		hour = 12
+	}
+	words := []string{onesWords[hour]}
+	switch {
+	case minute == 0:
+	case minute < 10:
+		words = append(words, "oh", onesWords[minute])
+	case minute < 20:
+		words = append(words, onesWords[minute])
+	default:
+		words = append(words, tensWords[minute/10])
+		if minute%10 > 0 {
+			words = append(words, onesWords[minute%10])
+		}
+	}
+	return strings.Join(words, " ")
 }

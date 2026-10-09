@@ -3,6 +3,7 @@ package scenario
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -179,7 +180,7 @@ func TestFrozenListLoads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ids) != 24 {
+	if len(ids) != 27 {
 		t.Fatalf("got %d frozen ids", len(ids))
 	}
 	filtered, err := Filter([]Scenario{{ID: "restaurant.golden"}, {ID: "other"}}, ids)
@@ -188,5 +189,110 @@ func TestFrozenListLoads(t *testing.T) {
 	}
 	if len(filtered) != 1 || filtered[0].ID != "restaurant.golden" {
 		t.Fatalf("%v", filtered)
+	}
+}
+
+func TestShortListIsFrozenSubset(t *testing.T) {
+	root := findRepoRoot(t)
+	short, err := LoadIDList(ShortPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := LoadIDList(FrozenPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inFrozen := map[string]bool{}
+	for _, id := range frozen {
+		inFrozen[id] = true
+	}
+	if len(short) != 15 {
+		t.Fatalf("got %d short ids", len(short))
+	}
+	for _, id := range short {
+		if !inFrozen[id] {
+			t.Fatalf("%s is not in the frozen set", id)
+		}
+	}
+}
+
+func TestALongTurnIsItsSentencesJoined(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "long.yaml")
+	body := `id: restaurant.long
+pack: restaurant
+category: checklist
+turns:
+  - id: request
+    segments:
+      - {text: "Name is Alvarez.", pause_after_ms: 900}
+      - {text: "Party of six at 7:30."}
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sc, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc.Turns[0].Text != "Name is Alvarez. Party of six at 7:30." {
+		t.Fatalf("text = %q", sc.Turns[0].Text)
+	}
+	if got := strings.Join(sc.SpeechTexts(), "|"); got != "Name is Alvarez.|Party of six at 7:30." {
+		t.Fatalf("each sentence is synthesized on its own: %q", got)
+	}
+	if sc.CallerTranscript() != "Name is Alvarez. Party of six at 7:30." {
+		t.Fatalf("the judge reads the turn whole: %q", sc.CallerTranscript())
+	}
+
+	both := strings.Replace(body, "    segments:", "    text: \"hi\"\n    segments:", 1)
+	if err := os.WriteFile(path, []byte(both), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(path); err == nil || !strings.Contains(err.Error(), "both text and segments") {
+		t.Fatalf("a turn with text and segments must be refused, got %v", err)
+	}
+}
+
+func TestALineIsSpokenInItsTurnsVoiceElseTheScenarios(t *testing.T) {
+	sc := Scenario{Voice: "caller-voice", Turns: []Turn{
+		{ID: "intro", Text: "Table for three."},
+		{ID: "kid", Text: "Mom, look!", Voice: "child-voice", Aside: true},
+	}}
+	if sc.VoiceOf("Table for three.") != "caller-voice" || sc.VoiceOf("Mom, look!") != "child-voice" {
+		t.Fatalf("voices = %q, %q", sc.VoiceOf("Table for three."), sc.VoiceOf("Mom, look!"))
+	}
+	if !strings.Contains(sc.CallerTranscript(), "(someone else in the room, not to the agent) Mom, look!") {
+		t.Fatalf("the judge should know the aside is not for the agent: %q", sc.CallerTranscript())
+	}
+}
+
+func TestTheExtendedSetIsOutsideTheFrozenOne(t *testing.T) {
+	root := findRepoRoot(t)
+	extended, err := LoadIDList(ExtendedPath(root))
+	if err != nil || len(extended) == 0 {
+		t.Fatalf("extended = %v, %v", extended, err)
+	}
+	frozen, err := LoadIDList(FrozenPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inFrozen := map[string]bool{}
+	for _, id := range frozen {
+		inFrozen[id] = true
+	}
+	all := map[string]bool{}
+	for _, pack := range Packs() {
+		scenarios, err := LoadPack(filepath.Join(root, "scenarios", pack))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, sc := range scenarios {
+			all[sc.ID] = true
+		}
+	}
+	for _, id := range extended {
+		if inFrozen[id] || !all[id] {
+			t.Fatalf("%s should be a scenario outside the frozen set", id)
+		}
 	}
 }

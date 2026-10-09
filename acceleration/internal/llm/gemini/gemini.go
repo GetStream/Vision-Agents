@@ -33,6 +33,10 @@ const defaultBaseURL = "https://generativelanguage.googleapis.com/v1beta/openai/
 // conversation gets.
 const defaultModel = "gemini-3.8-flash"
 
+// unsignedCall is the signature Google accepts on calls it never made, so a conversation
+// a fallback continued on another model can come back here.
+const unsignedCall = "skip_thought_signature_validator"
+
 // Options configures the provider.
 type Options struct {
 	APIKey string
@@ -134,6 +138,7 @@ func New(options Options) (*openaicompat.LLM, error) {
 		RequestFields: func(_ llm.ResponseParams, effort string) map[string]any {
 			return map[string]any{"reasoning_effort": effort}
 		},
-		Logger: options.Logger,
+		UnsignedCall: unsignedCall,
+		Logger:       options.Logger,
 	})
 }
