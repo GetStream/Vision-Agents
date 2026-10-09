@@ -19,8 +19,8 @@ Run(opts, apply)                       opts.Customer limits it to one app; empty
              write   CreateConnectorConnectionWithID, then pgsealed Update: sealed, connected,
                      then a grant_created audit row, reason plugin_migrate, tokens by
                      fingerprint, and the "connector credential event" line (api.Server.auditGrant)
-  bindings agent_plugins entry -> fixed binding to the app's moved login
-           user_plugins entry  -> session binding (none when agent_plugins names it too)
+  bindings plugins entry             -> fixed binding to the app's moved login
+           plugins entry, user: true -> session binding
            alias = connector id = plugin id; grants = every tool a validate lists through the
            moved login that the entry's tools allow (plugins.Offered): fixed with the digests
            listed, session by name (each person's connection pins its own on first use, #826)

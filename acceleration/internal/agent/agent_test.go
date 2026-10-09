@@ -597,9 +597,7 @@ type AgentSuite struct {
 	records *store.Store
 	// agentID names the agent, so a test writing turns can find its own rows.
 	agentID string
-	// speed is the voice's rate of delivery the agent joins with, and voiceAsked is what
-	// the voice was opened with.
-	speed      float64
+	// voiceAsked is what the voice was opened with.
 	voiceAsked routing.Spec
 
 	agent  *Agent
@@ -819,7 +817,6 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		STTTarget:          "en-low-latency",
 		TTS:                speaker,
 		TTSTarget:          "en-low-latency",
-		Speed:              s.speed,
 		Memory:             remembering,
 		Knowledge:          reading,
 		KnowledgeNamespace: s.namespace,
@@ -979,15 +976,7 @@ func (s *AgentSuite) TestJoiningEntersTheCall() {
 	s.True(s.edge.joined)
 }
 
-func (s *AgentSuite) TestTheVoiceIsOpenedAtTheSpeedTheAgentWasGiven() {
-	s.speed = 0.9
-	s.join(true)
-
-	s.Require().NotNil(s.voiceAsked.TTS.Speed)
-	s.Equal(0.9, *s.voiceAsked.TTS.Speed)
-}
-
-func (s *AgentSuite) TestAVoiceWithNoSpeedIsNotAskedForOne() {
+func (s *AgentSuite) TestTheVoiceIsNotAskedForASpeed() {
 	s.join(true)
 
 	s.Nil(s.voiceAsked.TTS.Speed, "naming a speed narrows the voices that may answer")
@@ -2499,6 +2488,40 @@ func (s *AgentSuite) TestSayGoesStraightToTheVoice() {
 	s.Empty(s.model.requests(), "a greeting does not need a model")
 	s.Require().Len(s.voice.spoken(), 1)
 	s.True(s.voice.spoken()[0].Final)
+}
+
+func (s *AgentSuite) TestAnExactGreetingIsSaidWordForWord() {
+	s.join(true)
+
+	s.Require().NoError(s.agent.Greet(s.ctx, "Northwind, how can I help?", false))
+
+	s.eventually(func() bool { return s.spokenText("Northwind, how can I help?") }, "the greeting was never said")
+	s.Empty(s.model.composeRequests(), "an exact greeting does not need a model")
+}
+
+func (s *AgentSuite) TestAVariedGreetingIsTheModelsOwnWording() {
+	s.join(true)
+	s.model.composes = []string{"Hi, Northwind here, what can I do for you?"}
+
+	s.Require().NoError(s.agent.Greet(s.ctx, "Northwind, how can I help?", true))
+
+	s.eventually(func() bool { return s.spokenText("Hi, Northwind here, what can I do for you?") },
+		"the model's variation was never said")
+	s.False(s.spokenText("Northwind, how can I help?"), "the configured words were said as well")
+	composed := s.model.composeRequests()
+	s.Require().Len(composed, 1)
+	s.Contains(composed[0].Input[len(composed[0].Input)-1].Content, "Northwind, how can I help?",
+		"the model writes its variation of the configured greeting")
+}
+
+func (s *AgentSuite) TestAVariedGreetingTheModelCannotWriteIsSaidAsWritten() {
+	s.join(true)
+	s.model.composeFails = errors.New("the model is down")
+
+	s.Require().NoError(s.agent.Greet(s.ctx, "Northwind, how can I help?", true))
+
+	s.eventually(func() bool { return s.spokenText("Northwind, how can I help?") },
+		"a caller was left in silence because the greeting could not be reworded")
 }
 
 func (s *AgentSuite) TestSimpleResponseAsksTheModel() {

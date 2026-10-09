@@ -5,6 +5,7 @@ from vision_agents.plugins.stream.folder import (
     ChannelSettings,
     MCPServerSettings,
     PluginSettings,
+    ToolSettings,
     SandboxSettings,
     find,
     load,
@@ -20,14 +21,14 @@ def write(root: Path, name: str, content: str) -> None:
 
 class TestFolder:
     def test_a_skill_that_captures_video_round_trips(self, tmp_path):
-        write(tmp_path, "agent.yaml", "name: vision\nthinking_llm: vlm\n")
+        write(tmp_path, "agent.yaml", "name: vision\nsubagent: vlm\n")
         write(
             tmp_path,
             "skills/vision.md",
             "---\nname: vision\ncapture_video: true\ndescription: inspect images\n---\nDescribe the evidence.",
         )
         folder = load(tmp_path)
-        assert folder.settings.thinking_llm == "vlm"
+        assert folder.settings.subagent == "vlm"
         assert folder.skills[0].capture_video
 
     def test_named_subagents_are_refused(self, tmp_path):
@@ -35,9 +36,9 @@ class TestFolder:
         with pytest.raises(ValueError, match="subagents"):
             load(tmp_path)
 
-    def test_the_old_subagent_key_is_refused(self, tmp_path):
-        write(tmp_path, "agent.yaml", "name: vision\nsubagent: vlm\n")
-        with pytest.raises(ValueError, match="subagent"):
+    def test_the_old_thinking_llm_key_is_refused(self, tmp_path):
+        write(tmp_path, "agent.yaml", "name: vision\nthinking_llm: vlm\n")
+        with pytest.raises(ValueError, match="thinking_llm"):
             load(tmp_path)
 
     def test_a_directory_is_read_as_instructions_skills_and_knowledge(
@@ -102,7 +103,7 @@ class TestFolder:
             "name: jean\n"
             "mode: voice\n"
             "llm: llm-fast\n"
-            "thinking_llm: llm-thinking\n"
+            "subagent: llm-thinking\n"
             "sandbox: daytona\n"
             "greeting: Hello.\n"
             "keyterms:\n  - Vision Agents\n  - ''\n"
@@ -113,7 +114,7 @@ class TestFolder:
 
         assert settings.mode == "voice"
         assert settings.llm == "llm-fast"
-        assert settings.thinking_llm == "llm-thinking"
+        assert settings.subagent == "llm-thinking"
         assert settings.sandbox == "daytona"
         assert settings.greeting == "Hello."
         assert settings.keyterms == ["Vision Agents"]
@@ -124,20 +125,33 @@ class TestFolder:
         write(
             root,
             "agent.yaml",
-            "name: triage\nagent_plugins:\n  - sentry\nuser_plugins:\n  - google_calendar\n",
+            "name: triage\nplugins:\n  - sentry\n  - name: google_calendar\n    user: true\n",
         )
 
         settings = load(root).settings
 
-        assert settings.agent_plugins == [PluginSettings(name="sentry")]
-        assert settings.user_plugins == [PluginSettings(name="google_calendar")]
+        assert settings.plugins == [
+            PluginSettings(name="sentry"),
+            PluginSettings(name="google_calendar", user=True),
+        ]
+
+    def test_a_plugin_user_that_is_not_true_or_false_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nplugins:\n  - name: linear\n    user: alice\n",
+        )
+
+        with pytest.raises(ValueError, match="user"):
+            load(root)
 
     def test_the_declaration_says_how_each_plugin_is_reached(self, tmp_path: Path):
         root = tmp_path / "triage"
         write(
             root,
             "agent.yaml",
-            "name: triage\nuser_plugins:\n"
+            "name: triage\nplugins:\n"
             "  - name: linear\n    readonly: true\n    scopes: [read]\n"
             "  - google_drive\n"
             "  - name: calcom\n    toolsets: [bookings, availability]\n"
@@ -146,7 +160,7 @@ class TestFolder:
 
         settings = load(root).settings
 
-        assert settings.user_plugins == [
+        assert settings.plugins == [
             PluginSettings(name="linear", readonly=True, scopes=["read"]),
             PluginSettings(name="google_drive"),
             PluginSettings(
@@ -161,7 +175,7 @@ class TestFolder:
         write(
             root,
             "agent.yaml",
-            "name: triage\nuser_plugins:\n  - name: linear\n    read_only: true\n",
+            "name: triage\nplugins:\n  - name: linear\n    read_only: true\n",
         )
 
         with pytest.raises(ValueError, match="read_only"):
@@ -171,16 +185,18 @@ class TestFolder:
         self, tmp_path: Path
     ):
         root = tmp_path / "triage"
-        write(root, "agent.yaml", "name: triage\nagent_plugins:\n  - [sentry]\n")
+        write(root, "agent.yaml", "name: triage\nplugins:\n  - [sentry]\n")
 
-        with pytest.raises(ValueError, match="agent_plugins"):
+        with pytest.raises(ValueError, match="plugins"):
             load(root)
 
     @pytest.mark.parametrize(
         "declared",
         [
-            "plugins: [sentry]\n",
+            "agent_plugins: [sentry]\n",
+            "user_plugins: [linear]\n",
             "plugin_options:\n  - plugin: linear\n    readonly: true\n",
+            "progressive_tools: true\n",
         ],
     )
     def test_the_old_plugin_keys_are_refused(self, tmp_path: Path, declared: str):
@@ -227,19 +243,25 @@ class TestFolder:
         with pytest.raises(ValueError, match="user"):
             load(root)
 
-    def test_progressive_tools_is_read(self, tmp_path: Path):
+    def test_progressive_tools_are_read(self, tmp_path: Path):
         root = tmp_path / "triage"
-        write(root, "agent.yaml", "name: triage\nprogressive_tools: true\n")
+        write(root, "agent.yaml", "name: triage\ntools:\n  progressive: true\n")
 
-        assert load(root).settings.progressive_tools is True
+        assert load(root).settings.tools == ToolSettings(progressive=True)
 
-    def test_progressive_tools_that_is_not_true_or_false_is_refused(
-        self, tmp_path: Path
-    ):
+    @pytest.mark.parametrize(
+        "declared",
+        [
+            "tools: true\n",
+            "tools:\n  progressive: sometimes\n",
+            "tools:\n  lazy: true\n",
+        ],
+    )
+    def test_tools_that_cannot_be_read_are_refused(self, tmp_path: Path, declared: str):
         root = tmp_path / "triage"
-        write(root, "agent.yaml", "name: triage\nprogressive_tools: sometimes\n")
+        write(root, "agent.yaml", "name: triage\n" + declared)
 
-        with pytest.raises(ValueError, match="progressive_tools"):
+        with pytest.raises(ValueError, match="tools"):
             load(root)
 
     def test_a_declaration_that_names_no_model_decides_nothing(self, tmp_path: Path):
@@ -250,8 +272,8 @@ class TestFolder:
 
         assert settings.llm == ""
         assert settings.sandbox == ""
-        assert settings.agent_plugins == []
-        assert settings.user_plugins == []
+        assert settings.plugins == []
+        assert settings.tools is None
         assert settings.tags == {}
 
     def test_a_key_nobody_knows_is_refused(self, tmp_path: Path):

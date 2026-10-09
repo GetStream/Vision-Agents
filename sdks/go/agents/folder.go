@@ -151,32 +151,29 @@ type Settings struct {
 	// STS is nil when the declaration says nothing, and empty when it turns it off.
 	STS     *string `yaml:"sts"`
 	Voice   string  `yaml:"voice"`
-	Speed   float64 `yaml:"speed"`
 	LLM     string  `yaml:"llm"`
 	Harness string  `yaml:"harness"`
-	// ThinkingLLM is the model a voice agent hands its skills to. A text agent runs on its
+	// Subagent is the model a voice agent hands its skills to. A text agent runs on its
 	// llm alone, and the router refuses one that names it.
-	ThinkingLLM string `yaml:"thinking_llm"`
-	Search      string `yaml:"search"`
-	Greeting    string `yaml:"greeting"`
-	Sandbox     string `yaml:"sandbox"`
+	Subagent string `yaml:"subagent"`
+	Search   string `yaml:"search"`
+	// Greeting is what the agent opens the call with. Nil leaves the stored one.
+	Greeting *GreetingSettings `yaml:"greeting"`
+	Sandbox  string            `yaml:"sandbox"`
 	// SandboxOptions is how the sandbox is built and how long code may run in it.
 	SandboxOptions *SandboxSettings `yaml:"sandbox_options"`
-	// AgentPlugins are the catalog plugins the agent reaches with the app's own login.
-	AgentPlugins []PluginSettings `yaml:"agent_plugins"`
-	// UserPlugins are the plugins each end user connects with their own account, in the
-	// conversation, rather than the app once for everybody.
-	UserPlugins []PluginSettings `yaml:"user_plugins"`
+	// Plugins are the catalog plugins the agent reaches: with the app's own login, or
+	// with each end user's own account for one that sets user.
+	Plugins []PluginSettings `yaml:"plugins"`
 	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
 	// a text conversation when it arrives.
 	PluginEvents []PluginEventSettings `yaml:"plugin_events"`
 	// MCPServers are MCP servers outside the plugin catalog, which the router opens by
 	// their URL, with a login when the server asks for one.
 	MCPServers []MCPServerSettings `yaml:"mcp_servers"`
-	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, the
-	// first call to each returning its full description instead of running it. Nil when
-	// the declaration says nothing about it.
-	ProgressiveTools *bool `yaml:"progressive_tools"`
+	// Tools is how plugin, MCP server and connector tools are offered. Nil when the
+	// declaration says nothing about it.
+	Tools *ToolSettings `yaml:"tools"`
 	// Channels are the lines the agent answers on besides its Stream Chat channel: a
 	// WhatsApp number, a number to text, an iMessage line. Each names a number the app
 	// connected on the router, which is where the provider's credentials live.
@@ -200,10 +197,21 @@ type PluginEventSettings struct {
 	Instructions string `yaml:"instructions"`
 }
 
+// ToolSettings is how plugin, MCP server and connector tools are offered.
+type ToolSettings struct {
+	// Progressive offers each tool by a summary, the first call to it returning its full
+	// description instead of running it. Nil when the declaration says nothing about it.
+	Progressive *bool `yaml:"progressive"`
+}
+
 // PluginSettings is one catalog plugin the agent names, and how it reaches it. agent.yaml
 // gives it as the plugin's id alone, or as a mapping naming it with the rest.
 type PluginSettings struct {
 	Name string `yaml:"name"`
+	// User has each end user connect the plugin with their own account, in the
+	// conversation, rather than the app once for everybody. Nil leaves it to the catalog,
+	// which has a person's own account, such as their calendar, connected by each of them.
+	User *bool `yaml:"user"`
 	// Readonly reaches the plugin's read-only endpoint, for a vendor that runs one.
 	Readonly bool `yaml:"readonly"`
 	// Scopes are asked for at consent in place of the catalog's.
@@ -262,6 +270,14 @@ type ChannelSettings struct {
 }
 
 // VideoSettings is which video a skill that captures it sees.
+// GreetingSettings is what the agent says as it joins, before anyone speaks.
+type GreetingSettings struct {
+	Text string `yaml:"text"`
+	// Mode is exact, said word for word, or variation, which the model rewords on every
+	// call. Empty is exact.
+	Mode string `yaml:"mode"`
+}
+
 type VideoSettings struct {
 	Source string `yaml:"source"`
 	// MaxFrames is how many recent frames are captured, from 1 to 8. Zero reads as one.

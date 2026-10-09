@@ -161,7 +161,7 @@ func (s *MCPLoginSuite) TestTheAppLogsIntoAServerNamedByURLAsItDoesIntoAPlugin()
 	s.Equal("crm-token", login[0].AccessToken)
 	var read AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
-	s.Nil(read.AgentPlugins, "the config names the server under mcp_servers already")
+	s.Nil(read.Plugins, "the config names the server under mcp_servers already")
 }
 
 func (s *MCPLoginSuite) TestTheAppsLoginToAServerNamedByURLCanBeDropped() {

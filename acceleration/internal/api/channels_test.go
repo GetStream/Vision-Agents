@@ -118,16 +118,16 @@ func (s *ChannelsSuite) TestASyncNamingANumberNobodyConnectedIsStoredWithAWarnin
 	var synced SyncAgentResult
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sync", map[string]any{
 		"name": "channelled-" + s.utils.uuid(), "hash": "v1", "mode": "text",
-		"user_plugins": []string{"linear"},
-		"channels":     map[string]any{"whatsapp": map[string]any{"number": number}},
+		"plugins":  []any{map[string]any{"name": "linear", "user": true}},
+		"channels": map[string]any{"whatsapp": map[string]any{"number": number}},
 	}, &synced))
 
 	s.Require().Len(synced.Warnings, 1)
 	s.Contains(synced.Warnings[0], "has not connected "+number)
 	s.Require().NotNil(synced.Config.Channels)
 	s.Equal(number, synced.Config.Channels.Whatsapp.Number)
-	s.Require().NotNil(synced.Config.UserPlugins)
-	s.Len(*synced.Config.UserPlugins, 1)
+	s.Require().NotNil(synced.Config.Plugins)
+	s.Len(*synced.Config.Plugins, 1)
 }
 
 // Two agents on one number would both answer every message to it.
@@ -153,7 +153,7 @@ func (s *ChannelsSuite) TestTheSameAgentMayBeSavedAgainOnItsOwnNumber() {
 	config := s.agentOn(number, "")
 
 	status := s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+config.Id,
-		AgentConfigPatch{Greeting: pointerTo("Hello there")}, nil)
+		AgentConfigPatch{Greeting: &Greeting{Text: "Hello there"}}, nil)
 
 	s.Equal(http.StatusOK, status)
 }

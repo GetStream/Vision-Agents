@@ -197,7 +197,7 @@ class TestDefineAgent:
             "name": "docs-agent",
             "instructions": "Answer from the docs.",
             "llm": "llm-fast",
-            "thinking_llm": "llm-smart",
+            "subagent": "llm-smart",
             "skills": [EXPLAIN],
             "knowledge": "docs",
         }
@@ -211,7 +211,7 @@ class TestDefineAgent:
 
         assert config.name == "docs-agent"
         stored = router.configs[config.id]
-        assert stored["thinking_llm"] == "llm-smart"
+        assert stored["subagent"] == "llm-smart"
         assert stored["skills"] == ["explain"]
         assert stored["knowledge_namespace"] == "docs"
 
@@ -229,7 +229,7 @@ class TestDefineAgent:
     ) -> None:
         config = await stream.define_agent(
             name="visual-agent",
-            thinking_llm="vlm",
+            subagent="vlm",
             video_source="roboflow_streaming",
             video_max_frames=2,
             skills=[
@@ -244,7 +244,7 @@ class TestDefineAgent:
             customer_id="acme",
         )
 
-        assert config.thinking_llm == "vlm"
+        assert config.subagent == "vlm"
         assert config.video.to_dict() == {
             "source": "roboflow_streaming",
             "max_frames": 2,
@@ -276,7 +276,7 @@ class TestDefineAgent:
     async def test_an_agent_that_delegates_nothing_needs_no_skills(
         self, router: Router
     ):
-        config = await self.define(router, skills=None, thinking_llm="")
+        config = await self.define(router, skills=None, subagent="")
 
         assert router.skills == {}
         assert "skills" not in router.configs[config.id]
@@ -518,7 +518,7 @@ class TestSyncAgent:
             "name: support\n"
             "mode: voice\n"
             "llm: llm-fast\n"
-            "thinking_llm: llm-thinking\n"
+            "subagent: llm-thinking\n"
             "stt: stt-fast\n"
             "tts: tts-fast\n"
             "voice: nova\n"
@@ -527,8 +527,7 @@ class TestSyncAgent:
             "search: search-fast\n"
             "greeting: Hello.\n"
             "sandbox: daytona\n"
-            "agent_plugins:\n  - gmail\n"
-            "user_plugins:\n  - google_calendar\n"
+            "plugins:\n  - gmail\n  - name: google_calendar\n    user: true\n"
             "keyterms:\n  - Vision Agents\n"
             "tags:\n  team: support\n"
         )
@@ -540,7 +539,7 @@ class TestSyncAgent:
         stored = router.configs[result.config.id]
         assert stored["mode"] == "voice"
         assert stored["llm"] == "llm-fast"
-        assert stored["thinking_llm"] == "llm-thinking"
+        assert stored["subagent"] == "llm-thinking"
         assert stored["stt"] == "stt-fast"
         assert stored["tts"] == "tts-fast"
         assert stored["voice"] == "nova"
@@ -549,8 +548,7 @@ class TestSyncAgent:
         assert stored["search"] == "search-fast"
         assert stored["greeting"] == "Hello."
         assert stored["sandbox"] == "daytona"
-        assert stored["agent_plugins"] == ["gmail"]
-        assert stored["user_plugins"] == ["google_calendar"]
+        assert stored["plugins"] == ["gmail", {"name": "google_calendar", "user": True}]
         assert stored["keyterms"] == ["Vision Agents"]
         assert stored["tags"] == {"team": "support"}
 
@@ -631,16 +629,16 @@ class TestSyncAgent:
         self, router: Router, support_dir
     ):
         (support_dir / "agent.yaml").write_text(
-            "name: support\nprogressive_tools: true\n"
+            "name: support\ntools:\n  progressive: true\n"
         )
 
         result = await stream.sync_agent(
             "support", path=str(support_dir), url=router.url, customer_id="acme"
         )
 
-        assert router.configs[result.config.id]["progressive_tools"] is True
+        assert router.configs[result.config.id]["tools"] == {"progressive": True}
 
-    async def test_a_file_saying_nothing_about_progressive_tools_sends_nothing(
+    async def test_a_file_saying_nothing_about_tools_sends_nothing(
         self, router: Router, support_dir
     ):
         (support_dir / "agent.yaml").write_text("name: support\n")
@@ -649,7 +647,7 @@ class TestSyncAgent:
             "support", path=str(support_dir), url=router.url, customer_id="acme"
         )
 
-        assert "progressive_tools" not in router.configs[result.config.id]
+        assert "tools" not in router.configs[result.config.id]
 
     async def test_the_channels_the_agent_answers_on_are_sent(
         self, router: Router, support_dir
@@ -686,8 +684,8 @@ class TestSyncAgent:
         self, router: Router, support_dir
     ):
         (support_dir / "agent.yaml").write_text(
-            "name: support\nuser_plugins:\n"
-            "  - name: linear\n    readonly: true\n"
+            "name: support\nplugins:\n"
+            "  - name: linear\n    user: true\n    readonly: true\n"
             "  - google_calendar\n"
             "  - name: calcom\n    toolsets: [bookings]\n    tools: [get_*]\n"
         )
@@ -696,8 +694,8 @@ class TestSyncAgent:
             "support", path=str(support_dir), url=router.url, customer_id="acme"
         )
 
-        assert router.configs[result.config.id]["user_plugins"] == [
-            {"name": "linear", "readonly": True},
+        assert router.configs[result.config.id]["plugins"] == [
+            {"name": "linear", "user": True, "readonly": True},
             "google_calendar",
             {"name": "calcom", "toolsets": ["bookings"], "tools": ["get_*"]},
         ]

@@ -247,7 +247,9 @@ func TestTheDeclarationSaysWhatTheAgentIsCalledAndRunsOn(t *testing.T) {
 llm: openai/gpt-5.6
 sts: ""
 keyterms: [Vision Agents]
-speed: 0.9
+greeting:
+  text: Hello.
+  mode: variation
 video:
   source: camera
 dispatch:
@@ -263,7 +265,8 @@ dispatch:
 		t.Errorf("the agent is called %q", folder.Name)
 	}
 	settings := folder.Settings
-	if settings.LLM != "openai/gpt-5.6" || settings.Keyterms[0] != "Vision Agents" || settings.Speed != 0.9 {
+	if settings.LLM != "openai/gpt-5.6" || settings.Keyterms[0] != "Vision Agents" ||
+		settings.Greeting == nil || settings.Greeting.Text != "Hello." || settings.Greeting.Mode != "variation" {
 		t.Errorf("the declaration read as %+v", settings)
 	}
 	if settings.STS == nil || *settings.STS != "" {
@@ -279,26 +282,26 @@ dispatch:
 
 func TestTheDeclarationSaysWhoConnectsEachPlugin(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", "name: triage\nagent_plugins: [sentry]\nuser_plugins:\n"+
-		"  - name: linear\n    readonly: true\n    tools: [list_issues]\n  - google_calendar\n")
+	write(t, root, "agent.yaml", "name: triage\nplugins:\n  - sentry\n"+
+		"  - name: linear\n    user: false\n    readonly: true\n    tools: [list_issues]\n  - google_calendar\n")
 
 	folder, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := folder.Settings.AgentPlugins; len(got) != 1 || got[0].Name != "sentry" {
-		t.Errorf("the app's plugins read as %+v", got)
+	got := folder.Settings.Plugins
+	if len(got) != 3 || got[0].Name != "sentry" || got[0].User != nil {
+		t.Fatalf("the plugins read as %+v", got)
 	}
-	got := folder.Settings.UserPlugins
-	if len(got) != 2 || got[0].Name != "linear" || !got[0].Readonly ||
-		strings.Join(got[0].Tools, ",") != "list_issues" || got[1].Name != "google_calendar" {
-		t.Errorf("each user's plugins read as %+v", got)
+	if got[1].Name != "linear" || got[1].User == nil || *got[1].User || !got[1].Readonly ||
+		strings.Join(got[1].Tools, ",") != "list_issues" || got[2].Name != "google_calendar" || got[2].User != nil {
+		t.Errorf("the plugins read as %+v", got)
 	}
 }
 
 func TestAPluginEntryWithAKeyNobodyKnowsIsRefused(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", "name: triage\nuser_plugins:\n  - name: linear\n    read_only: true\n")
+	write(t, root, "agent.yaml", "name: triage\nplugins:\n  - name: linear\n    read_only: true\n")
 
 	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "read_only") {
 		t.Errorf("an entry with a misspelt key loaded: %v", err)
@@ -307,8 +310,11 @@ func TestAPluginEntryWithAKeyNobodyKnowsIsRefused(t *testing.T) {
 
 func TestTheOldPluginKeysAreRefused(t *testing.T) {
 	for _, declared := range []string{
-		"plugins: [sentry]\n",
+		"agent_plugins: [sentry]\n",
+		"user_plugins: [linear]\n",
 		"plugin_options:\n  - plugin: linear\n    readonly: true\n",
+		"thinking_llm: openai/gpt-5.6-sol\n",
+		"progressive_tools: true\n",
 	} {
 		root := filepath.Join(t.TempDir(), "triage")
 		write(t, root, "agent.yaml", "name: triage\n"+declared)
@@ -321,7 +327,7 @@ func TestTheOldPluginKeysAreRefused(t *testing.T) {
 
 func TestTheDeclarationSaysWhichPluginEventsTheAgentTakes(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", "name: triage\nagent_plugins: [sentry]\nplugin_events:\n"+
+	write(t, root, "agent.yaml", "name: triage\nplugins: [sentry]\nplugin_events:\n"+
 		"  - plugin: sentry\n    event: issue.created\n    arguments:\n      project: web\n"+
 		"    instructions: Triage it.\n")
 

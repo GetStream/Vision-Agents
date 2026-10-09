@@ -128,11 +128,7 @@ func (s *PluginEventsSuite) subscribedAgent(userID *string) AgentConfig {
 			Instructions: pointerTo("Say what broke."),
 		}},
 	}
-	if userID == nil {
-		request.AgentPlugins = &[]PluginEntry{{Name: "sentry"}}
-	} else {
-		request.UserPlugins = &[]PluginEntry{{Name: "sentry"}}
-	}
+	request.Plugins = &[]PluginEntry{{Name: "sentry", User: pointerTo(userID != nil)}}
 	var config AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", request, &config))
 

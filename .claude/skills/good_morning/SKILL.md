@@ -14,6 +14,7 @@ Bring every repo below up to date. Run them in parallel; each is independent.
 | `~/workspace/artemis-impl` | current | |
 | `~/workspace/getstream.io` | current | `origin/main` |
 | `~/workspace/volt-dashboard` | `ai-team/agent-dashboard` | |
+| `~/workspace/cli` | `beta` | |
 
 For each repo:
 

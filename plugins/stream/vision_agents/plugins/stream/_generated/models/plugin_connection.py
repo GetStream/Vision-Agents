@@ -39,8 +39,8 @@ class PluginConnection:
             instance_hint (str | Unset):
             instance_required (bool | Unset):
             instance_url (str | Unset):
-            user (bool | Unset): True when the config names the plugin under user_plugins only: each end user connects their
-                own account in the conversation.
+            user (bool | Unset): True when the config names the plugin with user: each end user connects their own account
+                in the conversation.
     """
 
     logo_url: str

@@ -149,6 +149,8 @@ type Spec struct {
 	// Greeting is said on joining without going through the model. Empty means the agent
 	// waits to be spoken to.
 	Greeting string
+	// VaryGreeting has the model say its own variation of Greeting rather than the words.
+	VaryGreeting bool
 	// Guardrail is a guardrail.md, whole: frontmatter saying how a turn is screened, then
 	// the policy in prose. Empty means every turn is answered.
 	Guardrail string
@@ -172,7 +174,6 @@ type Spec struct {
 	// simply leaves the tool unoffered.
 	SearchTarget  string
 	Voice         string
-	Speed         float64
 	LanguageHints []string
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	// A provider that cannot be told about vocabulary ignores them.
@@ -201,12 +202,10 @@ type Spec struct {
 	// config's own, or one of the built-in think, recall and explain. Empty means the
 	// built-in set, which is only loaded when there is a subagent to run them.
 	SkillNames []string
-	// AgentPlugins are hosted MCP servers this session may reach, named from the catalog
-	// with how each is reached.
-	AgentPlugins []store.PluginEntry
-	// UserPlugins are hosted MCP servers the caller reaches with their own account, named
-	// from the catalog. A session with no caller is offered none of them.
-	UserPlugins []store.PluginEntry
+	// Plugins are hosted MCP servers this session may reach, named from the catalog with how
+	// each is reached. Those marked User the caller reaches with their own account, and a
+	// session with no caller is offered none of them.
+	Plugins []store.PluginEntry
 	// MCPServers are MCP servers outside the catalog, opened by their URL with no login, the
 	// app's, or each caller's own.
 	MCPServers []store.MCPServer
@@ -304,17 +303,16 @@ func FromConfig(config store.AgentConfig) Spec {
 		TTSTarget:      config.TTS,
 		STSTarget:      config.STS,
 		Voice:          config.Voice,
-		Speed:          config.Speed,
 		LLMTarget:      config.LLM,
 		SubagentTarget: config.Subagent,
 		VideoSource:    config.VideoSource, VideoMaxFrames: config.VideoMaxFrames,
 		SearchTarget:       config.Search,
 		Instructions:       config.Instructions,
 		Greeting:           config.Greeting,
+		VaryGreeting:       config.GreetingMode == store.GreetingVariation,
 		Guardrail:          config.Guardrail,
 		SkillNames:         config.Skills,
-		AgentPlugins:       config.AgentPlugins,
-		UserPlugins:        config.UserPlugins,
+		Plugins:            config.Plugins,
 		MCPServers:         config.MCPServers,
 		ConnectorBindings:  config.Connectors,
 		Keyterms:           config.Keyterms,
@@ -447,8 +445,7 @@ func (s *Spec) Normalize() error {
 
 	// A connector binding wins over a plugin entry for the same provider, so the session
 	// does not reach one account by two paths, the second with the plugin's own login.
-	s.AgentPlugins = s.withoutBoundPlugins(s.AgentPlugins)
-	s.UserPlugins = s.withoutBoundPlugins(s.UserPlugins)
+	s.Plugins = s.withoutBoundPlugins(s.Plugins)
 
 	s.Keyterms = stt.CleanKeyterms(s.Keyterms)
 	if len(s.Keyterms) > stt.MaxKeyterms {

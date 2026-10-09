@@ -3,20 +3,17 @@ description: Reads the team's issues and your own calendar and files, and makes 
 mode: text
 llm: llm-fast
 # This agent has dozens of tools, and some servers write a page of instructions and examples
-# into a tool's description. progressive_tools offers each tool by the first line of its
+# into a tool's description. progressive offers each tool by the first line of its
 # description instead, and the first call to a tool returns the rest without running it,
 # which costs one more model turn per tool used. Off when left out.
-progressive_tools: true
-# The company's accounts: connected once each, on the dashboard, for every conversation.
-agent_plugins:
-  - name: sentry
-    tools: [find_organizations, find_projects, search_issues, search_errors, get_sentry_resource, analyze_issue_with_seer, update_issue]
-  - github
-  - hubspot
-  - salesforce
-# Each person's own: the agent asks for one in the chat the first time it needs it.
-# Linear, Calendly and Cal.com register their own OAuth clients, so they need nothing
-# configured on the router: ask about an issue and the login works.
+tools:
+  progressive: true
+# The company's accounts, such as Sentry and GitHub, are connected once each, on the
+# dashboard, for every conversation. A person's own, such as their calendar, mail, files or
+# Linear, are each person's: the agent asks for one in the chat the first time it needs it.
+# The catalog knows which is which, so an entry needs no say; user: true or user: false
+# overrides it. Linear, Calendly and Cal.com register their own OAuth clients, so
+# they need nothing configured on the router: ask about an issue and the login works.
 # A plugin named by its id alone is the catalog's: Linear at https://mcp.linear.app/mcp,
 # asking for read and write. Name it with a mapping to change how it is reached. readonly
 # reaches https://mcp.linear.app/mcp/readonly instead, which has no tool that writes and
@@ -25,7 +22,12 @@ agent_plugins:
 # Cal.com to some of its tools, and needs no new login. tools offers the model only the
 # tools named, or matching a pattern such as get_*, on any plugin or MCP server; left out,
 # all of them.
-user_plugins:
+plugins:
+  - name: sentry
+    tools: [find_organizations, find_projects, search_issues, search_errors, get_sentry_resource, analyze_issue_with_seer, update_issue]
+  - github
+  - hubspot
+  - salesforce
   - name: linear
     tools: [list_issues, get_issue, save_issue, list_comments, save_comment, list_projects, get_project, list_cycles, list_teams, list_users, list_issue_statuses]
   # - name: linear
@@ -47,8 +49,8 @@ user_plugins:
 # Any other MCP server, by its URL. The router opens it for every conversation and offers
 # its tools as tablejourney__<tool>; tools offers only those named or matching a pattern.
 # The server says whether it needs a login: TableJourney needs none. The app connects one
-# that does once on the dashboard, as for agent_plugins; with user: true, each person
-# connects their own in the chat, as for user_plugins. scopes, left out, asks for what the
+# that does once on the dashboard; with user: true, each person connects their own in the
+# chat, as for a plugin. scopes, left out, asks for what the
 # server advertises. The server has to offer dynamic client registration. A login made before
 # a change of scopes keeps what it was granted, so connect again after changing them.
 mcp_servers:

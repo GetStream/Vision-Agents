@@ -40,6 +40,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/ed25519header"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/standardwebhooks"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
@@ -49,7 +50,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
@@ -683,11 +683,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// reason: a deployment that declares no section for it runs agents that cannot be
 	// given a guardrail, and says so when one is asked for rather than ignoring it. It is
 	// opened before the LLM router, which screens prompt injection on it.
-	var judging *lcmrouter.Router
-	if section, ok := capabilities[routing.LCM]; ok {
-		judging, err = lcmrouter.New(lcmrouter.Options{
+	var judging *decisionrouter.Router
+	if section, ok := capabilities[routing.DecisionModel]; ok {
+		judging, err = decisionrouter.New(decisionrouter.Options{
 			Config:   section,
-			Registry: lcmrouter.DefaultRegistry(),
+			Registry: decisionrouter.DefaultRegistry(),
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
@@ -697,8 +697,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		defer judging.Close()
-		routers[routing.LCM] = judging
-		streams.LCM = judging
+		routers[routing.DecisionModel] = judging
+		streams.DecisionModel = judging
 	}
 
 	if section, ok := capabilities[routing.LLM]; ok {
@@ -1300,7 +1300,7 @@ func buildSessions(
 	telephony *phone.Service,
 	base *turbopuffer.Store,
 	finding *searchrouter.Router,
-	judging *lcmrouter.Router,
+	judging *decisionrouter.Router,
 	stream *streamapp.Clients,
 	pluginAuth *plugins.Auth,
 	connectors session.Connectors,
