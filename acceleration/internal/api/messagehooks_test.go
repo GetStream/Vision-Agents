@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -140,6 +141,38 @@ func (s *MessageHooksSuite) TestAConfigThatWasDeletedNoLongerClaimsAChannel() {
 	s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(`{"%s": "%s"}`, ConfigField, configID)))
 
 	s.nothingReaches(worker.Messages(), "a message naming a deleted config was answered")
+}
+
+func (s *MessageHooksSuite) TestAMessageTheRouterWroteItselfReachesNoWorker() {
+	// An episode card is written into an agent channel with a source, as everything the
+	// router stores there is, and Stream delivers its custom fields at the top level of the
+	// message. Handed to a worker, it is the router answering itself; with none waiting, it
+	// is an error about nobody answering a message nobody wrote (AI-989).
+	configID := s.holds()
+	s.ran(configID)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	// The card's fields as GET /messages/{id} returned episode-46b7e83c… on 2026-10-09.
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", fmt.Sprintf(`{
+  "type": "message.new",
+  "cid": "agent:%[1]s",
+  "channel_id": "%[1]s",
+  "channel_type": "agent",
+  "message": {
+    "id": "episode-%[2]s",
+    "text": "Episode in progress",
+    "type": "regular",
+    "user": {"id": "%[1]s"},
+    "%[3]s": "slack",
+    "status": "in_progress",
+    "episode_id": "%[2]s",
+    "started_at": "2026-10-09T13:30:37Z",
+    "thread_channel": "agent:thread-%[2]s"
+  }
+}`, s.channelID, s.utils.uuid(), chatlog.SourceField)))
+
+	s.nothingReaches(worker.Messages(), "the router's own card was handed to a worker")
 }
 
 func (s *MessageHooksSuite) TestAnUnsignedMessageIsRefused() {
