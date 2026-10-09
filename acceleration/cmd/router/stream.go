@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	getstream "github.com/GetStream/getstream-go/v5"
-
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
@@ -120,27 +118,23 @@ func learnDeploymentApp(ctx context.Context, clients *streamapp.Clients, logger 
 // It only reads: the app's hooks are one setting the whole app shares, the operator's to
 // point (`go run ./cmd/phone hooks -url`), so the warning carries that command rather than
 // the router changing them. It runs only with connectors on, which is when the bridge writes
-// into thread channels, and with a public URL, which the hook has to name. A read that fails
+// into thread channels, and with a public URL, which the hook has to name. In app mode the
+// deployment's app is not where customers' messages arrive, so it says nothing. A read that fails
 // is a warning too, never a reason not to start.
-func warnWithoutMessageHook(ctx context.Context, settings config.Config, logger *slog.Logger) {
+func warnWithoutMessageHook(ctx context.Context, settings config.Config, clients *streamapp.Clients, logger *slog.Logger) {
 	public := strings.TrimRight(settings.PublicURL, "/")
-	if !settings.Connectors.Enabled || public == "" {
+	if !settings.Connectors.Enabled || public == "" || clients.PerApp() {
 		return
 	}
-	options := []getstream.ClientOption{}
-	if settings.Stream.BaseURL != "" {
-		options = append(options, getstream.WithBaseUrl(settings.Stream.BaseURL))
-	}
-	client, err := getstream.NewClient(settings.Stream.APIKey, settings.Stream.APISecret, options...)
+	attempt, cancel := context.WithTimeout(ctx, learnTimeout)
+	defer cancel()
+	bound, err := clients.For(attempt, "")
 	if err != nil {
 		logger.Warn("stream: could not check where the Stream app sends its messages", "error", err)
 		return
 	}
-
-	attempt, cancel := context.WithTimeout(ctx, learnTimeout)
-	defer cancel()
 	hook := public + chat.MessageHookPath
-	pointed, err := chat.StreamOf(client).DeliversMessagesTo(attempt, hook)
+	pointed, err := chat.StreamOf(bound.Client).DeliversMessagesTo(attempt, hook)
 	switch {
 	case err != nil:
 		logger.Warn("stream: could not read the Stream app's hooks, so whether its messages reach this router is unknown",

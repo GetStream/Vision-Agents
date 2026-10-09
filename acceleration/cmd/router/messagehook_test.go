@@ -9,8 +9,10 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // MessageHookWarningSuite is the startup check that the deployment's own Stream app sends
@@ -19,6 +21,7 @@ type MessageHookWarningSuite struct {
 	suite.Suite
 	stream   *chattest.Server
 	settings config.Config
+	sealer   *auth.Sealer
 	logs     bytes.Buffer
 }
 
@@ -40,6 +43,9 @@ func (s *MessageHookWarningSuite) SetupTest() {
 	s.settings.Connectors.Enabled = true
 	s.settings.PublicURL = hookPublic + "/"
 	s.logs.Reset()
+	sealer, err := auth.NewSealer("first-key")
+	s.Require().NoError(err)
+	s.sealer = sealer
 }
 
 // hooks gives the deployment's app these hooks, as an operator would have set them.
@@ -51,7 +57,9 @@ func (s *MessageHookWarningSuite) hooks(hooks ...getstream.EventHook) {
 }
 
 func (s *MessageHookWarningSuite) check() string {
-	warnWithoutMessageHook(context.Background(), s.settings, slog.New(slog.NewTextHandler(&s.logs, nil)))
+	clients, err := newStreamClients(s.settings, &store.Store{}, s.sealer, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	warnWithoutMessageHook(context.Background(), s.settings, clients, slog.New(slog.NewTextHandler(&s.logs, nil)))
 	return s.logs.String()
 }
 
@@ -130,6 +138,15 @@ func (s *MessageHookWarningSuite) TestWithConnectorsOffStreamIsNotAsked() {
 
 func (s *MessageHookWarningSuite) TestWithoutAPublicURLStreamIsNotAsked() {
 	s.settings.PublicURL = ""
+
+	s.Empty(s.check())
+	s.Empty(s.stream.Requests(hookKey))
+}
+
+// In app mode the deployment's own app is not where customers' messages arrive, so it is
+// neither asked nor warned about.
+func (s *MessageHookWarningSuite) TestInAppModeStreamIsNotAskedAndNothingIsLogged() {
+	s.settings.Stream.Tenancy, s.settings.Stream.AppID = config.TenancyApp, 99
 
 	s.Empty(s.check())
 	s.Empty(s.stream.Requests(hookKey))

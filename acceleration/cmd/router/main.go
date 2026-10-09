@@ -800,7 +800,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		pgStore.SetStreamPins(streamPins(streamClients))
 	}
 	go learnDeploymentApp(ctx, streamClients, logger)
-	go warnWithoutMessageHook(ctx, settings, logger)
+	go warnWithoutMessageHook(ctx, settings, streamClients, logger)
 
 	registrations, dlcGate, err := buildDLC(settings, pgStore, liveClient, logger)
 	if err != nil {
