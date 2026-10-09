@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -28,33 +29,13 @@ var messageHookEvents = []string{"message.new"}
 // webhookHookType is what Stream calls a hook delivered over HTTP, as opposed to SQS or SNS.
 const webhookHookType = "webhook"
 
-// StreamOptions configures the client. The credentials fall back to the environment, the
-// way the rest of the service reads them.
-type StreamOptions struct {
-	APIKey    string
-	APISecret string
-}
-
 // Stream configures the app's chat event hooks.
 type Stream struct {
 	client *getstream.Stream
 }
 
-// NewStream validates the credentials and returns a Stream.
-func NewStream(options StreamOptions) (*Stream, error) {
-	if options.APIKey == "" || options.APISecret == "" {
-		return nil, errors.New("chat: a stream api key and secret are required")
-	}
-
-	client, err := getstream.NewClient(options.APIKey, options.APISecret)
-	if err != nil {
-		return nil, err
-	}
-	return &Stream{client: client}, nil
-}
-
-// StreamOf configures the hooks of the app a client already acts in, such as a customer's
-// own app the router resolved, rather than the app the environment names.
+// StreamOf configures the hooks of the app a client acts in: the deployment's own, or a
+// customer's own app the router resolved.
 func StreamOf(client *getstream.Stream) *Stream { return &Stream{client: client} }
 
 // PointMessageHook makes the app deliver new messages to a url, leaving every other hook
@@ -81,9 +62,31 @@ func (s *Stream) PointMessageHook(ctx context.Context, url string) (bool, error)
 		return false, fmt.Errorf("chat: get app: %w", err)
 	}
 
-	hooks := response.Data.App.EventHooks
+	hooks, updated, err := WithMessageHook(response.Data.App.EventHooks, url)
+	if err != nil {
+		return false, err
+	}
+	if _, err := s.client.UpdateApp(ctx, &getstream.UpdateAppRequest{EventHooks: hooks}); err != nil {
+		return false, fmt.Errorf("chat: update app: %w", err)
+	}
+	return updated, nil
+}
+
+// WithMessageHook is hooks with url delivering new messages: the hook already at url asking
+// for them, or a new one added. It writes nothing, so a change to several hooks can go to
+// Stream in one update (phone.Stream.ChangeHooks).
+//
+// Reports whether a hook at url was updated rather than one added.
+func WithMessageHook(hooks []getstream.EventHook, url string) ([]getstream.EventHook, bool, error) {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return nil, false, errors.New("chat: a message hook needs a url to deliver to")
+	}
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		return nil, false, fmt.Errorf("chat: %s is not a url Stream can reach", url)
+	}
+
 	enabled := true
-	updated := false
 	for index, hook := range hooks {
 		if webhookURL(hook) != url {
 			continue
@@ -91,22 +94,42 @@ func (s *Stream) PointMessageHook(ctx context.Context, url string) (bool, error)
 		hooks[index].EventTypes = messageHookEvents
 		hooks[index].Enabled = &enabled
 		hooks[index].HookType = ptr(webhookHookType)
-		updated = true
-		break
+		return hooks, true, nil
 	}
-	if !updated {
-		hooks = append(hooks, getstream.EventHook{
-			HookType:   ptr(webhookHookType),
-			WebhookUrl: &url,
-			Enabled:    &enabled,
-			EventTypes: messageHookEvents,
-		})
-	}
+	return append(hooks, getstream.EventHook{
+		HookType:   ptr(webhookHookType),
+		WebhookUrl: &url,
+		Enabled:    &enabled,
+		EventTypes: messageHookEvents,
+	}), false, nil
+}
 
-	if _, err := s.client.UpdateApp(ctx, &getstream.UpdateAppRequest{EventHooks: hooks}); err != nil {
-		return false, fmt.Errorf("chat: update app: %w", err)
+// DeliversMessagesTo reports whether the app has a hook, switched on, that delivers new
+// messages to url, or to url followed by an app's own segment (url/{app}): the two paths the
+// router serves the app's message events on (internal/api/server.go). A hook that asks for
+// no event type in particular asks for every one (Stream Chat docs, «Webhooks Overview»,
+// getstream.io/chat/docs/python/webhooks-overview: «empty array = all events»).
+//
+// It only reads, so a router can say at startup that its own app sends messages nowhere it
+// answers without touching a setting the whole app shares (AI-990 F19).
+func (s *Stream) DeliversMessagesTo(ctx context.Context, url string) (bool, error) {
+	response, err := s.client.GetApp(ctx, &getstream.GetAppRequest{})
+	if err != nil {
+		return false, fmt.Errorf("chat: get app: %w", err)
 	}
-	return updated, nil
+	for _, hook := range response.Data.App.EventHooks {
+		address := webhookURL(hook)
+		if address != url && !strings.HasPrefix(address, url+"/") {
+			continue
+		}
+		if hook.Enabled != nil && !*hook.Enabled {
+			continue
+		}
+		if len(hook.EventTypes) == 0 || slices.Contains(hook.EventTypes, messageHookEvents[0]) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // RemoveMessageHook stops the app delivering to a url, leaving every other hook alone.

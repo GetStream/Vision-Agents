@@ -9,7 +9,6 @@ package openai
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -619,7 +618,7 @@ func tools(offered []llm.Tool) []responses.ToolUnionParam {
 		}
 		if len(tool.Parameters) > 0 {
 			function.Parameters = tool.Parameters
-			if hasOptional(tool.Parameters) {
+			if HasOptional(tool.Parameters) {
 				function.Strict = param.NewOpt(false)
 			}
 		}
@@ -628,40 +627,64 @@ func tools(offered []llm.Tool) []responses.ToolUnionParam {
 	return rendered
 }
 
-// hasOptional reports whether a schema, or any schema inside it, has a property its required
-// list leaves out. The schema goes through JSON first so a Go literal's []string reads like a
-// decoded []any. It looks at every nested value, not only properties and items, so a word
-// that is not a schema can count too; that costs only OpenAI's strict normalization.
-func hasOptional(schema map[string]any) bool {
-	raw, err := json.Marshal(schema)
-	if err != nil {
-		return true
-	}
-	var decoded any
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return true
-	}
-	return optionalIn(decoded)
+// HasOptional reports whether a schema, or any schema inside it, has a property its required
+// list leaves out. A function tool offered to a Responses model with such a schema needs strict
+// false, or the API normalizes it to strict mode and the model fills every optional property
+// (see tools). openailive's backend tools follow the same rule.
+//
+// It reads decoded JSON ([]any) and Go literals ([]string required, as internal/agent/native.go
+// and internal/sandbox/sandbox.go write them). Values under a data keyword are skipped, so a
+// default or an enum that holds an object with a properties key is not read as a schema.
+func HasOptional(schema map[string]any) bool {
+	return optionalIn(schema)
 }
+
+// dataKeywords hold instance values, not schemas: enum and const (JSON Schema 2020-12
+// validation, sections 6.1.2 and 6.1.3), default and examples (sections 9.2 and 9.5),
+// https://json-schema.org/draft/2020-12/json-schema-validation.
+var dataKeywords = map[string]bool{"enum": true, "const": true, "default": true, "examples": true}
+
+// namedSchemas hold schemas under names the schema's author chose, so a name there is never a
+// keyword (JSON Schema 2020-12 core, section 8.2.4 for $defs; applicator, sections 10.2.2.2
+// and 10.2.2.4 for patternProperties and dependentSchemas; definitions is the draft-07 name
+// of $defs).
+var namedSchemas = map[string]bool{"$defs": true, "definitions": true, "patternProperties": true, "dependentSchemas": true}
 
 func optionalIn(node any) bool {
 	switch value := node.(type) {
 	case map[string]any:
-		if properties, ok := value["properties"].(map[string]any); ok {
-			required := map[string]bool{}
-			names, _ := value["required"].([]any)
+		properties, _ := value["properties"].(map[string]any)
+		required := map[string]bool{}
+		switch names := value["required"].(type) {
+		case []string:
+			for _, name := range names {
+				required[name] = true
+			}
+		case []any:
 			for _, name := range names {
 				if name, ok := name.(string); ok {
 					required[name] = true
 				}
 			}
-			for name := range properties {
-				if !required[name] {
-					return true
-				}
+		}
+		for name, property := range properties {
+			if !required[name] || optionalIn(property) {
+				return true
 			}
 		}
-		for _, child := range value {
+		for key, child := range value {
+			if key == "properties" || dataKeywords[key] {
+				continue
+			}
+			if namedSchemas[key] {
+				named, _ := child.(map[string]any)
+				for _, schema := range named {
+					if optionalIn(schema) {
+						return true
+					}
+				}
+				continue
+			}
 			if optionalIn(child) {
 				return true
 			}

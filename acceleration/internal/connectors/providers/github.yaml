@@ -7,6 +7,8 @@
 #   [oauth]   https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps
 #   [user]    https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app
 #   [refresh] https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens
+# Opened October 9, 2026:
+#   [readme]  https://github.com/github/github-mcp-server/blob/eb47a99ddb866ca2b8a162920e6bda9521f33ebb/README.md
 # And the servers' own metadata, fetched on October 2, 2026 («[prm]» and «[as]»):
 #   [prm] GET https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/ at
 #         2026-10-02T21:06:34Z: resource https://api.githubcopilot.com/mcp/,
@@ -22,8 +24,8 @@
 #         2026-10-02T22:13:25Z, scopes_supported [offline_access].
 id: github
 # A new revision for any change to what this file says; see AGENTS.md. 2 renames
-# client.policy to client.registration.
-revision: 2
+# client.policy to client.registration. 3 adds bearer (AI-990).
+revision: 3
 # [proto]:78-80
 name: GitHub
 category: Developer tools
@@ -43,7 +45,13 @@ endpoints:
   # reads it is not documented on the pages above. # unverified
   resource: https://api.githubcopilot.com/mcp/
 # Authorization code with PKCE S256: [oauth], [user] (code_challenge_method S256); [as].
-schemes: [oauth2_code]
+# And a personal access token the developer supplies, sent to the same endpoint as
+# «"Authorization": "Bearer ${input:github_mcp_pat}"» ([readme]:73-83, «GitHub Personal Access
+# Token»), which is the bearer scheme's header (RFC 6750 section 2.1). bearer reads none of
+# the client, scopes, refresh or issuer below: they are oauth2_code's. A token learns no
+# account, since this manifest has no identity. A connection that names no scheme still gets
+# oauth2_code, its one scheme that is not static (api.defaultScheme).
+schemes: [oauth2_code, bearer]
 client:
   # A GitHub App or an OAuth App registered ahead of time: «Dynamic Client Registration is
   # NOT supported by Remote GitHub MCP Server at this time» ([host]), and [as] has neither a

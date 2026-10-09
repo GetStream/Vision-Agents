@@ -56,6 +56,7 @@ type Scheme struct{}
 var (
 	_ core.Scheme        = (*Scheme)(nil)
 	_ core.Fingerprinter = (*Scheme)(nil)
+	_ core.Static        = (*Scheme)(nil)
 )
 
 // New returns the scheme. It takes no configuration: the header and its prefix are RFC
@@ -74,6 +75,10 @@ func (*Scheme) Name() string {
 type payload struct {
 	Token string `json:"token"`
 }
+
+// StaticCredential marks bearer as core.Static: the token is supplied and never renewed, so a
+// token the provider rejects is replaced, not consented to again.
+func (*Scheme) StaticCredential() {}
 
 // Begin is Done: the token is supplied, nobody consents.
 func (*Scheme) Begin(context.Context, core.BeginInput) (core.BeginOutput, error) {

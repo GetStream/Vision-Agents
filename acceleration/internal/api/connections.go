@@ -145,7 +145,7 @@ func (ConnectionStatus) Schema(registry huma.Registry) *huma.Schema {
 type ConnectionRequest struct {
 	ConnectorID string            `json:"connector_id" minLength:"1" doc:"A built-in, such as slack, or one of the app's own."`
 	Owner       ConnectionOwner   `json:"owner"`
-	AuthScheme  string            `json:"auth_scheme,omitempty" doc:"One of the connector's schemes. Omitted is its only one; a connector with several needs it named."`
+	AuthScheme  string            `json:"auth_scheme,omitempty" doc:"One of the connector's schemes. Omitted is its only one, or else its only one that is not a static token or key (bearer, api_key), such as oauth2_code for github; a connector with several others needs it named."`
 	Inputs      map[string]string `json:"inputs,omitempty" doc:"Values for the connector's inputs, such as a region. One without a default is required, and each must match the connector's enum or pattern."`
 	Label       string            `json:"label,omitempty" maxLength:"120" doc:"A name to tell connections apart by."`
 }
@@ -305,11 +305,12 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 	}
 	scheme := sent.AuthScheme
 	if scheme == "" {
-		if len(definition.Manifest.Schemes) != 1 {
+		chosen, found := defaultScheme(definition.Manifest, s.connectors.Schemes)
+		if !found {
 			return nil, invalidRequest(fmt.Sprintf("auth_scheme is required: %s allows %s",
 				definition.ID, strings.Join(definition.Manifest.Schemes, ", ")))
 		}
-		scheme = definition.Manifest.Schemes[0]
+		scheme = chosen
 	}
 	// Resolve is what every later use of the connection reads it through, so an input it
 	// refuses here is one the connection could never be used with. Its errors name the input.
@@ -344,6 +345,26 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 	}
 	// A new connection is bound by nothing yet.
 	return &connectionResponse{Body: connectionOf(connection, nil, definitions[connection.ID], nil)}, nil
+}
+
+// defaultScheme is the scheme a connection to m gets when nobody names one: m's only scheme,
+// or else its only one that is not core.Static. A connector that takes a consent and a static
+// token beside it (github: oauth2_code and bearer, AI-990) so connects by consent, as it did
+// before it took the token. found is false when that leaves none or several.
+func defaultScheme(m core.Manifest, schemes map[string]core.Scheme) (string, bool) {
+	if len(m.Schemes) == 1 {
+		return m.Schemes[0], true
+	}
+	var others []string
+	for _, name := range m.Schemes {
+		if !core.IsStatic(schemes, name) {
+			others = append(others, name)
+		}
+	}
+	if len(others) != 1 {
+		return "", false
+	}
+	return others[0], true
 }
 
 // listConnections lists one owner's connections, a page at a time.

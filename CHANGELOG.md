@@ -1774,6 +1774,16 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- `phone hooks -remove` works when the tunnel it names is gone. Stream refuses an update of
+  the app's hooks while any hook in it is at a host that does not resolve, and the command
+  dropped a tunnel's call hook and its message hook in two updates, so the first was refused
+  over the second. It now drops both, and points `-url`, in one update. `-remove` can be
+  given more than once, and a refusal says how to drop the hook Stream names. A router with
+  connectors on and `ROUTER_PUBLIC_URL` set now warns at startup, with the command to run,
+  when its own Stream app has no message hook at it: without one a message written in a
+  thread channel is stored and never answered. It only reads the app's hooks. `source` is
+  documented as a reserved custom field on an agent channel: a message that carries it is
+  not answered (AI-990).
 - A voice agent with tools finishes a request that takes several of them while the caller is
   still on the line. A result that called for another tool was given its own sentence, so a
   request with several steps was a hold phrase, a read-back and a model turn per tool, and a
