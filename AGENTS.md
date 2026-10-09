@@ -111,6 +111,12 @@ npm run types   # regenerate src/generated/api.ts from the spec; --check in CI
 npm test        # typecheck, then the suite against a real http and ws server
 ```
 
+## Benchmark
+
+To run Voicebench (`benchmark/`) locally or read why a run failed, read the `voicebench` skill
+(`.claude/skills/voicebench/SKILL.md`) first: the keys and services a run needs, which command
+answers which question, and how to read the report.
+
 ## Testing
 
 For Go tests, read the `go-testing` skill (`.claude/skills/go-testing/SKILL.md`) first: testify
