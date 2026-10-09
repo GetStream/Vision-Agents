@@ -2172,7 +2172,7 @@ components:
         - failed
       type: string
     Connector:
-      description: 'A connector: an account elsewhere an agent may reach, built in or the app''s own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.'
+      description: 'A connector: an account elsewhere an agent may reach, built in or the app''s own. Only what a caller chooses between is shown, and a custom connector''s endpoint. A built-in''s endpoints, how an account is recognised, refresh and rate limits stay with the router.'
       properties:
         category:
           type: string
@@ -2189,6 +2189,9 @@ components:
           type: boolean
         description:
           type: string
+        endpoint:
+          description: The MCP server of a custom connector, as it was created. Absent on a built-in, whose endpoints stay with the router.
+          type: string
         id:
           description: Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does.
           type: string
@@ -2199,6 +2202,11 @@ components:
           nullable: true
           type: array
         name:
+          type: string
+        redirect_uri:
+          description: 'The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then.'
+          format: uri
+          readOnly: true
           type: string
         revision:
           description: The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
@@ -10143,6 +10151,47 @@ paths:
           $ref: '#/components/responses/InternalError'
       summary: Add a custom MCP connector
   /v1/agents/connectors/{id}:
+    delete:
+      description: |-
+        Deletes one of the app's own connectors, every revision of it, with the app's OAuth client for it. A built-in cannot be deleted and is not found. A connector a live connection was made from, or an agent config binds, is refused with a 409 naming them, unless force is set: then its connections are deleted as a forced connection delete deletes one, credentials dropped at once, and the bindings are left in place. The same id may be created again, from revision 1.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteConnector
+      parameters:
+        - description: The app's custom connector, such as custom_crm.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The app's custom connector, such as custom_crm.
+            type: string
+        - description: Delete it even while connections or agent config bindings use it. Its connections are deleted with it, and the bindings are left in place, naming a connector that no longer exists.
+          explode: false
+          in: query
+          name: force
+          schema:
+            description: Delete it even while connections or agent config bindings use it. Its connections are deleted with it, and the bindings are left in place, naming a connector that no longer exists.
+            type: boolean
+      responses:
+        "204":
+          description: The connector is deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Delete a custom connector
     get:
       description: |-
         A built-in or one of the app's own, at its newest revision. Another app's custom connector is not found.

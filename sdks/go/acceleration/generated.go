@@ -3773,7 +3773,7 @@ type ConnectionValidationRequest struct {
 // ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
 type ConnectionValidationStatus string
 
-// Connector A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
+// Connector A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown, and a custom connector's endpoint. A built-in's endpoints, how an account is recognised, refresh and rate limits stay with the router.
 type Connector struct {
 	Category *string `json:"category,omitempty"`
 
@@ -3787,12 +3787,18 @@ type Connector struct {
 	Custom      *bool   `json:"custom,omitempty"`
 	Description *string `json:"description,omitempty"`
 
+	// Endpoint The MCP server of a custom connector, as it was created. Absent on a built-in, whose endpoints stay with the router.
+	Endpoint *string `json:"endpoint,omitempty"`
+
 	// Id Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does.
 	Id string `json:"id"`
 
 	// Inputs What a connection is created with, such as a region or a shop.
 	Inputs *[]ConnectorInput `json:"inputs"`
 	Name   string            `json:"name"`
+
+	// RedirectUri The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then.
+	RedirectUri *string `json:"redirect_uri,omitempty"`
 
 	// Revision The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
 	Revision *int64 `json:"revision,omitempty"`
@@ -7612,6 +7618,12 @@ type FinishConnectorConsentParams struct {
 	Error *string `form:"error,omitempty" json:"error,omitempty"`
 }
 
+// DeleteConnectorParams defines parameters for DeleteConnector.
+type DeleteConnectorParams struct {
+	// Force Delete it even while connections or agent config bindings use it. Its connections are deleted with it, and the bindings are left in place, naming a connector that no longer exists.
+	Force *bool `form:"force,omitempty" json:"force,omitempty"`
+}
+
 // ListConnectorEventDestinationsParams defines parameters for ListConnectorEventDestinations.
 type ListConnectorEventDestinationsParams struct {
 	// Limit Up to 200. Omitted is 25.
@@ -9095,6 +9107,15 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
 	HandOffConnectorLaunch(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteConnector Delete a custom connector
+	//
+	// Deletes one of the app's own connectors, every revision of it, with the app's OAuth client for it. A built-in cannot be deleted and is not found. A connector a live connection was made from, or an agent config binds, is refused with a 409 naming them, unless force is set: then its connections are deleted as a forced connection delete deletes one, credentials dropped at once, and the bindings are left in place. The same id may be created again, from revision 1.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/connectors/{id} (the `DeleteConnector` operationId).
+	DeleteConnector(ctx context.Context, id string, params *DeleteConnectorParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConnector Read a connector
 	//
@@ -12284,6 +12305,25 @@ func (c *Client) GetConnectorLaunchPage(ctx context.Context, id string, reqEdito
 // Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
 func (c *Client) HandOffConnectorLaunch(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHandOffConnectorLaunchRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteConnector Delete a custom connector
+//
+// Deletes one of the app's own connectors, every revision of it, with the app's OAuth client for it. A built-in cannot be deleted and is not found. A connector a live connection was made from, or an agent config binds, is refused with a 409 naming them, unless force is set: then its connections are deleted as a forced connection delete deletes one, credentials dropped at once, and the bindings are left in place. The same id may be created again, from revision 1.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/connectors/{id} (the `DeleteConnector` operationId).
+func (c *Client) DeleteConnector(ctx context.Context, id string, params *DeleteConnectorParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteConnectorRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -18721,6 +18761,67 @@ func NewHandOffConnectorLaunchRequest(server string, id string) (*http.Request, 
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteConnectorRequest constructs an http.Request for the DeleteConnector method
+func NewDeleteConnectorRequest(server string, id string, params *DeleteConnectorParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Force != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "force", *params.Force, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -26425,6 +26526,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
 	HandOffConnectorLaunchWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*HandOffConnectorLaunchResponse, error)
 
+	// DeleteConnectorWithResponse Delete a custom connector
+	//
+	// Deletes one of the app's own connectors, every revision of it, with the app's OAuth client for it. A built-in cannot be deleted and is not found. A connector a live connection was made from, or an agent config binds, is refused with a 409 naming them, unless force is set: then its connections are deleted as a forced connection delete deletes one, credentials dropped at once, and the bindings are left in place. The same id may be created again, from revision 1.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/connectors/{id} (the `DeleteConnector` operationId).
+	DeleteConnectorWithResponse(ctx context.Context, id string, params *DeleteConnectorParams, reqEditors ...RequestEditorFn) (*DeleteConnectorResponse, error)
+
 	// GetConnectorWithResponse Read a connector
 	//
 	// A built-in or one of the app's own, at its newest revision. Another app's custom connector is not found.
@@ -32579,6 +32691,82 @@ func (r HandOffConnectorLaunchResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r HandOffConnectorLaunchResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteConnectorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteConnectorResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteConnectorResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteConnectorResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteConnectorResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteConnectorResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteConnectorResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteConnectorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteConnectorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteConnectorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteConnectorResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -44708,6 +44896,23 @@ func (c *ClientWithResponses) HandOffConnectorLaunchWithResponse(ctx context.Con
 	return ParseHandOffConnectorLaunchResponse(rsp)
 }
 
+// DeleteConnectorWithResponse Delete a custom connector
+//
+// Deletes one of the app's own connectors, every revision of it, with the app's OAuth client for it. A built-in cannot be deleted and is not found. A connector a live connection was made from, or an agent config binds, is refused with a 409 naming them, unless force is set: then its connections are deleted as a forced connection delete deletes one, credentials dropped at once, and the bindings are left in place. The same id may be created again, from revision 1.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/connectors/{id} (the `DeleteConnector` operationId).
+func (c *ClientWithResponses) DeleteConnectorWithResponse(ctx context.Context, id string, params *DeleteConnectorParams, reqEditors ...RequestEditorFn) (*DeleteConnectorResponse, error) {
+	rsp, err := c.DeleteConnector(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteConnectorResponse(rsp)
+}
+
 // GetConnectorWithResponse Read a connector
 //
 // A built-in or one of the app's own, at its newest revision. Another app's custom connector is not found.
@@ -51301,6 +51506,70 @@ func ParseHandOffConnectorLaunchResponse(rsp *http.Response) (*HandOffConnectorL
 
 	case rsp.StatusCode == 403:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteConnectorResponse parses an HTTP response from a DeleteConnectorWithResponse call
+func ParseDeleteConnectorResponse(rsp *http.Response) (*DeleteConnectorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteConnectorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

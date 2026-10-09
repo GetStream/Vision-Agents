@@ -22,7 +22,8 @@ T = TypeVar("T", bound="Connector")
 @_attrs_define
 class Connector:
     """A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between
-    is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
+    is shown, and a custom connector's endpoint. A built-in's endpoints, how an account is recognised, refresh and rate
+    limits stay with the router.
 
         Attributes:
             client (ConnectorClient): How the OAuth client a connection uses is registered, and how the client authenticates
@@ -39,6 +40,12 @@ class Connector:
             scopes (list[str] | None): The scopes a consent asks for.
             category (str | Unset):
             description (str | Unset):
+            endpoint (str | Unset): The MCP server of a custom connector, as it was created. Absent on a built-in, whose
+                endpoints stay with the router.
+            redirect_uri (str | Unset): The redirect URI an OAuth client registered for this connector has to list: where
+                every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by
+                /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when
+                ROUTER_PUBLIC_URL is not set, since no consent can start then.
             setup (ConnectorSetup | Unset): What a person does at the provider before the first consent.
     """
 
@@ -53,6 +60,8 @@ class Connector:
     scopes: list[str] | None
     category: str | Unset = UNSET
     description: str | Unset = UNSET
+    endpoint: str | Unset = UNSET
+    redirect_uri: str | Unset = UNSET
     setup: ConnectorSetup | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -97,6 +106,10 @@ class Connector:
 
         description = self.description
 
+        endpoint = self.endpoint
+
+        redirect_uri = self.redirect_uri
+
         setup: dict[str, Any] | Unset = UNSET
         if not isinstance(self.setup, Unset):
             setup = self.setup.to_dict()
@@ -120,6 +133,10 @@ class Connector:
             field_dict["category"] = category
         if description is not UNSET:
             field_dict["description"] = description
+        if endpoint is not UNSET:
+            field_dict["endpoint"] = endpoint
+        if redirect_uri is not UNSET:
+            field_dict["redirect_uri"] = redirect_uri
         if setup is not UNSET:
             field_dict["setup"] = setup
 
@@ -200,6 +217,10 @@ class Connector:
 
         description = d.pop("description", UNSET)
 
+        endpoint = d.pop("endpoint", UNSET)
+
+        redirect_uri = d.pop("redirect_uri", UNSET)
+
         _setup = d.pop("setup", UNSET)
         setup: ConnectorSetup | Unset
         if isinstance(_setup, Unset):
@@ -219,6 +240,8 @@ class Connector:
             scopes=scopes,
             category=category,
             description=description,
+            endpoint=endpoint,
+            redirect_uri=redirect_uri,
             setup=setup,
         )
 
