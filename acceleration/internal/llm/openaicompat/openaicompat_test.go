@@ -324,8 +324,8 @@ func (s *OpenAICompatSuite) TestThinkingIsSeparatedFromTheAnswer() {
 	s.Equal("The user said hi, so", thinking, "but it is still available to a caller that wants it")
 }
 
-// thinking joins the reasoning a response streamed.
-func thinking(events []llm.Event) string {
+// reasoningOf joins the reasoning a response streamed.
+func reasoningOf(events []llm.Event) string {
 	var text string
 	for _, event := range events {
 		if delta, ok := event.(llm.ReasoningTextDelta); ok {
@@ -350,7 +350,7 @@ func (s *OpenAICompatSuite) TestAThoughtChannelIsNeverSpoken() {
 	response, events := s.ask(provider, hello())
 
 	s.Equal("Just a moment, checking. \n\n", response.OutputText)
-	s.Equal("party of two", thinking(events), "the channel is still there for a caller that wants it")
+	s.Equal("party of two", reasoningOf(events), "the channel is still there for a caller that wants it")
 	s.Require().Len(response.ToolCalls, 1)
 }
 
