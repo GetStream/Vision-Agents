@@ -1035,6 +1035,50 @@ func (s *HarnessSuite) TestTheReplyCarryingAColleaguesAnswerKeepsItsTools() {
 	s.Contains(s.fast.requests()[1].Instructions, usePolicy)
 }
 
+func (s *HarnessSuite) TestSomebodyReadingIsNotToldToFillThePauseBeforeACall() {
+	s.tools = testTools()
+	s.build(true)
+	s.harness.options.Text = true
+
+	s.respond("turn-1", "where is my order")
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.NotEmpty(s.fast.requests()[0].Tools)
+	s.Contains(s.fast.requests()[0].Instructions, textUsePolicy)
+	s.NotContains(s.fast.requests()[0].Instructions, usePolicy)
+}
+
+func (s *HarnessSuite) TestAWrittenReplyCarryingAColleaguesQuestionIsToldNothingAboutTools() {
+	// In writing as on a call, a reply that only asks the caller has no tools, so it is not
+	// told how to call one either.
+	s.tools = testTools()
+	s.build(true)
+	s.harness.options.Text = true
+	s.slow.automatic = "NEED: which date did you want?"
+	s.respond("turn-1", "is there a table free")
+	s.reply("turn-1", `<ask skill="think">table availability</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+
+	s.Require().Len(s.fast.requests(), 2)
+	s.Contains(s.fast.requests()[0].Instructions, textUsePolicy)
+	s.Empty(s.fast.requests()[1].Tools)
+	s.NotContains(s.fast.requests()[1].Instructions, textUsePolicy)
+	s.NotContains(s.fast.requests()[1].Instructions, usePolicy)
+}
+
+func (s *HarnessSuite) TestSomebodyListeningIsToldToFillThePauseBeforeACall() {
+	s.tools = testTools()
+	s.build(true)
+
+	s.respond("turn-1", "where is my order")
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.Contains(s.fast.requests()[0].Instructions, usePolicy)
+	s.NotContains(s.fast.requests()[0].Instructions, textUsePolicy)
+}
+
 func (s *HarnessSuite) TestANewerRequestSupersedesTheOneItReplaces() {
 	// The caller has said something since, so the older question was asked about a
 	// conversation that no longer exists.

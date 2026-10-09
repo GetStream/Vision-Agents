@@ -289,11 +289,11 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 
 	if found {
 		if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
-			return nil, invalidRequest(err.Error())
+			return nil, storeFailure(err, errAgentNameTaken)
 		}
 	} else {
 		if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
-			return nil, invalidRequest(err.Error())
+			return nil, storeFailure(err, errAgentNameTaken)
 		}
 	}
 	var was any
