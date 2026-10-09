@@ -555,6 +555,8 @@ type AgentSuite struct {
 	// opened counts the transcription sessions the agent asked for, which is how a test
 	// tells a transcriber that was replaced from one that was never reopened.
 	opened atomic.Int64
+	// replacement is the voice opened after the first, for a test whose agent loses one.
+	replacement *stubTTS
 	// subagent is the second model, present only when a test asks for delegation.
 	subagent *stubLLM
 	// skills are what the model may hand over, when a test gives the agent a subagent.
@@ -748,8 +750,13 @@ func (s *AgentSuite) join(streamingVoice bool) {
 	}
 
 	speech := ttsrouter.NewRegistry()
+	opened := false
 	speech.Register("stub", func(spec routing.Spec) (tts.TTS, error) {
 		s.voiceAsked = spec
+		if opened && s.replacement != nil {
+			return s.replacement, nil
+		}
+		opened = true
 		return s.voice, nil
 	})
 	speaker, err := ttsrouter.New(ttsrouter.Options{
@@ -2363,6 +2370,75 @@ func (s *AgentSuite) TestTheReplyToAToolResultContinuesTheTurnThatAskedForIt() {
 	}
 	s.Empty(asked.Continues, "a question somebody asked continues nothing")
 	s.Equal(asked.TurnID, followed.Continues)
+}
+
+func (s *AgentSuite) TestALostVoiceIsReplacedForTheRestOfTheCall() {
+	// A voice can go part way through a call, as one out of quota does. Kept, it leaves the
+	// caller with silence for as long as the call lasts.
+	s.join(false)
+	s.replacement = newStubTTS(false)
+	lost := s.agent.voice()
+	s.voice.emitter.Send(tts.Error{
+		Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
+	})
+	s.eventually(func() bool { return s.agent.voice() != lost },
+		"the lost voice was never replaced")
+
+	_, err := s.agent.RespondTo(s.ctx, "where is my order", nil)
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 },
+		"the reply was not spoken in the voice that replaced the lost one")
+}
+
+func (s *AgentSuite) TestAnAgentThatLostItsVoiceMidReplyIsNoLongerTalking() {
+	// What the lost voice was saying never finishes. Still counted as talking, the agent
+	// would hear everything the caller says next as talking over it.
+	s.join(false)
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	_, err := s.agent.RespondTo(s.ctx, "where is my order", nil)
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 && s.agent.floor().Talking },
+		"the reply never reached the voice")
+
+	s.voice.emitter.Send(tts.Error{
+		Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
+	})
+
+	s.eventually(func() bool { return !s.agent.floor().Talking },
+		"the agent was still talking in a voice it had lost")
+}
+
+func (s *AgentSuite) TestWhatIsTypedIntoACallIsHeardAsTheCallerSaid() {
+	// The transcript, the review and the logs take a caller's line from Heard. Without it
+	// a line typed into a call is answered and then nowhere to be read.
+	s.join(false)
+
+	_, err := s.agent.RespondTo(s.ctx, "my order number is 12", nil)
+	s.Require().NoError(err)
+
+	s.eventually(func() bool {
+		for _, event := range s.reported() {
+			if heard, ok := event.(Heard); ok && heard.Text == "my order number is 12" {
+				return true
+			}
+		}
+		return false
+	}, "the typed line was never reported as what the caller said")
+}
+
+func (s *AgentSuite) TestWhatIsTypedIntoATextSessionIsNotAlsoHeard() {
+	// A text session records its caller's lines from Responding, and taking Heard as well
+	// would record each of them twice.
+	s.joinText()
+
+	_, err := s.agent.RespondTo(s.ctx, "my order number is 12", nil)
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 },
+		"the typed line was never answered")
+	s.Zero(countOf[Heard](s.reported()))
 }
 
 func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
