@@ -193,7 +193,8 @@ func (r *Resolver) Resolve(ctx context.Context, ref core.ConnectionRef, req core
 // stored credentials are no longer at rejected.Revision because another router renewed them,
 // only the cache entry is dropped and the next Resolve gets a credential the provider takes.
 //
-// A rejected credential of a core.Static scheme says to replace it (rejectedStatic), since a
+// A rejected or scope-refused credential of a core.Static scheme says to replace it
+// (rejectedStatic), since a
 // reconnect cannot help a token or key the developer supplied.
 func (r *Resolver) Invalidate(ctx context.Context, ref core.ConnectionRef, rejected core.AccessCredential, why core.Outcome) error {
 	var lastError string
@@ -217,7 +218,7 @@ func (r *Resolver) Invalidate(ctx context.Context, ref core.ConnectionRef, rejec
 			return false, nil
 		}
 		state.Status, state.LastError = store.ConnectionNeedsReauthorization, lastError
-		if why.Kind == core.OutcomeInvalidGrant && core.IsStatic(r.schemes, state.Credentials.Scheme) {
+		if core.IsStatic(r.schemes, state.Credentials.Scheme) {
 			state.LastError = rejectedStatic
 		}
 		moved, revision = true, state.Revision

@@ -294,6 +294,23 @@ func (s *ConnectionToolsSuite) TestAConnectionThatNeedsAReconnectSaysSoWithoutAs
 	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP))
 }
 
+// TestAStaticTokenThatLacksScopeSaysToReplaceItNotToReconnect: a channel bridge invalidates a
+// connection with OutcomeScopeRequired when the provider refuses it for want of access; for a
+// token or key a reconnect cannot help, so the validate says to replace it (AI-990).
+func (s *ConnectionToolsSuite) TestAStaticTokenThatLacksScopeSaysToReplaceItNotToReconnect() {
+	id := s.connected(bearer.Name)
+	ref := core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: id}
+	sent, err := s.resolver.Resolve(context.Background(), ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+	s.Require().NoError(s.resolver.Invalidate(context.Background(), ref, sent, core.Outcome{Kind: core.OutcomeScopeRequired, Scopes: []string{"repo"}}))
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal("The provider rejected the stored token or key; replace it with PUT /v1/agents/connections/{id}/credentials", validation.Error)
+}
+
 // TestATokenTheProviderRefusesMovesTheConnectionToNeedsReauthorization: the MCP server answers
 // 401 invalid_token, nothing renews a static token, so core.Transports invalidates it and the
 // validate reports what the connection now needs: new credentials, not a reconnect (AI-990),
