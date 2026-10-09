@@ -40,7 +40,10 @@ type Scenario struct {
 	ToolOrder     []OrderConstraint `yaml:"tool_order"`
 	Entities      []Entity          `yaml:"entities"`
 	Policy        []string          `yaml:"policy"`
-	Judge         JudgeSpec         `yaml:"judge"`
+	// HoldFloor fails a call in which the agent starts speaking while the caller is still in
+	// a scripted turn, pauses included: the point of a long turn is that it is not cut short.
+	HoldFloor bool      `yaml:"hold_floor"`
+	Judge     JudgeSpec `yaml:"judge"`
 	// AgentReplies is the gold reference reply, scored against the text gates in tests
 	// so a scenario cannot ask for something its own reference answer does not do.
 	AgentReplies []string `yaml:"agent_replies"`
@@ -48,10 +51,20 @@ type Scenario struct {
 
 // Turn is one caller utterance or overlap sound.
 type Turn struct {
-	ID           string  `yaml:"id"`
-	Text         string  `yaml:"text"`
-	OverlapSound string  `yaml:"overlap_sound"`
-	Trigger      Trigger `yaml:"trigger"`
+	ID   string `yaml:"id"`
+	Text string `yaml:"text"`
+	// Segments make one long utterance from sentences with pauses between them, the way a
+	// caller thinking aloud talks. Text is then the sentences joined, and the audio is their
+	// clips with the pauses in silence between them.
+	Segments     []Segment `yaml:"segments"`
+	OverlapSound string    `yaml:"overlap_sound"`
+	Trigger      Trigger   `yaml:"trigger"`
+}
+
+// Segment is one sentence of a long turn and the pause the caller leaves after it.
+type Segment struct {
+	Text         string `yaml:"text"`
+	PauseAfterMS int    `yaml:"pause_after_ms"`
 }
 
 // Trigger decides when the turn is played.
@@ -121,6 +134,22 @@ func LoadFile(path string) (Scenario, error) {
 	}
 	if s.MaxDurationS <= 0 {
 		s.MaxDurationS = 180
+	}
+	for i, turn := range s.Turns {
+		if len(turn.Segments) == 0 {
+			continue
+		}
+		if turn.Text != "" {
+			return Scenario{}, fmt.Errorf("scenario: %s: turn %q has both text and segments", path, turn.ID)
+		}
+		texts := make([]string, len(turn.Segments))
+		for j, segment := range turn.Segments {
+			if strings.TrimSpace(segment.Text) == "" || segment.PauseAfterMS < 0 {
+				return Scenario{}, fmt.Errorf("scenario: %s: turn %q segment %d needs text and a pause of 0 or more", path, turn.ID, j)
+			}
+			texts[j] = segment.Text
+		}
+		s.Turns[i].Text = strings.Join(texts, " ")
 	}
 	if err := s.Validate(); err != nil {
 		return Scenario{}, fmt.Errorf("scenario: %s: %w", path, err)
@@ -198,11 +227,15 @@ func (s Scenario) Validate() error {
 	return nil
 }
 
-// SpeechTexts returns caller lines that need TTS.
+// SpeechTexts returns the clips the caller's lines are made of, which need TTS: each
+// sentence of a long turn, or a turn's text.
 func (s Scenario) SpeechTexts() []string {
 	var out []string
 	for _, turn := range s.Turns {
-		if turn.Text != "" {
+		for _, segment := range turn.Segments {
+			out = append(out, segment.Text)
+		}
+		if turn.Text != "" && len(turn.Segments) == 0 {
 			out = append(out, turn.Text)
 		}
 	}
@@ -211,7 +244,13 @@ func (s Scenario) SpeechTexts() []string {
 
 // CallerTranscript returns the scripted caller text used as canonical judge input.
 func (s Scenario) CallerTranscript() string {
-	return strings.Join(s.SpeechTexts(), "\n")
+	var lines []string
+	for _, turn := range s.Turns {
+		if turn.Text != "" {
+			lines = append(lines, turn.Text)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // HasBargeIn reports whether the scenario expects a measurable interruption.

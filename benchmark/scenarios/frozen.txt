@@ -24,3 +24,6 @@ telecom.coherence
 telecom.noise
 telecom.selectivity
 telecom.tool_filler
+restaurant.monologue
+healthcare.monologue
+telecom.monologue

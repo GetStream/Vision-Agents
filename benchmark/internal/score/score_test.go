@@ -477,3 +477,19 @@ func TestFirstResponseDoesNotFallBackToALaterTurn(t *testing.T) {
 		t.Fatalf("first response %+v, want nil when the first caller turn has no reply", got)
 	}
 }
+
+func TestTalkingOverALongTurnFailsOnlyWhereTheFloorMustBeHeld(t *testing.T) {
+	passing := Metrics{SelectivityHold: true, HoldThroughOverlap: true, FalseCutoff: 1}
+
+	ordinary := passing
+	ApplyGates(&ordinary, scenario.Scenario{})
+	if !ordinary.Passed {
+		t.Fatalf("a false cutoff is reported, not gated, in an ordinary scenario: %v", ordinary.GateNotes)
+	}
+
+	monologue := passing
+	ApplyGates(&monologue, scenario.Scenario{HoldFloor: true})
+	if monologue.Passed || strings.Join(monologue.GateNotes, ",") != "false_cutoff" {
+		t.Fatalf("talking into a long turn must fail it: passed=%v notes=%v", monologue.Passed, monologue.GateNotes)
+	}
+}

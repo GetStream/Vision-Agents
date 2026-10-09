@@ -191,7 +191,7 @@ There is no single industry-standard score across these verticals. Voicebench ta
 | Voice-to-voice | Caller end to agent onset, every measurable turn | P50 300–700 ms; P95 and sample count reported | No |
 | Time to first response | Caller end to agent onset, first caller turn of each call only | P50 and P95 with sample count reported; no target yet | No |
 | Stability | Non-tool gap over 2× that call's P50 | Zero spikes | No |
-| False cutoffs | Agent starts while caller is speaking | Zero | No |
+| False cutoffs | Agent starts while caller is speaking | Zero | Only in the monologue scenarios |
 | Reliability | Repeated runs | `pass^k`; default target 3/3 | Aggregate |
 
 ### Restaurant
@@ -228,7 +228,7 @@ See the [healthcare contract](agents/contracts/healthcare.prompt). Its data-mini
 
 See the [telecom contract](agents/contracts/telecom.prompt).
 
-Each vertical includes task completion, two-minute coherence, 10 dB noise, competing-talker selectivity, delayed-tool filler, interruption, entity-dense, and adversarial scenarios. The three verticals remain separate score columns; they are never combined into one score.
+Each vertical includes task completion, two-minute coherence, 10 dB noise, competing-talker selectivity, delayed-tool filler, interruption, entity-dense, adversarial, and monologue scenarios. A monologue is a minute of one caller turn, built from sentences with 0.8–2 s thinking pauses between them, with the details spread through it; the agent must not start talking anywhere inside it (`hold_floor`), then must act on all of it. The three verticals remain separate score columns; they are never combined into one score.
 
 ## Scenario world
 
