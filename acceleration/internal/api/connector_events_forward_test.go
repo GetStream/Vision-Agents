@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -187,6 +188,28 @@ func (s *EventForwardingSuite) TestAReplyThatWaitedAndIsNotWrittenDoesNotForward
 	s.Never(func() bool { return len(target.requests()) > 1 }, dropped, 20*time.Millisecond,
 		"the destination got the mention's delivery as unhandled")
 	s.Empty(s.chat.Stored(thread.ChannelID), "the reply was not written")
+}
+
+// AI-1001: only the messages a take brought skip unanswered. In a delivery of two original
+// messages (WhatsApp batches them), the second one's failed write still calls it.
+func (s *EventForwardingSuite) TestABatchsSecondMessageThatIsNotWrittenCallsUnanswered() {
+	s.answering(s.connectedBot())
+	inbound := func(ts string) core.InboundMessage {
+		return core.InboundMessage{ConnectorID: "slack_bot", ProviderUnitID: s.workspace, ThreadKey: "C0000CHAN:" + ts,
+			AuthorID: "U0000ALICE", Text: "hi", ProviderMessageID: ts, Raw: s.message("U0000ALICE", "hi", ts)}
+	}
+	first, second := inbound("1759740000.000100"), inbound("1759740000.000300")
+	var calls atomic.Int32
+	_, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{first}, nil)
+	s.Require().NoError(err)
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(s.threadChannel())) == 1 }, settleFor, 10*time.Millisecond)
+	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
+
+	answered, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{first, second}, func() { calls.Add(1) })
+
+	s.Require().NoError(err)
+	s.True(answered)
+	s.Eventually(func() bool { return calls.Load() == 1 }, settleFor, 10*time.Millisecond, "the second original message's failed write calls unanswered")
 }
 
 // Slack's event_id is «A unique identifier for this specific event»
