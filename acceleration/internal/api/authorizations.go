@@ -261,8 +261,11 @@ func (c consents) connectionFor(ctx context.Context, request session.ConsentRequ
 	// comes back with another account (completeConsent, account_mismatch), and the session
 	// opens it only once that consent connected it anew (session.openOrAsk). A session still
 	// uses only the connection chosen for it (T22): this one, by the person's own consent.
+	//
+	// A static token or key is replaced, never consented to (AI-990), so the chat passes over
+	// a connection that holds one: a person's github token beside the consent the chat asks for.
 	for _, connection := range held {
-		if mine(connection) {
+		if mine(connection) && !core.IsStatic(c.registry.Schemes, connection.AuthScheme) {
 			return connection, nil
 		}
 	}
@@ -272,11 +275,16 @@ func (c consents) connectionFor(ctx context.Context, request session.ConsentRequ
 	}
 	// The chat cannot ask for a scheme or an input, so only a connector that needs neither is
 	// connected from it, as createConnection takes one with neither named.
-	if len(definition.Manifest.Schemes) != 1 {
+	scheme, found := defaultScheme(definition.Manifest, c.registry.Schemes)
+	if !found {
 		return store.ConnectorConnection{}, stack.Wrap(fmt.Errorf("%s allows %d schemes, and the chat cannot choose one",
 			definition.ID, len(definition.Manifest.Schemes)))
 	}
-	scheme := definition.Manifest.Schemes[0]
+	// Nor can it ask for a token or key, so it makes no connection that could only wait for one.
+	if core.IsStatic(c.registry.Schemes, scheme) {
+		return store.ConnectorConnection{}, stack.Wrap(fmt.Errorf("%s takes only a static token or key, which the chat cannot ask for",
+			definition.ID))
+	}
 	profile, err := definition.Manifest.Resolve(scheme, nil, nil)
 	if err != nil {
 		return store.ConnectorConnection{}, stack.Wrap(err)
@@ -678,6 +686,8 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 
 	switched := false
 	var committed *core.CredentialState
+	// The tokens a reconnect replaces, and those the consent got.
+	change := core.CredentialChange{Current: core.FingerprintsOf(s.connectors.Schemes, credentials)}
 	err = s.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		if state.AccountID != "" && state.AccountID != account.AccountID {
 			switched = true
@@ -686,6 +696,7 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 		}
 		// The credential store leaves the revision it committed here (core.CredentialStore).
 		committed = state
+		change.Previous = core.FingerprintsOf(s.connectors.Schemes, state.Credentials)
 		state.Credentials = credentials
 		state.Status = store.ConnectionConnected
 		state.LastError = ""
@@ -710,7 +721,7 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 		return consentAccountMismatch
 	}
 	s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
-		store.AuditGrantCreated, store.AuditReasonConsent, committed.Revision, row.ID)
+		store.AuditGrantCreated, store.AuditReasonConsent, committed.Revision, row.ID, change)
 	// A reconnect brings back the MCP event subscriptions its bindings declare, as a validate
 	// does: one a disconnect or a long wait dropped is made again. The consent itself is done,
 	// so a failure here is logged and the next validate tries again.

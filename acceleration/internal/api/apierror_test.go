@@ -2,12 +2,15 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 func answered(t *testing.T, body []byte) ErrorDetail {
@@ -98,4 +101,39 @@ func TestAStatusHumaChoseIsAnsweredAsTheTypeOfThatStatus(t *testing.T) {
 	require.Equal(t, ErrorTypeInvalidRequest, statusError(http.StatusTeapot, "x").Type, "a 4xx no type names")
 	require.Equal(t, internalError(), statusError(http.StatusBadGateway, "dial tcp 10.0.0.7"),
 		"a 5xx says nothing of what failed")
+}
+
+func TestANameTakenInTheStoreIsAConflictTheCallerCanFix(t *testing.T) {
+	handler, logged := served(t, func() error {
+		return storeFailure(stack.Wrap(store.ErrNameTaken), errAgentNameTaken)
+	})
+
+	response := postSync(handler, `{"name":"jean"}`)
+
+	require.Equal(t, http.StatusConflict, response.Code)
+	failure := answered(t, response.Body.Bytes())
+	require.Equal(t, codeNameTaken, failure.Code)
+	require.Equal(t, "an agent with this name already exists", failure.Message)
+	require.NotContains(t, logged.String(), "stack=", "a name taken is not a failure to trace")
+}
+
+func TestARecordGoneFromTheStoreIsStillTheInvalidRequestItWas(t *testing.T) {
+	gone := fmt.Errorf("%w %s", store.ErrNoSkill, "k1")
+	handler, _ := served(t, func() error { return storeFailure(stack.Wrap(gone), errSkillNameTaken) })
+
+	response := postSync(handler, `{"name":"jean"}`)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	require.Equal(t, "store: there is no skill k1", answered(t, response.Body.Bytes()).Message)
+}
+
+func TestAnyOtherStoreFailureIsTheRoutersOwnAndSaysNothingOfIt(t *testing.T) {
+	broken := stack.Wrap(errors.New("store: create agent config: dial tcp 10.0.0.7:5432: connection refused"))
+	handler, logged := served(t, func() error { return storeFailure(broken, errAgentNameTaken) })
+
+	response := postSync(handler, `{"name":"jean"}`)
+
+	require.Equal(t, http.StatusInternalServerError, response.Code)
+	require.Equal(t, somethingWentWrong, answered(t, response.Body.Bytes()).Message)
+	require.Contains(t, logged.String(), "connection refused", "recorded for whoever looks into it")
 }

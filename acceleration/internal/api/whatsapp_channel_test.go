@@ -382,16 +382,13 @@ func (s *WhatsAppChannelSuite) written(channel string, count int) []map[string]a
 }
 
 // streamDelivers delivers the message.new Stream Chat sends for the index-th message of a
-// thread channel, as Stream holds it, signed with the app's secret.
+// thread channel, shaped as Stream sends it, signed with the app's secret.
 func (s *WhatsAppChannelSuite) streamDelivers(channel string, index int) int {
-	stored := s.chat.Stored(channel)[index]
 	data, _ := s.chat.Channel(channel)
 	payload, err := json.Marshal(map[string]any{
 		"type": "message.new", "cid": "agent:" + channel, "channel_id": channel, "channel_type": "agent",
 		"channel_custom": data["custom"],
-		"message": map[string]any{
-			"id": stored["id"], "text": stored["text"], "user": stored["user"], "custom": stored["custom"],
-		},
+		"message":        s.chat.Delivered(channel)[index],
 	})
 	s.Require().NoError(err)
 	return s.signedly("/v1/chat/hooks/stream", string(payload))

@@ -33,6 +33,8 @@ const suiteConnectorTimeout = 10 * time.Second
 // its own connector and connection in the suite's app.
 type ConnectionToolsSuite struct {
 	RouterSuite
+	// logged is what the router logged, for a test of the credential event lines.
+	logged   *lockedLog
 	provider *fakeprovider.Server
 	// token is an access token the fake issued, which its MCP endpoint takes: the value a
 	// bearer connection is given. Synthetic, fresh per suite.
@@ -66,6 +68,8 @@ func (s *ConnectionToolsSuite) SetupSuite() {
 	}
 	s.connectorHTTP = s.provider.Client()
 	s.token = s.issue()
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -186,6 +190,57 @@ func (s *ConnectionToolsSuite) TestAnImportedGrantConnectsWithTheConnectorsEndpo
 	s.Equal(validationConnected, string(s.validate(id).Status))
 }
 
+// TestAnImportedGrantIsAuditedAndLoggedByTheTokensItReplaced: the credentials write names the
+// tokens it stored by fingerprint on its audit row and its log line, a second one those it
+// replaced, and the connector's refresh_ttl shows as when the refresh token expires (AI-990).
+// No token is logged.
+func (s *ConnectionToolsSuite) TestAnImportedGrantIsAuditedAndLoggedByTheTokensItReplaced() {
+	connector := s.connector(oauth2code.Name, "refresh:\n  refresh_ttl: 720h\n")
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	firstAccess, firstRefresh := "first-access-"+s.utils.uuid(), "first-refresh-"+s.utils.uuid()
+	secondAccess, secondRefresh := "second-access-"+s.utils.uuid(), "second-refresh-"+s.utils.uuid()
+	for revision, tokens := range [][2]string{{firstAccess, firstRefresh}, {secondAccess, secondRefresh}} {
+		grant := s.importedGrant(tokens[0], "chat:write")
+		grant["expected_revision"] = revision + 1
+		grant["values"].(map[string]string)[oauth2code.SuppliedRefreshToken] = tokens[1]
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials", grant, nil))
+	}
+
+	var page ConnectorAuditPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connector-audit?connection_id="+created.ID, nil, &page))
+	s.Require().Len(page.Items, 2)
+	first, second := page.Items[1].Credential, page.Items[0].Credential
+	s.Require().NotNil(first)
+	s.Require().NotNil(second)
+	s.Equal(core.Fingerprint(firstAccess), first.AccessFingerprint)
+	s.Equal(core.Fingerprint(firstRefresh), first.RefreshFingerprint)
+	s.Empty(first.PreviousAccessFingerprint)
+	s.Equal(core.Fingerprint(secondAccess), second.AccessFingerprint)
+	s.Equal(core.Fingerprint(firstAccess), second.PreviousAccessFingerprint)
+	s.Equal(core.Fingerprint(firstRefresh), second.PreviousRefreshFingerprint)
+	s.True(second.Rotated)
+	s.Require().NotNil(second.AccessExpiresAt)
+	s.Require().NotNil(second.RefreshExpiresAt, "the connector's refresh_ttl")
+	s.WithinDuration(time.Now().Add(720*time.Hour), *second.RefreshExpiresAt, time.Minute)
+
+	var line string
+	for l := range strings.Lines(s.logged.String()) {
+		if strings.Contains(l, "event=grant_created") && strings.Contains(l, " connection="+created.ID+" ") &&
+			strings.Contains(l, " access_fingerprint="+core.Fingerprint(secondAccess)) {
+			line = l
+		}
+	}
+	s.Require().NotEmpty(line, "one INFO line for the second credentials write")
+	s.Contains(line, "level=INFO")
+	s.Contains(line, " previous_access_fingerprint="+core.Fingerprint(firstAccess))
+	s.Contains(line, " refresh_fingerprint="+core.Fingerprint(secondRefresh))
+	s.Contains(line, " rotated=true")
+	for _, token := range []string{firstAccess, firstRefresh, secondAccess, secondRefresh} {
+		s.NotContains(s.logged.String(), token)
+	}
+}
+
 func (s *ConnectionToolsSuite) TestValidateListsTheToolsAndToolsReadsThemBack() {
 	id := s.connected(bearer.Name)
 
@@ -239,9 +294,27 @@ func (s *ConnectionToolsSuite) TestAConnectionThatNeedsAReconnectSaysSoWithoutAs
 	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP))
 }
 
+// TestAStaticTokenThatLacksScopeSaysToReplaceItNotToReconnect: a channel bridge invalidates a
+// connection with OutcomeScopeRequired when the provider refuses it for want of access; for a
+// token or key a reconnect cannot help, so the validate says to replace it (AI-990).
+func (s *ConnectionToolsSuite) TestAStaticTokenThatLacksScopeSaysToReplaceItNotToReconnect() {
+	id := s.connected(bearer.Name)
+	ref := core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: id}
+	sent, err := s.resolver.Resolve(context.Background(), ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+	s.Require().NoError(s.resolver.Invalidate(context.Background(), ref, sent, core.Outcome{Kind: core.OutcomeScopeRequired, Scopes: []string{"repo"}}))
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal("The provider rejected the stored token or key; replace it with PUT /v1/agents/connections/{id}/credentials", validation.Error)
+}
+
 // TestATokenTheProviderRefusesMovesTheConnectionToNeedsReauthorization: the MCP server answers
 // 401 invalid_token, nothing renews a static token, so core.Transports invalidates it and the
-// validate reports what the connection now needs.
+// validate reports what the connection now needs: new credentials, not a reconnect (AI-990),
+// with a code a program branches on.
 func (s *ConnectionToolsSuite) TestATokenTheProviderRefusesMovesTheConnectionToNeedsReauthorization() {
 	id := s.connection(bearer.Name)
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, "not-a-token-the-fake-issued"), nil))
@@ -249,7 +322,12 @@ func (s *ConnectionToolsSuite) TestATokenTheProviderRefusesMovesTheConnectionToN
 	validation := s.validate(id)
 
 	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal("The provider rejected the stored token or key; replace it with PUT /v1/agents/connections/{id}/credentials", validation.Error)
 	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), s.get(id).Status)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(s.get(id).Revision, s.token), nil))
+	s.Equal(validationConnected, string(s.validate(id).Status), "a new token is what fixes it")
 }
 
 // TestABare401WhoseRefreshIsRefusedValidatesAsNeedsReauthorization: the MCP server refuses an
@@ -268,6 +346,8 @@ func (s *ConnectionToolsSuite) TestABare401WhoseRefreshIsRefusedValidatesAsNeeds
 	validation := s.validate(id)
 
 	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Empty(validation.Code, "an OAuth grant keeps the answer it had before AI-990")
+	s.Equal("The provider rejected the grant; reconnect the account", validation.Error)
 	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), s.get(id).Status)
 	s.Equal(refreshes+1, s.provider.Refreshes(), "the bare 401 was renewed first")
 }

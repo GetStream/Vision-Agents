@@ -601,6 +601,14 @@ func messageText(message llm.Message) string {
 }
 
 // tools renders the tools a request offers.
+//
+// A schema with an optional property, at any depth, is sent with strict false. Without it, the
+// Responses API turns the schema into strict mode by marking every property required, so the
+// model has to fill optional ones (an empty thread_ts that Slack refuses). "If you omit strict,
+// ... Responses requests will attempt to normalize your schema into strict mode when possible",
+// and strict mode needs "All fields in properties must be marked as required":
+// https://developers.openai.com/api/docs/guides/function-calling. A schema whose properties are
+// all required is sent as before, without strict: that normalization loses nothing from it.
 func tools(offered []llm.Tool) []responses.ToolUnionParam {
 	rendered := make([]responses.ToolUnionParam, 0, len(offered))
 	for _, tool := range offered {
@@ -610,10 +618,85 @@ func tools(offered []llm.Tool) []responses.ToolUnionParam {
 		}
 		if len(tool.Parameters) > 0 {
 			function.Parameters = tool.Parameters
+			if HasOptional(tool.Parameters) {
+				function.Strict = param.NewOpt(false)
+			}
 		}
 		rendered = append(rendered, responses.ToolUnionParam{OfFunction: function})
 	}
 	return rendered
+}
+
+// HasOptional reports whether a schema, or any schema inside it, has a property its required
+// list leaves out. A function tool offered to a Responses model with such a schema needs strict
+// false, or the API normalizes it to strict mode and the model fills every optional property
+// (see tools). openailive's backend tools follow the same rule.
+//
+// It reads decoded JSON ([]any) and Go literals ([]string required, as internal/agent/native.go
+// and internal/sandbox/sandbox.go write them). Values under a data keyword are skipped, so a
+// default or an enum that holds an object with a properties key is not read as a schema.
+func HasOptional(schema map[string]any) bool {
+	return optionalIn(schema)
+}
+
+// dataKeywords hold instance values, not schemas: enum and const (JSON Schema 2020-12
+// validation, sections 6.1.2 and 6.1.3), default and examples (sections 9.2 and 9.5),
+// https://json-schema.org/draft/2020-12/json-schema-validation.
+var dataKeywords = map[string]bool{"enum": true, "const": true, "default": true, "examples": true}
+
+// namedSchemas hold schemas under names the schema's author chose, so a name there is never a
+// keyword (JSON Schema 2020-12 core, section 8.2.4 for $defs; applicator, sections 10.2.2.2
+// and 10.2.2.4 for patternProperties and dependentSchemas; definitions is the draft-07 name
+// of $defs).
+var namedSchemas = map[string]bool{"$defs": true, "definitions": true, "patternProperties": true, "dependentSchemas": true}
+
+func optionalIn(node any) bool {
+	switch value := node.(type) {
+	case map[string]any:
+		properties, _ := value["properties"].(map[string]any)
+		required := map[string]bool{}
+		switch names := value["required"].(type) {
+		case []string:
+			for _, name := range names {
+				required[name] = true
+			}
+		case []any:
+			for _, name := range names {
+				if name, ok := name.(string); ok {
+					required[name] = true
+				}
+			}
+		}
+		for name, property := range properties {
+			if !required[name] || optionalIn(property) {
+				return true
+			}
+		}
+		for key, child := range value {
+			if key == "properties" || dataKeywords[key] {
+				continue
+			}
+			if namedSchemas[key] {
+				named, _ := child.(map[string]any)
+				for _, schema := range named {
+					if optionalIn(schema) {
+						return true
+					}
+				}
+				continue
+			}
+			if optionalIn(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range value {
+			if optionalIn(child) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // cacheOptions renders the request's cache policy, returning nil when it asked for nothing

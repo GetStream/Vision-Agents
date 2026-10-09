@@ -120,13 +120,73 @@ type MessageRule struct {
 	// Text may be absent from a message, such as one that is only a file; the message is
 	// still read, with empty text.
 	Text string `yaml:"text" json:"text"`
+	// Addressed is when a message speaks to the connection's own account, such as its bot in
+	// a channel of people. A message that does not starts no thread: it is answered only on a
+	// thread already linked. Empty: every message does, as before (AI-989).
+	Addressed *AddressRule `yaml:"addressed,omitempty" json:"addressed,omitempty"`
+}
+
+// AddressRule is when a message speaks to the connection's own account: when it has match,
+// or when its text holds mention.
+type AddressRule struct {
+	// Match is values that address a message whatever its text says, compared as exact
+	// strings as messages.match is, such as a direct message.
+	Match map[string]string `yaml:"match,omitempty" json:"match,omitempty"`
+	// Mention is the text that names the account, with {name} placeholders filled from the
+	// connection's captured values, such as Slack's <@{bot_user_id}>. A connection without
+	// one of them is never mentioned.
+	Mention string `yaml:"mention,omitempty" json:"mention,omitempty"`
+}
+
+// Addresses is whether a message this rule read speaks to the connection whose captured
+// values are metadata.
+func (rule MessageRule) Addresses(message ChannelMessage, metadata map[string]string) bool {
+	if rule.Addressed == nil || message.Direct {
+		return true
+	}
+	mention, ok := rule.mention(metadata)
+	return ok && strings.Contains(message.Text, mention)
+}
+
+// WithoutMention is a message's text as the agent gets it: with each mention of the
+// connection's own account taken out, and the space around it trimmed, since the mention
+// only says whom the message is for (AI-990 F29). Example, for Slack's <@{bot_user_id}>:
+// «<@U0000BOT> is the build green?» is «is the build green?». Text that is only the mention
+// is kept as it is, so the agent still gets a message to answer. Without a mention rule, or
+// on a connection without its values, the text is as the provider wrote it.
+func (rule MessageRule) WithoutMention(text string, metadata map[string]string) string {
+	mention, ok := rule.mention(metadata)
+	if !ok {
+		return text
+	}
+	without := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(text, mention+" ", ""), mention, ""))
+	if without == "" {
+		return text
+	}
+	return without
+}
+
+// mention is addressed.mention filled from a connection's captured values, and whether it
+// has every one of them.
+func (rule MessageRule) mention(metadata map[string]string) (string, bool) {
+	if rule.Addressed == nil || rule.Addressed.Mention == "" {
+		return "", false
+	}
+	complete := true
+	mention := placeholder.ReplaceAllStringFunc(rule.Addressed.Mention, func(match string) string {
+		value := metadata[match[1:len(match)-1]]
+		complete = complete && value != ""
+		return value
+	})
+	return mention, complete
 }
 
 // IsZero is whether the block declares no messages, so encoding/json (omitzero) and yaml.v3
 // (omitempty) leave it out.
 func (rule MessageRule) IsZero() bool {
 	return rule.Each == "" && len(rule.Match) == 0 && len(rule.SkipIfPresent) == 0 && rule.ProviderUnitID == "" &&
-		len(rule.ThreadKey) == 0 && rule.AuthorID == "" && rule.ProviderMessageID == "" && rule.Text == ""
+		len(rule.ThreadKey) == 0 && rule.AuthorID == "" && rule.ProviderMessageID == "" && rule.Text == "" &&
+		rule.Addressed == nil
 }
 
 // ThreadKeyPart is one named part of a thread key.
@@ -309,6 +369,11 @@ type ChannelEvent struct {
 	Challenge string
 	Messages  []ChannelMessage
 	Signals   []Signal
+	// Skipped is why each message the block did not read was left out, one entry per
+	// message, naming the rule that matched, such as «skip_if_present $.event.subtype» for
+	// Slack's channel_join. It names paths only, never a value, since a value may be a
+	// person's (AI-990 F21, F30).
+	Skipped []string
 }
 
 // ChannelMessage is one message of a body: the InboundMessage a verifier returns, and the
@@ -317,6 +382,9 @@ type ChannelEvent struct {
 type ChannelMessage struct {
 	InboundMessage
 	ThreadParts map[string]string
+	// Direct is whether the message has messages.addressed.match, which addresses it
+	// whatever its text says.
+	Direct bool
 }
 
 // ReplyValues is what one reply is sent with.
@@ -481,6 +549,29 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 	}
 	for i, path := range msgs.SkipIfPresent {
 		checkPath(fmt.Sprintf("channel.messages.skip_if_present[%d]", i), path)
+	}
+	if a := msgs.Addressed; a != nil {
+		if len(a.Match) == 0 && a.Mention == "" {
+			fail("channel.messages.addressed", "is empty: it needs a match or a mention")
+		}
+		for _, path := range slices.Sorted(maps.Keys(a.Match)) {
+			checkPath("channel.messages.addressed.match."+path, path)
+			if a.Match[path] == "" {
+				fail("channel.messages.addressed.match."+path, "is empty")
+			}
+		}
+		names, err := placeholderNames(a.Mention)
+		if err != nil {
+			fail("channel.messages.addressed.mention", "%v", err)
+		}
+		if a.Mention != "" && len(names) == 0 {
+			fail("channel.messages.addressed.mention", "%q names no captured value, so it would address every message that holds it", a.Mention)
+		}
+		for _, name := range names {
+			if _, captured := captures[name]; !captured {
+				fail("channel.messages.addressed.mention", "{%s} is not a capture rule's name", name)
+			}
+		}
 	}
 	if msgs.ProviderUnitID != "" {
 		checkPath("channel.messages.provider_unit_id", msgs.ProviderUnitID)
@@ -735,15 +826,17 @@ func (c ChannelRule) Read(connectorID string, body []byte) (ChannelEvent, error)
 			}
 		}
 		for _, bound := range bindings {
-			message, ok, err := c.Messages.read(root, bound)
+			message, skipped, err := c.Messages.read(root, bound)
 			if err != nil {
 				return ChannelEvent{}, err
 			}
-			if ok {
-				message.ConnectorID = connectorID
-				message.Raw = body
-				event.Messages = append(event.Messages, message)
+			if skipped != "" {
+				event.Skipped = append(event.Skipped, skipped)
+				continue
 			}
+			message.ConnectorID = connectorID
+			message.Raw = body
+			event.Messages = append(event.Messages, message)
 		}
 	}
 	for _, rule := range c.Signals {
@@ -815,18 +908,25 @@ func (rule SignalRule) read(root any, connectorID string) ([]Signal, error) {
 	return signals, nil
 }
 
-// read reads the message at one binding of the each path. ok is false when the message is
-// not one the block reads.
-func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ok bool, err error) {
+// read reads the message at one binding of the each path. skipped is set when the message is
+// not one the block reads, naming the rule that left it out.
+func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, skipped string, err error) {
 	for _, path := range slices.Sorted(maps.Keys(rule.Match)) {
 		value, found, err := readPath(root, path, bound)
-		if err != nil || !found || value != rule.Match[path] {
-			return ChannelMessage{}, false, err
+		if err != nil {
+			return ChannelMessage{}, "", err
+		}
+		if !found || value != rule.Match[path] {
+			return ChannelMessage{}, "match " + path, nil
 		}
 	}
 	for _, path := range rule.SkipIfPresent {
-		if _, found, err := readPath(root, path, bound); err != nil || found {
-			return ChannelMessage{}, false, err
+		_, found, err := readPath(root, path, bound)
+		if err != nil {
+			return ChannelMessage{}, "", err
+		}
+		if found {
+			return ChannelMessage{}, "skip_if_present " + path, nil
 		}
 	}
 	required := func(path string) (string, bool) {
@@ -847,25 +947,45 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ok 
 	}
 	parts := map[string]string{}
 	keys := make([]string, 0, len(rule.ThreadKey))
-	hasParts := true
+	missingPart := ""
 	for _, part := range rule.ThreadKey {
 		value, found := required(part.Path)
 		if !found && part.Fallback != "" {
 			value, found = required(part.Fallback)
 		}
-		hasParts = hasParts && found
+		if !found && missingPart == "" {
+			missingPart = part.Name
+		}
 		parts[part.Name] = value
 		keys = append(keys, escapeKeyPart(value))
 	}
 	if err != nil {
-		return ChannelMessage{}, false, err
+		return ChannelMessage{}, "", err
 	}
-	if !hasAuthor || !hasID || !hasUnit || !hasParts {
-		return ChannelMessage{}, false, nil
+	switch {
+	case !hasAuthor:
+		return ChannelMessage{}, "no author_id " + rule.AuthorID, nil
+	case !hasID:
+		return ChannelMessage{}, "no provider_message_id " + rule.ProviderMessageID, nil
+	case !hasUnit:
+		return ChannelMessage{}, "no provider_unit_id " + rule.ProviderUnitID, nil
+	case missingPart != "":
+		return ChannelMessage{}, "no thread_key part " + missingPart, nil
 	}
 	text, _, err := readPath(root, rule.Text, bound)
 	if err != nil {
-		return ChannelMessage{}, false, err
+		return ChannelMessage{}, "", err
+	}
+	direct := false
+	if rule.Addressed != nil && len(rule.Addressed.Match) > 0 {
+		direct = true
+		for _, path := range slices.Sorted(maps.Keys(rule.Addressed.Match)) {
+			value, found, err := readPath(root, path, bound)
+			if err != nil {
+				return ChannelMessage{}, "", err
+			}
+			direct = direct && found && value == rule.Addressed.Match[path]
+		}
 	}
 	return ChannelMessage{
 		InboundMessage: InboundMessage{
@@ -876,7 +996,8 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ok 
 			ProviderMessageID: id,
 		},
 		ThreadParts: parts,
-	}, true, nil
+		Direct:      direct,
+	}, "", nil
 }
 
 // Reply is the URL and JSON body that send one reply, from the channel block's templates. A

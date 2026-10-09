@@ -141,6 +141,12 @@ func (s *BearerSuite) TestABare401IsInvalidGrant() {
 	s.Equal(core.Outcome{Kind: core.OutcomeInvalidGrant}, s.scheme.Classify(recorder.Result(), nil, nil))
 }
 
+// The token is supplied and never renewed, so a rejected one is replaced rather than consented
+// to again (core.Static, AI-990).
+func (s *BearerSuite) TestItIsStatic() {
+	s.True(core.IsStatic(map[string]core.Scheme{bearer.Name: s.scheme}, bearer.Name))
+}
+
 // provider is a TLS server that answers 200 to a request carrying Authorization: Bearer
 // token, exactly, and 401 to anything else.
 func provider(t *testing.T) *httptest.Server {

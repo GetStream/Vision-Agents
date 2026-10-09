@@ -334,6 +334,56 @@ func (s *ConverseSuite) TestASettledTurnWaitsOnAnOverlapAskInFlight() {
 	s.Equal(ready.ID, action.Candidate.ID)
 }
 
+func (s *ConverseSuite) TestATurnQueuedBehindAnOverlapAskIsHeardOnceItIsAnswered() {
+	// A transcript closes the caller's line on Heard. A turn that never sends it leaves the
+	// line open, and whatever the caller says next is written over it.
+	s.build(DuplexOptions{})
+	s.overhears("okay wait make it six", s.talking())
+	queued := s.converse.Settled(s.held(), s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.eventually(func() bool {
+		for _, heard := range s.heard() {
+			if heard.Text == "okay wait make it six" {
+				return true
+			}
+		}
+		return false
+	}, "the queued turn was answered without being reported as what the caller said")
+}
+
+func (s *ConverseSuite) TestATurnQueuedAfterItsRulingIsHeardOnlyOnce() {
+	s.build(DuplexOptions{})
+	ready := s.settle("book a table for four", s.talking())
+	queued := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.talking())
+	s.Require().Equal([]ActionKind{ActQueue}, kinds(queued))
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+
+	// Events arrive in order, so once a later turn is heard, a second report of the queued
+	// one would already be here.
+	later := s.settle("and a high chair", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: later.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+	s.eventually(func() bool {
+		heard := s.heard()
+		return len(heard) > 0 && heard[len(heard)-1].Text == "and a high chair"
+	}, "the later turn was never heard")
+
+	var reports int
+	for _, heard := range s.heard() {
+		if heard.Text == "book a table for four" {
+			reports++
+		}
+	}
+	s.Equal(1, reports, "a turn ruled on before it was queued was reported again when answered")
+}
+
 func (s *ConverseSuite) TestAQueuedTurnIsDroppedOnceTheSameWordsAreAnsweredInFull() {
 	// The caller was still talking when their first words settled, so those were queued.
 	// Everything they went on to say is answered, and the queued part must not be answered

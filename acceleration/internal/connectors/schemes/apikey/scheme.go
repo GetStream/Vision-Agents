@@ -55,6 +55,7 @@ type Scheme struct{}
 var (
 	_ core.Scheme   = (*Scheme)(nil)
 	_ core.Exporter = (*Scheme)(nil)
+	_ core.Static   = (*Scheme)(nil)
 )
 
 // New returns the scheme. It takes no configuration: the header is the connection's, and
@@ -74,6 +75,10 @@ type payload struct {
 	Header string `json:"header"`
 	Key    string `json:"key"`
 }
+
+// StaticCredential marks api_key as core.Static: the key is supplied and never renewed, so a
+// key the provider rejects is replaced, not consented to again.
+func (*Scheme) StaticCredential() {}
 
 // Begin is Done: the key is supplied, nobody consents.
 func (*Scheme) Begin(context.Context, core.BeginInput) (core.BeginOutput, error) {

@@ -240,7 +240,7 @@ func (b *Bridge) Close() {
 // called then, for those destinations to have it (AI-924).
 func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage, unanswered func()) (answered bool, err error) {
 	for _, message := range messages {
-		thread, config, fresh, err := b.take(ctx, app, message)
+		thread, config, fresh, err := b.take(ctx, app, &message)
 		if err != nil {
 			return false, err
 		}
@@ -371,9 +371,10 @@ type retryable struct{ err error }
 func (r retryable) Error() string { return r.err.Error() }
 func (r retryable) Unwrap() error { return r.err }
 
-// take finds who a message is for and claims it. fresh is false for a message nobody answers
-// and for one already taken.
-func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, message core.InboundMessage) (store.ChannelThread, store.AgentConfig, bool, error) {
+// take finds who a message is for and claims it, and leaves the mention of the connection's
+// account out of the message's text (MessageRule.WithoutMention). fresh is false for a message
+// nobody answers and for one already taken.
+func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, message *core.InboundMessage) (store.ChannelThread, store.AgentConfig, bool, error) {
 	if app.CustomerID == "" || message.ProviderUnitID == "" {
 		b.logger.Info("dropped an inbound message that names no provider app or no provider unit",
 			"connector", message.ConnectorID)
@@ -399,10 +400,25 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 			"connector", message.ConnectorID, "customer", app.CustomerID, "connection", connection.ID, "configs", len(configs))
 		return store.ChannelThread{}, store.AgentConfig{}, false, nil
 	}
-	parts, err := b.threadParts(ctx, connection, message)
+	read, rule, err := b.read(ctx, connection, *message)
 	if err != nil {
 		return store.ChannelThread{}, store.AgentConfig{}, false, err
 	}
+	// A message that does not speak to the connection's own account, such as one in a Slack
+	// channel that does not mention the bot, starts no thread: it is answered only on a
+	// thread a message that did linked before (AI-989).
+	if !rule.Addresses(read, connection.Metadata) {
+		linked, err := b.store.ChannelThreadLinked(ctx, app.CustomerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey)
+		if err != nil {
+			return store.ChannelThread{}, store.AgentConfig{}, false, err
+		}
+		if !linked {
+			b.logger.Debug("dropped an inbound message that is not addressed to the connection on a thread nobody linked",
+				"connector", message.ConnectorID, "connection", connection.ID)
+			return store.ChannelThread{}, store.AgentConfig{}, false, nil
+		}
+	}
+	message.Text = rule.WithoutMention(read.Text, connection.Metadata)
 	thread := store.ChannelThread{
 		ChannelID:      threadChannelPrefix + uuid.NewString(),
 		CustomerID:     app.CustomerID,
@@ -410,7 +426,7 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 		ProviderUnitID: message.ProviderUnitID,
 		ThreadKey:      message.ThreadKey,
 		ConnectionID:   connection.ID,
-		ThreadParts:    parts,
+		ThreadParts:    read.ThreadParts,
 		StreamAppPK:    app.StreamAppPK,
 	}
 	if _, err := b.store.LinkChannelThread(ctx, &thread); err != nil {
@@ -452,27 +468,28 @@ func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config
 	})
 }
 
-// threadParts are the named parts of a message's thread key, which its replies name. The
-// verifier hands over the key alone, so they are read again from the raw body with the
-// connection's manifest, by the provider's id for the message (core.ChannelMessage).
-func (b *Bridge) threadParts(ctx context.Context, connection store.ConnectorConnection, message core.InboundMessage) (map[string]string, error) {
+// read reads a message again from the raw body with the connection's manifest, by the
+// provider's id for it (core.ChannelMessage), with the rule that read it: the verifier hands
+// over the thread key alone, and a reply names the key's parts; whether the message
+// addresses the connection is that revision's to say.
+func (b *Bridge) read(ctx context.Context, connection store.ConnectorConnection, message core.InboundMessage) (core.ChannelMessage, core.MessageRule, error) {
 	definition, err := b.store.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
 	if err != nil {
-		return nil, err
+		return core.ChannelMessage{}, core.MessageRule{}, err
 	}
 	if definition.Manifest.Channel == nil {
-		return nil, stack.Wrap(fmt.Errorf("channelbridge: revision %d of %s has no channel block", connection.DefinitionRevision, connection.ConnectorID))
+		return core.ChannelMessage{}, core.MessageRule{}, stack.Wrap(fmt.Errorf("channelbridge: revision %d of %s has no channel block", connection.DefinitionRevision, connection.ConnectorID))
 	}
 	read, err := definition.Manifest.Channel.Read(message.ConnectorID, message.Raw)
 	if err != nil {
-		return nil, stack.Wrap(err)
+		return core.ChannelMessage{}, core.MessageRule{}, stack.Wrap(err)
 	}
 	for _, found := range read.Messages {
 		if found.ProviderMessageID == message.ProviderMessageID && found.ThreadKey == message.ThreadKey {
-			return found.ThreadParts, nil
+			return found, definition.Manifest.Channel.Messages, nil
 		}
 	}
-	return nil, stack.Wrap(fmt.Errorf("channelbridge: revision %d of %s does not read message %s the way the event's did",
+	return core.ChannelMessage{}, core.MessageRule{}, stack.Wrap(fmt.Errorf("channelbridge: revision %d of %s does not read message %s the way the event's did",
 		connection.DefinitionRevision, connection.ConnectorID, message.ProviderMessageID))
 }
 

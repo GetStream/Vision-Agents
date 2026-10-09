@@ -681,6 +681,18 @@ func (s *RoutingSuite) TestAPriorityListIsTriedInTheOrderItWasWritten() {
 		"the vendor the caller put first serves, whatever the ranking would have said")
 }
 
+func (s *RoutingSuite) TestACandidateTheCallerSawFailIsTriedLast() {
+	_, config, err := s.newRouter().Select(s.ctx, Request{
+		CustomerID: "acme",
+		Providers:  []string{"lush", "quick"},
+		Failed:     []string{"lush/multi"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("quick/en", config.Name(),
+		"a voice lost on a call came straight back rather than giving way to the next one")
+}
+
 func (s *RoutingSuite) TestAPriorityListWinsOverATarget() {
 	_, config, err := s.newRouter().Select(s.ctx, Request{
 		CustomerID: "acme",

@@ -137,6 +137,28 @@ func (s *ChannelSuite) TestAnUnknownVerifierKindIsRefusedWithItsField() {
 	s.ErrorContains(err, `channel.verifier.kind: "jwt_set" is not one of [hmac_header secret_header standard_webhooks ed25519]`)
 }
 
+// AI-989: messages.addressed needs a match or a mention, and a mention names captured values.
+func (s *ChannelSuite) TestAnAddressedRuleNeedsAMatchOrAMentionOfACapturedValue() {
+	err := s.variant("    text: $.text\n", "    text: $.text\n    addressed: {}\n")
+	s.ErrorContains(err, "channel.messages.addressed: is empty: it needs a match or a mention")
+
+	err = s.variant("    text: $.text\n", "    text: $.text\n    addressed:\n      mention: \"<@{bot}>\"\n")
+	s.ErrorContains(err, "channel.messages.addressed.mention: {bot} is not a capture rule's name")
+
+	err = s.variant("    text: $.text\n", "    text: $.text\n    addressed:\n      mention: \"@bot\"\n")
+	s.ErrorContains(err, "names no captured value")
+
+	s.NoError(s.variant("    text: $.text\n", "    text: $.text\n    addressed:\n      match:\n        $.kind: direct\n"))
+}
+
+// A block without messages.addressed marshals as it did before the field existed, so a
+// stored built-in is found unchanged (store.sameManifest).
+func (s *ChannelSuite) TestAMessagesBlockWithoutAddressedMarshalsWithoutIt() {
+	raw, err := json.Marshal(s.load("linq"))
+	s.Require().NoError(err)
+	s.NotContains(string(raw), "addressed")
+}
+
 func (s *ChannelSuite) TestAReplyBodyNamingAnUndeclaredInputIsRefused() {
 	err := s.variant(`text: "{text}"`, `text: "{text} {signature}"`)
 	s.ErrorContains(err, "channel.reply.body.text: {signature} is not text, a declared thread key part or provider_unit_id, an input, a vars entry or a captured name")
@@ -347,16 +369,16 @@ func (s *ChannelSuite) TestTheSlackBotsOwnMessageIsNotRead() {
 // The customer's app may subscribe to other events on the same Request URL. channel_created's
 // event.channel is an object, so reading it as a message would fail the whole body.
 func (s *ChannelSuite) TestASlackEventThatIsNotAMessageIsNoMessageAndNoError() {
-	s.Equal(ChannelEvent{}, s.read("slack_bot", "slack_bot.channel_created.json"))
+	s.Equal(ChannelEvent{Skipped: []string{"match $.event.type"}}, s.read("slack_bot", "slack_bot.channel_created.json"))
 }
 
 func (s *ChannelSuite) TestALinqReadReceiptIsNoMessage() {
-	s.Equal(ChannelEvent{}, s.read("linq", "linq.read.json"))
+	s.Equal(ChannelEvent{Skipped: []string{"match $.event_type"}}, s.read("linq", "linq.read.json"))
 }
 
 // An Update holds at most one of its optional fields, so an edit has no message.
 func (s *ChannelSuite) TestATelegramUpdateWithoutAMessageIsNoMessage() {
-	s.Equal(ChannelEvent{}, s.read("telegram", "telegram.edited.json"))
+	s.Equal(ChannelEvent{Skipped: []string{"no author_id $.message.from.id"}}, s.read("telegram", "telegram.edited.json"))
 }
 
 // A WhatsApp Business Account webhook also posts other fields, such as
@@ -536,6 +558,39 @@ func (s *ChannelSuite) TestAMessageWithoutAnAuthorIsNotRead() {
 	read, err := m.Channel.Read(m.ID, []byte(`{"chat":"a","id":"1","text":"hi"}`))
 	s.Require().NoError(err)
 	s.Empty(read.Messages)
+}
+
+// AI-990 F29: only a block with addressed.mention takes anything out of a message's text, so
+// every other connector's text reaches the agent as the provider wrote it.
+func (s *ChannelSuite) TestATextWithoutAMentionRuleIsKeptAsItIs() {
+	for _, id := range []string{"linq", "telegram", "whatsapp"} {
+		rule := s.load(id).Channel.Messages
+		s.Equal("<@U0000BOT> hi {x} ", rule.WithoutMention("<@U0000BOT> hi {x} ", map[string]string{"bot_user_id": "U0000BOT"}), id)
+	}
+}
+
+// AI-990 F21, F30: each message the block leaves out names the rule that left it out, and no
+// value: a skip_if_present path, a match path, or the required field it lacks.
+func (s *ChannelSuite) TestASkippedMessageNamesTheRuleThatSkippedIt() {
+	m, err := ParseManifest(minimal(strings.Replace(baseChannel, "    text: $.text\n",
+		"    text: $.text\n    match:\n      $.kind: message\n    skip_if_present: [$.bot]\n", 1)))
+	s.Require().NoError(err)
+	for body, rule := range map[string]string{
+		`{"kind":"message","chat":"a","id":"1","from":"p","text":"hi","bot":"b"}`: "skip_if_present $.bot",
+		`{"kind":"edit","chat":"a","id":"1","from":"p","text":"hi"}`:              "match $.kind",
+		`{"chat":"a","id":"1","from":"p","text":"hi"}`:                            "match $.kind",
+		`{"kind":"message","chat":"a","from":"p","text":"hi"}`:                    "no provider_message_id $.id",
+		`{"kind":"message","id":"1","from":"p","text":"hi"}`:                      "no thread_key part chat",
+	} {
+		read, err := m.Channel.Read(m.ID, []byte(body))
+		s.Require().NoError(err, body)
+		s.Empty(read.Messages, body)
+		s.Equal([]string{rule}, read.Skipped, body)
+	}
+	read, err := m.Channel.Read(m.ID, []byte(`{"kind":"message","chat":"a","id":"1","from":"p","text":"hi"}`))
+	s.Require().NoError(err)
+	s.Len(read.Messages, 1)
+	s.Empty(read.Skipped, "a message read is not skipped")
 }
 
 func (s *ChannelSuite) TestABodyThatIsNotJSONIsAnError() {

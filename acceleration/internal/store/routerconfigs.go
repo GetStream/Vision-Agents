@@ -26,6 +26,9 @@ func (s *Store) CreateRouterConfig(ctx context.Context, config *RouterConfig) er
 	config.DeletedAt = nil
 
 	if _, err := s.db.NewInsert().Model(config).Exec(ctx); err != nil {
+		if constraint(err) == "router_configs_name_idx" {
+			return stack.Wrap(ErrNameTaken)
+		}
 		return stack.Wrap(fmt.Errorf("store: create router config: %w", err))
 	}
 	return nil
@@ -49,6 +52,9 @@ func (s *Store) UpdateRouterConfig(ctx context.Context, config *RouterConfig) er
 		Where("customer_id = ?", config.CustomerID).
 		Where("deleted_at IS NULL").
 		Exec(ctx)
+	if constraint(err) == "router_configs_name_idx" {
+		return stack.Wrap(ErrNameTaken)
+	}
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: update router config: %w", err))
 	}
@@ -151,6 +157,10 @@ func (s *Store) CustomerRouterConfigs(ctx context.Context, customerID string) ([
 	return configs, nil
 }
 
+// ErrNoRouterConfig is a router config id the customer holds no live config by, as
+// ErrNoAgentConfig is for an agent config.
+var ErrNoRouterConfig = errors.New("store: there is no router config")
+
 func unknownRouterConfig(id string) error {
-	return stack.Wrap(fmt.Errorf("store: there is no router config %s", id))
+	return stack.Wrap(fmt.Errorf("%w %s", ErrNoRouterConfig, id))
 }

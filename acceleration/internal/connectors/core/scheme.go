@@ -43,6 +43,22 @@ type Scheme interface {
 	Revoke(ctx context.Context, stored StoredCredentials, m ResolvedManifest) error
 }
 
+// Static is a Scheme whose stored credentials are a token or key the developer supplied (PUT
+// /v1/agents/connections/{id}/credentials), handed out as they are and never renewed, such as
+// a personal access token. Nobody consents to one, so a credential the provider rejects is
+// fixed only by supplying another, never by a consent (AI-990). It is optional: a scheme that
+// does not implement it is not static.
+type Static interface {
+	// StaticCredential marks the scheme. It does nothing.
+	StaticCredential()
+}
+
+// IsStatic reports whether the scheme schemes names name is Static. An unknown name is not.
+func IsStatic(schemes map[string]Scheme, name string) bool {
+	_, ok := schemes[name].(Static)
+	return ok
+}
+
 // Exporter is a Scheme whose access credential the app's backend may take and send to the
 // provider itself (T45, AI-874). It is optional: a scheme that does not implement it exports
 // nothing.
@@ -233,6 +249,9 @@ type Outcome struct {
 	// Claims is, for ScopeRequired, a claims challenge to pass back on consent.
 	Claims     string
 	RetryAfter time.Duration
+	// Code is the error code the provider answered with, such as invalid_grant (RFC 6749
+	// section 5.2), for a log line; empty when it named none. Never its description or body.
+	Code string
 }
 
 // OutcomeError is a failed AccessCredential or Revoke with the outcome it was classified as, so the

@@ -63,11 +63,17 @@ const (
 // connector-design.md:389 on codex/connector-support).
 const codeScopeRequired = "connector_scope_required"
 
+// codeCredentialRejected is the code of a validate whose connection holds a token or key the
+// provider no longer takes (a core.Static scheme: bearer, api_key). New (AI-990): a reconnect
+// cannot help such a connection, only new credentials, so a program needs to tell it apart
+// from an OAuth grant that needs a reconnect.
+const codeCredentialRejected = "connector_credential_rejected"
+
 func (ConnectionValidationStatus) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "ConnectionValidationStatus",
 		"connected: the credential works and the tools were listed. pending: no credentials yet. "+
 			"needs_reauthorization: the provider no longer takes the credential, so only a reconnect "+
-			"helps. needs_scopes: the tools were listed, and the grant lacks scopes they need; "+
+			"helps, or, with code connector_credential_rejected, new credentials. needs_scopes: the tools were listed, and the grant lacks scopes they need; "+
 			"missing_scopes names them, and a consent that asks for them helps. failed: the provider "+
 			"could not be reached or listed nothing usable; error says why.",
 		validationConnected, validationPending, validationNeedsReauthorization, validationNeedsScopes, validationFailed)
@@ -94,7 +100,7 @@ type validateConnectionRequest struct {
 type ConnectionValidation struct {
 	ConnectionID  string                     `json:"connection_id"`
 	Status        ConnectionValidationStatus `json:"status"`
-	Code          string                     `json:"code,omitempty" doc:"What a program branches on when the status is not connected: connector_scope_required with needs_scopes. More may be added."`
+	Code          string                     `json:"code,omitempty" doc:"What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, which only new credentials (PUT .../credentials) fix. More may be added."`
 	MissingScopes []string                   `json:"missing_scopes,omitempty" doc:"With needs_scopes: the scopes the checked tools need that the grant lacks, sorted."`
 	Error         string                     `json:"error,omitempty" doc:"Why the status is not connected, for a person to read."`
 	ToolsDigest   string                     `json:"tools_digest,omitempty" doc:"The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them."`
@@ -229,6 +235,8 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 	}
 	stale := false
 	var committed *core.CredentialState
+	// The tokens a write replaces, and those it stores, for a scheme that names them.
+	change := core.CredentialChange{Current: core.FingerprintsOf(s.connectors.Schemes, credentials)}
 	err = s.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		if state.Revision != sent.ExpectedRevision {
 			stale = true
@@ -236,6 +244,7 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 		}
 		// The credential store leaves the revision it committed here (core.CredentialStore).
 		committed = state
+		change.Previous = core.FingerprintsOf(s.connectors.Schemes, state.Credentials)
 		state.Credentials = credentials
 		state.Status = store.ConnectionConnected
 		state.LastError = ""
@@ -262,7 +271,7 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 		return nil, errStaleRevision
 	}
 	s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
-		store.AuditGrantCreated, store.AuditReasonCredentials, committed.Revision, "")
+		store.AuditGrantCreated, store.AuditReasonCredentials, committed.Revision, "", change)
 	return s.getConnection(ctx, &connectionRequest{ID: connection.ID})
 }
 
@@ -402,8 +411,11 @@ func (s *Server) validationAfter(ctx context.Context, connection store.Connector
 		return &validationResponse{Body: ConnectionValidation{ConnectionID: now.ID, Status: validationPending,
 			Error: "no credentials yet: start a consent or set its credentials"}}, nil
 	case store.ConnectionNeedsReauthorization:
-		return &validationResponse{Body: ConnectionValidation{ConnectionID: now.ID, Status: validationNeedsReauthorization,
-			Error: now.LastError}}, nil
+		validation := ConnectionValidation{ConnectionID: now.ID, Status: validationNeedsReauthorization, Error: now.LastError}
+		if core.IsStatic(s.connectors.Schemes, now.AuthScheme) {
+			validation.Code = codeCredentialRejected
+		}
+		return &validationResponse{Body: validation}, nil
 	}
 	// The error says what failed and where, never a credential: the transport applies those
 	// below everything that writes an error (core AGENTS.md, «Secrets never print»).

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -11,6 +11,10 @@ from typing_extensions import Self
 from ..models.connection_owner_type import ConnectionOwnerType
 from ..models.connector_audit_action import ConnectorAuditAction
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.connector_audit_credential import ConnectorAuditCredential
+
 
 T = TypeVar("T", bound="ConnectorAuditEvent")
 
@@ -22,10 +26,10 @@ class ConnectorAuditEvent:
     connections being deleted.
 
         Attributes:
-            action (ConnectorAuditAction): grant_created: a consent or a credentials write gave the connection a grant.
-                grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused
-                or revoked it or the connection was deleted. token_export: the app's backend exported its access credential.
-                proxy_call: a direct call went to the provider through the connection.
+            action (ConnectorAuditAction): grant_created: a consent, a credentials write or router plugins migrate gave the
+                connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because
+                the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its
+                access credential. proxy_call: a direct call went to the provider through the connection.
             connection_id (str): The connection, which may since have been deleted.
             connector_id (str):
             created_at (datetime.datetime):
@@ -33,10 +37,14 @@ class ConnectorAuditEvent:
             owner_type (ConnectionOwnerType): app is the app's own account, user one user's.
             attempt_id (str | Unset): The authorization attempt a consent finished. Absent once the connection's user was
                 deleted.
+            credential (ConnectorAuditCredential | Unset): The tokens a grant event left, each named by its fingerprint: the
+                first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token,
+                so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
             latency_ms (int | Unset): How long a proxy_call took until the provider's answer, in milliseconds. Absent for a
                 grant.
-            reason (str | Unset): Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for
-                a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
+            reason (str | Unset): Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted
+                for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or
+                revoked.
             request_id (str | Unset): The X-Request-Id of the API request that caused it. For a change a session's tool call
                 caused, that is the request that created the session, not the one that asked for the turn. Absent for an
                 incognito session's, and once the connection's user was deleted.
@@ -55,6 +63,7 @@ class ConnectorAuditEvent:
     id: str
     owner_type: ConnectionOwnerType
     attempt_id: str | Unset = UNSET
+    credential: ConnectorAuditCredential | Unset = UNSET
     latency_ms: int | Unset = UNSET
     reason: str | Unset = UNSET
     request_id: str | Unset = UNSET
@@ -78,6 +87,10 @@ class ConnectorAuditEvent:
         owner_type = self.owner_type.value
 
         attempt_id = self.attempt_id
+
+        credential: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.credential, Unset):
+            credential = self.credential.to_dict()
 
         latency_ms = self.latency_ms
 
@@ -107,6 +120,8 @@ class ConnectorAuditEvent:
         )
         if attempt_id is not UNSET:
             field_dict["attempt_id"] = attempt_id
+        if credential is not UNSET:
+            field_dict["credential"] = credential
         if latency_ms is not UNSET:
             field_dict["latency_ms"] = latency_ms
         if reason is not UNSET:
@@ -126,6 +141,10 @@ class ConnectorAuditEvent:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.connector_audit_credential import (
+            ConnectorAuditCredential,
+        )
+
         d = dict(src_dict)
         action = ConnectorAuditAction(d.pop("action"))
 
@@ -140,6 +159,13 @@ class ConnectorAuditEvent:
         owner_type = ConnectionOwnerType(d.pop("owner_type"))
 
         attempt_id = d.pop("attempt_id", UNSET)
+
+        _credential = d.pop("credential", UNSET)
+        credential: ConnectorAuditCredential | Unset
+        if isinstance(_credential, Unset):
+            credential = UNSET
+        else:
+            credential = ConnectorAuditCredential.from_dict(_credential)
 
         latency_ms = d.pop("latency_ms", UNSET)
 
@@ -163,6 +189,7 @@ class ConnectorAuditEvent:
             id=id,
             owner_type=owner_type,
             attempt_id=attempt_id,
+            credential=credential,
             latency_ms=latency_ms,
             reason=reason,
             request_id=request_id,

@@ -120,7 +120,8 @@ func (s *ConsentSuite) TestSlackConnectsTheUserFromTheLiveUserTokenResponse() {
 
 // The bot install of a customer's Slack app: oauth.v2.access names the workspace as team.id
 // (https://docs.slack.dev/authentication/installing-with-oauth), which is the connection's
-// whole identity, so the bridge finds it by an event's team_id.
+// whole identity, so the bridge finds it by an event's team_id, and the bot's user as
+// bot_user_id, which a mention of the bot names (AI-989).
 func (s *ConsentSuite) TestSlackBotInstallsWithTheCustomersClientAndIsTheWorkspace() {
 	srv := fakeprovider.New(s.T(), fakeprovider.CommaScopes)
 	resolved := s.atFake(srv, s.resolve("slack_bot", nil))
@@ -136,7 +137,7 @@ func (s *ConsentSuite) TestSlackBotInstallsWithTheCustomersClientAndIsTheWorkspa
 	s.Require().NoError(err)
 	s.NotEmpty(s.accessToken(stored))
 	s.Equal(srv.TeamID, account.AccountID)
-	s.Equal(map[string]string{"team_id": srv.TeamID}, account.Metadata)
+	s.Equal(map[string]string{"team_id": srv.TeamID, "bot_user_id": "U0000BOT"}, account.Metadata)
 }
 
 func (s *ConsentSuite) TestGitHubSendsTheClientSecretInTheTokenRequestBody() {

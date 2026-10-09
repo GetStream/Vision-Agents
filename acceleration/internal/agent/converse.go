@@ -229,6 +229,9 @@ type overlapState struct {
 type queuedCandidate struct {
 	candidate candidate
 	clarify   string
+	// heard says the turn was already reported as what the caller said. One queued before
+	// it was ruled on is reported once it is answered.
+	heard bool
 }
 
 // unfinished is a thought the controller keeps wanting to wait on, and when the waiting
@@ -432,7 +435,7 @@ func (c *converse) Settled(ready candidate, state floor) Action {
 			// overlap Create sat behind a Cerebras generate, so a follow-up never left
 			// the loop. Queue it once; Waiting answers it when the floor is quiet.
 			c.cadence.Resolve(ready.ID, false)
-			c.hold(ready, "")
+			c.hold(ready, "", false)
 			return c.decide(Action{
 				Kind:        ActQueue,
 				Reason:      "the floor is already being asked about, so the settled turn waits",
@@ -709,7 +712,7 @@ func (c *converse) ruled(ruling harness.Decided, state floor, primary bool) []Ac
 		held := answer
 		held.Kind = ActQueue
 		held.Reason = "the caller added to what they asked, so the reply in flight is cut short"
-		c.hold(ready, clarify)
+		c.hold(ready, clarify, true)
 		return []Action{
 			c.decide(held),
 			c.decide(Action{
@@ -725,7 +728,7 @@ func (c *converse) ruled(ruling harness.Decided, state floor, primary bool) []Ac
 		held := answer
 		held.Kind = ActQueue
 		held.Reason = "a brief acknowledgement or unrelated speech, so the agent finishes what it was saying"
-		c.hold(ready, clarify)
+		c.hold(ready, clarify, true)
 		return []Action{c.decide(held)}
 	}
 }
@@ -897,6 +900,16 @@ func (c *converse) Waiting(state floor) (Action, bool) {
 			Text:        held.candidate.Text,
 		})
 		return Action{}, false
+	}
+	if !held.heard {
+		// Answering it is what makes it count, as Ruled says of a turn ruled on, and a
+		// transcript waits on this to close the caller's line: without it their next words
+		// are written over this one.
+		c.emitter.Send(Heard{
+			Participant: held.candidate.Participant,
+			Text:        held.candidate.Text,
+			Language:    held.candidate.Language,
+		})
 	}
 	return c.decide(Action{
 		Kind:        ActAnswer,
@@ -1095,7 +1108,7 @@ func (c *converse) forgetQueuedRevisedByLocked(ready candidate) {
 	c.queued = nil
 }
 
-func (c *converse) hold(ready candidate, clarify string) {
+func (c *converse) hold(ready candidate, clarify string, heard bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -1103,7 +1116,7 @@ func (c *converse) hold(ready candidate, clarify string) {
 		c.logger.Debug("dropping a turn that never got answered",
 			"candidate", c.queued.candidate.ID, "text", c.queued.candidate.Text)
 	}
-	c.queued = &queuedCandidate{candidate: ready, clarify: clarify}
+	c.queued = &queuedCandidate{candidate: ready, clarify: clarify, heard: heard}
 }
 
 // decide records one judgement and hands it back, so a caller can write

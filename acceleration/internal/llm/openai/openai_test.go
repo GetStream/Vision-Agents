@@ -2,6 +2,9 @@ package openai
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -154,4 +157,206 @@ func (s *OpenAISuite) TestAToolResultImageGoesInFunctionCallOutput() {
 	s.Contains(string(raw), `"type":"function_call_output"`)
 	s.Contains(string(raw), `"type":"input_image"`)
 	s.Contains(string(raw), "2 roses")
+}
+
+// sendMessage is Slack's MCP slack_send_message input schema as its server listed it on
+// 2026-10-08: two required properties and four optional ones (AI-969).
+var sendMessage = llm.Tool{
+	Name:        "slack__slack_send_message",
+	Description: "Sends a message to a Slack channel or user.",
+	Parameters: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"channel_id":       map[string]any{"type": "string"},
+			"message":          map[string]any{"type": "string"},
+			"thread_ts":        map[string]any{"type": "string"},
+			"draft_id":         map[string]any{"type": "string"},
+			"reply_broadcast":  map[string]any{"type": "boolean"},
+			"unfurl_app_links": map[string]any{"type": "boolean"},
+		},
+		"required": []any{"channel_id", "message"},
+	},
+}
+
+// sentTool is the tool as the request to OpenAI carried it.
+type sentTool struct {
+	Strict     *bool          `json:"strict"`
+	Parameters map[string]any `json:"parameters"`
+}
+
+// send offers one tool to a server that records the request, and returns the tool it got.
+func (s *OpenAISuite) send(tool llm.Tool) sentTool {
+	sent := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		sent <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"status\":\"completed\"}}\n\n")
+	}))
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL})
+	s.Require().NoError(err)
+	defer provider.Close()
+
+	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{
+		Input: []llm.Message{{Role: llm.User, Content: "post hello"}},
+		Tools: []llm.Tool{tool},
+	})
+	s.Require().NoError(err)
+	_, err = llm.Collect(stream)
+	s.Require().NoError(err)
+
+	var request struct {
+		Tools []sentTool `json:"tools"`
+	}
+	s.Require().NoError(json.Unmarshal(<-sent, &request))
+	s.Require().Len(request.Tools, 1)
+	return request.Tools[0]
+}
+
+// TestAToolsOptionalArgumentsStayOptional is a tool offered as the caller described it. Left
+// to itself, the Responses API turns a tool into strict mode by making every property
+// required, so the model has to fill thread_ts with "" and Slack refuses the post.
+func (s *OpenAISuite) TestAToolsOptionalArgumentsStayOptional() {
+	sent := s.send(sendMessage)
+
+	s.Require().NotNil(sent.Strict, "an omitted strict is strict mode on the Responses API")
+	s.False(*sent.Strict)
+	s.Equal([]any{"channel_id", "message"}, sent.Parameters["required"])
+	s.NotContains(sent.Parameters, "additionalProperties")
+}
+
+// TestAnOptionalPropertyInsideAListCounts is the same normalization one level down: OpenAI
+// also marks every property of an object in an array required.
+func (s *OpenAISuite) TestAnOptionalPropertyInsideAListCounts() {
+	sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"items": map[string]any{"type": "array", "items": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"name": map[string]any{"type": "string"}, "note": map[string]any{"type": "string"}},
+				"required":   []string{"name"},
+			}},
+		},
+		"required": []string{"items"},
+	}})
+
+	s.Require().NotNil(sent.Strict)
+	s.False(*sent.Strict)
+}
+
+// TestAnOptionalPropertyInsideAnyOfCounts is the same normalization inside a union branch:
+// OpenAI also marks every property of an object under anyOf required.
+func (s *OpenAISuite) TestAnOptionalPropertyInsideAnyOfCounts() {
+	sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"r": map[string]any{"anyOf": []any{
+				map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"a": map[string]any{}, "b": map[string]any{}},
+					"required":   []any{"a"},
+				},
+				map[string]any{"type": "string"},
+			}},
+		},
+		"required": []any{"r"},
+	}})
+
+	s.Require().NotNil(sent.Strict)
+	s.False(*sent.Strict)
+}
+
+// TestAToolWithEveryPropertyRequiredIsSentAsBefore leaves strict out, as before AI-969:
+// OpenAI's strict normalization takes nothing from a schema with no optional property.
+func (s *OpenAISuite) TestAToolWithEveryPropertyRequiredIsSentAsBefore() {
+	sent := s.send(llm.Tool{Name: "get_weather", Parameters: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"city": map[string]any{"type": "string"}},
+		"required":   []string{"city"},
+	}})
+
+	s.Nil(sent.Strict)
+}
+
+// TestAToolWithEveryPropertyRequiredDecodedFromJSONIsSentAsBefore: a decoded MCP schema has
+// required as []any, and it must count as much as a []string does.
+func (s *OpenAISuite) TestAToolWithEveryPropertyRequiredDecodedFromJSONIsSentAsBefore() {
+	sent := s.send(llm.Tool{Name: "get_weather", Parameters: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"city": map[string]any{"type": "string"}},
+		"required":   []any{"city"},
+	}})
+
+	s.Nil(sent.Strict)
+}
+
+// TestADefinitionNamedLikeAKeywordIsASchema: a name under $defs, definitions, patternProperties
+// or dependentSchemas is the author's, so default or enum there is no data keyword and
+// properties is no properties map.
+func (s *OpenAISuite) TestADefinitionNamedLikeAKeywordIsASchema() {
+	optional := map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{}}}
+	allRequired := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"x": map[string]any{}},
+		"required":   []string{"x"},
+	}
+	for _, holder := range []string{"$defs", "definitions", "patternProperties", "dependentSchemas"} {
+		for _, name := range []string{"default", "enum", "const", "examples"} {
+			s.Run(holder+"/"+name+" with an optional property", func() {
+				sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"a": map[string]any{}},
+					"required":   []string{"a"},
+					holder:       map[string]any{name: optional},
+				}})
+
+				s.Require().NotNil(sent.Strict)
+				s.False(*sent.Strict)
+			})
+		}
+		s.Run(holder+"/properties with every property required", func() {
+			sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"a": map[string]any{}},
+				"required":   []string{"a"},
+				holder:       map[string]any{"properties": allRequired},
+			}})
+
+			s.Nil(sent.Strict)
+		})
+	}
+}
+
+// TestAPropertiesKeyThatIsDataIsNotASchema reads an object under default, enum, const or
+// examples as a value: its properties key names no property, so nothing is optional.
+func (s *OpenAISuite) TestAPropertiesKeyThatIsDataIsNotASchema() {
+	data := map[string]any{"properties": map[string]any{"x": 1}}
+	for _, keyword := range []string{"default", "enum", "const", "examples"} {
+		s.Run(keyword, func() {
+			value := any(data)
+			if keyword == "enum" || keyword == "examples" {
+				value = []any{data}
+			}
+			sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"config": map[string]any{"type": "object", keyword: value}},
+				"required":   []string{"config"},
+			}})
+
+			s.Nil(sent.Strict)
+		})
+	}
+}
+
+// TestAnArgumentNamedPropertiesIsAProperty reads a property called properties as one more
+// property, not as a properties keyword holding the schema's other keywords.
+func (s *OpenAISuite) TestAnArgumentNamedPropertiesIsAProperty() {
+	sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"properties": map[string]any{"type": "string"}},
+		"required":   []string{"properties"},
+	}})
+
+	s.Nil(sent.Strict)
 }

@@ -117,11 +117,31 @@ const usePolicy = "Before calling a tool, say one short sentence that opens with
 	"caller's details back) or else what you are doing. Say it there and only there: never " +
 	"as a sentence of its own, never in place of a required read-back, never after the call " +
 	"or after a result. Then call the tool in the same turn once every argument it requires " +
-	"is known. Do not collect optional arguments or ask permission for what was asked. Take " +
-	"a name or value as given (a surname is a name). After a result, answer from it; if the " +
-	"request needs tools, call them straight away without a word, together when independent. " +
-	"Pass bare values, not phrases. Where your instructions or a tool's approval require " +
-	"confirmation first, follow them."
+	"is known. " + useArguments
+
+// useArguments is what usePolicy and textUsePolicy both say about filling a call in and
+// going on from its result, held once so the two cannot drift apart.
+const useArguments = "Do not collect optional arguments or ask permission for what was " +
+	"asked. Take a name or value as given (a surname is a name). After a result, answer from " +
+	"it; if the request needs tools, call them straight away without a word, together when " +
+	"independent. Pass bare values, not phrases. Where your instructions or a tool's " +
+	"approval require confirmation first, follow them."
+
+// textUsePolicy is usePolicy for a conversation held in writing. The reasons to act at
+// once, to take values as given and to say first what the operator's instructions have the
+// agent say before acting all hold in writing too. The hold phrase does not: in writing
+// there is no silence for it to fill, and whatever the model writes on the way to an answer
+// is part of the reply. A sentence before each call therefore stays on the page, and a
+// request that takes a chain of calls opens its answer with a run of near-identical lines,
+// one per link, which reads as the agent repeating itself.
+//
+// It is about tool calls only. Handing work to a skill is another matter: Skills.TextPrompt
+// still has the model say it is on it, since that answer comes in a later reply.
+const textUsePolicy = "Call a tool as soon as every argument it requires is known, without " +
+	"announcing it: what you write before a call does not fill the wait, it stays in your " +
+	"reply. So write nothing before a call or between calls, except what your instructions " +
+	"ask you to write before acting (such as reading the caller's details back). " +
+	useArguments
 
 // Prompt is what the model is told about using its tools: when to call one and how to fill
 // it in. It is empty when there are none, so a harness without tools adds nothing to the
@@ -131,6 +151,15 @@ func (t Tools) Prompt() string {
 		return ""
 	}
 	return usePolicy
+}
+
+// TextPrompt is Prompt for a conversation held in writing, which fills no pause before a
+// call (textUsePolicy).
+func (t Tools) TextPrompt() string {
+	if len(t.Tools) == 0 {
+		return ""
+	}
+	return textUsePolicy
 }
 
 // Validate reports the first tool the harness could not use.

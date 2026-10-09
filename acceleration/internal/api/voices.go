@@ -24,6 +24,12 @@ var errUnknownVoice = APIError{
 	Message: "there is no such voice",
 }
 
+// errVoiceNameTaken is a create or a rename to a name another of the customer's voices has.
+var errVoiceNameTaken = APIError{
+	Type: ErrorTypeConflict, Code: codeNameTaken,
+	Message: "a voice with this name already exists",
+}
+
 // previewLine is what a voice says when the caller did not choose a line.
 const previewLine = "Hi there! This is how I will sound when I answer your calls."
 
@@ -71,7 +77,7 @@ func (s *Server) createVoice(ctx context.Context, request *createVoiceRequest) (
 
 	voice, err := s.voices.Create(ctx, customerID, request.Body.Name, text(request.Body.Description))
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, storeFailure(err, errVoiceNameTaken)
 	}
 
 	described, err := s.describeVoice(ctx, voice)
@@ -129,7 +135,7 @@ func (s *Server) updateVoice(ctx context.Context, request *updateVoiceRequest) (
 		if errors.Is(err, store.ErrNoVoice) {
 			return nil, errUnknownVoice
 		}
-		return nil, invalidRequest(err.Error())
+		return nil, storeFailure(err, errVoiceNameTaken)
 	}
 
 	described, err := s.describeVoice(ctx, voice)
@@ -431,7 +437,8 @@ func (s *Server) registerVoices(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"201": {Description: "The voice was stored"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusConflict},
 	}, s.createVoice)
 	huma.Register(api, huma.Operation{
 		OperationID: "getVoice",
@@ -455,7 +462,8 @@ func (s *Server) registerVoices(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The voice as it now is"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusNotFound, http.StatusConflict},
 	}, s.updateVoice)
 	huma.Register(api, huma.Operation{
 		OperationID: "deleteVoice",

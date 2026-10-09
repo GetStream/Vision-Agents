@@ -42,6 +42,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openai"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -197,6 +198,10 @@ type tool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
+	// Strict is false for a schema with an optional property and left out otherwise, as
+	// on the text path (openai.HasOptional): the backend is a Responses model, which turns
+	// a tool with strict left out into strict mode and fills every optional argument.
+	Strict *bool `json:"strict,omitempty"`
 }
 
 // item is a Responses input item: a tool's result or a typed message.
@@ -646,12 +651,17 @@ func (s *STS) delegation(tools []llm.Tool) *delegation {
 		configured.ToolChoice = "auto"
 		configured.ParallelToolCalls = &parallel
 		for _, offered := range tools {
-			configured.Tools = append(configured.Tools, tool{
+			function := tool{
 				Type:        "function",
 				Name:        offered.Name,
 				Description: offered.Description,
 				Parameters:  offered.Parameters,
-			})
+			}
+			if openai.HasOptional(offered.Parameters) {
+				strict := false
+				function.Strict = &strict
+			}
+			configured.Tools = append(configured.Tools, function)
 		}
 	}
 	return &delegation{Type: "responses", Responses: configured}

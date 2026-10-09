@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,13 @@ type SlackChannelSuite struct {
 	workspace string
 	// transcribed is the channel each voice session's transcript was opened for.
 	transcribed *openedTranscripts
+	// logged is what the router logged, at debug and up.
+	logged *lockedLog
 }
+
+// botMention is how a message names the test workspace's bot, U0000BOT (fakeprovider's
+// bot_user_id): https://docs.slack.dev/messaging/formatting-message-text.
+const botMention = "<@U0000BOT> "
 
 func TestSlackChannelSuite(t *testing.T) {
 	runSuite(t, new(SlackChannelSuite))
@@ -65,6 +72,8 @@ func (s *SlackChannelSuite) SetupSuite() {
 	s.channelProvider = func() string { return strings.TrimPrefix(s.slack.URL, "https://") }
 	s.transcribed = &openedTranscripts{}
 	s.transcripts = s.transcribed.open
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -86,7 +95,7 @@ func (s *SlackChannelSuite) TestAMessageIsWrittenIntoANewThreadChannelAsThePerso
 	s.Equal(http.StatusOK, status)
 	channel := s.threadChannel("C0000CHAN:1759740000.000100")
 	stored := s.written(channel, 1)
-	s.Equal("Can you check the build?", stored[0]["text"])
+	s.Equal("Can you check the build?", stored[0]["text"], "without the bot's mention (AI-990 F29)")
 	s.Empty(stored[0]["custom"], "without source, so the message hook takes it as written to the agent")
 	author, _ := stored[0]["user_id"].(string)
 	user, found := s.chat.User(author)
@@ -245,6 +254,147 @@ func (s *SlackChannelSuite) TestAMessageWithASubtypeIsIgnored() {
 	}
 
 	s.nothingLinked()
+}
+
+// AI-990 F21, F30: a message the manifest skips is answered 200 as before, and logged at
+// debug with the rule that skipped it, without its text.
+func (s *SlackChannelSuite) TestASkippedMessageIsLoggedWithTheRuleThatSkippedIt() {
+	for rule, body := range map[string][]byte{
+		"skip_if_present $.event.subtype": s.event(`{"type":"message","subtype":"channel_join","channel":"C0000CHAN","user":"U0000ALICE",` +
+			`"text":"synthetic join text F21","ts":"1759740000.002100"}`),
+		"match $.authorizations[0].is_bot": s.eventFor(`{"type":"message","channel":"D0000PEOPLE","user":"U0000ALICE",`+
+			`"text":"synthetic direct text F30","ts":"1759740000.002200","channel_type":"im"}`,
+			`{"team_id":"`+s.workspace+`","user_id":"U0000KANAT","is_bot":false}`),
+	} {
+		status, _ := s.deliver(body, 0)
+		s.Equal(http.StatusOK, status)
+		s.Contains(s.logged.String(), `level=DEBUG msg="skipped a connector event's message" connector=slack_bot rule="`+rule+`"`)
+	}
+	s.nothingLinked()
+	s.NotContains(s.logged.String(), "synthetic join text F21")
+	s.NotContains(s.logged.String(), "synthetic direct text F30")
+}
+
+// AI-989: an agent's slack_send_message through a person's user token posts as that person,
+// with no bot_id and no subtype; the event names the posting app in app_id. The shape is a
+// live event of 2026-10-09 (slack_bot.yaml, revision 4), with synthetic ids. It is skipped
+// even when it mentions the bot.
+func (s *SlackChannelSuite) TestAnAppsPostThroughAPersonsUserTokenIsNotWritten() {
+	status, _ := s.deliver(s.event(`{"type":"message","user":"U0000JUSTIN","ts":"1759740000.000800","app_id":"A0000OTHERAPP",`+
+		`"text":"<@U0000BOT> hello from another agent *Sent using* Another app","team":"`+s.workspace+`",`+
+		`"blocks":[{"type":"context","block_id":"ctx","elements":[{"type":"mrkdwn","text":"*Sent using* Another app","verbatim":false}]}],`+
+		`"channel":"C0000CHAN","event_ts":"1759740000.000800","channel_type":"channel"}`), 0)
+
+	s.Equal(http.StatusOK, status)
+	s.nothingLinked()
+}
+
+// A message a person types in a Slack client carries client_msg_id and no app_id (a live
+// event of 2026-10-09, synthetic ids), and is written when it mentions the bot.
+func (s *SlackChannelSuite) TestAMessageAPersonTypesInSlackIsWritten() {
+	status, _ := s.deliver(s.event(`{"type":"message","user":"U0000ALICE","client_msg_id":"00000000-0000-4000-8000-000000000001",`+
+		`"ts":"1759740000.000900","text":"<@U0000BOT> Hello","team":"`+s.workspace+`",`+
+		`"blocks":[{"type":"rich_text","block_id":"rt","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Hello"}]}]}],`+
+		`"channel":"C0000CHAN","event_ts":"1759740000.000900","channel_type":"channel"}`), 0)
+
+	s.Equal(http.StatusOK, status)
+	stored := s.written(s.threadChannel("C0000CHAN:1759740000.000900"), 1)
+	s.Equal("Hello", stored[0]["text"])
+}
+
+// AI-989: an app a person also installed with user scopes gets that person's direct messages
+// with other people under the person's install (authorizations is_bot false, seen live on
+// 2026-10-09). None is a message to the bot.
+func (s *SlackChannelSuite) TestAnEventOnlyAPersonsInstallSeesIsNotWritten() {
+	status, _ := s.deliver(s.eventFor(`{"type":"message","channel":"D0000PEOPLE","user":"U0000ALICE","text":"see you at the sync",`+
+		`"ts":"1759740000.001000","channel_type":"im"}`, `{"team_id":"`+s.workspace+`","user_id":"U0000KANAT","is_bot":false}`), 0)
+
+	s.Equal(http.StatusOK, status)
+	s.nothingLinked()
+}
+
+// AI-989: a thread the bot was mentioned in is linked, and the bot answers there without a
+// mention. A top-level message that mentions nobody, in the same channel, is another thread.
+func (s *SlackChannelSuite) TestAnotherTopLevelMessageInAChannelWithALinkedThreadIsNotWritten() {
+	s.messaged("U0000ALICE", "check the build", "1759740000.003100", "")
+
+	s.deliver(s.event(`{"type":"message","channel":"C0000CHAN","user":"U0000BOB","text":"lunch?",`+
+		`"ts":"1759740000.003200","channel_type":"channel"}`), 0)
+
+	s.Never(func() bool { return s.threadChannels() > 1 }, dropped, 20*time.Millisecond)
+}
+
+// AI-989: connections pinned to revision 3 of slack_bot keep working: its rule answers a
+// channel message without a mention, and does not skip an app's post or an install of a person.
+// Revision 3 is the manifest as shipped before revision 4 (testdata/slack_bot_rev3.yaml).
+func (s *SlackChannelSuite) TestAConnectionPinnedToRevisionThreeStillAnswersAChannelMessageWithoutAMention() {
+	raw, err := os.ReadFile("testdata/slack_bot_rev3.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
+	s.Require().Equal(3, manifest.Revision)
+	_, err = s.store.DB().NewInsert().Model(&store.ConnectorDefinition{
+		CustomerID: store.BuiltinCustomer, ID: manifest.ID, Revision: manifest.Revision, Name: manifest.Name,
+		Category: manifest.Category, Description: manifest.Description, Manifest: manifest, CreatedAt: time.Now().UTC(),
+	}).On("CONFLICT DO NOTHING").Exec(context.Background())
+	s.Require().NoError(err)
+	credentials, err := pgsealed.New(s.store, s.sealer)
+	s.Require().NoError(err)
+	s.Require().NoError(credentials.Update(context.Background(), s.bot, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.DefinitionRevision = 3
+		return true, nil
+	}))
+
+	s.deliver(s.event(`{"type":"message","channel":"C0000CHAN","user":"U0000ALICE","text":"lunch?",`+
+		`"ts":"1759740000.002100","channel_type":"channel"}`), 0)
+	s.written(s.threadChannel("C0000CHAN:1759740000.002100"), 1)
+
+	s.deliver(s.event(`{"type":"message","channel":"C0000CHAN","user":"U0000JUSTIN","app_id":"A0000OTHERAPP","text":"hi",`+
+		`"ts":"1759740000.002200","channel_type":"channel"}`), 0)
+	s.deliver(s.eventFor(`{"type":"message","channel":"D0000PEOPLE","user":"U0000ALICE","text":"x",`+
+		`"ts":"1759740000.002300","channel_type":"im"}`, `{"team_id":"`+s.workspace+`","user_id":"U0000KANAT","is_bot":false}`), 0)
+	s.Never(func() bool { return s.threadChannels() > 1 }, dropped, 20*time.Millisecond)
+}
+
+// AI-989: in a channel the bot answers only a message that mentions it.
+func (s *SlackChannelSuite) TestAChannelMessageThatDoesNotMentionTheBotIsNotWritten() {
+	status, _ := s.deliver(s.event(`{"type":"message","channel":"C0000CHAN","user":"U0000ALICE","text":"lunch?",`+
+		`"ts":"1759740000.001100","channel_type":"channel"}`), 0)
+
+	s.Equal(http.StatusOK, status)
+	s.nothingLinked()
+}
+
+// AI-989: once mentioned in a thread, the bot answers every reply there without a mention.
+func (s *SlackChannelSuite) TestAReplyInAThreadTheBotWasMentionedInIsWrittenWithoutAMention() {
+	channel := s.messaged("U0000ALICE", "can you check the build?", "1759740000.001200", "")
+
+	s.deliver(s.message("U0000BOB", "and the deploy?", "1759740000.001300", "1759740000.001200"), 0)
+
+	stored := s.written(channel, 2)
+	s.Equal("and the deploy?", stored[1]["text"])
+}
+
+// AI-989: a mention in a thread of people starts the bot there; the replies before it are
+// not written, the ones after it are.
+func (s *SlackChannelSuite) TestAMentionInAThreadOfPeopleStartsTheBotThere() {
+	s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.001500", "1759740000.001400"), 0)
+	s.nothingLinked()
+
+	s.deliver(s.message("U0000BOB", botMention+"do you know?", "1759740000.001600", "1759740000.001400"), 0)
+	s.deliver(s.message("U0000ALICE", "thanks", "1759740000.001700", "1759740000.001400"), 0)
+
+	stored := s.written(s.threadChannel("C0000CHAN:1759740000.001400"), 2)
+	s.Equal([]any{"do you know?", "thanks"}, []any{stored[0]["text"], stored[1]["text"]})
+}
+
+// AI-989: a direct message to the bot is to it without a mention.
+func (s *SlackChannelSuite) TestADirectMessageIsWrittenWithoutAMention() {
+	status, _ := s.deliver(s.event(`{"type":"message","channel":"D0000BOT","user":"U0000ALICE","text":"Blah",`+
+		`"ts":"1759740000.001800","channel_type":"im"}`), 0)
+
+	s.Equal(http.StatusOK, status)
+	s.Equal("Blah", s.written(s.threadChannel("D0000BOT:1759740000.001800"), 1)[0]["text"])
 }
 
 func (s *SlackChannelSuite) TestAnEventSignedWithAnotherAppsSecretIsRefusedOnThisAppsURL() {
@@ -558,7 +708,7 @@ func (s *SlackChannelSuite) connectedBot(team, token string) core.ConnectionRef 
 		state.Credentials = core.StoredCredentials{Scheme: oauth2code.Name, Version: 1, Payload: payload}
 		state.Status = store.ConnectionConnected
 		state.AccountID = team
-		state.Metadata = map[string]string{"team_id": team}
+		state.Metadata = map[string]string{"team_id": team, "bot_user_id": "U0000BOT"}
 		state.ConnectedAt = time.Now().UTC()
 		return true, nil
 	}))
@@ -584,17 +734,27 @@ func (s *SlackChannelSuite) deliver(body []byte, retry int) (int, string) {
 	return s.slack.Deliver(s.server.URL+providerAppEventsPath+"slack_bot/"+s.app.ProviderAppID, s.secret, body, retry)
 }
 
-// event is a Slack event_callback in the test's workspace (https://docs.slack.dev/apis/events-api/).
+// event is a Slack event_callback in the test's workspace (https://docs.slack.dev/apis/events-api/),
+// visible to the app's bot install.
 func (s *SlackChannelSuite) event(inner string) []byte {
+	return s.eventFor(inner, `{"team_id":"`+s.workspace+`","user_id":"U0000BOT","is_bot":true}`)
+}
+
+// eventFor is a Slack event_callback whose authorizations names the one install authorization.
+func (s *SlackChannelSuite) eventFor(inner, authorization string) []byte {
 	return []byte(`{"token":"synthetic","team_id":"` + s.workspace + `","api_app_id":"` + s.app.ProviderAppID +
 		`","event":` + inner + `,"type":"event_callback","event_id":"Ev` + strings.ReplaceAll(s.utils.uuid(), "-", "") +
-		`","event_time":` + fmt.Sprint(time.Now().Unix()) + `}`)
+		`","event_time":` + fmt.Sprint(time.Now().Unix()) + `,"authorizations":[` + authorization + `]}`)
 }
 
 // message is a message.channels event by user in C0000CHAN
 // (https://docs.slack.dev/reference/events/message.channels), a reply in thread when
-// threadTS is set.
+// threadTS is set. A message that starts a thread mentions the bot, which it must to be
+// answered (AI-989), so its text is the mention and text.
 func (s *SlackChannelSuite) message(user, text, ts, threadTS string) []byte {
+	if threadTS == "" {
+		text = botMention + text
+	}
 	inner := map[string]string{"type": "message", "channel": "C0000CHAN", "user": user, "text": text, "ts": ts, "channel_type": "channel"}
 	if threadTS != "" {
 		inner["thread_ts"] = threadTS
@@ -644,16 +804,13 @@ func (s *SlackChannelSuite) written(channel string, count int) []map[string]any 
 }
 
 // streamDelivers delivers the message.new Stream Chat sends for the index-th message of a
-// thread channel, as Stream holds it, signed with the app's secret.
+// thread channel, shaped as Stream sends it, signed with the app's secret.
 func (s *SlackChannelSuite) streamDelivers(channel string, index int) int {
-	stored := s.chat.Stored(channel)[index]
 	data, _ := s.chat.Channel(channel)
 	payload, err := json.Marshal(map[string]any{
 		"type": "message.new", "cid": "agent:" + channel, "channel_id": channel, "channel_type": "agent",
 		"channel_custom": data["custom"],
-		"message": map[string]any{
-			"id": stored["id"], "text": stored["text"], "user": stored["user"], "custom": stored["custom"],
-		},
+		"message":        s.chat.Delivered(channel)[index],
 	})
 	s.Require().NoError(err)
 	return s.signedly("/v1/chat/hooks/stream", string(payload))

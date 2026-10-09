@@ -509,10 +509,10 @@ func (s *SyncSuite) TestASyncWithAnAliasHoldingTheToolSeparatorIsRefused() {
 }
 
 func (s *SyncSuite) TestASyncAddingAPluginABindingIsCalledIsRefused() {
-	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("slack")}})
+	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("linear")}})
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
-		map[string]any{"name": "support", "hash": "v2", "agent_plugins": []string{"slack"}})
+		map[string]any{"name": "support", "hash": "v2", "agent_plugins": []string{"linear"}})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "plugin")

@@ -323,6 +323,9 @@ type Agent struct {
 	pumps sync.WaitGroup
 
 	tts *ttsrouter.Session
+	// lostVoices are the voices this call has lost, as "provider/model", so the one that
+	// replaces a lost voice is a different one.
+	lostVoices []string
 	// sts is the native audio session, and is what a native agent has instead of llm,
 	// tts and listeners. The harness still runs delegated work.
 	sts *stsrouter.Session
@@ -853,6 +856,15 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	if a.native() {
 		return "", a.respondNative(text, images)
 	}
+	caller := stt.Participant{ID: "caller"}
+	// Typed into a call, the words are what the caller said as much as anything transcribed,
+	// and the transcript, the review and the logs all take a caller's line from Heard. A text
+	// session reads its caller's lines from Responding instead.
+	typed := func() {
+		if !a.options.Text {
+			a.emitter.Send(Heard{Participant: caller, Text: text})
+		}
+	}
 	if len(images) > 0 {
 		a.mu.Lock()
 		current, model := a.harness, a.llm
@@ -883,15 +895,18 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 			if _, err := current.Delegate(visionSkill, text, id, parts, nil); err != nil {
 				return "", err
 			}
-			return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
+			typed()
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
-			return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "", attached)
+			typed()
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", attached)
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
 	}
 	id := replyPrefix + turnStamp()
-	return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "", nil)
+	typed()
+	return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", nil)
 }
 
 // VideoFramesTool is the caller's tool the agent reads frames of the user's video through.
@@ -3262,6 +3277,9 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	// Abandoned audio arrives a frame at a time, so it is reported once per utterance
 	// rather than once per frame.
 	dropping := ""
+	// lost is set once the voice has gone, which a provider may say twice: as a fatal error
+	// and as the socket dropping.
+	lost := false
 	// Later frames bypass the first-frame hold; cancelled turns stay dropped.
 	published, dropped := "", ""
 	// holds are the replies waiting on the caller's silence, which is none almost always, and
@@ -3415,6 +3433,10 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			}
 			a.logger.Warn("the voice dropped, the agent has lost its speech",
 				"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
+			if !lost {
+				lost = true
+				a.loseVoice(p, voice)
+			}
 
 		case tts.Error:
 			active := a.finishSynthesis(typed.SynthesisID)
@@ -3424,7 +3446,10 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				a.settle()
 			}
 			a.fail(typed.Err, "tts")
-			if active {
+			if typed.Fatal && !lost {
+				lost = true
+				a.loseVoice(p, voice)
+			} else if active {
 				a.respondQueued()
 				a.followUp()
 			}

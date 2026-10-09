@@ -102,8 +102,8 @@ type Metrics struct {
 	RepeatedTools []string `json:"repeated_tools,omitempty"`
 	UnknownTools  []string `json:"unknown_tools,omitempty"`
 
-	// Stages is the router's own account of each caller turn, for the targets that run on
-	// it. It is a diagnostic for our own performance work: LiveKit reports nothing like it.
+	// Stages is the router's own account of each reply, for the targets that run on it. It is
+	// a diagnostic for our own performance work: LiveKit reports nothing like it.
 	Stages []StageTiming `json:"stages,omitempty"`
 	// AgentMetrics are the averages a Python Vision Agents session reports about itself,
 	// keyed as the agent names them, such as stt_latency_ms__avg.
@@ -111,9 +111,12 @@ type Metrics struct {
 }
 
 // StageTiming is one caller turn as the router timed it: consecutive legs from the settled
-// transcript to the first audio published, after the time speech-to-text spent settling.
+// transcript to the first audio published, after the time speech-to-text spent settling. A
+// reply the agent started after a tool returned (Tool) has no transcript, so only the legs from
+// the model to the first audio.
 type StageTiming struct {
 	TurnID          string `json:"turn_id"`
+	Tool            bool   `json:"tool,omitempty"`
 	STTMs           int    `json:"stt_ms"`
 	CadenceMs       int    `json:"cadence_ms"`
 	DecisionMs      int    `json:"decision_ms"`
