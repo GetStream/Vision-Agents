@@ -228,7 +228,9 @@ See the [healthcare contract](agents/contracts/healthcare.prompt). Its data-mini
 
 See the [telecom contract](agents/contracts/telecom.prompt).
 
-Each vertical includes task completion, two-minute coherence, 10 dB noise, competing-talker selectivity, delayed-tool filler, interruption, entity-dense, adversarial, and monologue scenarios. A monologue is a minute of one caller turn, built from sentences with 0.8–2 s thinking pauses between them, with the details spread through it; the agent must not start talking anywhere inside it (`hold_floor`), then must act on all of it. The three verticals remain separate score columns; they are never combined into one score.
+Each vertical includes task completion, two-minute coherence, 10 dB noise, competing-talker selectivity, delayed-tool filler, interruption, entity-dense, adversarial, and monologue scenarios. A monologue is a minute of one caller turn, built from sentences with 0.8–2 s thinking pauses between them, with the details spread through it; the agent must not start talking anywhere inside it (`hold_floor`), then must act on all of it.
+
+An **extended** set (`scenarios/extended.txt`, `voicebench run --extended`, or `set=extended` on Run workflow) holds scenarios outside the frozen set, run by hand until a methodology bump takes them in: a caller correcting themselves mid-sentence, one- and two-word answers, a child talking to the caller during the call, a caller going silent for nine seconds (the agent should check in), a television and music in the background, an Australian-accented caller, numbers dictated digit by digit, and an angry caller demanding a credit. A scenario can set the caller's ElevenLabs `voice`, a turn its own `voice`; an `aside` line is someone else in the room and is scored like an overlap sound; a `check_in` turn holds the caller back for its delay, and fails the call if the agent lets the silence pass. The three verticals remain separate score columns; they are never combined into one score.
 
 ## Scenario world
 

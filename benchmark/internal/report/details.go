@@ -167,7 +167,7 @@ func classify(call CallResult, heard, script string) []Failure {
 		switch gate.Gate {
 		case "policy", "say_do":
 			failure.Cause = CauseSaid
-		case "filler", "barge_in", "selectivity", "hold", "false_cutoff":
+		case "filler", "barge_in", "selectivity", "hold", "false_cutoff", "check_in":
 			failure.Cause = CauseTurns
 		case "entity_speech":
 			failure.Cause = CauseSaid

@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       set:
-        description: 'Scenario set: frozen (the nightly, compared with the previous night) or short (a quicker check, compared with nothing)'
+        description: 'Scenario set: frozen (the nightly, compared with the previous night), short (a quicker check), or extended (scenarios outside the frozen set)'
         type: choice
-        options: [ frozen, short ]
+        options: [ frozen, short, extended ]
         default: frozen
       packs:
         description: 'Packs to run: all (the nightly) or one of them (a quicker check, compared with nothing)'

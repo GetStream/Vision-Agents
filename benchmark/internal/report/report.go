@@ -796,6 +796,9 @@ func gateDetails(m score.Metrics) []gateDetail {
 	if containsNote(m.GateNotes, "hold") {
 		add("hold", []string{"agent did not continue through mid-speech overlap"})
 	}
+	if containsNote(m.GateNotes, "check_in") {
+		add("check_in", []string{"agent stayed silent while the caller went quiet: " + strings.Join(m.CheckInFail, ", ")})
+	}
 	if containsNote(m.GateNotes, "false_cutoff") {
 		add("false_cutoff", []string{fmt.Sprintf("agent started talking %d time(s) while the caller was still in a turn", m.FalseCutoff)})
 	}

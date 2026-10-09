@@ -102,3 +102,18 @@ func TestWriteStereoWAV(t *testing.T) {
 		t.Fatal("wav empty")
 	}
 }
+
+func TestMusicAndTVAreRepeatableNoise(t *testing.T) {
+	for _, name := range []string{"music", "tv"} {
+		a := NoiseNamed(name, Rate*2, 7)
+		b := NoiseNamed(name, Rate*2, 7)
+		if len(a) != Rate*2 || FrameEnergy(a) < DefaultSpeechThreshold/10 {
+			t.Fatalf("%s should be audible noise, energy %v", name, FrameEnergy(a))
+		}
+		for i := range a {
+			if a[i] != b[i] {
+				t.Fatalf("%s should be the same for the same seed", name)
+			}
+		}
+	}
+}
