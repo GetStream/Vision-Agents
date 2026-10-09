@@ -19,29 +19,52 @@ Every one of these has failed a run. Check them before the first call, and never
 
 **Which .env.** voicebench reads `benchmark/.env` and, only when that file does not exist, the
 repository's `.env`. A key added to the root `.env` is ignored while `benchmark/.env` exists.
+Run the checks below from the repository root.
 
-**Keys the default pipeline needs** (Flux STT, Gemma 4 on Baseten, ElevenLabs v4 Turbo, GPT-6.1
-Sol): `STREAM_API_KEY`, `STREAM_API_SECRET`, `ELEVENLABS_API_KEY` (caller lines and the agent's
-voice), `DEEPGRAM_API_KEY` (Flux, and the transcript the judge reads), `OPENAI_API_KEY` (judge
-and subagent), `GEMMA_BASE_URL` and `BASETEN_API_KEY`. `INWORLD_API_KEY` for the TTS bench.
-
-Probe the ones that run out or go cold, from the folder whose `.env` voicebench will read:
+**Every variable is there.** These are what the default pipeline (Flux STT, Gemma 4 on
+Baseten, ElevenLabs v4 Turbo, GPT-6.1 Sol) and the benches use. The check prints names only:
 
 ```bash
-EL=$(grep -E '^ELEVENLABS_API_KEY=' .env | cut -d= -f2- | tr -d "\"'\r\n "); curl -sS -o /dev/null -w "ElevenLabs HTTP %{http_code}\n" -H "xi-api-key: $EL" -H 'Content-Type: application/json' -d '{"text":"Hi.","model_id":"eleven_flash_v2_5"}' "https://api.elevenlabs.io/v1/text-to-speech/VR6AewLTigWG4xSOukaG?output_format=pcm_16000"
+f=.env; [ -f benchmark/.env ] && f=benchmark/.env; echo "voicebench reads $f"; for k in STREAM_API_KEY STREAM_API_SECRET ELEVENLABS_API_KEY DEEPGRAM_API_KEY OPENAI_API_KEY GEMMA_BASE_URL BASETEN_API_KEY INWORLD_API_KEY GOOGLE_API_KEY; do v=$(grep -E "^$k=" "$f" | tail -1 | cut -d= -f2- | tr -d "\"' \r"); [ -n "$v" ] && echo "ok       $k" || echo "MISSING  $k"; done; grep -qE '^GEMMA_BASE_URL=https://' "$f" || echo "BAD      GEMMA_BASE_URL is not an https URL"
 ```
 
-`401 quota_exceeded` is the key's character limit, whatever the model: someone with workspace
-access has to raise it. Already-cached caller lines (`benchmark/cache/tts/`) need no quota, the
-agent's own voice always does.
+**If any is missing, fetch the environment** with rocky, which writes every key the team keeps
+in Secret Manager to the file it is given:
 
 ```bash
-GU=$(grep -E '^GEMMA_BASE_URL=' .env | cut -d= -f2- | tr -d "\"'\r\n "); BK=$(grep -E '^BASETEN_API_KEY=' .env | cut -d= -f2- | tr -d "\"'\r\n "); curl -sS -m 90 -w "\nGemma HTTP %{http_code} %{time_total}s\n" "$GU/chat/completions" -H "Authorization: Bearer $BK" -H 'Content-Type: application/json' -d '{"model":"google/gemma-4-26B-A4B-it","max_tokens":1,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"Hi"}]}' | tail -c 200
+cp "$f" "$f.bak" 2>/dev/null; rocky agents local secrets create_env -f "$f"
 ```
 
-`deactivated` or `not ready` means the Baseten deployment is down or waking; a first answer can
-take minutes. Wait until it answers in about a second before placing calls: calls made while it
-wakes go unanswered and score as failures with no tools.
+It **overwrites** the file and keeps no comments, so restore any local-only lines from the
+backup afterwards (a `ROUTER_POSTGRES_DSN` pointing at your own database, the Slack bot
+variables): `diff "$f.bak" "$f"` shows what was lost. Write to `$f`, the file voicebench reads: a
+fresh root `.env` does nothing while `benchmark/.env` exists. Then run the check again. If rocky
+fails, it is the user's gcloud login or access, not something to work around: tell them.
+
+**Every key works.** A key can be present and dead, and fetching again does not fix that: the
+team's file can carry the same exhausted key. Probe each one; none of these prints a key, and
+only the ElevenLabs probe spends anything (three characters):
+
+```bash
+key() { grep -E "^$1=" "$f" | tail -1 | cut -d= -f2- | tr -d "\"' \r"; }
+curl -sS -o /dev/null -w "Deepgram   HTTP %{http_code}\n" -H "Authorization: Token $(key DEEPGRAM_API_KEY)" https://api.deepgram.com/v1/projects
+curl -sS -o /dev/null -w "OpenAI     HTTP %{http_code}\n" -H "Authorization: Bearer $(key OPENAI_API_KEY)" https://api.openai.com/v1/models
+curl -sS -o /dev/null -w "ElevenLabs HTTP %{http_code}\n" -H "xi-api-key: $(key ELEVENLABS_API_KEY)" -H 'Content-Type: application/json' -d '{"text":"Hi.","model_id":"eleven_flash_v2_5"}' "https://api.elevenlabs.io/v1/text-to-speech/VR6AewLTigWG4xSOukaG?output_format=pcm_16000"
+curl -sS -m 90 -o /dev/null -w "Gemma      HTTP %{http_code} in %{time_total}s\n" "$(key GEMMA_BASE_URL)/chat/completions" -H "Authorization: Bearer $(key BASETEN_API_KEY)" -H 'Content-Type: application/json' -d '{"model":"google/gemma-4-26B-A4B-it","max_tokens":1,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"Hi"}]}'
+```
+
+All four should be `200`. What the others mean:
+
+- **401 from Deepgram or OpenAI**: the key is wrong or revoked. Fetch again with rocky; if the
+  fetched key fails too, the team's secret is stale and someone with access has to replace it.
+- **401 from ElevenLabs**: rerun the probe without `-o /dev/null`. `quota_exceeded` is the
+  key's character limit, whatever the model: someone with workspace access has to raise it.
+  Cached caller lines (`benchmark/cache/tts/`) need no quota, the agent's own voice always does.
+- **400 from Gemma**, or a slow first answer: the Baseten deployment is deactivated or waking.
+  Wait until it answers in about a second before placing calls: calls made while it wakes go
+  unanswered and score as failures with no tools.
+
+Stop and tell the user about any key that stays broken; do not start calls with one.
 
 **Services.** The router needs Postgres and Redis: `docker compose up -d --wait postgres redis`
 from the repo root (Postgres on 55432, Redis on 56379, which the router's local profile expects).
