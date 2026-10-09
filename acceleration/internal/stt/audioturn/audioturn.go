@@ -160,7 +160,7 @@ func (s *STT) run() {
 		end, participant := s.total, s.participant
 		// Do not decode silence before speech or after a settled utterance.
 		if len(words.words) == 0 && quietAudio(s.audio[max(0, len(s.audio)-int(end-words.turnStart)):]) {
-			read, s.scored, words.turnStart = end, end, end
+			read, s.scored = end, end
 			s.mu.Unlock()
 			continue
 		}

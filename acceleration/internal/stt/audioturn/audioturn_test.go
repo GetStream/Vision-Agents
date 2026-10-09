@@ -184,15 +184,16 @@ func (s *AudioTurnSuite) TestSilenceDoesNotCreateUtterances() {
 	}
 	assertIdle()
 	for turn := int64(1); turn <= 2; turn++ {
-		s.replies <- transcriptionReply{words: []Word{{Text: "hello", StartMS: -500, EndMS: -100}}}
+		// Decoder timestamps can put the first word just before speech begins.
+		s.replies <- transcriptionReply{words: []Word{{Text: "hello", StartMS: -1100, EndMS: -100}}}
 		s.feed(1)
 		partial := s.transcript()
 		s.Equal("hello", partial.Text)
 		s.Equal(turn, partial.Utterance)
-		s.Equal(float64(1000), partial.AudioDurationMs)
+		s.Equal(float64(2000), partial.AudioDurationMs)
 		<-s.requests
 
-		s.replies <- transcriptionReply{words: []Word{{Text: "hello", StartMS: -1500, EndMS: -1100}}}
+		s.replies <- transcriptionReply{words: []Word{{Text: "hello", StartMS: -2100, EndMS: -1100}}}
 		s.Require().NoError(s.provider.ProcessAudio(quiet, stt.Participant{ID: "caller"}))
 		final := s.transcript()
 		s.True(final.Final())
