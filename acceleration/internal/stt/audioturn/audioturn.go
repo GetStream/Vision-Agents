@@ -143,8 +143,7 @@ func (s *STT) run() {
 	s.emitter.Send(stt.Connected{Provider: ProviderName, Model: DefaultModel, At: time.Now()})
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
-	var read, revised int64
-	var previous string
+	var read int64
 	var words windowTranscript
 	utterance := int64(1)
 	for {
@@ -159,6 +158,7 @@ func (s *STT) run() {
 			continue
 		}
 		end, participant := s.total, s.participant
+		quiet := quietTail(s.audio)
 		pcm := (stt.PcmData{Samples: s.audio, SampleRate: SampleRate, Channels: 1}).Bytes()
 		s.mu.Unlock()
 
@@ -183,17 +183,13 @@ func (s *STT) run() {
 		s.mu.Unlock()
 		endMS := (end*1000 + SampleRate - 1) / SampleRate
 		text := words.update(*transcript, endMS)
-		if text != previous {
-			previous, revised = text, end
-		}
 		if text == "" {
 			continue
 		}
-		// A turn score decides when to answer, not whether these words can still
-		// change. Settle only after a stable hypothesis and a pause after its tail.
-		final := end-revised >= SampleRate*400/1000 && endMS-int64(words.words[len(words.words)-1].EndMS) >= 600
+		// Word durations can extend into silence. Settle against the audio, while
+		// the turn score remains a separate decision about when to answer.
 		mode := stt.ModeReplacement
-		if final {
+		if quiet {
 			mode = stt.ModeFinal
 		}
 		s.emitter.Send(stt.Transcript{
@@ -202,34 +198,68 @@ func (s *STT) run() {
 			ProcessingTimeMs: float64(time.Since(started).Microseconds()) / 1000,
 			AudioDurationMs:  float64(end-words.turnStart) * 1000 / SampleRate,
 		})
-		if final {
+		if quiet {
 			utterance++
 			words = windowTranscript{turnStart: end}
-			previous = ""
 		}
 	}
 }
 
-// Replace the overlapping window, keeping only words about to leave its left
-// edge. One second of left context avoids replacing a whole word with a clipped
-// one. Timestamp matching is restricted to the seam so repeated words survive.
+// quietTail requires 600 ms below -42 dBFS, checked in 20 ms frames so a short
+// word cannot disappear into the average energy of a longer quiet window.
+func quietTail(samples []int16) bool {
+	const length = SampleRate * 600 / 1000
+	if len(samples) < length {
+		return false
+	}
+	for tail := samples[len(samples)-length:]; len(tail) > 0; tail = tail[MinSamples:] {
+		var energy int64
+		for _, sample := range tail[:MinSamples] {
+			energy += int64(sample) * int64(sample)
+		}
+		if energy >= 250*250*MinSamples {
+			return false
+		}
+	}
+	return true
+}
+
+// Once a turn outgrows the window, keep its prefix and revise the last second.
+// Earlier words retain the context they were decoded with.
 type windowTranscript struct {
 	words     []Word // timestamps on the session clock
 	turnStart int64  // samples
+	endMS     int
 }
 
 func (w *windowTranscript) update(transcript Transcript, endMS int64) string {
 	keep := 0
-	cutoff := int(endMS) - MaxSamples*1000/SampleRate + 1000
+	cutoff := w.endMS - 1000
+	if endMS-w.turnStart*1000/SampleRate <= MaxSamples*1000/SampleRate {
+		cutoff = -1
+	}
+	w.endMS = int(endMS)
 	for keep < len(w.words) && w.words[keep].EndMS <= cutoff {
 		keep++
 	}
 	w.words = w.words[:keep]
 	seam := int(w.turnStart*1000/SampleRate) - 1
+	start := 0
 	if keep > 0 {
-		seam = max(seam, w.words[keep-1].StartMS+40)
+		last := w.words[keep-1]
+		seam = max(seam, last.EndMS-1)
+		// Align the last retained word: decoder timestamps can shift between
+		// windows. The closest occurrence preserves intentional repetitions.
+		distance := 1000
+		for i, word := range transcript.Words {
+			delta := word.StartMS + int(endMS) - last.StartMS
+			if max(delta, -delta) < distance && strings.EqualFold(strings.Trim(word.Text, ".,!?;:"), strings.Trim(last.Text, ".,!?;:")) {
+				start, distance = i+1, max(delta, -delta)
+				seam = int(w.turnStart*1000/SampleRate) - 1
+			}
+		}
 	}
-	for _, word := range transcript.Words {
+	for _, word := range transcript.Words[start:] {
 		word.StartMS += int(endMS)
 		word.EndMS += int(endMS)
 		if word.StartMS > seam {

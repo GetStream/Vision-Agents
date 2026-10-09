@@ -98,7 +98,7 @@ func (s *AudioTurnSuite) transcript() stt.Transcript {
 	}
 }
 
-func (s *AudioTurnSuite) TestStableWordsSettleIndependentlyOfTheTurnScore() {
+func (s *AudioTurnSuite) TestQuietAudioSettlesWordsIndependentlyOfTheTurnScore() {
 	s.start()
 	s.replies <- transcriptionReply{probability: 0.1, words: []Word{{Text: "seven", StartMS: -500, EndMS: -100, Confidence: 0.95}}}
 	s.feed(1)
@@ -121,7 +121,9 @@ func (s *AudioTurnSuite) TestStableWordsSettleIndependentlyOfTheTurnScore() {
 		{Text: "seven", StartMS: -2500, EndMS: -2100, Confidence: 0.95},
 		{Text: "thirty", StartMS: -1800, EndMS: -1500, Confidence: 0.97},
 	}}
-	s.feed(1)
+	s.Require().NoError(s.provider.ProcessAudio(stt.PcmData{
+		Samples: make([]int16, SampleRate), SampleRate: SampleRate, Channels: 1,
+	}, stt.Participant{ID: "caller"}))
 	final := s.transcript()
 	s.Equal("seven thirty", final.Text)
 	s.True(final.Final(), "a low turn score must not strand settled words")
@@ -149,19 +151,20 @@ func (s *AudioTurnSuite) TestLongSpeechKeepsItsPrefixAndRevisesTheOverlappingTai
 	s.start()
 	s.replies <- transcriptionReply{probability: 0.1, words: []Word{
 		{Text: "first", StartMS: -11000, EndMS: -10800, Confidence: 0.9},
-		{Text: "word", StartMS: -2000, EndMS: -1800, Confidence: 0.9},
+		{Text: "word", StartMS: -7500, EndMS: -7200, Confidence: 0.9},
 		{Text: "wrong", StartMS: -800, EndMS: -300, Confidence: 0.7},
 	}}
 	s.feed(12)
 	s.Equal("first word wrong", s.transcript().Text)
 	s.replies <- transcriptionReply{probability: 0.9, words: []Word{
-		{Text: "word", StartMS: -9980, EndMS: -9800, Confidence: 0.9},
+		{Text: "word", StartMS: -15100, EndMS: -14900, Confidence: 0.9},
+		{Text: "word", StartMS: -14700, EndMS: -14200, Confidence: 0.9},
 		{Text: "corrected", StartMS: -8800, EndMS: -8300, Confidence: 0.98},
 		{Text: "ending", StartMS: -1000, EndMS: -500, Confidence: 0.9},
 	}}
 	s.feed(8)
 	revision := s.transcript()
-	s.Equal("first word corrected ending", revision.Text)
+	s.Equal("first word word corrected ending", revision.Text)
 	s.False(revision.Final())
 	s.Equal(float64(20000), revision.AudioDurationMs)
 	<-s.requests
@@ -223,8 +226,12 @@ func (s *AudioTurnSuite) TestUntranscribedAudioCannotBeSilentlyOverwritten() {
 func (s *AudioTurnSuite) TestWordTimestampsCanRoundPastTheWindowEdges() {
 	s.start()
 	s.replies <- transcriptionReply{probability: 0.9, words: []Word{{Text: "gold.", StartMS: -1001, EndMS: 40, Confidence: 0.868}}}
+	samples := make([]int16, SampleRate+1)
+	for i := range samples {
+		samples[i] = 1000
+	}
 	s.Require().NoError(s.provider.ProcessAudio(stt.PcmData{
-		Samples: make([]int16, SampleRate+1), SampleRate: SampleRate, Channels: 1,
+		Samples: samples, SampleRate: SampleRate, Channels: 1,
 	}, stt.Participant{ID: "caller"}))
 	partial := s.transcript()
 	s.False(partial.Final())
@@ -232,4 +239,9 @@ func (s *AudioTurnSuite) TestWordTimestampsCanRoundPastTheWindowEdges() {
 	s.replies <- transcriptionReply{probability: 0.9, words: []Word{{Text: "gold.", StartMS: -600, EndMS: 40, Confidence: 0.868}}}
 	s.feed(1)
 	s.False(s.transcript().Final(), "unchanged words at the audio edge are still provisional")
+	s.replies <- transcriptionReply{probability: 0.1, words: []Word{{Text: "gold.", StartMS: -1600, EndMS: 40, Confidence: 0.868}}}
+	s.Require().NoError(s.provider.ProcessAudio(stt.PcmData{
+		Samples: make([]int16, SampleRate), SampleRate: SampleRate, Channels: 1,
+	}, stt.Participant{ID: "caller"}))
+	s.True(s.transcript().Final(), "a decoder duration extending through silence must not strand the final")
 }

@@ -751,10 +751,11 @@ this protocol; private deployments must enable transcription on the server.
 
 Audio is sampled every 200 ms while new frames arrive, with one request in
 flight and a 16-second window. Overlapping transcripts replace provisional
-words. A transcript settles after its words hold for 400 ms and its last word
-ends at least 600 ms before the current audio. The turn score remains a separate
-decision about when to answer. Settling keeps the audio context; timestamps
-exclude already committed words and preserve the beginning of long turns.
+words. A transcript settles after the audio has been quiet for 600 ms;
+decoder word durations can extend through that silence. The turn score remains a separate
+decision about when to answer. Settling keeps the audio context. When a turn
+outgrows the window, its prefix is retained and its last second stays provisional;
+overlap alignment avoids repeating already committed words.
 An input backlog that exceeds the window is reported as
 an error. The server's word confidence and acoustic turn probability are separate
 values. Provider billing reports zero for this service; TPU hosting costs are
