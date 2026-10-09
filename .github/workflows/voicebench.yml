@@ -30,6 +30,8 @@ env:
   GEMMA_BASE_URL: ${{ secrets.GEMMA_BASE_URL }}
   BASETEN_API_KEY: ${{ secrets.BASETEN_API_KEY }}
   ROUTER_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/model_router?sslmode=disable
+  # Set outright: the router's local profile otherwise looks for the compose Redis on 56379.
+  ROUTER_REDIS_ADDR: localhost:6379
 
 jobs:
   # Nightly: the frozen set at k=1 on our stack alone, compared against the previous night's
@@ -40,7 +42,8 @@ jobs:
   nightly:
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    # The agent syncs its config to the router, which keeps configs in Postgres.
+    # The agent syncs its config to the router, which keeps configs in Postgres, and the
+    # router keeps live sessions in Redis.
     services:
       postgres:
         image: postgres:16-alpine
@@ -51,6 +54,14 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d model_router"
+          --health-interval 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval 5s
           --health-retries 10
     defaults:
