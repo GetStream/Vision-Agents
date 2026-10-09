@@ -64,6 +64,16 @@ func (s *Server) FailPosts(n int) {
 	s.failPosts = n
 }
 
+// RefusePosts has the next n calls to chat.postMessage answer HTTP 200 with «"ok": false» and
+// the error name code, and post nothing, as Slack refuses a post for a reason other than the
+// token, such as not_in_channel, «Cannot post user messages to a channel they are not in»
+// ([post], opened October 9, 2026).
+func (s *Server) RefusePosts(n int, code string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refusedPosts, s.refusal = n, code
+}
+
 // Posts are the messages chat.postMessage took, oldest first.
 func (s *Server) Posts() []Post {
 	s.mu.Lock()
@@ -119,6 +129,11 @@ func (s *Server) chatPostMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if s.refusedPosts > 0 {
+		s.refusedPosts--
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": s.refusal})
+		return
+	}
 	presented, found := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !found {
 		// [post] error names: not_authed is «No authentication token provided».

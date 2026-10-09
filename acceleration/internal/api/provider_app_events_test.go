@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,6 +46,8 @@ type SlackChannelSuite struct {
 	workspace string
 	// transcribed is the channel each voice session's transcript was opened for.
 	transcribed *openedTranscripts
+	// logged is what the router logged.
+	logged *lockedLog
 }
 
 // botMention is how a message names the test workspace's bot, U0000BOT (fakeprovider's
@@ -70,6 +73,8 @@ func (s *SlackChannelSuite) SetupSuite() {
 	s.channelProvider = func() string { return strings.TrimPrefix(s.slack.URL, "https://") }
 	s.transcribed = &openedTranscripts{}
 	s.transcripts = s.transcribed.open
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -519,6 +524,98 @@ func (s *SlackChannelSuite) TestAReplyThatNeverGotThroughIsSentByTheNextHandOff(
 	s.Never(func() bool { return len(s.slack.Posts()) > 1 }, dropped, 20*time.Millisecond)
 }
 
+// AI-990 F28: Slack refusing a reply for a reason other than its token, HTTP 200 with
+// «"ok": false» and an error name (https://docs.slack.dev/reference/methods/chat.postMessage),
+// leaves no reply row behind, so the next hand-off sends it, once. The log names Slack's error.
+func (s *SlackChannelSuite) TestAReplySlackRefusesIsUnclaimedAndItsErrorIsLogged() {
+	s.slack.RefusePosts(1, "not_in_channel")
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.Require().Eventually(func() bool { return s.slack.Hits(fakeprovider.PathChatPostMessage) == 1 }, settleFor, 10*time.Millisecond)
+
+	s.Require().Eventually(func() bool { return s.claimed(channel, "reply") == 0 }, settleFor, 10*time.Millisecond,
+		"a refused reply is not kept as sent")
+	s.Require().Eventually(func() bool { return strings.Contains(s.logged.String(), "not_in_channel") }, settleFor, 10*time.Millisecond,
+		"the log names the error Slack refused the reply with")
+	s.Empty(s.slack.Posts())
+	finished := conversation.FinishedReply{Customer: s.customerID(), CID: "agent:" + channel, MessageID: s.agentsReply(channel)["id"].(string), Text: "Noted."}
+
+	s.bridge.(*channelbridge.Bridge).Reply(finished)
+	s.posted(1)
+	s.Require().Eventually(func() bool { return s.claimed(channel, "reply") == 1 }, settleFor, 10*time.Millisecond,
+		"a reply Slack took is kept as sent")
+	s.bridge.(*channelbridge.Bridge).Reply(finished)
+
+	s.Never(func() bool { return len(s.slack.Posts()) > 1 }, dropped, 20*time.Millisecond)
+}
+
+// AI-990 F31a: Slack retries a mention whose first delivery failed
+// (https://docs.slack.dev/apis/events-api/, «Retries»), so a reply in its thread can arrive
+// before the mention links the thread. The reply waits for the link and is written after it.
+func (s *SlackChannelSuite) TestAReplyThatArrivesBeforeTheRetriedMentionIsWrittenAfterIt() {
+	status, _ := s.deliver(s.message("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	s.Require().Equal(http.StatusOK, status)
+	s.nothingLinked()
+
+	status, _ = s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100", ""), 1)
+
+	s.Require().Equal(http.StatusOK, status)
+	stored := s.written(s.threadChannel("C0000CHAN:1759740000.000100"), 2)
+	s.Equal([]any{botMention + "is the build green?", "and the deploy?"}, []any{stored[0]["text"], stored[1]["text"]},
+		"the mention first, then the reply that waited for it")
+	s.Zero(s.waiting(), "the reply no longer waits")
+}
+
+// AI-990 F31a: mentions and replies in their threads that arrive together are all written,
+// whichever of each pair the router reads first.
+func (s *SlackChannelSuite) TestRepliesArrivingWithTheirMentionsAreAllWritten() {
+	const threads = 50
+	var delivered sync.WaitGroup
+	for i := range threads {
+		ts := fmt.Sprintf("1759740000.%06d", 1000+10*i)
+		for _, body := range [][]byte{
+			s.message("U0000ALICE", "is the build green?", ts, ""),
+			s.message("U0000BOB", "and the deploy?", fmt.Sprintf("1759740000.%06d", 1000+10*i+1), ts),
+		} {
+			delivered.Add(1)
+			go func() {
+				defer delivered.Done()
+				s.deliver(body, 0)
+			}()
+		}
+	}
+	delivered.Wait()
+
+	for i := range threads {
+		s.written(s.threadChannel(fmt.Sprintf("C0000CHAN:1759740000.%06d", 1000+10*i)), 2)
+	}
+}
+
+// AI-990 F31a: a message that starts its thread and is not to the bot is not kept: no later
+// message takes it, since the one that links its thread is a reply after it (AI-989).
+func (s *SlackChannelSuite) TestAChannelMessageNotToTheBotDoesNotWait() {
+	s.deliver(s.event(`{"type":"message","channel":"C0000CHAN","user":"U0000ALICE","text":"lunch?",`+
+		`"ts":"1759740000.001100","channel_type":"channel"}`), 0)
+	s.deliver(s.message("U0000BOB", "sure", "1759740000.001200", "1759740000.001100"), 0)
+
+	s.Require().Eventually(func() bool { return s.waiting() == 1 }, settleFor, 10*time.Millisecond, "the reply waits")
+	s.Never(func() bool { return s.waiting() > 1 }, dropped, 20*time.Millisecond, "the message that started the thread does not")
+}
+
+// AI-990 F31a: a reply that waited for a mention is written once, though Slack delivers it
+// again once the thread is linked.
+func (s *SlackChannelSuite) TestAReplyThatWaitedAndIsDeliveredAgainIsWrittenOnce() {
+	reply := s.message("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100")
+	s.deliver(reply, 0)
+	s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100", ""), 1)
+	channel := s.threadChannel("C0000CHAN:1759740000.000100")
+	s.written(channel, 2)
+
+	s.deliver(reply, 1)
+
+	s.Never(func() bool { return len(s.chat.Stored(channel)) > 2 }, dropped, 20*time.Millisecond)
+}
+
 // Another router holds the thread's turn: this one waits, and answers once it is let go.
 func (s *SlackChannelSuite) TestAThreadAnotherRouterIsAnsweringWaitsForItsTurn() {
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
@@ -613,6 +710,14 @@ func (s *SlackChannelSuite) agentsReply(channel string) map[string]any {
 	}
 	s.FailNow("the thread channel holds no reply of its agent")
 	return nil
+}
+
+// waiting is how many replies of the test's customer wait for their thread's link.
+func (s *SlackChannelSuite) waiting() int {
+	var count int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_thread_waiting WHERE customer_id = ?", s.customerID()).Scan(&count))
+	return count
 }
 
 // claimed is how many of a thread channel's messages one step holds claimed.

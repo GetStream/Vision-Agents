@@ -252,6 +252,9 @@ type Server struct {
 	posts []Post
 	// failPosts is how many more posts answer 503 (FailPosts).
 	failPosts int
+	// refusedPosts is how many more posts answer refusal in an HTTP 200 (RefusePosts).
+	refusedPosts int
+	refusal      string
 	// account is the user the next consent is by: UserID until SwitchAccount.
 	account string
 

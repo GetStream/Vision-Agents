@@ -15,11 +15,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -238,12 +240,18 @@ func (b *Bridge) Close() {
 // router does not handle (internal/eventforward, T46). A message whose write into its thread
 // channel fails after the ack reaches no agent after all, so unanswered, when not nil, is
 // called then, for those destinations to have it (AI-924).
+//
+// A message that links its thread brings the replies that waited for that link (take), which
+// are handled after it, in this delivery.
 func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage, unanswered func()) (answered bool, err error) {
-	for _, message := range messages {
-		thread, config, fresh, err := b.take(ctx, app, message)
+	queue := slices.Clone(messages)
+	for i := 0; i < len(queue); i++ {
+		message := queue[i]
+		thread, config, fresh, waited, err := b.take(ctx, app, message)
 		if err != nil {
 			return false, err
 		}
+		queue = append(queue, waited...)
 		// take links a thread only for a message an agent answers.
 		answered = answered || thread.ChannelID != ""
 		if !fresh {
@@ -291,9 +299,10 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 // (conversation.Service.OnFinishedReply), the one place a reply leaves. It claims the reply
 // by its Stream Chat id first, so a reply written, and so told, again is sent once. A send
 // that fails for a reason a later one can get past (no answer, a 5xx, a 429) is sent again
-// after each of the bridge's retry backoffs; a reply still not sent is unclaimed again, so a
-// later hand-off of it sends it. It runs off the caller, which is the conversation's writer;
-// a reply it cannot send is logged.
+// after each of the bridge's retry backoffs. A reply not sent, after those or after a
+// refusal, is unclaimed again, so the claim stays only on a reply the provider took (AI-990
+// F28), and a later hand-off of it sends it. It runs off the caller, which is the
+// conversation's writer; a reply it cannot send is logged.
 func (b *Bridge) Reply(reply conversation.FinishedReply) {
 	b.working.Add(1)
 	go func() {
@@ -339,7 +348,7 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 		}
 		var again retryable
 		if !errors.As(err, &again) {
-			return err
+			break
 		}
 		if attempt == len(b.retries) {
 			break
@@ -372,52 +381,57 @@ func (r retryable) Error() string { return r.err.Error() }
 func (r retryable) Unwrap() error { return r.err }
 
 // take finds who a message is for and claims it. fresh is false for a message nobody answers
-// and for one already taken.
-func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, message core.InboundMessage) (store.ChannelThread, store.AgentConfig, bool, error) {
+// and for one already taken. waited are the replies the message's thread link brought: when
+// the message links its thread and starts it, the replies that arrived before the link
+// (wait).
+func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, message core.InboundMessage) (thread store.ChannelThread, config store.AgentConfig, fresh bool, waited []core.InboundMessage, err error) {
 	if app.CustomerID == "" || message.ProviderUnitID == "" {
 		b.logger.Info("dropped an inbound message that names no provider app or no provider unit",
 			"connector", message.ConnectorID)
-		return store.ChannelThread{}, store.AgentConfig{}, false, nil
+		return store.ChannelThread{}, store.AgentConfig{}, false, nil, nil
 	}
 	connection, err := b.store.AppConnectionByAccount(ctx, app.CustomerID, message.ConnectorID, message.ProviderUnitID)
 	if errors.Is(err, store.ErrNoConnectorConnection) {
 		b.logger.Info("dropped an inbound message: the provider app has no connection of its provider unit",
 			"connector", message.ConnectorID, "customer", app.CustomerID, "provider_unit", message.ProviderUnitID)
-		return store.ChannelThread{}, store.AgentConfig{}, false, nil
+		return store.ChannelThread{}, store.AgentConfig{}, false, nil, nil
 	}
 	if err != nil {
-		return store.ChannelThread{}, store.AgentConfig{}, false, err
+		return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
 	}
 	configs, err := b.store.AgentConfigsBindingConnection(ctx, app.CustomerID, connection.ID)
 	if err != nil {
-		return store.ChannelThread{}, store.AgentConfig{}, false, err
+		return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
 	}
 	if len(configs) != 1 {
 		// Two agents answering one thread would talk over each other, and none answers a
 		// thread nobody bound. Either is the customer's agent configs to fix.
 		b.logger.Warn("dropped an inbound message: one agent config must bind the connection it came in on",
 			"connector", message.ConnectorID, "customer", app.CustomerID, "connection", connection.ID, "configs", len(configs))
-		return store.ChannelThread{}, store.AgentConfig{}, false, nil
+		return store.ChannelThread{}, store.AgentConfig{}, false, nil, nil
 	}
 	read, rule, err := b.read(ctx, connection, message)
 	if err != nil {
-		return store.ChannelThread{}, store.AgentConfig{}, false, err
+		return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
 	}
 	// A message that does not speak to the connection's own account, such as one in a Slack
 	// channel that does not mention the bot, starts no thread: it is answered only on a
 	// thread a message that did linked before (AI-989).
 	if !rule.Addresses(read, connection.Metadata) {
 		linked, err := b.store.ChannelThreadLinked(ctx, app.CustomerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey)
+		if err == nil && !linked && !startsThread(read) {
+			linked, err = b.wait(ctx, app.CustomerID, message)
+		}
 		if err != nil {
-			return store.ChannelThread{}, store.AgentConfig{}, false, err
+			return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
 		}
 		if !linked {
 			b.logger.Debug("dropped an inbound message that is not addressed to the connection on a thread nobody linked",
 				"connector", message.ConnectorID, "connection", connection.ID)
-			return store.ChannelThread{}, store.AgentConfig{}, false, nil
+			return store.ChannelThread{}, store.AgentConfig{}, false, nil, nil
 		}
 	}
-	thread := store.ChannelThread{
+	thread = store.ChannelThread{
 		ChannelID:      threadChannelPrefix + uuid.NewString(),
 		CustomerID:     app.CustomerID,
 		ConnectorID:    message.ConnectorID,
@@ -427,17 +441,58 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 		ThreadParts:    read.ThreadParts,
 		StreamAppPK:    app.StreamAppPK,
 	}
-	if _, err := b.store.LinkChannelThread(ctx, &thread); err != nil {
-		return store.ChannelThread{}, store.AgentConfig{}, false, err
-	}
-	fresh, err := b.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, store.ClaimInbound, message.ProviderMessageID)
+	created, err := b.store.LinkChannelThread(ctx, &thread)
 	if err != nil {
-		return store.ChannelThread{}, store.AgentConfig{}, false, err
+		return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
+	}
+	fresh, err = b.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, store.ClaimInbound, message.ProviderMessageID)
+	if err != nil {
+		return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
 	}
 	if !fresh {
 		b.logger.Debug("dropped a retried inbound message", "connector", message.ConnectorID, "channel", thread.ChannelID)
 	}
-	return thread, configs[0], fresh, nil
+	// Every reply in a thread comes after the message that started it, so the replies that
+	// waited for that message are all to be answered. A link made by a reply, such as a
+	// mention in a thread of people, leaves them waiting until they are dropped: some came
+	// before the bot was spoken to, which it does not read (AI-989).
+	if created && fresh && startsThread(read) {
+		waited, err = b.store.TakeWaitingChannelThreadMessages(ctx, app.CustomerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey)
+		if err != nil {
+			return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
+		}
+	}
+	return thread, configs[0], fresh, waited, nil
+}
+
+// wait keeps a reply that does not speak to the connection's account, on a thread nobody
+// linked, for the message that links the thread to take (AI-990 F31a): a mention Slack retries
+// after its first delivery failed arrives after the replies in its thread. linked is whether
+// the thread was linked meanwhile and this reply took itself back, so it is answered now; the
+// message that linked it did not see it, or took it first, in which case linked is false and
+// that message answers it. The second look is after the reply is kept, so one of the two
+// always finds it.
+func (b *Bridge) wait(ctx context.Context, customerID string, message core.InboundMessage) (linked bool, err error) {
+	if _, err := b.store.WaitChannelThreadMessage(ctx, customerID, message); err != nil {
+		return false, err
+	}
+	linked, err = b.store.ChannelThreadLinked(ctx, customerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey)
+	if err != nil || !linked {
+		return false, err
+	}
+	return b.store.UnwaitChannelThreadMessage(ctx, customerID, message)
+}
+
+// startsThread is whether a message is the first of its thread: its own id is a part of its
+// thread key, as a Slack message that starts a thread is keyed by its own ts (slack_bot.yaml,
+// thread_ts falls back to the message's ts).
+func startsThread(message core.ChannelMessage) bool {
+	for _, part := range message.ThreadParts {
+		if part == message.ProviderMessageID {
+			return true
+		}
+	}
+	return false
 }
 
 // episode opens the episode a message is in, in the omni-channel of the person who wrote it:
@@ -628,7 +683,7 @@ func (b *Bridge) send(ctx context.Context, thread store.ChannelThread, text stri
 		return stack.Wrap(fmt.Errorf("channelbridge: %s answered a reply with a body it does not read: %w", connection.ConnectorID, err))
 	}
 	if !sent {
-		refusal := stack.Wrap(fmt.Errorf("channelbridge: %s refused a reply in a %d answer", connection.ConnectorID, response.StatusCode))
+		refusal := stack.Wrap(fmt.Errorf("channelbridge: %s refused a reply in a %d answer%s", connection.ConnectorID, response.StatusCode, refusalCode(answer)))
 		switch b.refused(ctx, ref, scheme, response, answer) {
 		case core.OutcomeTransient, core.OutcomeRateLimited:
 			return retryable{refusal}
@@ -636,6 +691,20 @@ func (b *Bridge) send(ctx context.Context, thread store.ChannelThread, text stri
 		return refusal
 	}
 	return nil
+}
+
+// refusalCode names, for the log, the error a provider refused a reply with in its answer's
+// top-level error member, such as Slack's «"ok": false, "error": "not_in_channel"»
+// (https://docs.slack.dev/reference/methods/chat.postMessage, opened October 9, 2026), or
+// nothing when the answer has no such member.
+func refusalCode(answer []byte) string {
+	var refusal struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(answer, &refusal) != nil || refusal.Error == "" {
+		return ""
+	}
+	return fmt.Sprintf(", error %q", refusal.Error)
 }
 
 // refused tells the resolver when the provider refused a reply's credential in an answer the
