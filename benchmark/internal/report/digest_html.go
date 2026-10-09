@@ -278,7 +278,9 @@ var digestTemplate = template.Must(template.New("digest").Parse(`<!doctype html>
             {{with .Models}}<div class="why">{{range .}}{{.}}<br>{{end}}</div>{{end}}</td>
             <td class="why">{{range .Stages}}{{.Name}} {{.Ms}} ms<br>{{end}}</td></tr>{{end}}
         </table>{{end}}
-        {{with .Detail.Tools}}<h3>Tool calls</h3><table>
+        {{if or .Detail.Tools .Detail.ToolNotes}}<h3>Tool calls</h3>{{end}}
+        {{with .Detail.ToolNotes}}<ul class="failures">{{range .}}<li>{{.}}</li>{{end}}</ul>{{end}}
+        {{with .Detail.Tools}}<table>
           {{range .}}<tr><td><strong>{{.Name}}</strong> <span class="why">{{.DurationMs}} ms</span></td><td class="mono">{{.Args}}</td><td class="mono">{{if .Error}}<span class="missed">{{.Error}}</span>{{else}}{{.Result}}{{end}}</td></tr>{{end}}
         </table>{{end}}
         {{with .Detail.TurnTaking}}<h3>Turn-taking</h3><ul class="failures">{{range .}}<li>{{.}}</li>{{end}}</ul>{{end}}

@@ -78,10 +78,12 @@ type ToolUse struct {
 
 // CallDetail is everything known about how one call went, read from its artifacts.
 type CallDetail struct {
-	Failures   []Failure
-	Caller     []CallerLine
-	Agent      []AgentTurn
-	Tools      []ToolUse
+	Failures []Failure
+	Caller   []CallerLine
+	Agent    []AgentTurn
+	Tools    []ToolUse
+	// ToolNotes say how well the tools were used: arguments right, repeats, made-up names.
+	ToolNotes  []string
 	TurnTaking []string
 	JudgeNotes string
 }
@@ -114,6 +116,7 @@ func LoadCallDetail(call CallResult, sc *scenario.Scenario) CallDetail {
 	}
 	detail := CallDetail{
 		Failures:   classify(call, strings.Join(heardText, " "), script),
+		ToolNotes:  toolNotes(call.Metrics),
 		TurnTaking: turnTaking(call.Metrics),
 	}
 	if sc != nil {
@@ -287,6 +290,24 @@ func callerLines(sc scenario.Scenario, heard []string) []CallerLine {
 			}
 		}
 		out = append(out, line)
+	}
+	return out
+}
+
+// toolNotes is how well the agent used its tools, none of which gates a pass.
+func toolNotes(m score.Metrics) []string {
+	var out []string
+	if m.ArgsExpected > 0 {
+		out = append(out, fmt.Sprintf("%d of %d expected arguments right", m.ArgsRight, m.ArgsExpected))
+	}
+	if len(m.RepeatedTools) > 0 {
+		out = append(out, "called more than once: "+strings.Join(m.RepeatedTools, ", "))
+	}
+	if len(m.ExtraTools) > 0 {
+		out = append(out, "called tools the scenario does not need: "+strings.Join(m.ExtraTools, ", "))
+	}
+	if len(m.UnknownTools) > 0 {
+		out = append(out, "called tools that do not exist: "+strings.Join(m.UnknownTools, ", "))
 	}
 	return out
 }
