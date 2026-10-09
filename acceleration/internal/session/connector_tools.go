@@ -64,6 +64,9 @@ const (
 	// unavailableReauthorize: the provider no longer takes the connection's credential, or the
 	// connection reads a definition revision a later one marked broken.
 	unavailableReauthorize = "needs_reauthorization"
+	// unavailableCredentialRejected: the provider no longer takes the token or key a
+	// core.Static scheme holds (AI-990). Only new credentials help, never a consent.
+	unavailableCredentialRejected = "credential_rejected"
 	// unavailableNotConnected: the connection has no credential yet, or was disconnected.
 	unavailableNotConnected = "not_connected"
 	// unavailableOpenFailed: the provider could not be reached or listed nothing, or this
@@ -80,12 +83,14 @@ const (
 
 // unavailableWhy is each reason in words, for the error a required binding fails with.
 var unavailableWhy = map[string]string{
-	unavailableNoSelection:  "the session named no connection for it in connector_bindings",
-	unavailableShared:       "more than one person writes in this conversation, so it uses the app's connections only",
-	unavailableUnverified:   "it is the caller's own connection, and the caller is anonymous, a guest or a backend acting for nobody",
-	unavailableConnection:   "there is no such connection that it may use",
-	unavailableProvider:     "the connection is to another connector",
-	unavailableReauthorize:  "the provider no longer takes the connection's credential; reconnect it",
+	unavailableNoSelection: "the session named no connection for it in connector_bindings",
+	unavailableShared:      "more than one person writes in this conversation, so it uses the app's connections only",
+	unavailableUnverified:  "it is the caller's own connection, and the caller is anonymous, a guest or a backend acting for nobody",
+	unavailableConnection:  "there is no such connection that it may use",
+	unavailableProvider:    "the connection is to another connector",
+	unavailableReauthorize: "the provider no longer takes the connection's credential; reconnect it",
+	unavailableCredentialRejected: "the provider rejected the connection's token or key; replace it with " +
+		"PUT /v1/agents/connections/{id}/credentials",
 	unavailableNotConnected: "the connection is not connected",
 	unavailableOpenFailed:   "its tools could not be listed",
 	unavailableTool:         "the provider no longer offers a granted tool with the schema it was granted against",
@@ -262,6 +267,9 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 	switch connection.Status {
 	case store.ConnectionConnected:
 	case store.ConnectionNeedsReauthorization:
+		if core.IsStatic(registry.Schemes, connection.AuthScheme) {
+			return unavailableCredentialRejected, nil
+		}
 		return unavailableReauthorize, nil
 	default:
 		return unavailableNotConnected, nil

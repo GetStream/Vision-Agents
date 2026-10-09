@@ -58,6 +58,12 @@ type connectorFixture struct {
 	revision    int
 }
 
+// consented is bearer without its core.Static mark: the suites' token stands for one a
+// consent issued, so a connection that needs reauthorization waits for a login, as an
+// oauth2_code one does. A rejected static token, which waits for none, is covered end to end
+// by internal/api's ChatLoginsSuite (AI-990).
+type consented struct{ core.Scheme }
+
 func (s *connectorFixture) SetupSuite() {
 	dsn := os.Getenv("ROUTER_POSTGRES_DSN")
 	if dsn == "" {
@@ -74,7 +80,7 @@ func (s *connectorFixture) SetupSuite() {
 	s.Require().NoError(err)
 	s.provider = newAccountsProvider(s)
 	s.registry = core.Registry{
-		Schemes:     map[string]core.Scheme{bearer.Name: bearer.New()},
+		Schemes:     map[string]core.Scheme{bearer.Name: consented{bearer.New()}},
 		ToolSources: map[string]core.ToolSource{mcp.Kind: mcp.New()},
 	}
 	credentials, err := pgsealed.New(db, s.sealer)
