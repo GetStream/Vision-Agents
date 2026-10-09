@@ -35,6 +35,9 @@ Invalidate(ref, rejected, why)    why is invalid_grant or scope_required, else r
   rejected had expired                     -> nothing more
   under the lock, connected and the stored revision still rejected.Revision
                                            -> needs_reauthorization; otherwise nothing more
+    last_error                             invalid_grant of a core.Static scheme (bearer,
+                                           api_key): rejectedStatic, replace it; else the
+                                           why's: rejectedGrant or missingScope
 
 Revoke(ref, why, endedAt)         why is revoked, uninstalled or rotated, else refused
   drop the cache entry
