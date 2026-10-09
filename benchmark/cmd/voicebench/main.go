@@ -58,7 +58,7 @@ func dispatch(cmd string, args []string) error {
 	case "noise":
 		return cmdNoise(root, args)
 	case "digest":
-		return cmdDigest(ctx, args)
+		return cmdDigest(ctx, root, args)
 	case "stt":
 		return cmdSTT(ctx, root, args)
 	case "tts":
@@ -330,7 +330,7 @@ func cmdNoise(root string, args []string) error {
 	return os.WriteFile(path, append(raw, '\n'), 0o644)
 }
 
-func cmdDigest(ctx context.Context, args []string) error {
+func cmdDigest(ctx context.Context, root string, args []string) error {
 	fs := flag.NewFlagSet("digest", flag.ExitOnError)
 	title := fs.String("title", "Voicebench", "headline of the card and the message")
 	out := fs.String("out", "", "directory to write voicebench.png and voicebench.html into")
@@ -351,10 +351,28 @@ func cmdDigest(ctx context.Context, args []string) error {
 		if label == "" {
 			label = filepath.Base(dir)
 		}
+		// A call's artifacts sit beside its summary, wherever the run directory has moved to
+		// since: a downloaded CI artifact keeps the runner's paths in summary.json.
+		for i := range sum.Calls {
+			if sum.Calls[i].Dir != "" {
+				sum.Calls[i].Dir = filepath.Join(dir, filepath.Base(sum.Calls[i].Dir))
+			}
+		}
 		runs = append(runs, report.LabeledRun{Label: label, Summary: sum})
 	}
 	runs = report.MergeRuns(runs)
 	digest := report.BuildDigest(runs)
+	digest.Scenarios = map[string]scenario.Scenario{}
+	for _, pack := range scenario.Packs() {
+		scenarios, err := scenario.LoadPack(filepath.Join(root, "scenarios", pack))
+		if err != nil {
+			return fmt.Errorf("digest: %w", err)
+		}
+		for _, sc := range scenarios {
+			digest.Scenarios[sc.ID] = sc
+		}
+	}
+	digest.ReadCauses(runs)
 	card, err := digest.PNG(*title)
 	if err != nil {
 		return fmt.Errorf("digest: draw card: %w", err)

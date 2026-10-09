@@ -49,6 +49,8 @@ type Results struct {
 	Score   int
 	ByPack  []GroupResult
 	ByKind  []GroupResult
+	// Causes counts the failed calls by why they failed, when their artifacts were read.
+	Causes []CauseCount
 }
 
 // ScoreText is the overall score as it reads in a message, or a dash when there is none.
