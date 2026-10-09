@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -177,15 +178,17 @@ func (s *AttachConnectorsSuite) TestNoSelectionImpliesNothingWithNoneOrTwoConnec
 }
 
 // TestNoSelectionNeverImpliesAnotherUsersOrAnotherCustomersConnection: Bob's connection, and
-// one of an Alice of another customer, are not Alice's here.
+// the one connection of a user of the same id at another customer, are not hers here. Her id
+// is the test's own, so that one is the only connection under it anywhere.
 func (s *AttachConnectorsSuite) TestNoSelectionNeverImpliesAnotherUsersOrAnotherCustomersConnection() {
+	alice := "alice-" + uuid.NewString()
 	s.connection("bob", "secondary")
 	ours, revision := s.customerID, s.revision
 	s.SetupTest()
-	s.connection("alice", "moved")
+	s.connection(alice, "moved")
 	s.customerID, s.revision = ours, revision
 
-	_, _, _, err := s.attach(s.spec(s.config(required(s.chosen("crm", "whoami"))), "alice", nil))
+	_, _, _, err := s.attach(s.spec(s.config(required(s.chosen("crm", "whoami"))), alice, nil))
 
 	s.ErrorContains(err, `required connector "crm" cannot be used: no_selection`)
 	s.Empty(s.provider.sent("secondary"))
