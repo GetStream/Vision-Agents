@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -239,7 +240,7 @@ func (a *Agent) prepare(current, next Settings, native, restart bool) (*prepared
 			}
 		}
 		if !a.options.Text && (next.TTSTarget != current.TTSTarget || next.Voice != current.Voice) {
-			if prep.tts, err = a.startVoice(next); err != nil {
+			if prep.tts, err = a.startVoice(next, nil); err != nil {
 				return fail(fmt.Errorf("agent: start tts: %w", err))
 			}
 		}
@@ -536,7 +537,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 		return nil, err
 	}
 	if !a.options.Text {
-		if prep.tts, err = a.startVoice(s); err != nil {
+		if prep.tts, err = a.startVoice(s, nil); err != nil {
 			prep.close()
 			return nil, stack.Wrap(fmt.Errorf("agent: start tts: %w", err))
 		}
@@ -638,7 +639,7 @@ func answers(ctx context.Context, session *llmrouter.Session) error {
 	return stream.Err()
 }
 
-func (a *Agent) startVoice(s Settings) (*ttsrouter.Session, error) {
+func (a *Agent) startVoice(s Settings, failed []string) (*ttsrouter.Session, error) {
 	return a.options.TTS.Start(a.ctx, ttsrouter.Request{
 		CustomerID:    a.options.CustomerID,
 		AgentID:       a.options.AgentID,
@@ -648,7 +649,62 @@ func (a *Agent) startVoice(s Settings) (*ttsrouter.Session, error) {
 		LanguageHints: a.options.LanguageHints,
 		Voice:         s.Voice,
 		Options:       a.voiceOptions(),
+		Failed:        failed,
 	})
+}
+
+// maxLostVoices is how many voices a call may lose before the agent stops replacing them:
+// past it, every voice there is has failed, and opening another is only more of the same.
+const maxLostVoices = 3
+
+// loseVoice is what follows a voice going for good. Whatever it was saying will never
+// finish, and an agent still counted as talking hears everything the caller says next as
+// talking over it, so that is let go of first. Then another voice is opened for the rest
+// of the call, with the one that went tried last.
+func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
+	a.mu.Lock()
+	a.utterances = 0
+	replace := !a.closed && a.pipe == p && a.tts == lost && !a.switching.Load() &&
+		len(a.lostVoices) < maxLostVoices
+	if replace {
+		a.lostVoices = append(a.lostVoices, lost.Provider()+"/"+lost.Model())
+	}
+	settings, failed := a.settingsLocked(), slices.Clone(a.lostVoices)
+	a.mu.Unlock()
+	a.respondQueued()
+	a.followUp()
+	if !replace {
+		return
+	}
+
+	// The new voice is consumed under this pipeline like the one it replaces, so it is
+	// counted before this one's consumer can return.
+	p.running.Add(1)
+	go func() {
+		next, err := a.startVoice(settings, failed)
+		if err != nil {
+			p.running.Done()
+			a.fail(fmt.Errorf("agent: replace the lost voice: %w", err), "tts")
+			return
+		}
+		a.mu.Lock()
+		if a.closed || a.pipe != p || a.tts != lost {
+			a.mu.Unlock()
+			p.running.Done()
+			_ = next.Close()
+			return
+		}
+		a.tts = next
+		a.voicePrompt = next.Prompt()
+		a.performs = next.Performs()
+		a.mu.Unlock()
+		a.logger.Warn("the voice was lost, speaking in another",
+			"lost", failed[len(failed)-1], "provider", next.Provider(), "model", next.Model())
+		if err := lost.Close(); err != nil {
+			a.logger.Debug("closing the lost voice", "error", err)
+		}
+		a.consumeTTS(p, next)
+	}()
 }
 
 // voiceOptions is what the agent asks of its voice beyond a target and a speaker. Speed is
