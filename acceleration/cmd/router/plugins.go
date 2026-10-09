@@ -56,10 +56,20 @@ func runPlugins(args []string, settings config.Config, logger *slog.Logger) erro
 	customer := flags.String("customer", "", "move only this app's rows; empty moves every app's")
 	only := flags.String("plugin", "", "move only these plugins' rows, comma-separated; empty moves every plugin's")
 	includeRotating := flags.Bool("include-rotating", false, "also move grants of connectors that rotate refresh tokens")
-	if err := flags.Parse(args[1:]); err != nil {
+	err := flags.Parse(args[1:])
+	if err != nil {
 		return err
 	}
-	return migratePlugins(context.Background(), settings, logger, pluginmigrate.Options{Customer: *customer, Plugins: pluginIDs(*only), IncludeRotating: *includeRotating}, *apply, os.Stdout)
+	ids := pluginIDs(*only)
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "plugin" && len(ids) == 0 {
+			err = fmt.Errorf("--plugin %q names no plugin: pass catalog ids, or leave the flag out to move every plugin's rows", *only)
+		}
+	})
+	if err != nil {
+		return err
+	}
+	return migratePlugins(context.Background(), settings, logger, pluginmigrate.Options{Customer: *customer, Plugins: ids, IncludeRotating: *includeRotating}, *apply, os.Stdout)
 }
 
 // migratePlugins builds what the router builds for connectors, over settings' database and

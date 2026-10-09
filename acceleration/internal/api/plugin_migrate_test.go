@@ -303,6 +303,12 @@ func (s *PluginMigrateSuite) TestAGrantWhoseRotationIsUnknownIsSkippedUnlessAske
 // a later run naming the other plugin moves it.
 func (s *PluginMigrateSuite) TestOnlyTheNamedPluginsRowsMove() {
 	config := s.config([]store.PluginEntry{{Name: movedPlugin}, {Name: rotatingPlugin}}, []store.PluginEntry{{Name: rotatingPlugin}})
+	withEvents := store.AgentConfig{ID: config, PluginEvents: []store.PluginEvent{{Plugin: movedPlugin, Event: "created"}, {Plugin: rotatingPlugin, Event: "closed"}}}
+	_, err := s.store.DB().NewUpdate().Model(&withEvents).Column("plugin_events").WherePK().Exec(context.Background())
+	s.Require().NoError(err)
+	s.pluginClient(config, s.provider.ClientID, s.provider.ClientSecret)
+	s.Require().NoError(s.store.SavePluginClient(context.Background(), &store.PluginClient{CustomerID: s.customerID(),
+		ConfigID: config, PluginID: rotatingPlugin, ClientID: "other-client", SecretSealed: []byte{}, SecretKEKVersion: s.sealer.CurrentVersion()}))
 	moved := s.login(config, "", s.provider.ClientID)
 	later := s.loginTo(config, "", rotatingPlugin, s.provider.ClientID, s.provider.URL+fakeprovider.PathToken, store.PluginConnected)
 
@@ -314,6 +320,16 @@ func (s *PluginMigrateSuite) TestOnlyTheNamedPluginsRowsMove() {
 		s.NotContains(row.Source, " "+rotatingPlugin, "an entry of a plugin not named is not read")
 	}
 	s.Equal(1, s.count("SELECT count(*) FROM connector_connections WHERE customer_id = ?", s.customerID()))
+	s.Zero(s.count("SELECT count(*) FROM connector_oauth_clients WHERE customer_id = ? AND connector_id = ?", s.customerID(), rotatingPlugin),
+		"a client of a plugin not named is not moved")
+	var events []string
+	for _, row := range report.Rows {
+		if row.Kind == pluginmigrate.KindEvent {
+			events = append(events, row.Source)
+		}
+	}
+	s.Require().Len(events, 1, "only the named plugin's event is reported")
+	s.Contains(events[0], movedPlugin+"/created")
 	bindings := s.storedConfig(config).Connectors
 	s.Require().Len(bindings, 1)
 	s.Equal(movedPlugin, bindings[0].Name)
