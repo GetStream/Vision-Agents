@@ -176,6 +176,12 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 // reopened chat implies again from the connections as they are then. Nothing is implied for
 // a fixed binding, a shared conversation, an unverified caller, or with connectors off.
 //
+// A session the router opens itself implies the same way (Kanat's decision of 2026-10-09,
+// AI-1000), with the trust user_plugins gives its caller (userPlugins): for a plugin event,
+// the end user whose login subscribed, and nobody for the app's (pluginevents.Service.run);
+// for a channel message, the number that wrote, as phone:+E164, or the user it was linked to
+// (channels.Service.answer). Pinned by api.RouterOpenedConnectorsSuite.
+//
 // Example: Alice's only connected Linear connection is the one the plugin migration moved, so
 // a session of a config binding linear as session opens on it with no connector_bindings.
 // Once she connects a second Linear account, a session has to name one.
