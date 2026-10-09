@@ -223,7 +223,7 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 	}
 
 	callID := webrtcCallID(cfg, sc, trial)
-	rec, callErr := runWebRTC(ctx, cfg, sc, audioMap, trial, callID)
+	rec, callErr := runWebRTC(ctx, cfg, sc, audioMap, trial, callID, worldSrv.ToolActivity)
 	if rec.Rate > 0 {
 		if err := audio.WriteWAV(filepath.Join(callDir, "caller.wav"), audio.PCM{Rate: rec.Rate, Samples: rec.Caller}); err != nil {
 			return result, err

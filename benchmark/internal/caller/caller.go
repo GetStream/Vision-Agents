@@ -36,6 +36,10 @@ const turnSettleGrace = 4 * time.Second
 
 const paceInterval = 20 * time.Millisecond
 const substantiveReplyMin = 2500 * time.Millisecond
+
+// answerHeard is how long the agent must be heard after a tool returns before its result counts
+// as answered.
+const answerHeard = time.Second
 const maxAgentJitterFrames = 5
 const decodedSilenceThreshold = 0.000001
 
@@ -106,6 +110,10 @@ type Engine struct {
 	Threshold      float64
 	TurnHangoverMS int
 	ClosingGraceMS int
+	// ToolActivity reports the tool calls still running and when the last one returned. With
+	// it, a reply is not taken as finished while the agent still owes an answer to a tool
+	// result, so a long filler said over a slow tool does not end the turn or the call.
+	ToolActivity func() (int, time.Time)
 }
 
 type clipJob struct {
@@ -297,8 +305,27 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 		return lastAgentSegment
 	}
 
+	// owesAnswer is whether a tool call is running, or returned during the agent's current reply
+	// without the agent being heard for answerHeard since: it has something left to say about it.
+	// An agent that answers in the same breath as its filler is heard past the result, so it
+	// does not keep the call open.
+	owesAnswer := func() bool {
+		if e.ToolActivity == nil {
+			return false
+		}
+		inFlight, lastEnded := e.ToolActivity()
+		mu.Lock()
+		segmentStarted, heardAt := agentSegmentStartedAt, agentLiveAt
+		mu.Unlock()
+		if inFlight > 0 {
+			return true
+		}
+		return lastEnded.After(segmentStarted) && heardAt.Before(lastEnded.Add(answerHeard))
+	}
+
 	// settle keeps waiting through short filler phrases, but does not add the full resume grace
-	// after a substantive reply. This keeps long coherence scripts inside their call budget.
+	// after a substantive reply. This keeps long coherence scripts inside their call budget. A
+	// reply the agent still owes after a tool is waited for up to the whole budget, not the grace.
 	settle := func(total, wait time.Duration, responseObserved bool) {
 		deadline := time.Now().Add(total)
 		drain(agentStarted)
@@ -308,11 +335,16 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 				waitSilence()
 				responseObserved = true
 			}
-			if responseObserved && segmentDuration() > substantiveReplyMin {
+			owed := owesAnswer()
+			if responseObserved && segmentDuration() > substantiveReplyMin && !owed {
 				return
 			}
 			remaining := time.Until(deadline)
-			if remaining <= 0 || !waitCh(agentStarted, min(remaining, wait)) {
+			step := min(remaining, wait)
+			if owed {
+				step = remaining
+			}
+			if remaining <= 0 || !waitCh(agentStarted, step) {
 				return
 			}
 			responseObserved = true
