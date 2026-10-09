@@ -178,10 +178,14 @@ var sendMessage = llm.Tool{
 	},
 }
 
-// TestAToolsOptionalArgumentsStayOptional is a tool offered as the caller described it. Left
-// to itself, the Responses API turns a tool into strict mode by making every property
-// required, so the model has to fill thread_ts with "" and Slack refuses the post.
-func (s *OpenAISuite) TestAToolsOptionalArgumentsStayOptional() {
+// sentTool is the tool as the request to OpenAI carried it.
+type sentTool struct {
+	Strict     *bool          `json:"strict"`
+	Parameters map[string]any `json:"parameters"`
+}
+
+// send offers one tool to a server that records the request, and returns the tool it got.
+func (s *OpenAISuite) send(tool llm.Tool) sentTool {
 	sent := make(chan []byte, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -196,22 +200,59 @@ func (s *OpenAISuite) TestAToolsOptionalArgumentsStayOptional() {
 
 	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{
 		Input: []llm.Message{{Role: llm.User, Content: "post hello"}},
-		Tools: []llm.Tool{sendMessage},
+		Tools: []llm.Tool{tool},
 	})
 	s.Require().NoError(err)
 	_, err = llm.Collect(stream)
 	s.Require().NoError(err)
 
 	var request struct {
-		Tools []struct {
-			Strict     *bool          `json:"strict"`
-			Parameters map[string]any `json:"parameters"`
-		} `json:"tools"`
+		Tools []sentTool `json:"tools"`
 	}
 	s.Require().NoError(json.Unmarshal(<-sent, &request))
 	s.Require().Len(request.Tools, 1)
-	s.Require().NotNil(request.Tools[0].Strict, "an omitted strict is strict mode on the Responses API")
-	s.False(*request.Tools[0].Strict)
-	s.Equal([]any{"channel_id", "message"}, request.Tools[0].Parameters["required"])
-	s.NotContains(request.Tools[0].Parameters, "additionalProperties")
+	return request.Tools[0]
+}
+
+// TestAToolsOptionalArgumentsStayOptional is a tool offered as the caller described it. Left
+// to itself, the Responses API turns a tool into strict mode by making every property
+// required, so the model has to fill thread_ts with "" and Slack refuses the post.
+func (s *OpenAISuite) TestAToolsOptionalArgumentsStayOptional() {
+	sent := s.send(sendMessage)
+
+	s.Require().NotNil(sent.Strict, "an omitted strict is strict mode on the Responses API")
+	s.False(*sent.Strict)
+	s.Equal([]any{"channel_id", "message"}, sent.Parameters["required"])
+	s.NotContains(sent.Parameters, "additionalProperties")
+}
+
+// TestAnOptionalPropertyInsideAListCounts is the same normalization one level down: OpenAI
+// also marks every property of an object in an array required.
+func (s *OpenAISuite) TestAnOptionalPropertyInsideAListCounts() {
+	sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"items": map[string]any{"type": "array", "items": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"name": map[string]any{"type": "string"}, "note": map[string]any{"type": "string"}},
+				"required":   []string{"name"},
+			}},
+		},
+		"required": []string{"items"},
+	}})
+
+	s.Require().NotNil(sent.Strict)
+	s.False(*sent.Strict)
+}
+
+// TestAToolWithEveryPropertyRequiredIsSentAsBefore leaves strict out, as before AI-969:
+// OpenAI's strict normalization takes nothing from a schema with no optional property.
+func (s *OpenAISuite) TestAToolWithEveryPropertyRequiredIsSentAsBefore() {
+	sent := s.send(llm.Tool{Name: "get_weather", Parameters: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"city": map[string]any{"type": "string"}},
+		"required":   []string{"city"},
+	}})
+
+	s.Nil(sent.Strict)
 }
