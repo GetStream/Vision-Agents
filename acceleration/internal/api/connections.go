@@ -54,6 +54,20 @@ type Connection struct {
 	CreatedAt              time.Time                  `json:"created_at" readOnly:"true"`
 	UpdatedAt              time.Time                  `json:"updated_at" readOnly:"true"`
 	UsedBy                 []ConnectionUse            `json:"used_by" readOnly:"true" doc:"The agent config bindings that name this connection as their fixed connection, which deleting it would break. A binding a session fills with the caller's own connection names none, so it is never listed."`
+	Client                 *ConnectionClient          `json:"client,omitempty" readOnly:"true" doc:"The OAuth client the connection's grant was issued to. Absent for a scheme without one, before the first consent, and for a connection last consented before the router kept it."`
+}
+
+// ConnectionClient is the OAuth client a connection's grant was issued to
+// (store.ConnectorConnectionClient, AI-990 F16).
+type ConnectionClient struct {
+	Registration ConnectorClientRegistrationMethod `json:"registration"`
+	ClientID     string                            `json:"client_id" doc:"The client identifier, which is not a secret (RFC 6749 section 2.2). For dcr, the one the provider issued when the router registered at the consent."`
+}
+
+func (*ConnectionClient) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "Which OAuth client a connection's grant was issued to, so a client the router " +
+		"registered on the fly (RFC 7591) can be found at the provider. Its secret is never shown."
+	return schema
 }
 
 // ConnectionUse is one binding of an agent config that names a connection as its fixed
@@ -329,7 +343,7 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 		return nil, err
 	}
 	// A new connection is bound by nothing yet.
-	return &connectionResponse{Body: connectionOf(connection, nil, definitions[connection.ID])}, nil
+	return &connectionResponse{Body: connectionOf(connection, nil, definitions[connection.ID], nil)}, nil
 }
 
 // listConnections lists one owner's connections, a page at a time.
@@ -377,9 +391,13 @@ func (s *Server) listConnections(ctx context.Context, request *listConnectionsRe
 	if err != nil {
 		return nil, err
 	}
+	clients, err := s.store.ConnectorConnectionClients(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 	listed := ConnectionPage{Items: make([]Connection, 0, len(kept)), HasMore: more}
 	for _, connection := range kept {
-		listed.Items = append(listed.Items, connectionOf(connection, uses[connection.ID], definitions[connection.ID]))
+		listed.Items = append(listed.Items, connectionOf(connection, uses[connection.ID], definitions[connection.ID], clientOf(clients, connection.ID)))
 	}
 	if more {
 		last := kept[len(kept)-1]
@@ -402,7 +420,11 @@ func (s *Server) getConnection(ctx context.Context, request *connectionRequest) 
 	if err != nil {
 		return nil, err
 	}
-	return &connectionResponse{Body: connectionOf(connection, uses[connection.ID], definitions[connection.ID])}, nil
+	clients, err := s.store.ConnectorConnectionClients(ctx, []string{connection.ID})
+	if err != nil {
+		return nil, err
+	}
+	return &connectionResponse{Body: connectionOf(connection, uses[connection.ID], definitions[connection.ID], clientOf(clients, connection.ID))}, nil
 }
 
 // deleteConnection soft deletes one connection the caller may have, unless an
@@ -479,6 +501,23 @@ func (s *Server) auditGrant(ctx context.Context, customerID, connectionID, conne
 	}
 }
 
+// recordClient keeps which OAuth client a consent's credentials were issued to, for a scheme
+// that names it (core.ClientNamer), so the connection's reads show it (AI-990 F16). The consent
+// is committed when it is called, so a row that cannot be written is logged and the consent
+// stands.
+func (s *Server) recordClient(ctx context.Context, connectionID string, credentials core.StoredCredentials) {
+	client, ok := core.ClientOf(s.connectors.Schemes, credentials)
+	if !ok {
+		return
+	}
+	err := s.store.PutConnectorConnectionClient(ctx, &store.ConnectorConnectionClient{
+		ConnectionID: connectionID, Registration: client.Registration, ClientID: client.ID,
+	})
+	if err != nil {
+		s.logger.Error("could not record a connection's OAuth client", "connection", connectionID, "error", err)
+	}
+}
+
 // reachableConnection is the live connection id names, if the caller may have it, and
 // otherwise the one not-found every other missing connection gets.
 func (s *Server) reachableConnection(ctx context.Context, id string) (store.ConnectorConnection, error) {
@@ -548,9 +587,10 @@ func actingUser(ctx context.Context) string {
 // copied by name, so a column added to the row stays hidden until it is added here. Sealed
 // credentials, cached tools and last_error are left out: the first is never shown, and the
 // other two are for the operations that write them (T18, T12). uses are the bindings that
-// name it (store.ConnectorConnectionUses), and definition how its revision compares with its
-// connector's (store.ConnectorDefinitionStatuses).
-func connectionOf(connection store.ConnectorConnection, uses []store.ConnectionUse, definition store.DefinitionStatus) Connection {
+// name it (store.ConnectorConnectionUses), definition how its revision compares with its
+// connector's (store.ConnectorDefinitionStatuses), and client the OAuth client its grant was
+// issued to, nil when none is recorded (store.ConnectorConnectionClients).
+func connectionOf(connection store.ConnectorConnection, uses []store.ConnectionUse, definition store.DefinitionStatus, client *ConnectionClient) Connection {
 	usedBy := make([]ConnectionUse, 0, len(uses))
 	for _, use := range uses {
 		usedBy = append(usedBy, ConnectionUse{ConfigID: use.ConfigID, ConfigName: use.ConfigName, Binding: use.Binding})
@@ -578,5 +618,15 @@ func connectionOf(connection store.ConnectorConnection, uses []store.ConnectionU
 		CreatedAt:     connection.CreatedAt,
 		UpdatedAt:     connection.UpdatedAt,
 		UsedBy:        usedBy,
+		Client:        client,
 	}
+}
+
+// clientOf is the recorded client of the connection id names, nil when there is none.
+func clientOf(clients map[string]store.ConnectorConnectionClient, id string) *ConnectionClient {
+	client, ok := clients[id]
+	if !ok {
+		return nil
+	}
+	return &ConnectionClient{Registration: ConnectorClientRegistrationMethod(client.Registration), ClientID: client.ClientID}
 }
