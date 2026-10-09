@@ -78,6 +78,7 @@ func (s *VerifierSuite) TestTheNumbersOwnSentMessageIsNotRead() {
 
 	s.Require().NoError(err)
 	s.Empty(event.Messages)
+	s.Equal([]string{"match $.data.event_type"}, event.Skipped, "the rule that skipped it, for the events route to log (AI-990 F21)")
 }
 
 func (s *VerifierSuite) TestAnUnsignedRequestIsRefused() {

@@ -1589,11 +1589,13 @@ func (s *SessionSuite) TestWhatWasSaidIsKeptSoTheCallCanBeReviewed() {
 
 	s.says(created, "where is my order")
 
-	s.eventually(func() bool { return len(created.conversation()) > 0 },
+	s.eventually(func() bool { return len(created.conversation()) > 1 },
 		"the call left nothing to review")
 	said := created.conversation()
-	s.True(said[0].agent, "the agent's own reply is the agent's")
-	s.Equal("Hello.", said[0].text)
+	s.False(said[0].agent, "a line typed into the call is the caller's")
+	s.Equal("where is my order", said[0].text)
+	s.True(said[1].agent, "the agent's own reply is the agent's")
+	s.Equal("Hello.", said[1].text)
 }
 
 func (s *SessionSuite) TestShutdownEndsEveryCallRatherThanDroppingIt() {

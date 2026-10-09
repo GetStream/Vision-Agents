@@ -278,3 +278,85 @@ func (s *OpenAISuite) TestAToolWithEveryPropertyRequiredIsSentAsBefore() {
 
 	s.Nil(sent.Strict)
 }
+
+// TestAToolWithEveryPropertyRequiredDecodedFromJSONIsSentAsBefore: a decoded MCP schema has
+// required as []any, and it must count as much as a []string does.
+func (s *OpenAISuite) TestAToolWithEveryPropertyRequiredDecodedFromJSONIsSentAsBefore() {
+	sent := s.send(llm.Tool{Name: "get_weather", Parameters: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"city": map[string]any{"type": "string"}},
+		"required":   []any{"city"},
+	}})
+
+	s.Nil(sent.Strict)
+}
+
+// TestADefinitionNamedLikeAKeywordIsASchema: a name under $defs, definitions, patternProperties
+// or dependentSchemas is the author's, so default or enum there is no data keyword and
+// properties is no properties map.
+func (s *OpenAISuite) TestADefinitionNamedLikeAKeywordIsASchema() {
+	optional := map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{}}}
+	allRequired := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"x": map[string]any{}},
+		"required":   []string{"x"},
+	}
+	for _, holder := range []string{"$defs", "definitions", "patternProperties", "dependentSchemas"} {
+		for _, name := range []string{"default", "enum", "const", "examples"} {
+			s.Run(holder+"/"+name+" with an optional property", func() {
+				sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"a": map[string]any{}},
+					"required":   []string{"a"},
+					holder:       map[string]any{name: optional},
+				}})
+
+				s.Require().NotNil(sent.Strict)
+				s.False(*sent.Strict)
+			})
+		}
+		s.Run(holder+"/properties with every property required", func() {
+			sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"a": map[string]any{}},
+				"required":   []string{"a"},
+				holder:       map[string]any{"properties": allRequired},
+			}})
+
+			s.Nil(sent.Strict)
+		})
+	}
+}
+
+// TestAPropertiesKeyThatIsDataIsNotASchema reads an object under default, enum, const or
+// examples as a value: its properties key names no property, so nothing is optional.
+func (s *OpenAISuite) TestAPropertiesKeyThatIsDataIsNotASchema() {
+	data := map[string]any{"properties": map[string]any{"x": 1}}
+	for _, keyword := range []string{"default", "enum", "const", "examples"} {
+		s.Run(keyword, func() {
+			value := any(data)
+			if keyword == "enum" || keyword == "examples" {
+				value = []any{data}
+			}
+			sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"config": map[string]any{"type": "object", keyword: value}},
+				"required":   []string{"config"},
+			}})
+
+			s.Nil(sent.Strict)
+		})
+	}
+}
+
+// TestAnArgumentNamedPropertiesIsAProperty reads a property called properties as one more
+// property, not as a properties keyword holding the schema's other keywords.
+func (s *OpenAISuite) TestAnArgumentNamedPropertiesIsAProperty() {
+	sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"properties": map[string]any{"type": "string"}},
+		"required":   []string{"properties"},
+	}})
+
+	s.Nil(sent.Strict)
+}

@@ -13,6 +13,7 @@
 //	phone hooks
 //	phone hooks -url https://example.ngrok.app
 //	phone hooks -url https://example.ngrok.app -app 1234
+//	phone hooks -url https://example.ngrok.app -remove https://gone.trycloudflare.com
 //	phone release -number +15125551234
 //
 // Stream's SIP is inbound only today, so dialling out is the vendor placing the call and
@@ -35,6 +36,8 @@ import (
 	"strings"
 	"syscall"
 	"text/tabwriter"
+
+	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -500,8 +503,13 @@ func hooks(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("hooks", flag.ExitOnError)
 	url := flags.String("url", "",
 		"public base url of the router, e.g. https://example.ngrok.app; empty only shows what is set")
-	remove := flags.String("remove", "",
-		"public base url to stop delivering to, for a tunnel that is gone")
+	var removes []string
+	flags.Func("remove",
+		"public base url to stop delivering to, for a tunnel that is gone; repeat it for several, all dropped in the one update with -url",
+		func(base string) error {
+			removes = append(removes, base)
+			return nil
+		})
 	app := flags.String("app", "",
 		"this Stream app's id, for a router in app mode: its hooks are delivered to a path of its own and checked with its keys")
 	if err := flags.Parse(arguments); err != nil {
@@ -519,60 +527,14 @@ func hooks(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
-	messages, err := chat.NewStream(chat.StreamOptions{APIKey: streamKey(), APISecret: streamSecret()})
-	if err != nil {
-		return err
-	}
 
-	if *remove != "" {
-		base := strings.TrimSuffix(*remove, "/")
-
-		hookURL := base + phone.CallHookPath + segment
-		removed, err := stream.RemoveCallHook(ctx, hookURL)
+	if len(removes) > 0 || *url != "" {
+		said, err := changeHooks(ctx, stream, *url, removes, segment)
 		if err != nil {
 			return err
 		}
-		if removed {
-			fmt.Printf("call events no longer go to %s\n", hookURL)
-		} else {
-			fmt.Printf("nothing was delivering to %s\n", hookURL)
-		}
-
-		messageURL := base + chat.MessageHookPath + segment
-		removed, err = messages.RemoveMessageHook(ctx, messageURL)
-		if err != nil {
-			return err
-		}
-		if removed {
-			fmt.Printf("messages no longer go to %s\n", messageURL)
-		} else {
-			fmt.Printf("nothing was delivering to %s\n", messageURL)
-		}
-	}
-
-	if *url != "" {
-		base := strings.TrimSuffix(*url, "/")
-
-		hookURL := base + phone.CallHookPath + segment
-		updated, err := stream.PointCallHook(ctx, hookURL)
-		if err != nil {
-			return err
-		}
-		if updated {
-			fmt.Printf("call events already went to %s, now asking for the right ones\n", hookURL)
-		} else {
-			fmt.Printf("call events now go to %s\n", hookURL)
-		}
-
-		messageURL := base + chat.MessageHookPath + segment
-		updated, err = messages.PointMessageHook(ctx, messageURL)
-		if err != nil {
-			return err
-		}
-		if updated {
-			fmt.Printf("messages already went to %s, now asking for the right ones\n", messageURL)
-		} else {
-			fmt.Printf("messages now go to %s\n", messageURL)
+		for _, line := range said {
+			fmt.Println(line)
 		}
 	}
 
@@ -596,6 +558,66 @@ func hooks(ctx context.Context, arguments []string) error {
 			or(hook.HookType, "-"), or(hook.Destination, "-"), hook.Enabled, events)
 	}
 	return out.Flush()
+}
+
+// changeHooks drops the call and message hooks at every base in removes and points both at
+// url, in one update of the app's hooks, and says what it did, a line each.
+//
+// One update rather than one per hook, because Stream refuses an update holding any hook
+// whose url does not resolve (phone.Stream.ChangeHooks): dropping a gone tunnel's call hook
+// on its own was refused over its message hook, still in that update (AI-990 F22).
+func changeHooks(ctx context.Context, stream *phone.Stream, url string, removes []string, segment string) ([]string, error) {
+	var said []string
+	err := stream.ChangeHooks(ctx, func(hooks []getstream.EventHook) ([]getstream.EventHook, bool, error) {
+		changed := false
+		for _, remove := range removes {
+			base := strings.TrimSuffix(remove, "/")
+			for _, hook := range []struct{ url, what string }{
+				{base + phone.CallHookPath + segment, "call events"},
+				{base + chat.MessageHookPath + segment, "messages"},
+			} {
+				var removed bool
+				hooks, removed = phone.WithoutHook(hooks, hook.url)
+				if removed {
+					changed = true
+					said = append(said, fmt.Sprintf("%s no longer go to %s", hook.what, hook.url))
+				} else {
+					said = append(said, fmt.Sprintf("nothing was delivering to %s", hook.url))
+				}
+			}
+		}
+		if url == "" {
+			return hooks, changed, nil
+		}
+
+		base := strings.TrimSuffix(url, "/")
+		hookURL := base + phone.CallHookPath + segment
+		hooks, updated, err := phone.WithCallHook(hooks, hookURL)
+		if err != nil {
+			return nil, false, err
+		}
+		if updated {
+			said = append(said, fmt.Sprintf("call events already went to %s, now asking for the right ones", hookURL))
+		} else {
+			said = append(said, fmt.Sprintf("call events now go to %s", hookURL))
+		}
+
+		messageURL := base + chat.MessageHookPath + segment
+		hooks, updated, err = chat.WithMessageHook(hooks, messageURL)
+		if err != nil {
+			return nil, false, err
+		}
+		if updated {
+			said = append(said, fmt.Sprintf("messages already went to %s, now asking for the right ones", messageURL))
+		} else {
+			said = append(said, fmt.Sprintf("messages now go to %s", messageURL))
+		}
+		return hooks, true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return said, nil
 }
 
 func release(ctx context.Context, arguments []string) error {

@@ -71,45 +71,13 @@ func (s *Stream) CallHooks(ctx context.Context) ([]CallHook, error) {
 // Reports whether an existing hook was updated rather than one being added, which is what
 // tells an operator running this twice that nothing was duplicated.
 func (s *Stream) PointCallHook(ctx context.Context, url string) (bool, error) {
-	url = strings.TrimSpace(url)
-	if url == "" {
-		return false, errors.New("phone: a call hook needs a url to deliver to")
-	}
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		return false, fmt.Errorf("phone: %s is not a url Stream can reach", url)
-	}
-
-	response, err := s.client.GetApp(ctx, &getstream.GetAppRequest{})
-	if err != nil {
-		return false, fmt.Errorf("phone: get app: %w", err)
-	}
-
-	hooks := response.Data.App.EventHooks
-	enabled := true
-	updated := false
-	for index, hook := range hooks {
-		if value(hook.WebhookUrl) != url {
-			continue
-		}
-		hooks[index].EventTypes = callHookEvents
-		hooks[index].Enabled = &enabled
-		hooks[index].HookType = ptr(webhookHookType)
-		updated = true
-		break
-	}
-	if !updated {
-		hooks = append(hooks, getstream.EventHook{
-			HookType:   ptr(webhookHookType),
-			WebhookUrl: &url,
-			Enabled:    &enabled,
-			EventTypes: callHookEvents,
-		})
-	}
-
-	if _, err := s.client.UpdateApp(ctx, &getstream.UpdateAppRequest{EventHooks: hooks}); err != nil {
-		return false, fmt.Errorf("phone: update app: %w", err)
-	}
-	return updated, nil
+	var updated bool
+	err := s.ChangeHooks(ctx, func(hooks []getstream.EventHook) ([]getstream.EventHook, bool, error) {
+		var err error
+		hooks, updated, err = WithCallHook(hooks, url)
+		return hooks, err == nil, err
+	})
+	return updated, err
 }
 
 // RemoveCallHook stops the app delivering to a url, leaving every other hook alone.
@@ -124,27 +92,85 @@ func (s *Stream) RemoveCallHook(ctx context.Context, url string) (bool, error) {
 	if url == "" {
 		return false, errors.New("phone: a url is required")
 	}
+	var removed bool
+	err := s.ChangeHooks(ctx, func(hooks []getstream.EventHook) ([]getstream.EventHook, bool, error) {
+		hooks, removed = WithoutHook(hooks, url)
+		return hooks, removed, nil
+	})
+	return removed, err
+}
 
+// ChangeHooks reads the app's event hooks, hands them to change, and writes back the list it
+// returns in one update, or nothing when it reports no change.
+//
+// One update is the point. Stream checks every hook an update holds, unchanged ones too, and
+// refuses the whole update over one whose url does not resolve (AI-990 F22). Moving off a
+// tunnel that is gone in several updates is then refused at the first, which still holds
+// the tunnel's other hook; the final list in one update holds neither.
+func (s *Stream) ChangeHooks(ctx context.Context, change func([]getstream.EventHook) ([]getstream.EventHook, bool, error)) error {
 	response, err := s.client.GetApp(ctx, &getstream.GetAppRequest{})
 	if err != nil {
-		return false, fmt.Errorf("phone: get app: %w", err)
+		return fmt.Errorf("phone: get app: %w", err)
 	}
 
-	kept := make([]getstream.EventHook, 0, len(response.Data.App.EventHooks))
-	for _, hook := range response.Data.App.EventHooks {
+	hooks, changed, err := change(response.Data.App.EventHooks)
+	if err != nil || !changed {
+		return err
+	}
+	if _, err := s.client.UpdateApp(ctx, &getstream.UpdateAppRequest{EventHooks: hooks}); err != nil {
+		return fmt.Errorf("phone: update app: %w; %s", err, unresolvableHint)
+	}
+	return nil
+}
+
+// unresolvableHint is what an operator is told when Stream refuses a change to the hooks.
+// Stream's own message names the url it could not resolve; this says how to get past it.
+const unresolvableHint = "if Stream says a hook's url does not resolve, that hook, such as one " +
+	"at a tunnel that is gone, blocks every change to the hooks: drop it in the same run with " +
+	"`go run ./cmd/phone hooks -remove <its base url>` (repeat -remove for each, beside -url)"
+
+// WithCallHook is hooks with url delivering call events: the hook already at url asking for
+// them, or a new one added.
+//
+// Reports whether a hook at url was updated rather than one added.
+func WithCallHook(hooks []getstream.EventHook, url string) ([]getstream.EventHook, bool, error) {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return nil, false, errors.New("phone: a call hook needs a url to deliver to")
+	}
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		return nil, false, fmt.Errorf("phone: %s is not a url Stream can reach", url)
+	}
+
+	enabled := true
+	for index, hook := range hooks {
+		if value(hook.WebhookUrl) != url {
+			continue
+		}
+		hooks[index].EventTypes = callHookEvents
+		hooks[index].Enabled = &enabled
+		hooks[index].HookType = ptr(webhookHookType)
+		return hooks, true, nil
+	}
+	return append(hooks, getstream.EventHook{
+		HookType:   ptr(webhookHookType),
+		WebhookUrl: &url,
+		Enabled:    &enabled,
+		EventTypes: callHookEvents,
+	}), false, nil
+}
+
+// WithoutHook is hooks less every hook delivering to url, whatever it asks for, and whether
+// there was one.
+func WithoutHook(hooks []getstream.EventHook, url string) ([]getstream.EventHook, bool) {
+	kept := make([]getstream.EventHook, 0, len(hooks))
+	for _, hook := range hooks {
 		if value(hook.WebhookUrl) == url {
 			continue
 		}
 		kept = append(kept, hook)
 	}
-	if len(kept) == len(response.Data.App.EventHooks) {
-		return false, nil
-	}
-
-	if _, err := s.client.UpdateApp(ctx, &getstream.UpdateAppRequest{EventHooks: kept}); err != nil {
-		return false, fmt.Errorf("phone: update app: %w", err)
-	}
-	return true, nil
+	return kept, len(kept) != len(hooks)
 }
 
 // destinationOf describes where a hook delivers, for a human reading a list of them.
