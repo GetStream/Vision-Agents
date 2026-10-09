@@ -444,7 +444,8 @@ func verifiedCaller(spec Spec) bool {
 
 // connectorCollision is a connector tool called what another of the session's tools is.
 // A config cannot name a plugin or an MCP server what one of its bindings is
-// (api.pluginAliasComplaint); a caller's own tool still can.
+// (api.pluginAliasComplaint), unless the binding is to that plugin's own connector, whose
+// entry the spec drops (Spec.withoutBoundPlugins); a caller's own tool still can.
 func connectorCollision(connectors, others []harness.Tool) error {
 	for _, tool := range connectors {
 		if slices.ContainsFunc(others, func(other harness.Tool) bool { return other.Name == tool.Name }) {

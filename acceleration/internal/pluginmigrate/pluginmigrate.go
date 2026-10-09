@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
@@ -91,6 +92,9 @@ type Options struct {
 	// moves onto the connector of the same id, which is what lets a binding win over its plugin
 	// entry in a session (session.Spec.boundProvider).
 	Catalog func(id string) (plugins.Plugin, bool)
+	// Logger gets one line per moved grant, the API's "connector credential event"
+	// (api.Server.auditGrant). Nil is slog.Default().
+	Logger *slog.Logger
 }
 
 // Row is one row read and what was done with it.
@@ -148,6 +152,9 @@ func (r Report) Write(w io.Writer) error {
 func Run(ctx context.Context, opts Options, apply bool) (Report, error) {
 	if opts.Catalog == nil {
 		opts.Catalog = plugins.Lookup
+	}
+	if opts.Logger == nil {
+		opts.Logger = slog.Default()
 	}
 	m := &migration{opts: opts, apply: apply, planned: map[clientKey]oauth2code.Client{}, moved: map[string]string{}}
 	scheme, err := oauth2code.New(oauth2code.Config{HTTP: opts.HTTP, PublicEndpoint: opts.PublicEndpoint, Clients: m.clients})
@@ -479,6 +486,7 @@ func (m *migration) moveConnection(ctx context.Context, login store.PluginConnec
 		}
 	}
 	finished := false
+	var committed *core.CredentialState
 	err = m.opts.Credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		// Only a connection no credentials were ever saved onto: one a person connected or a
 		// run finished since is theirs.
@@ -486,6 +494,8 @@ func (m *migration) moveConnection(ctx context.Context, login store.PluginConnec
 			finished = true
 			return false, nil
 		}
+		// The credential store leaves the revision it committed here (core.CredentialStore).
+		committed = state
 		state.Credentials = credentials
 		state.Status = store.ConnectionConnected
 		state.LastError = ""
@@ -503,8 +513,32 @@ func (m *migration) moveConnection(ctx context.Context, login store.PluginConnec
 		m.add(Row{Kind: KindConnection, Action: Exists, Source: source, Target: target, Note: "already moved"})
 		return nil
 	}
+	m.auditGrant(ctx, ref, login.PluginID, owner, committed.Revision, credentials)
 	m.add(Row{Kind: KindConnection, Action: Written, Source: source, Target: target})
 	return nil
+}
+
+// auditGrant records a moved grant as the API records one it created (api.Server.auditGrant):
+// a grant_created audit row with reason plugin_migrate and the tokens by fingerprint, and the
+// same "connector credential event" line, so the audit shows which grant a connection began
+// with and when (AI-994 F43). The grant is committed when it is called, so a row that cannot be
+// written is logged and the move stands. The plugin row had the grant before, so the
+// connection has no previous tokens.
+func (m *migration) auditGrant(ctx context.Context, ref core.ConnectionRef, connectorID, ownerType string, revision int, credentials core.StoredCredentials) {
+	change := core.CredentialChange{Current: core.FingerprintsOf(map[string]core.Scheme{oauth2code.Name: m.scheme}, credentials)}
+	m.opts.Logger.Info("connector credential event", append([]any{"event", store.AuditGrantCreated,
+		"connection", ref.ConnectionID, "connector", connectorID, "revision", revision, "reason", store.AuditReasonPluginMigrate},
+		change.LogAttrs()...)...)
+	event := &store.ConnectorAuditEvent{
+		CustomerID: ref.CustomerID, ConnectionID: ref.ConnectionID, ConnectorID: connectorID, OwnerType: ownerType,
+		Action: store.AuditGrantCreated, Reason: store.AuditReasonPluginMigrate, Revision: revision,
+	}
+	if change != (core.CredentialChange{}) {
+		event.Credential = store.AuditCredential(change)
+	}
+	if err := m.opts.Store.RecordConnectorAudit(ctx, event); err != nil {
+		m.opts.Logger.Error("could not record a connector audit row", "connection", ref.ConnectionID, "action", store.AuditGrantCreated, "error", err)
+	}
 }
 
 // setInAdvance reports whether the login's client is one the plugin system had in advance: the
@@ -573,7 +607,8 @@ func (m *migration) moveBinding(ctx context.Context, config store.AgentConfig, e
 		return skip(err.Error())
 	}
 	// The login whose tools the binding grants: the app's for a fixed binding, any one person's
-	// for a session binding, since each person's login reaches the same server.
+	// for a session binding, since each person's login reaches the same server and the same tool
+	// names; a session binding takes the names alone.
 	var through string
 	for _, login := range logins {
 		if login.CustomerID != config.CustomerID || login.ConfigID != config.ID || login.PluginID != entry.Name {
@@ -603,6 +638,9 @@ func (m *migration) moveBinding(ctx context.Context, config store.AgentConfig, e
 		if len(configured.Tools) > 0 {
 			grants = "the tools matching " + strings.Join(configured.Tools, ", ")
 		}
+		if selection == "session" {
+			grants += " by name"
+		}
 		m.add(Row{Kind: KindBinding, Action: Planned, Source: source, Target: target, Note: "grants " + grants + ", as listed through " + through})
 		return nil
 	}
@@ -612,9 +650,18 @@ func (m *migration) moveBinding(ctx context.Context, config store.AgentConfig, e
 	}
 	var grants []store.ToolGrant
 	for _, spec := range specs {
-		if plugins.Offered(configured.Tools, spec.Name) {
-			grants = append(grants, store.ToolGrant{Name: spec.Name, SchemaDigest: spec.SchemaDigest})
+		if !plugins.Offered(configured.Tools, spec.Name) {
+			continue
 		}
+		grant := store.ToolGrant{Name: spec.Name, SchemaDigest: spec.SchemaDigest}
+		// A session binding grants by name: each person's connection pins the digest its own
+		// provider lists on first use (session.Manager.pinGrants, #826), since a provider may
+		// describe a tool per person (Slack, AI-994 F45) and one person's digests would leave the
+		// others' tools unavailable. A fixed binding has one connection, the one listed through.
+		if selection == "session" {
+			grant.SchemaDigest = ""
+		}
+		grants = append(grants, grant)
 	}
 	if len(grants) == 0 {
 		return skip("the server lists no tool the entry offers")
