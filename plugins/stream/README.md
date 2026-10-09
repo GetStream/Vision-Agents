@@ -83,7 +83,6 @@ subagent: llm-thinking
 stt: stt-fast
 tts: tts-fast
 voice: aurora
-speed: 1.1
 harness: default
 search: search-fast
 greeting: Thanks for calling, how can I help?

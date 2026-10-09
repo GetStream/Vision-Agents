@@ -522,7 +522,6 @@ class TestSyncAgent:
             "stt: stt-fast\n"
             "tts: tts-fast\n"
             "voice: nova\n"
-            "speed: 1.1\n"
             "harness: default\n"
             "search: search-fast\n"
             "greeting: Hello.\n"
@@ -543,10 +542,9 @@ class TestSyncAgent:
         assert stored["stt"] == "stt-fast"
         assert stored["tts"] == "tts-fast"
         assert stored["voice"] == "nova"
-        assert stored["speed"] == 1.1
         assert stored["harness"] == "default"
         assert stored["search"] == "search-fast"
-        assert stored["greeting"] == "Hello."
+        assert stored["greeting"] == {"text": "Hello."}
         assert stored["sandbox"] == "daytona"
         assert stored["plugins"] == ["gmail", {"name": "google_calendar", "user": True}]
         assert stored["keyterms"] == ["Vision Agents"]
