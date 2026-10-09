@@ -324,6 +324,68 @@ func (s *OpenAICompatSuite) TestThinkingIsSeparatedFromTheAnswer() {
 	s.Equal("The user said hi, so", thinking, "but it is still available to a caller that wants it")
 }
 
+// reasoningOf joins the reasoning a response streamed.
+func reasoningOf(events []llm.Event) string {
+	var text string
+	for _, event := range events {
+		if delta, ok := event.(llm.ReasoningTextDelta); ok {
+			text += delta.Delta
+		}
+	}
+	return text
+}
+
+func (s *OpenAICompatSuite) TestAThoughtChannelIsNeverSpoken() {
+	// What Gemma 4 sent in Voicebench: the channel written after the filler, just before the
+	// tool call, with its markers split over several chunks.
+	s.frames = []string{
+		textFrame("Just a moment, checking. \n\n<|chan"),
+		textFrame("nel>thought\nparty of two<chan"),
+		textFrame("nel|>"),
+		toolFrame(0, "call-1", "check_availability", `{"party_size":2}`),
+		usageFrame(20, 0, 14, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{ThoughtChannel: true})
+
+	response, events := s.ask(provider, hello())
+
+	s.Equal("Just a moment, checking. \n\n", response.OutputText)
+	s.Equal("party of two", reasoningOf(events), "the channel is still there for a caller that wants it")
+	s.Require().Len(response.ToolCalls, 1)
+}
+
+func (s *OpenAICompatSuite) TestABareChannelNameOpeningAReplyIsNeverSpoken() {
+	// vLLM can take the markers and leave the channel's name at the start of the reply.
+	s.frames = []string{textFrame("thou"), textFrame("ght\n You're all set!"), usageFrame(20, 0, 8, 0, "stop")}
+	provider := s.provider(Options{ThoughtChannel: true})
+
+	response, _ := s.ask(provider, hello())
+
+	s.Equal(" You're all set!", response.OutputText)
+}
+
+func (s *OpenAICompatSuite) TestAReplyThatMerelyLooksLikeAChannelIsSpokenWhole() {
+	s.frames = []string{
+		textFrame("thought"),
+		textFrame(" about it: a <|chan"),
+		usageFrame(20, 0, 8, 0, "stop"),
+	}
+	provider := s.provider(Options{ThoughtChannel: true})
+
+	response, _ := s.ask(provider, hello())
+
+	s.Equal("thought about it: a <|chan", response.OutputText, "a marker that never finished is text")
+}
+
+func (s *OpenAICompatSuite) TestAThoughtChannelIsLeftAloneForOtherModels() {
+	s.frames = []string{textFrame("<|channel>thought\n<channel|>Hi"), usageFrame(20, 0, 8, 0, "stop")}
+	provider := s.provider(Options{})
+
+	response, _ := s.ask(provider, hello())
+
+	s.Equal("<|channel>thought\n<channel|>Hi", response.OutputText)
+}
+
 func (s *OpenAICompatSuite) TestInstructionsAreSentAsASystemMessage() {
 	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
 	provider := s.provider(Options{})
