@@ -100,7 +100,7 @@ func (s *Server) registerConfigPatch(api huma.API) {
 			"end user's device.",
 		Responses: map[string]*huma.Response{"200": {Description: "The config as it now is"}},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
-			http.StatusNotFound},
+			http.StatusNotFound, http.StatusConflict},
 	}, s.patchAgentConfig)
 }
 
@@ -226,7 +226,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	}
 
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, storeFailure(err, errAgentNameTaken)
 	}
 	stored := agentConfigOf(config)
 	s.audit(ctx, auditRecord{

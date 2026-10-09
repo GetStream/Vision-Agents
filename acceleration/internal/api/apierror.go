@@ -97,6 +97,7 @@ const (
 	codeUnsyncedChanges         = "unsynced_changes"
 	codePhoneNumberNeedsAddress = "phone_number_needs_address"
 	codePhoneVendorFailed       = "phone_vendor_failed"
+	codeNameTaken               = "name_taken"
 )
 
 // APIError is a failure an operation answers with on purpose: its type decides the
@@ -163,7 +164,7 @@ func (*ErrorResponse) TransformSchema(_ huma.Registry, schema *huma.Schema) *hum
 type ErrorDetail struct {
 	Message string    `json:"message" doc:"What went wrong, for a person to read. Its wording may change; branch on code."`
 	Type    ErrorType `json:"type"`
-	Code    string    `json:"code" doc:"What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know."`
+	Code    string    `json:"code" doc:"What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know."`
 	DocURL  string    `json:"doc_url" format:"uri" doc:"Where the code is explained."`
 }
 

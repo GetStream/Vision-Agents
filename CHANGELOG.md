@@ -1786,6 +1786,13 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
   on the page in a chat, so a chain of lookups opened its answer with a run of near-identical
   lines. A text session is now told to call its tools without announcing them; a voice
   session is told what it was before.
+- A name that is already taken is a `409 name_taken` that says so. Creating or renaming an
+  agent config, a router config or a voice under the name of another of the customer's, or a
+  skill under the name of another skill of the same agent config, answered
+  `400 invalid_request` with the database's own text, naming its table and index. It now
+  answers, for example, "an agent with this name already exists", and the nine operations
+  that can say it document the 409. Any other database failure on those writes is a
+  `500 internal_error`, recorded with its stack, rather than a 400 quoting the database.
 - A phone vendor's own error no longer reaches the client. The `/v1/phone/*` endpoints
   answered a Twilio, Telnyx, Bandwidth or Sinch failure with `400 invalid_request` and the
   vendor's full text, which held the vendor account id. The router now logs that text and
