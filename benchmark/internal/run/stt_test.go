@@ -8,7 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/report"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/synth"
 )
 
 func TestScoreClipTimesFromTheSpeechNotTheFile(t *testing.T) {
@@ -93,5 +96,56 @@ func TestSTTScoresGivenHypothesesIntoASummary(t *testing.T) {
 	clips, err := os.ReadFile(filepath.Join(out, "clips.jsonl"))
 	if err != nil || strings.Count(string(clips), "\n") != 2 {
 		t.Fatalf("clips.jsonl should hold one line per clip: %q, %v", clips, err)
+	}
+}
+
+func TestScenarioClipsAreTheCallersLinesWithTheirScripts(t *testing.T) {
+	root := t.TempDir()
+	for _, pack := range scenario.Packs() {
+		if err := os.MkdirAll(filepath.Join(root, "scenarios", pack), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	yaml := `id: restaurant.short_call
+pack: restaurant
+category: checklist
+turns:
+  - {id: intro, text: "Table for four at 7:30, name Alvarez."}
+  - {id: again, text: "Table for four at 7:30, name Alvarez."}
+  - {id: cough, overlap_sound: cough}
+  - {id: go_ahead, text: "Yes, please go ahead."}
+`
+	if err := os.WriteFile(filepath.Join(root, "scenarios", "restaurant", "short_call.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Every pack has scenarios; these say a line already in the set.
+	for _, pack := range []string{"healthcare", "telecom"} {
+		other := "id: " + pack + ".yes\npack: " + pack + "\ncategory: checklist\nturns:\n  - {id: go_ahead, text: \"Yes, please go ahead.\"}\n"
+		if err := os.WriteFile(filepath.Join(root, "scenarios", pack, "yes.yaml"), []byte(other), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The caller audio is already cached, as it is after any run, so nothing is synthesized.
+	for _, text := range []string{"Table for four at 7:30, name Alvarez.", "Yes, please go ahead."} {
+		path := synth.CachePath(root, "", text)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := audio.WriteWAV(path, audio.PCM{Rate: audio.Rate, Samples: audio.Tone(audio.Rate/2, 200, 8000)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := ScenarioClips(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].Reference != "Table for four at 7:30, name Alvarez." || rows[0].ID != "restaurant.short_call#1" {
+		t.Fatalf("one clip per distinct line, its script as reference: %+v", rows)
+	}
+	if _, err := os.Stat(rows[1].Audio); err != nil {
+		t.Fatalf("the clip is the cached caller audio: %v", err)
+	}
+	if _, err := ScenarioClips(root, []string{"restaurant.other"}); err == nil {
+		t.Fatal("a set with none of these scenarios has no clips")
 	}
 }

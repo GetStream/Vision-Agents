@@ -42,9 +42,12 @@ type messageEvent struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"user"`
-		// Custom is whatever the writer put on the message. What matters here is the one
-		// field the agent writes on everything it stores.
-		Custom map[string]any `json:"custom"`
+		// Source is the one field of what the writer put on the message that matters here:
+		// chatlog.SourceField, which the agent writes on everything it stores. A hook carries
+		// a message's custom fields at the top level of the message, beside its own, not
+		// under "custom" as the v2 API returns them (Stream Chat docs, «Webhook Events»,
+		// message.new; the classic GET /messages/{id} of an episode card shows the same).
+		Source json.RawMessage `json:"source"`
 	} `json:"message"`
 }
 
@@ -119,8 +122,7 @@ func addressed(event messageEvent) bool {
 	if event.Message.Text == "" {
 		return false
 	}
-	_, written := event.Message.Custom[chatlog.SourceField]
-	return !written
+	return len(event.Message.Source) == 0
 }
 
 // routeArrivingMessage answers a message from the session running on its channel, or hands
