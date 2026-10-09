@@ -311,6 +311,7 @@ func (c *cadence) resolve(candidateID string, wait bool, retryAfter time.Duratio
 		}
 		current.candidateID = ""
 		if wait {
+			current.turnProbability = nil // The retry needs a score for newer audio.
 			c.logger.Debug("giving the caller longer to finish",
 				"participant", current.participant.ID, "candidate", candidateID, "retry", retryAfter)
 			c.scheduleLocked(current, retryAfter)

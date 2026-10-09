@@ -741,8 +741,9 @@ model groups unless a custom group explicitly includes it.
 
 This uses the same `ROUTER_EOT_URL` and credentials as turn detection.
 Each request asks for both words and a turn score. Transcript revisions use the
-normal STT pipeline, and eligible turn decisions reuse that score without a
-second EOT request. No other transcription provider or STT API key is needed.
+normal STT pipeline, and eligible turn decisions reuse that score. If it says
+to wait, the retry scores newer audio. No other transcription provider or STT
+API key is needed.
 
 The server must support `POST /v1/eot?transcript=true&transcript_min_p=0`, returning
 the decision and transcript as NDJSON. Startup checks this with generated

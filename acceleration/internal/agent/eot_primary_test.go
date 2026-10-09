@@ -413,3 +413,20 @@ func (s *AgentSuite) TestATranscriptTurnScoreAnswersWithoutAnotherEOTRequest() {
 	s.Zero(requests.Load(), "the words and turn score came from the same AudioTurn request")
 	s.Contains(said(s.voice.spoken()), "Hello there.")
 }
+
+func (s *AgentSuite) TestALowTranscriptTurnScoreIsRefreshedAfterWaiting() {
+	var requests atomic.Int64
+	s.primaryEOTServer(primaryScoreHandler(s, 0.95, &requests))
+	s.join(false)
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	probability := 0.1
+	s.ears.emitter.Send(stt.Transcript{
+		Participant: participant, Mode: stt.ModeFinal, Text: "please find a table",
+		TurnProbability: &probability,
+	})
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
+		"the settled words kept waiting on an old transcript score")
+	s.Equal(int64(1), requests.Load(), "after waiting, score the audio again")
+	s.Contains(said(s.voice.spoken()), "Hello there.")
+}
