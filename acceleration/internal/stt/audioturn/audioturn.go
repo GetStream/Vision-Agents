@@ -158,7 +158,14 @@ func (s *STT) run() {
 			continue
 		}
 		end, participant := s.total, s.participant
-		quiet := quietTail(s.audio)
+		// Do not decode silence before speech or after a settled utterance.
+		if len(words.words) == 0 && quietAudio(s.audio[max(0, len(s.audio)-int(end-words.turnStart)):]) {
+			read, s.scored, words.turnStart = end, end, end
+			s.mu.Unlock()
+			continue
+		}
+		const silence = SampleRate * 600 / 1000
+		quiet := len(s.audio) >= silence && quietAudio(s.audio[len(s.audio)-silence:])
 		pcm := (stt.PcmData{Samples: s.audio, SampleRate: SampleRate, Channels: 1}).Bytes()
 		s.mu.Unlock()
 
@@ -205,21 +212,19 @@ func (s *STT) run() {
 	}
 }
 
-// quietTail requires 600 ms below -42 dBFS, checked in 20 ms frames so a short
+// quietAudio checks for audio below -42 dBFS in 20 ms frames so a short
 // word cannot disappear into the average energy of a longer quiet window.
-func quietTail(samples []int16) bool {
-	const length = SampleRate * 600 / 1000
-	if len(samples) < length {
-		return false
-	}
-	for tail := samples[len(samples)-length:]; len(tail) > 0; tail = tail[MinSamples:] {
+func quietAudio(samples []int16) bool {
+	for len(samples) > 0 {
+		frame := samples[:min(len(samples), MinSamples)]
 		var energy int64
-		for _, sample := range tail[:MinSamples] {
+		for _, sample := range frame {
 			energy += int64(sample) * int64(sample)
 		}
-		if energy >= 250*250*MinSamples {
+		if energy >= 250*250*int64(len(frame)) {
 			return false
 		}
+		samples = samples[len(frame):]
 	}
 	return true
 }

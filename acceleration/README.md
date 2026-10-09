@@ -750,11 +750,12 @@ the decision and transcript as NDJSON. Startup checks this with generated
 silence and refuses a decision-only deployment. The hosted EU endpoint supports
 this protocol; private deployments must enable transcription on the server.
 
-Audio is sampled every 200 ms while new frames arrive, with one request in
-flight and a 16-second window. Overlapping transcripts replace provisional
+Audio is sampled every 200 ms during speech, with one request in
+flight and a 16-second window. Idle silence is not transcribed.
+Overlapping transcripts replace provisional
 words. A transcript settles after the audio has been quiet for 600 ms;
-decoder word durations can extend through that silence. The turn score remains a separate
-decision about when to answer. Settling keeps the audio context. When a turn
+decoder word durations can extend through that silence. The turn score remains
+a separate decision about when to answer. Settling keeps the audio context. When a turn
 outgrows the window, its prefix is retained and its last second stays provisional;
 overlap alignment avoids repeating already committed words.
 An input backlog that exceeds the window is reported as

@@ -171,6 +171,37 @@ func (s *AudioTurnSuite) TestLongSpeechKeepsItsPrefixAndRevisesTheOverlappingTai
 	s.Len(<-s.requests, MaxSamples*2)
 }
 
+func (s *AudioTurnSuite) TestSilenceDoesNotCreateUtterances() {
+	s.start()
+	quiet := stt.PcmData{Samples: make([]int16, SampleRate), SampleRate: SampleRate, Channels: 1}
+	assertIdle := func() {
+		s.Require().NoError(s.provider.ProcessAudio(quiet, stt.Participant{ID: "caller"}))
+		select {
+		case <-s.requests:
+			s.FailNow("idle silence reached the decoder")
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	assertIdle()
+	for turn := int64(1); turn <= 2; turn++ {
+		s.replies <- transcriptionReply{words: []Word{{Text: "hello", StartMS: -500, EndMS: -100}}}
+		s.feed(1)
+		partial := s.transcript()
+		s.Equal("hello", partial.Text)
+		s.Equal(turn, partial.Utterance)
+		s.Equal(float64(1000), partial.AudioDurationMs)
+		<-s.requests
+
+		s.replies <- transcriptionReply{words: []Word{{Text: "hello", StartMS: -1500, EndMS: -1100}}}
+		s.Require().NoError(s.provider.ProcessAudio(quiet, stt.Participant{ID: "caller"}))
+		final := s.transcript()
+		s.True(final.Final())
+		s.Equal("hello", final.Text)
+		<-s.requests
+		assertIdle()
+	}
+}
+
 func (s *AudioTurnSuite) TestAudioArrivingDuringInferenceKeepsTheWordsInFlight() {
 	s.start()
 	s.feed(1)
