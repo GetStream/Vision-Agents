@@ -1,16 +1,16 @@
-// Package lcmrouter routes judgement traffic and records what each judgement cost.
+// Package decisionrouter routes judgement traffic and records what each judgement cost.
 //
 // Resolving a target, ranking candidates and failing over are generic and live in
 // internal/routing. What this package adds is the classifier shape: which providers exist,
 // and what counts as a unit of work, which here is one request however many questions it
 // carried, because that is how a classifier is billed.
-package lcmrouter
+package decisionrouter
 
 import (
 	"context"
 	"log/slog"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -18,7 +18,7 @@ import (
 )
 
 // Registry is the set of classifiers a build can construct.
-type Registry = routing.Registry[lcm.Provider]
+type Registry = routing.Registry[decisionmodel.Provider]
 
 // Options configures a Router. Store and Live are optional: without them the router still
 // routes, it just stops recording.
@@ -51,13 +51,13 @@ type Request struct {
 
 // Router selects a classifier and opens sessions.
 type Router struct {
-	*routing.Router[lcm.Provider]
+	*routing.Router[decisionmodel.Provider]
 }
 
 // New validates the options and returns a Router.
 func New(options Options) (*Router, error) {
-	core, err := routing.New(routing.Options[lcm.Provider]{
-		Modality: routing.LCM,
+	core, err := routing.New(routing.Options[decisionmodel.Provider]{
+		Modality: routing.DecisionModel,
 		Config:   options.Config,
 		Registry: options.Registry,
 		Store:    options.Store,

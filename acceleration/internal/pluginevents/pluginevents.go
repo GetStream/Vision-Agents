@@ -2,8 +2,8 @@
 // conversation for each event delivered.
 //
 // A config declares its events in plugin_events. Each one is subscribed to with every login
-// the config holds to that plugin: the app's own when the plugin is under agent_plugins, and
-// each end user's when it is under user_plugins. The server delivers to a callback whose path is a
+// the config holds to that plugin: the app's own, or each end user's when its entry in plugins
+// sets user. The server delivers to a callback whose path is a
 // token of the subscription's own, signed with a secret of its own, and each event that
 // arrives opens a text session from the config, as the login's owner, with the event as the
 // first thing said to it.
@@ -211,13 +211,13 @@ func (s *Service) Reconcile(ctx context.Context, config store.AgentConfig) {
 	}
 }
 
-// reaches reports whether a login is one the config uses: the app's for agent_plugins, an end
-// user's for user_plugins.
+// reaches reports whether a login is one the config uses: the app's for a plugin it names,
+// an end user's for one it names with user set.
 func reaches(config store.AgentConfig, login store.PluginConnection) bool {
 	if login.UserID == "" {
-		return store.NamesPlugin(config.AgentPlugins, login.PluginID)
+		return store.NamesPlugin(store.AppPlugins(config.Plugins), login.PluginID)
 	}
-	return store.NamesPlugin(config.UserPlugins, login.PluginID)
+	return store.NamesPlugin(store.UserPlugins(config.Plugins), login.PluginID)
 }
 
 func slot(pluginID, userID, key string) string {
@@ -323,11 +323,7 @@ func (s *Service) login(ctx context.Context, sub store.PluginEventSubscription) 
 }
 
 func (s *Service) connection(ctx context.Context, config store.AgentConfig, login store.PluginConnection) (plugins.Connection, error) {
-	entries := config.UserPlugins
-	if login.UserID == "" {
-		entries = config.AgentPlugins
-	}
-	plugin, err := session.ConfiguredPlugin(session.EntryFor(login.PluginID, entries))
+	plugin, err := session.ConfiguredPlugin(session.EntryFor(login.PluginID, config.Plugins))
 	if err != nil {
 		return plugins.Connection{}, err
 	}

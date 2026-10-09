@@ -9,7 +9,7 @@ import (
 const defaultAccelURL = "http://127.0.0.1:8080"
 
 // The acceleration pipeline the bench runs by default. The subagent is named as
-// thinking_llm in each pack's agents/accelerated/{pack}/agent.yaml; this records it.
+// subagent in each pack's agents/accelerated/{pack}/agent.yaml; this records it.
 const (
 	DefaultAcceleratedSTT      = "deepgram/flux-general-en"
 	DefaultAcceleratedTTS      = "elevenlabs/eleven_v4_turbo"

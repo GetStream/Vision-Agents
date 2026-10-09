@@ -1,4 +1,4 @@
-package lcm
+package decisionmodel
 
 import (
 	"testing"

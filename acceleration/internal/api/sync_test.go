@@ -61,14 +61,16 @@ func (s *SyncSuite) TestSyncingAnAgentStoresWhatItsDeclarationRunsItOn() {
 	result := s.sync(map[string]any{
 		"name": "analyst", "hash": "v1", "mode": "text",
 		"llm": "llm-flow", "tts": "en-low-latency", "voice": "aurora",
-		"greeting": "Hello.", "keyterms": []string{"Vision Agents"}, "sandbox": "daytona",
+		"greeting": map[string]any{"text": "Hello.", "mode": "variation"}, "keyterms": []string{"Vision Agents"}, "sandbox": "daytona",
 		"tags": map[string]string{"project": "analyst"},
 	})
 
 	s.Equal(AgentModeText, result.Config.Mode)
 	s.Equal("llm-flow", value(result.Config.Llm))
 	s.Equal("aurora", value(result.Config.Voice))
-	s.Equal("Hello.", value(result.Config.Greeting))
+	s.Require().NotNil(result.Config.Greeting)
+	s.Equal("Hello.", result.Config.Greeting.Text)
+	s.Equal(GreetingModeVariation, value(result.Config.Greeting.Mode))
 	s.Equal([]string{"Vision Agents"}, value(result.Config.Keyterms))
 	s.Equal(Daytona, value(result.Config.Sandbox))
 	s.Equal("analyst", value(result.Config.Tags)["project"])
@@ -85,11 +87,11 @@ func (s *SyncSuite) TestSyncingAnAgentStoresWhatItLeavesToDispatch() {
 }
 
 func (s *SyncSuite) TestSyncingAnAgentStoresWhetherItsToolsAreOfferedProgressively() {
-	result := s.sync(map[string]any{"name": "concierge", "hash": "v1", "progressive_tools": true})
-	s.True(value(result.Config.ProgressiveTools))
+	result := s.sync(map[string]any{"name": "concierge", "hash": "v1", "tools": map[string]any{"progressive": true}})
+	s.True(value(result.Config.Tools.Progressive))
 
 	again := s.sync(map[string]any{"name": "concierge", "hash": "v2"})
-	s.True(value(again.Config.ProgressiveTools), "a directory that says nothing leaves what is stored")
+	s.True(value(again.Config.Tools.Progressive), "a directory that says nothing leaves what is stored")
 }
 
 func (s *SyncSuite) TestSyncingAnAgentStoresHowItsSandboxIsBuilt() {
@@ -113,20 +115,20 @@ func (s *SyncSuite) TestSyncingAnAgentStoresTheMCPServersItNamesByURL() {
 	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp"}}, value(result.Config.McpServers))
 }
 
-func (s *SyncSuite) TestSyncingAVoiceAgentStoresItsThinkingLlm() {
+func (s *SyncSuite) TestSyncingAVoiceAgentStoresItsSubagent() {
 	result := s.sync(map[string]any{
-		"name": "support", "hash": "v1", "mode": "voice", "thinking_llm": "llm-flow",
+		"name": "support", "hash": "v1", "mode": "voice", "subagent": "llm-flow",
 	})
 
-	s.Equal("llm-flow", value(result.Config.ThinkingLlm))
+	s.Equal("llm-flow", value(result.Config.Subagent))
 }
 
-func (s *SyncSuite) TestASyncGivingATextAgentAThinkingLlmIsRefused() {
+func (s *SyncSuite) TestASyncGivingATextAgentASubagentIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
-		map[string]any{"name": "analyst", "hash": "v1", "mode": "text", "thinking_llm": "llm-flow"})
+		map[string]any{"name": "analyst", "hash": "v1", "mode": "text", "subagent": "llm-flow"})
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "thinking_llm")
+	s.Contains(failure, "subagent")
 }
 
 func (s *SyncSuite) TestASyncAskingForTooMuchMemoryIsRefused() {
@@ -365,6 +367,91 @@ func (s *SyncSuite) TestASyncThatDoesNotAskToBeCheckedWritesOverTheChange() {
 		"a process syncing on startup is what the default is for")
 }
 
+func (s *SyncSuite) TestADocumentChangedSinceTheLastSyncRefusesASyncThatWouldRewriteIt() {
+	s.sync(map[string]any{"name": "support", "hash": "v1",
+		"knowledge": []map[string]string{{"source": "faq.md", "text": "Open at nine."}}})
+	s.ingest("support", "faq.md", "Open at eight.")
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "support", "hash": "v2", "check_changes": true,
+		"knowledge": []map[string]string{{"source": "faq.md", "text": "Open at nine."}},
+	})
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, "knowledge faq.md")
+}
+
+// The step that has to terminate: a client told what changed writes it into its own files
+// and syncs again, and the sync that now says what the dashboard says goes through.
+func (s *SyncSuite) TestASyncIsNotRefusedWhenItsDirectoryAlreadyHoldsTheChangedDocument() {
+	s.sync(map[string]any{"name": "support", "hash": "v1",
+		"knowledge": []map[string]string{{"source": "faq.md", "text": "Open at nine."}}})
+	s.ingest("support", "faq.md", "Open at eight.")
+
+	second := s.sync(map[string]any{
+		"name": "support", "hash": "v2", "check_changes": true,
+		"knowledge": []map[string]string{{"source": "faq.md", "text": "Open at eight."}},
+	})
+
+	s.False(second.Unchanged)
+	s.Empty(s.changes(second.Config.Id).Items, "the sync is the newest thing on record again")
+}
+
+func (s *SyncSuite) TestResyncingAnUnchangedDocumentRecordsNoChange() {
+	first := s.sync(map[string]any{"name": "support", "hash": "v1",
+		"knowledge": []map[string]string{{"source": "faq.md", "text": "Open at nine."}}})
+	s.patch(first.Config.Id, map[string]any{"instructions": "Be warm."})
+
+	// A second sync of the same documents under a directory that moved elsewhere.
+	second := s.sync(map[string]any{"name": "support", "hash": "v2", "instructions": "Be warm.",
+		"knowledge": []map[string]string{{"source": "faq.md", "text": "Open at nine."}}})
+
+	for _, entry := range s.auditOf(second.Config.Id) {
+		s.NotEqual(AuditResourceType("knowledge"), entry.ResourceType,
+			"nobody rewrote the document, so nothing was changed about it")
+	}
+}
+
+// Editing a config clears its sync_hash, so the next sync of the directory runs. Editing
+// what hangs off it -- a document, a page, a skill -- does not, and an untouched directory
+// then carries the hash the agent still has. The person at that directory is told anyway:
+// theirs is the copy that has gone stale, and the hash is no longer evidence of agreement.
+func (s *SyncSuite) TestASyncOfAnUnchangedDirectoryIsStillRefusedOverADocumentChangedSince() {
+	declaration := map[string]any{"name": "support", "hash": "v1", "check_changes": true,
+		"knowledge": []map[string]string{{"source": "faq.md", "text": "Open at nine."}}}
+	s.sync(declaration)
+	s.ingest("support", "faq.md", "Open at eight.")
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", declaration)
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, "knowledge faq.md")
+}
+
+func (s *SyncSuite) TestAnAcknowledgedSyncOfAnUnchangedDirectoryWritesItsDocumentBack() {
+	declaration := map[string]any{"name": "support", "hash": "v1", "check_changes": true,
+		"knowledge": []map[string]string{{"source": "faq.md", "text": "Open at nine."}}}
+	result := s.sync(declaration)
+	s.ingest("support", "faq.md", "Open at eight.")
+	changes := s.changes(result.Config.Id)
+	s.Require().NotNil(changes.LastChange)
+
+	declaration["base_change"] = *changes.LastChange
+	second := s.sync(declaration)
+
+	s.False(second.Unchanged, "the directory had something left to write, untouched as it is")
+	s.Equal("Open at nine.", s.documentText(result.Config.Id, "faq.md"))
+}
+
+func (s *SyncSuite) TestASyncOfAnUnchangedDirectoryNobodyElseTouchedWritesNothing() {
+	declaration := map[string]any{
+		"name": "support", "hash": "v1", "instructions": "Be brief.", "check_changes": true,
+	}
+	s.sync(declaration)
+
+	s.True(s.sync(declaration).Unchanged)
+}
+
 func (s *SyncSuite) TestASkillChangedSinceTheLastSyncRefusesASyncThatWouldRewriteIt() {
 	declaration := map[string]any{"name": "support", "hash": "v1", "skills": []map[string]string{
 		{"config_id": "", "name": "refund", "description": "work out a refund",
@@ -400,6 +487,38 @@ func (s *SyncSuite) changes(configID string) AgentChanges {
 func (s *SyncSuite) patch(configID string, body map[string]any) {
 	s.Require().Equal(http.StatusOK,
 		s.dashboard().do(http.MethodPatch, "/v1/agents/configs/"+configID, body, nil))
+}
+
+// ingest is somebody rewriting a knowledge document in the dashboard.
+func (s *SyncSuite) ingest(namespace, source, text string) {
+	s.Require().Equal(http.StatusOK, s.dashboard().do(http.MethodPost, "/v1/agents/knowledge",
+		map[string]any{"namespace": namespace,
+			"documents": []map[string]string{{"source": source, "text": text}}}, nil))
+}
+
+// documentText is what one of an agent's knowledge documents now says.
+func (s *SyncSuite) documentText(configID, source string) string {
+	namespace := value(s.configsNamed("support")[0].KnowledgeNamespace)
+	s.Require().NotEmpty(namespace, "agent "+configID+" has no knowledge base")
+	for _, listed := range s.documents(namespace) {
+		if listed.Source != source {
+			continue
+		}
+		var document IndexedKnowledgeDocument
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+			"/v1/agents/knowledge/documents/"+listed.Id, nil, &document))
+		return value(document.Text)
+	}
+	s.Require().Fail("no document called " + source)
+	return ""
+}
+
+// auditOf is everything on one agent's record, newest first.
+func (s *SyncSuite) auditOf(configID string) []AuditEntry {
+	var answered AuditPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/audit/query",
+		map[string]any{"filter": map[string]any{"agent_id": configID}}, &answered))
+	return answered.Items
 }
 
 // dashboard is the backend saying it is the dashboard, with the operator who clicked save.
@@ -512,7 +631,7 @@ func (s *SyncSuite) TestASyncAddingAPluginABindingIsCalledIsRefused() {
 	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("linear")}})
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
-		map[string]any{"name": "support", "hash": "v2", "agent_plugins": []string{"linear"}})
+		map[string]any{"name": "support", "hash": "v2", "plugins": []string{"linear"}})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "plugin")

@@ -613,7 +613,7 @@ export type paths = {
         };
         /**
          * The plugin logins this agent holds
-         * @description The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+         * @description The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
          */
         readonly get: operations["listConfigPlugins"];
         readonly put?: never;
@@ -2483,7 +2483,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Ask a classifier typed questions about a piece of text
-         * @description The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+         * @description The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
          *     Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
          *     A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
          */
@@ -3649,7 +3649,6 @@ export type components = {
             readonly whatsapp?: components["schemas"]["ChannelLineRequest"];
         };
         readonly AgentConfig: {
-            readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly channels?: components["schemas"]["AgentChannels"];
             /** @description The bindings exactly as they were written. Absent when there are none. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
@@ -3658,7 +3657,7 @@ export type components = {
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             /** @description Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards. */
             readonly episode_cards?: boolean;
-            readonly greeting?: string;
+            readonly greeting?: components["schemas"]["Greeting"];
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
             readonly id: string;
@@ -3670,40 +3669,37 @@ export type components = {
             readonly mode: components["schemas"]["AgentMode"];
             readonly name: string;
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
-            /** @description Whether tools from plugins, MCP servers and connectors are offered by a summary, the first call to each returning its full description instead of running it. */
-            readonly progressive_tools?: boolean;
+            readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
             readonly skills?: readonly string[];
-            /** Format: double */
-            readonly speed?: number;
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             readonly stt?: string;
+            readonly subagent?: string;
             /** @description Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory. */
             readonly sync_hash?: string;
             readonly tags?: {
                 readonly [key: string]: string;
             };
-            readonly thinking_llm?: string;
+            readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
             /** Format: date-time */
             readonly updated_at: string;
-            readonly user_plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly video?: components["schemas"]["SessionVideo"];
             readonly visible_tools?: readonly string[];
             readonly voice?: string;
         };
         /** @description What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored. */
         readonly AgentConfigPatch: {
-            readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly channels?: components["schemas"]["AgentChannels"];
             /** @description The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly episode_cards?: boolean;
-            readonly greeting?: string;
+            /** @description Replaces the greeting whole. An empty text removes it. */
+            readonly greeting?: components["schemas"]["Greeting"];
             /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail. */
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
@@ -3716,33 +3712,26 @@ export type components = {
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name?: string;
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
-            readonly progressive_tools?: boolean;
+            readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
             readonly skills?: readonly string[];
-            /**
-             * Format: double
-             * @description The voice's rate of delivery, 1 being its own. Zero leaves it there.
-             */
-            readonly speed?: number;
             readonly sts?: string;
             readonly stt?: string;
+            /** @description Only a voice agent names one. Switching an agent to text drops it. */
+            readonly subagent?: string;
             readonly tags?: {
                 readonly [key: string]: string;
             };
-            /** @description Only a voice agent names one. Switching an agent to text drops it. */
-            readonly thinking_llm?: string;
+            readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
-            readonly user_plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search. */
             readonly visible_tools?: readonly string[];
             readonly voice?: string;
         };
         readonly AgentConfigRequest: {
-            /** @description Hosted MCP servers this agent may reach with the app's own login, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. */
-            readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
             /** @description Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels. */
             readonly channels?: components["schemas"]["AgentChannels"];
             /** @description The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
@@ -3750,8 +3739,8 @@ export type components = {
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             /** @description Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays. */
             readonly episode_cards?: boolean;
-            readonly greeting?: string;
-            /** @description A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
+            readonly greeting?: components["schemas"]["Greeting"];
+            /** @description A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
             readonly instructions?: string;
@@ -3768,33 +3757,27 @@ export type components = {
             readonly name: string;
             /** @description MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through. */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
-            /** @description Whether the agent is offered its plugin, MCP server and connector tools by the first line of each one's description, with its arguments' descriptions left out, and the first call to a tool returns its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays. */
-            readonly progressive_tools?: boolean;
+            /** @description Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one. */
+            readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             /** @description What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way. */
             readonly search?: string;
             /** @description Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set. */
             readonly skills?: readonly string[];
-            /**
-             * Format: double
-             * @description Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
-             * @example 0.9
-             */
-            readonly speed?: number;
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             /** @description A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it. */
             readonly stt?: string;
+            /** @description The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent. */
+            readonly subagent?: string;
             /** @description Cost labels, carried onto every request a session using it makes. */
             readonly tags?: {
                 readonly [key: string]: string;
             };
-            /** @description The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default thinking model. */
-            readonly thinking_llm?: string;
+            /** @description How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay. */
+            readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
-            /** @description Hosted MCP servers each end user connects with their own account, named from the built-in catalog like agent_plugins. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one. */
-            readonly user_plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search. */
             readonly visible_tools?: readonly string[];
@@ -3922,6 +3905,11 @@ export type components = {
             readonly items: readonly components["schemas"]["AgentResponse"][];
             /** @description Pass as `cursor` for the next page. Absent on the last one. */
             readonly next_cursor?: string;
+        };
+        /** @description How an agent is offered its plugin, MCP server and connector tools. */
+        readonly AgentTools: {
+            /** @description Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays. */
+            readonly progressive?: boolean;
         };
         /** @description What the router does for the calling app. It never carries a secret. */
         readonly AppSettings: {
@@ -4214,15 +4202,15 @@ export type components = {
             readonly stt?: string;
             /** @description The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over. */
             readonly stt_used?: string;
+            /** @description The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too. */
+            readonly subagent?: string;
+            /** @description The provider/model delegated work ran on. Empty when nothing was handed over, or when the subagent was never reached. */
+            readonly subagent_used?: string;
             /** @description What a model made of the call, written once it was over. */
             readonly summary?: string;
             readonly tags?: {
                 readonly [key: string]: string;
             };
-            /** @description The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too. */
-            readonly thinking_llm?: string;
-            /** @description The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached. */
-            readonly thinking_llm_used?: string;
             readonly to_number?: string;
             /** @description The voice target, on the same terms as stt. */
             readonly tts?: string;
@@ -4941,7 +4929,7 @@ export type components = {
             readonly secret: string;
         };
         /**
-         * @description Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+         * @description Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there. A Slack reply that does not mention the bot, in a thread the agent is not in yet, is unhandled when it arrives. If the mention that starts the thread arrives within 10 minutes, as when Slack retries the mention, the agent answers the reply too. The forward is not taken back, and no event says that the agent answered it.
          * @enum {string}
          */
         readonly ConnectorEventForward: "unhandled" | "all";
@@ -5124,8 +5112,8 @@ export type components = {
             };
             /** @description A longer note about the conversation, searched alongside the title. */
             readonly description?: string;
-            /** @description Said on joining without going through the model. Empty means the agent waits to be spoken to. */
-            readonly greeting?: string;
+            /** @description What the agent opens the call with, over what the config says. */
+            readonly greeting?: components["schemas"]["Greeting"];
             /** @description The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth. */
             readonly history?: readonly components["schemas"]["HistoryMessage"][];
             /** @description The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7. */
@@ -5378,6 +5366,18 @@ export type components = {
          * @enum {string}
          */
         readonly Granularity: "hourly" | "daily";
+        /** @description What the agent says as it joins, before anyone speaks. */
+        readonly Greeting: {
+            readonly mode?: components["schemas"]["GreetingMode"];
+            /** @description What the agent says on joining. Empty means the agent waits to be spoken to. */
+            readonly text: string;
+        };
+        /**
+         * @description exact says the text word for word. variation has the model say its own variation of it on every call, so callers do not hear the same opening each time. A speech-to-speech model cannot say exact words, so it always says its own rendering of the text.
+         * @default exact
+         * @enum {string}
+         */
+        readonly GreetingMode: "exact" | "variation";
         readonly GuestUser: {
             readonly custom?: {
                 readonly [key: string]: unknown;
@@ -5795,7 +5795,7 @@ export type components = {
             readonly tools?: readonly string[];
             /** @description Its Streamable HTTP endpoint, over https. */
             readonly url: string;
-            /** @description Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for user_plugins, rather than the app once, from the dashboard. Only a server that needs a login may set it. */
+            /** @description Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it. */
             readonly user?: boolean;
         };
         /** @description The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name. */
@@ -5810,10 +5810,10 @@ export type components = {
         };
         readonly MessageContent: string | readonly components["schemas"]["ContentPart"][];
         /**
-         * @description What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+         * @description What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
          * @enum {string}
          */
-        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "lcm" | "image" | "memory" | "knowledge" | "phone";
+        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "decision_model" | "image" | "memory" | "knowledge" | "phone";
         readonly ModelCallTiming: {
             /**
              * Format: double
@@ -6104,7 +6104,7 @@ export type components = {
              * @enum {string}
              */
             readonly status: "pending" | "connected" | "failed" | "not_connected";
-            /** @description True when the config names the plugin under user_plugins only: each end user connects their own account in the conversation. */
+            /** @description True when the config names the plugin with user: each end user connects their own account in the conversation. */
             readonly user?: boolean;
         };
         /** @description One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached. */
@@ -6119,7 +6119,7 @@ export type components = {
             readonly event: string;
             /** @description What the agent does with the event when it arrives, added to its instructions for that conversation. */
             readonly instructions?: string;
-            /** @description A catalog plugin the config names under agent_plugins or user_plugins. */
+            /** @description A catalog plugin the config names under plugins. */
             readonly plugin: string;
         };
         /** @description One thing to do with a plugin's provider before its OAuth client can be set. */
@@ -6141,6 +6141,8 @@ export type components = {
             readonly tools?: readonly string[];
             /** @description Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login. */
             readonly toolsets?: readonly string[];
+            /** @description Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says. */
+            readonly user?: boolean;
         };
         /** @description What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. */
         readonly Policy: {
@@ -6153,7 +6155,7 @@ export type components = {
             readonly allowed_models?: readonly string[];
             readonly budget?: components["schemas"]["Budget"];
             readonly data_policy?: components["schemas"]["DataPolicy"];
-            /** @description Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on. */
+            /** @description Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on. */
             readonly prompt_injection?: boolean;
             /** @description Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused. */
             readonly require_own_stream_app?: boolean;
@@ -6553,10 +6555,10 @@ export type components = {
             readonly sts?: string;
             /** @description The provider and model transcribing, once somebody has been heard. */
             readonly stt?: string;
+            /** @description The provider and model delegated work runs on. */
+            readonly subagent?: string;
             /** @description The conversation is held in writing rather than on a call. */
             readonly text?: boolean;
-            /** @description The provider and model delegated work runs on. */
-            readonly thinking_llm?: string;
             readonly title?: string;
             /** @description The provider and model speaking. */
             readonly tts?: string;
@@ -6733,7 +6735,7 @@ export type components = {
             readonly client_id: string;
             /** @description The client secret the provider issued. Left out for a public client. */
             readonly client_secret?: string;
-            /** @description Also name the plugin under the config's user_plugins, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it under agent_plugins. */
+            /** @description Also name the plugin under the config's plugins with user, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it as the app's. */
             readonly user?: boolean;
         };
         readonly SetSandboxRecipientsRequest: {
@@ -7324,8 +7326,6 @@ export type components = {
         };
         /** @description An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it. */
         readonly SyncAgentRequest: {
-            /** @description Plugins the agent reaches with the app's own login: a catalog id, or an object naming it with how it is reached. */
-            readonly agent_plugins?: readonly components["schemas"]["PluginEntry"][];
             /** @description The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again. */
             readonly base_change?: string;
             /** @description Lines this agent answers on besides Stream Chat, each a number the app connected. */
@@ -7335,7 +7335,7 @@ export type components = {
             /** @description The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            readonly greeting?: string;
+            readonly greeting?: components["schemas"]["Greeting"];
             /** @description The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered. */
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
@@ -7354,30 +7354,25 @@ export type components = {
             readonly name: string;
             /** @description MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives. */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
-            /** @description Whether plugin, MCP server and connector tools are offered by a summary, the first call to each returning its full description and input schema instead of running it. */
-            readonly progressive_tools?: boolean;
+            /** @description Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it. */
+            readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
             readonly search?: string;
             /** @description The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone. */
             readonly simulations?: readonly components["schemas"]["SimulationDeclaration"][];
             readonly skills?: readonly components["schemas"]["SkillRequest"][];
-            /**
-             * Format: double
-             * @description The voice's rate of delivery, 1 being its own. Zero leaves it there.
-             */
-            readonly speed?: number;
             /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
             readonly sts?: string;
             readonly stt?: string;
+            /** @description Only a voice agent names one: a text agent runs everything on its llm. */
+            readonly subagent?: string;
             readonly tags?: {
                 readonly [key: string]: string;
             };
-            /** @description Only a voice agent names one: a text agent runs everything on its llm. */
-            readonly thinking_llm?: string;
+            /** @description How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored. */
+            readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
-            /** @description Plugins each end user connects with their own account, from the conversation, the first time the agent needs one. Each is named like agent_plugins. */
-            readonly user_plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly video?: components["schemas"]["SessionVideo"];
             readonly voice?: string;
         };

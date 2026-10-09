@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -34,9 +34,12 @@ import (
 type Kind string
 
 const (
-	// KindClassifier asks the lcm router for the probability that a turn violates the
-	// policy.
-	KindClassifier Kind = "lcm"
+	// KindDecisionModel asks the decision model router for the probability that a turn
+	// violates the policy.
+	KindDecisionModel Kind = "decision_model"
+	// kindLCM is what KindDecisionModel was called before the rename, which stored
+	// guardrail.md files still say.
+	kindLCM Kind = "lcm"
 	// KindWebhook asks the customer's own server.
 	KindWebhook Kind = "webhook"
 	// KindLLM asks a language model to read the policy and judge the turn.
@@ -122,8 +125,8 @@ type Guardrail interface {
 type Deps struct {
 	// Owner is who a routed check is billed to.
 	Owner routing.Owner
-	// Classifier routes a KindClassifier check.
-	Classifier *lcmrouter.Router
+	// Classifier routes a KindDecisionModel check.
+	Classifier *decisionrouter.Router
 	// LLM routes a KindLLM check.
 	LLM *llmrouter.Router
 	// Secret signs a webhook, so the customer's server can tell our request from anyone
@@ -149,7 +152,7 @@ func New(ctx context.Context, policy Policy, deps Deps) (Guardrail, error) {
 	}
 
 	switch policy.Kind {
-	case KindClassifier:
+	case KindDecisionModel:
 		return newClassifier(ctx, policy, deps)
 	case KindWebhook:
 		return newWebhook(policy, deps)
@@ -167,7 +170,7 @@ func New(ctx context.Context, policy Policy, deps Deps) (Guardrail, error) {
 // own is the shortest thing worth writing here.
 func Parse(content string) (Policy, error) {
 	policy := Policy{
-		Kind:      KindClassifier,
+		Kind:      KindDecisionModel,
 		Mode:      ModeParallel,
 		Threshold: DefaultThreshold,
 		Refusal:   DefaultRefusal,
@@ -192,6 +195,9 @@ func Parse(content string) (Policy, error) {
 			switch key {
 			case "type":
 				policy.Kind = Kind(value)
+				if policy.Kind == kindLCM {
+					policy.Kind = KindDecisionModel
+				}
 			case "mode":
 				policy.Mode = Mode(value)
 			case "threshold":
@@ -221,7 +227,7 @@ func Parse(content string) (Policy, error) {
 // Validate reports what would make a policy mean something other than what it says.
 func (p Policy) Validate() error {
 	switch p.Kind {
-	case KindClassifier, KindLLM:
+	case KindDecisionModel, KindLLM:
 		if strings.TrimSpace(p.Text) == "" {
 			return stack.Wrap(errors.New("guardrail: there is no policy to judge a turn against"))
 		}

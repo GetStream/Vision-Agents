@@ -1280,7 +1280,7 @@ func (s *Session) askTool(call ToolCall) error {
 // down as instructions alone can hand the hard parts over rather than guess at them.
 //
 // It is the one target looked up before it is asked for. A target a caller named and this
-// deployment cannot route is a refusal, but a deployment routing no thinking model should
+// deployment cannot route is a refusal, but a deployment routing no subagent model should
 // still take calls: that agent answers everything itself, the way it goes without search.
 func (m *Manager) think(ctx context.Context, spec *Spec) {
 	if spec.Text || spec.SubagentTarget != "" {

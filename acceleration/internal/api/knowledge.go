@@ -214,7 +214,9 @@ func (s *Server) fillKnowledge(
 		return len(written), len(passages), nil
 	}
 
-	stored, err := s.store.CustomerKnowledgeDocuments(ctx, customerID, namespace)
+	// With their text, because that is what the entry below reports as having moved. Read
+	// without it, every document would look rewritten from nothing on every sync.
+	stored, err := s.store.CustomerKnowledgeDocumentsWithText(ctx, customerID, namespace)
 	if err != nil {
 		return 0, 0, err
 	}

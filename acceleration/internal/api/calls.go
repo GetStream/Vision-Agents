@@ -712,7 +712,7 @@ func callOf(call store.Call) Call {
 	rendered.Tts = optional(call.TTS)
 	rendered.Sts = optional(call.STS)
 	rendered.Llm = optional(call.LLM)
-	rendered.ThinkingLlm = optional(call.Subagent)
+	rendered.Subagent = optional(call.Subagent)
 	rendered.Voice = optional(call.Voice)
 	mode := SessionModeCascade
 	if call.STS != "" {
@@ -750,7 +750,7 @@ func (s *Server) attachUsed(ctx context.Context, customerID string, call store.C
 			rendered.Tts = optional(spec.TTSTarget)
 			rendered.Llm = optional(spec.LLMTarget)
 			rendered.Sts = optional(spec.STSTarget)
-			rendered.ThinkingLlm = optional(spec.SubagentTarget)
+			rendered.Subagent = optional(spec.SubagentTarget)
 			asked, voiceUsed := found.Voice()
 			rendered.Voice = optional(asked)
 			rendered.VoiceUsed = optional(voiceUsed)
@@ -760,7 +760,7 @@ func (s *Server) attachUsed(ctx context.Context, customerID string, call store.C
 			rendered.SttUsed = optional(stt)
 			rendered.LlmUsed = optional(llm)
 			rendered.TtsUsed = optional(tts)
-			rendered.ThinkingLlmUsed = optional(subagent)
+			rendered.SubagentUsed = optional(subagent)
 			rendered.StsUsed = optional(found.Speech())
 		}
 	}
@@ -782,14 +782,14 @@ func (s *Server) attachUsed(ctx context.Context, customerID string, call store.C
 		rendered.TtsUsed = firstUsed(rendered.TtsUsed, matchUsed(value(rendered.Tts), namesOf(used, "tts"), s.candidateNames(ctx, routing.TTS, value(rendered.Tts))))
 		rendered.LlmUsed = firstUsed(rendered.LlmUsed, matchUsed(value(rendered.Llm), namesOf(used, "llm"), s.candidateNames(ctx, routing.LLM, value(rendered.Llm))))
 	}
-	rendered.ThinkingLlmUsed = firstUsed(rendered.ThinkingLlmUsed, matchUsed(value(rendered.ThinkingLlm), namesOf(used, "llm"), s.candidateNames(ctx, routing.LLM, value(rendered.ThinkingLlm))))
+	rendered.SubagentUsed = firstUsed(rendered.SubagentUsed, matchUsed(value(rendered.Subagent), namesOf(used, "llm"), s.candidateNames(ctx, routing.LLM, value(rendered.Subagent))))
 }
 
 func filledUsed(call *Call) bool {
 	if value(call.Sts) != "" {
-		return call.StsUsed != nil && (value(call.ThinkingLlm) == "" || call.ThinkingLlmUsed != nil)
+		return call.StsUsed != nil && (value(call.Subagent) == "" || call.SubagentUsed != nil)
 	}
-	return call.SttUsed != nil && call.TtsUsed != nil && call.LlmUsed != nil && call.ThinkingLlmUsed != nil
+	return call.SttUsed != nil && call.TtsUsed != nil && call.LlmUsed != nil && call.SubagentUsed != nil
 }
 
 func firstUsed(existing *string, used string) *string {
@@ -812,7 +812,7 @@ func namesOf(used []store.UsedModel, modality string) []string {
 // matchUsed picks which of the used provider/models served a target. used is most-recent
 // first. candidates are the names that target can resolve to; when they are known only a
 // used model that is still a candidate is returned, which is how the voice model and the
-// thinking model are told apart when both wrote llm rows.
+// subagent are told apart when both wrote llm rows.
 func matchUsed(asked string, used []string, candidates []string) string {
 	if asked == "" || len(used) == 0 {
 		return ""

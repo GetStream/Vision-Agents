@@ -22,8 +22,9 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm/typesafe"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel/systemone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel/typesafe"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -250,7 +251,7 @@ func (s *FlowBenchmarkSuite) ask(
 
 // busy reports whether a failure is one that waiting fixes.
 func busy(err error) bool {
-	var refused *typesafe.StatusError
+	var refused *systemone.StatusError
 	if errors.As(err, &refused) {
 		return refused.Retryable()
 	}
@@ -498,7 +499,7 @@ func (s *FlowBenchmarkSuite) jevArms() []arm {
 		return nil
 	}
 
-	client, err := typesafe.New(typesafe.Options{
+	client, err := typesafe.New(systemone.Options{
 		Model:   jevModel,
 		Timeout: benchDeadline,
 		Logger:  slog.New(slog.DiscardHandler),
@@ -543,54 +544,54 @@ func (s *FlowBenchmarkSuite) jevArms() []arm {
 // jevDecomposed is every fact the conversation's policy turns on, each asked as its own yes or
 // no, which is how TypeSafe says its model is meant to be used: one well-scoped question at a
 // time, answered literally, with the combining done in code. No question asks what to do.
-func jevDecomposed() map[string]lcm.Question {
-	return map[string]lcm.Question{
-		"addressed_to_agent": lcm.Noul(
+func jevDecomposed() map[string]decisionmodel.Question {
+	return map[string]decisionmodel.Question{
+		"addressed_to_agent": decisionmodel.Noul(
 			"Were the words in `heard` meant for the agent described in `agent_was_told`?",
 			"Spoken to the agent, whether or not they are finished.",
 			"Spoken to somebody else in the room, to a pet or a child, read off a television, "+
 				"or otherwise not meant for the agent."),
-		"finished": lcm.Noul(
+		"finished": decisionmodel.Noul(
 			"Is `heard` a complete thought that now waits for the agent to reply?",
 			"The speaker has said what they meant to say and expects an answer.",
 			"The words stop part way through a sentence, a list, a number or a name, so "+
 				"more is coming."),
-		"still_growing": lcm.Noul(
+		"still_growing": decisionmodel.Noul(
 			"Does `heard` end part way through a number, an identifier or a time that the "+
 				"speaker is still reading out?",
 			"It ends mid-sequence, so more digits or words are still coming.",
 			"Whatever number it contains is complete, or it contains none."),
-		"recorded_menu": lcm.Noul(
+		"recorded_menu": decisionmodel.Noul(
 			"Is `heard` a recording reading out its options rather than a person talking?",
 			"An automated menu, hold message or greeting.",
 			"A person speaking, however stilted."),
-		"non_speech": lcm.Noul(
+		"non_speech": decisionmodel.Noul(
 			"Is `heard` a noise rather than words: a cough, a sneeze, a laugh, a door, "+
 				"static, or something else in the room?",
 			"A noise, or a transcriber's description of one.",
 			"Words the speaker meant to say, however short."),
-		"ambiguous": lcm.Noul(
+		"ambiguous": decisionmodel.Noul(
 			"Is what `heard` asks the agent to do impossible to act on without asking which "+
 				"thing the speaker means?",
 			"It points at something `conversation` does not pin down, such as \"the usual\", "+
 				"\"change it\" or \"put it back\" with nothing saying what it is.",
 			"What is wanted is clear from `heard` and `conversation`, or it asks for nothing."),
-		"echo": lcm.Noul(
+		"echo": decisionmodel.Noul(
 			"Is `heard` the agent's own words from `agent_has_said` coming back, word for word "+
 				"or nearly?",
 			"The same words the agent just said, as a line echoing back.",
 			"Words of the speaker's own."),
-		"acknowledgement": lcm.Noul(
+		"acknowledgement": decisionmodel.Noul(
 			"Is `heard` only a brief sign that the speaker is listening, such as \"yeah\", "+
 				"\"okay\" or \"right\"?",
 			"A listening noise that asks for nothing.",
 			"It says or asks something."),
-		"adds_to_request": lcm.Noul(
+		"adds_to_request": decisionmodel.Noul(
 			"Does `heard` add to what the speaker asked for, without contradicting what the "+
 				"agent is saying in `agent_has_said`?",
 			"An addition such as \"and Saturday as well\" or \"and put us on the patio\".",
 			"It corrects the agent, asks something unrelated, or adds nothing."),
-		"objects": lcm.Noul(
+		"objects": decisionmodel.Noul(
 			"Does `heard` correct the agent, tell it to stop or wait, or ask it something new, "+
 				"while it is saying `agent_has_said`?",
 			"A correction such as \"no, make it six\", \"that's the wrong date\", \"wait\", "+
@@ -601,7 +602,7 @@ func jevDecomposed() map[string]lcm.Question {
 
 // askJevDecomposed asks every fact at once over a trimmed state and decides in code.
 func (s *FlowBenchmarkSuite) askJevDecomposed(
-	ctx context.Context, client *typesafe.Client, set flowSet, one flowCase, attempt int,
+	ctx context.Context, client *systemone.Client, set flowSet, one flowCase, attempt int,
 ) (judgement, error) {
 	state := one.state(set.Contracts)
 	if said := state["conversation"].([]map[string]string); len(said) > jevRecentTurns {
@@ -609,7 +610,7 @@ func (s *FlowBenchmarkSuite) askJevDecomposed(
 	}
 
 	askedAt := time.Now()
-	answered, err := client.Classify(ctx, lcm.Request{State: state, Questions: jevDecomposed()})
+	answered, err := client.Classify(ctx, decisionmodel.Request{State: state, Questions: jevDecomposed()})
 	if err != nil {
 		return judgement{}, err
 	}
@@ -627,7 +628,7 @@ func (s *FlowBenchmarkSuite) askJevDecomposed(
 // decomposedOutcome is the conversation's policy written over facts rather than over a model's
 // choice of what to do. The order is the order of precedence: whether the words were speech,
 // then whether they were for the agent, then what they ask of it.
-func decomposedOutcome(one flowCase, answers map[string]lcm.Answer) flowOutcome {
+func decomposedOutcome(one flowCase, answers map[string]decisionmodel.Answer) flowOutcome {
 	yes := func(fact string) bool { return answers[fact].Yes >= jevNeutral }
 
 	if !one.AgentSpeaking {
@@ -663,9 +664,9 @@ func decomposedOutcome(one flowCase, answers map[string]lcm.Answer) flowOutcome 
 // The two choices, which are the two axes the conversation reads. Their options are described in
 // the words the production prompt uses, so what differs between the arms is the model and the
 // shape of the answer rather than the policy.
-func jevChoices() map[string]lcm.Question {
-	return map[string]lcm.Question{
-		"disposition": lcm.Choice(
+func jevChoices() map[string]decisionmodel.Question {
+	return map[string]decisionmodel.Question{
+		"disposition": decisionmodel.Choice(
 			"A voice agent is on a live call and has just heard `heard` from `speaker`. "+
 				"What should it do with those words?",
 			map[string]string{
@@ -680,7 +681,7 @@ func jevChoices() map[string]lcm.Question {
 		// Asked whether or not the agent is speaking. When it is not, the answer decides
 		// nothing and the code ignores it, which costs a few tokens and saves a round trip on
 		// the cases where it does decide.
-		"floor": lcm.Choice(
+		"floor": decisionmodel.Choice(
 			"Assume the agent is in the middle of saying `agent_has_said` out loud when "+
 				"`heard` arrives. Should it stop, cut its answer short, or carry on?",
 			map[string]string{
@@ -698,26 +699,26 @@ func jevChoices() map[string]lcm.Question {
 // jevComposed asks the two choices and, separately, the four judgements the conversation
 // already makes in code rather than leaving to a model. Splitting them out is what lets the
 // policy stay in Go: the model says what is true and the code says what to do about it.
-func jevComposed() map[string]lcm.Question {
+func jevComposed() map[string]decisionmodel.Question {
 	questions := jevChoices()
-	questions["addressed_to_agent"] = lcm.Noul(
+	questions["addressed_to_agent"] = decisionmodel.Noul(
 		"Were the words in `heard` meant for the agent described in `agent_was_told`?",
 		"Spoken to the agent, whether or not they are finished.",
 		"Spoken to somebody else in the room, to a pet or a child, read off a television, "+
 			"or otherwise not meant for the agent. `different_voice` being true is evidence "+
 			"of this without settling it, because a second person may have leaned in to "+
 			"answer for the caller.")
-	questions["still_growing"] = lcm.Noul(
+	questions["still_growing"] = decisionmodel.Noul(
 		"Does `heard` end part way through a number, an identifier or a time that the "+
 			"speaker is still reading out?",
 		"It ends mid-sequence, so more digits or words are still coming.",
 		"Whatever number it contains is complete, or it contains none.")
-	questions["recorded_menu"] = lcm.Noul(
+	questions["recorded_menu"] = decisionmodel.Noul(
 		"Is `heard` a recording reading out its options rather than a person talking?",
 		"An automated menu, hold message or greeting, which is one thought however long "+
 			"the pauses between its parts.",
 		"A person speaking, however stilted.")
-	questions["non_speech"] = lcm.Noul(
+	questions["non_speech"] = decisionmodel.Noul(
 		"Is `heard` a noise rather than words: a cough, a sneeze, a throat clear, a laugh, "+
 			"a door, static, or something else in the room?",
 		"A noise, or a transcriber's description of one.",
@@ -728,15 +729,15 @@ func jevComposed() map[string]lcm.Question {
 // askJev puts one case to Jev and reads the answers the way the arm's own policy says to.
 func (s *FlowBenchmarkSuite) askJev(
 	ctx context.Context,
-	client *typesafe.Client,
+	client *systemone.Client,
 	set flowSet,
 	one flowCase,
 	attempt int,
-	questions map[string]lcm.Question,
+	questions map[string]decisionmodel.Question,
 	composed bool,
 ) (judgement, error) {
 	askedAt := time.Now()
-	answered, err := client.Classify(ctx, lcm.Request{
+	answered, err := client.Classify(ctx, decisionmodel.Request{
 		State:     one.state(set.Contracts),
 		Questions: questions,
 	})
@@ -781,7 +782,7 @@ func (s *FlowBenchmarkSuite) askJev(
 // no longer measure.
 func composedOutcome(
 	one flowCase,
-	answers map[string]lcm.Answer,
+	answers map[string]decisionmodel.Answer,
 	disposition Disposition,
 	floor Floor,
 ) flowOutcome {

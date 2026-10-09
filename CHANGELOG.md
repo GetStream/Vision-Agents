@@ -2,6 +2,20 @@
 
 ## Breaking Changes
 
+### `lcm` is now `decision_model`, with ten models behind it
+
+The modality that answers typed questions with probabilities is called `decision_model`,
+the name the industry settled on. The `Modality` enum value `lcm` is now `decision_model`, so
+its providers are at `/v1/decision_model/providers` and its stats are under the new name.
+Stored stats are renamed by a migration. A guardrail.md says `type: decision_model`, and one
+that still says `type: lcm` keeps working.
+
+Besides TypeSafe's Jev, the router now reaches the top ten decision models on OpenRouter
+(`OPENROUTER_API_KEY`): Jev 1.13, GPT-6 Luna Decisions, Clef Flash, Clef, Span-01 Lite, d1,
+Kev 4B, Decider V1.1 and Mercury Decide, plus its free tier. It also reaches both Deciders on
+Perplexity's own API (`PERPLEXITY_API_KEY`), which is the only host left for Decider V1. The
+default route still prefers Jev. Clef is what the `*-high-accuracy` shortcuts now resolve to.
+
 ### Talking over the agent no longer cancels the tools it is running
 
 When the caller talked over a voice agent, every tool call still running was cancelled, and
@@ -61,31 +75,40 @@ well. Go returns a `*stream.RouterError` for `errors.As`. Swift's `AgentsError.h
 `HTTPFailure`, Rust's `Error::Router` a boxed `RouterFailure`, PHP names the code `errorCode`, and
 Python raises `RouterError` for a refused socket where it raised aiohttp's handshake error.
 
-### `plugins` is `agent_plugins`, and `plugin_options` moved onto each entry
+### `user_plugins` is folded into `plugins`, and `plugin_options` moved onto each entry
 
-An agent config's `plugins` is now `agent_plugins`, in `agent.yaml` and on `AgentConfig`,
-`AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest`. `plugin_options` is gone:
-each entry of `agent_plugins` and `user_plugins` is either a catalog id or an object
-`{name, readonly, scopes, toolsets, tools}` (`PluginEntry`, a `oneOf` of a string and a
-`PluginWithOptions`), and an entry with no options is answered as its id. The old keys are
-refused as unknown in `agent.yaml` and dropped by the API. A config now gets a 400 for an id
-the catalog does not have and for a plugin named twice in one list. A migration renames the
-column and folds the stored options into their entries; an option for a plugin named in
-neither list adds that plugin to `agent_plugins`.
+An agent config names its catalog plugins in one list, `plugins`, in `agent.yaml` and on
+`AgentConfig`, `AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest`. `user_plugins`
+and `plugin_options` are gone: each entry is either a catalog id or an object
+`{name, user, readonly, scopes, toolsets, tools}` (`PluginEntry`, a `oneOf` of a string and a
+`PluginWithOptions`), and an entry with no options is answered as its id. `user: true` has each
+end user connect their own account in the conversation, as it does on `mcp_servers`; left out,
+the app connects the plugin once. The old keys are refused as unknown in `agent.yaml` and
+dropped by the API. A config now gets a 400 for an id the catalog does not have and for a plugin
+named twice. A migration folds the stored options and the `user_plugins` entries into
+`plugins`; a plugin named in both lists stays the app's.
 
 ```yaml
-agent_plugins:
+plugins:
   - sentry
-user_plugins:
   - name: linear
+    user: true
     readonly: true
     scopes: [read]
-  - google_calendar
+  - name: google_calendar
+    user: true
 ```
 
 The Go SDK (`agents.PluginSettings`) and the Python folder reader (`PluginSettings` in
 `plugins/stream`) have moved, and the Python reader now accepts `scopes` and `user` on
 `mcp_servers`. Other SDKs follow.
+
+### `thinking_llm` is `subagent`
+
+The model a voice agent hands its skills to is `subagent` again, in `agent.yaml`, on agent
+configs and syncs, and on `Session` and call records, where `thinking_llm_used` is
+`subagent_used`. Python's `define_agent` takes `subagent=`. `thinking_llm` is refused as
+unknown in `agent.yaml`.
 
 ### `Dispatch.host` takes an agent and hosts its tools
 
@@ -595,7 +618,7 @@ startup is unaffected.
 
 ### Tools can be loaded progressively
 
-An agent config takes `progressive_tools`, a boolean that is off by default, and so does `agent.yaml`. When it is on, the model sees each plugin, MCP server and connector tool as the first line of its description, plus its argument schema with every description, title and example removed. The first time the model calls a tool, the router returns the full description and input schema instead of running the tool, and the model calls it again. Some servers put a page of instructions and examples into a tool's description; with this setting, that page is only paid for in conversations that use the tool. The cost is one extra model turn for each tool a conversation uses. User plugins are unchanged, since they already list their tools on demand. Go and Python read the key from `agent.yaml`, and JavaScript has the regenerated types; other SDKs follow.
+An agent config takes `tools: {progressive: true}`, off by default, and so does `agent.yaml`. `tools` is where later tool settings go. When it is on, the model sees each plugin, MCP server and connector tool as the first line of its description, plus its argument schema with every description, title and example removed. The first time the model calls a tool, the router returns the full description and input schema instead of running the tool, and the model calls it again. Some servers put a page of instructions and examples into a tool's description; with this setting, that page is only paid for in conversations that use the tool. The cost is one extra model turn for each tool a conversation uses. User plugins are unchanged, since they already list their tools on demand. Go and Python read the key from `agent.yaml`, and JavaScript has the regenerated types; other SDKs follow.
 
 ### A connector call waits out the provider's rate limit
 

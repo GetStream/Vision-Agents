@@ -29,6 +29,7 @@ from .agent_response_item_page import AgentResponseItemPage
 from .agent_response_item_payload import AgentResponseItemPayload
 from .agent_response_page import AgentResponsePage
 from .agent_response_status import AgentResponseStatus
+from .agent_tools import AgentTools
 from .app_settings import AppSettings
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
@@ -183,6 +184,8 @@ from .get_connector_client_metadata_response_200 import (
 )
 from .get_conversation_messages_response_200 import GetConversationMessagesResponse200
 from .granularity import Granularity
+from .greeting import Greeting
+from .greeting_mode import GreetingMode
 from .guest_user import GuestUser
 from .guest_user_custom import GuestUserCustom
 from .guest_user_request import GuestUserRequest
@@ -457,6 +460,7 @@ __all__ = (
     "AgentResponseItemPayload",
     "AgentResponsePage",
     "AgentResponseStatus",
+    "AgentTools",
     "AppSettings",
     "AttachNumberRequest",
     "AttachedNumber",
@@ -605,6 +609,8 @@ __all__ = (
     "GetConnectorClientMetadataResponse200",
     "GetConversationMessagesResponse200",
     "Granularity",
+    "Greeting",
+    "GreetingMode",
     "GuestUser",
     "GuestUserCustom",
     "GuestUserRequest",

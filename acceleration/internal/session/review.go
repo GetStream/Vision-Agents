@@ -15,7 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// defaultReviewTarget is what judges a call when the agent had no thinking model of its
+// defaultReviewTarget is what judges a call when the agent had no subagent of its
 // own. It is a quality tier rather than a fast one: nobody is waiting for this, and the
 // point of it is the judgement.
 const defaultReviewTarget = "multilingual-high-accuracy"

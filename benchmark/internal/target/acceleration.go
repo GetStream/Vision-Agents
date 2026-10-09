@@ -32,14 +32,18 @@ type accelToolsFile struct {
 }
 
 type accelSessionRequest struct {
-	CallID       string      `json:"call_id"`
-	CallType     string      `json:"call_type,omitempty"`
-	UserID       string      `json:"user_id,omitempty"`
-	Instructions string      `json:"instructions,omitempty"`
-	Greeting     string      `json:"greeting,omitempty"`
-	LLM          string      `json:"llm,omitempty"`
-	STT          string      `json:"stt,omitempty"`
-	Tools        []AccelTool `json:"tools"`
+	CallID       string        `json:"call_id"`
+	CallType     string        `json:"call_type,omitempty"`
+	UserID       string        `json:"user_id,omitempty"`
+	Instructions string        `json:"instructions,omitempty"`
+	Greeting     accelGreeting `json:"greeting"`
+	LLM          string        `json:"llm,omitempty"`
+	STT          string        `json:"stt,omitempty"`
+	Tools        []AccelTool   `json:"tools"`
+}
+
+type accelGreeting struct {
+	Text string `json:"text"`
 }
 
 type accelSession struct {
@@ -135,7 +139,7 @@ func (a *Acceleration) StartCall(ctx context.Context, callID string, callType st
 		CallType:     callType,
 		UserID:       "accel-agent",
 		Instructions: a.Instructions,
-		Greeting:     "Hello, how can I help?",
+		Greeting:     accelGreeting{Text: "Hello, how can I help?"},
 		LLM:          os.Getenv("VOICEBENCH_MODEL"),
 		STT:          os.Getenv("VOICEBENCH_STT"),
 		Tools:        a.Tools,

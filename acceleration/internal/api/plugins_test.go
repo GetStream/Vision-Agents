@@ -120,9 +120,8 @@ func (s *PluginsSuite) TestAPluginTheAgentNamesThatNobodyConnectedIsLeftToRemind
 	var agent AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
 		AgentConfigRequest{
-			Name:         "on-call-" + s.utils.uuid(),
-			AgentPlugins: pointerTo([]PluginEntry{{Name: "sentry"}}),
-			UserPlugins:  pointerTo([]PluginEntry{{Name: "google_calendar"}}),
+			Name:    "on-call-" + s.utils.uuid(),
+			Plugins: pointerTo([]PluginEntry{{Name: "sentry"}, {Name: "google_calendar", User: pointerTo(true)}}),
 		}, &agent))
 
 	var connections []PluginConnection
@@ -139,7 +138,7 @@ func (s *PluginsSuite) TestAPluginTheAgentNamesThatNobodyConnectedIsLeftToRemind
 	s.Require().NotNil(connections[1].ClientRequired)
 	s.True(*connections[1].ClientRequired, "Google registers no client on the fly")
 	s.Nil(connections[1].Client)
-	s.Equal([]PluginEntry{{Name: "google_calendar"}}, *agent.UserPlugins)
+	s.Equal([]PluginEntry{{Name: "sentry"}, {Name: "google_calendar"}}, *agent.Plugins)
 }
 
 func (s *PluginsSuite) TestAnAgentsClientSecretIsSealedAndNeverReturned() {
@@ -192,8 +191,8 @@ func (s *PluginsSuite) TestAPluginEachEndUserConnectsIsNotConnectedByTheApp() {
 	var agent AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
 		AgentConfigRequest{
-			Name:        "assistant-" + s.utils.uuid(),
-			UserPlugins: pointerTo([]PluginEntry{{Name: "linear"}}),
+			Name:    "assistant-" + s.utils.uuid(),
+			Plugins: pointerTo([]PluginEntry{{Name: "linear", User: pointerTo(true)}}),
 		}, &agent))
 
 	status, failure := s.serverClient.failure(http.MethodPost,
@@ -216,12 +215,14 @@ func (s *PluginsSuite) TestRemovingAPluginEachEndUserConnectsDropsItsClient() {
 	s.ErrorIs(err, store.ErrUnknownPluginClient)
 	var stored AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+agent.Id, nil, &stored))
-	s.Nil(stored.UserPlugins)
+	s.Nil(stored.Plugins)
 }
 
 func (s *PluginsSuite) TestASyncNamingAPluginNobodyCanConnectYetIsStoredWithAWarning() {
 	name := "assistant-" + s.utils.uuid()
-	sync := map[string]any{"name": name, "hash": "v1", "mode": "text", "user_plugins": []string{"linear", "google_calendar"}}
+	sync := map[string]any{"name": name, "hash": "v1", "mode": "text", "plugins": []any{
+		map[string]any{"name": "linear", "user": true}, map[string]any{"name": "google_calendar", "user": true},
+	}}
 
 	var synced SyncAgentResult
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sync", sync, &synced))
@@ -294,7 +295,7 @@ func (s *PluginsSuite) TestAnEndUsersLoginIsTheirsAloneAndSendsThemBackToTheConv
 	s.Equal(PluginConnectionStatusPending, connections[0].Status)
 	var stored AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+agent.Id, nil, &stored))
-	s.Nil(stored.AgentPlugins, "a user's login does not hand the plugin to every session")
+	s.Nil(stored.Plugins, "a user's login does not hand the plugin to every session")
 }
 
 func (s *PluginsSuite) TestTheLoginsOfAnAgentThatIsNotThereAreNotFound() {

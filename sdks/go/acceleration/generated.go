@@ -983,6 +983,24 @@ func (e Granularity) Valid() bool {
 	}
 }
 
+// Defines values for GreetingMode.
+const (
+	Exact     GreetingMode = "exact"
+	Variation GreetingMode = "variation"
+)
+
+// Valid indicates whether the value is a known member of the GreetingMode enum.
+func (e GreetingMode) Valid() bool {
+	switch e {
+	case Exact:
+		return true
+	case Variation:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Harness.
 const (
 	Default Harness = "default"
@@ -1276,26 +1294,26 @@ func (e LlmOptionsVerbosity) Valid() bool {
 
 // Defines values for Modality.
 const (
-	ModalityImage     Modality = "image"
-	ModalityKnowledge Modality = "knowledge"
-	ModalityLcm       Modality = "lcm"
-	ModalityLlm       Modality = "llm"
-	ModalityMemory    Modality = "memory"
-	ModalityPhone     Modality = "phone"
-	ModalitySearch    Modality = "search"
-	ModalitySts       Modality = "sts"
-	ModalityStt       Modality = "stt"
-	ModalityTts       Modality = "tts"
+	ModalityDecisionModel Modality = "decision_model"
+	ModalityImage         Modality = "image"
+	ModalityKnowledge     Modality = "knowledge"
+	ModalityLlm           Modality = "llm"
+	ModalityMemory        Modality = "memory"
+	ModalityPhone         Modality = "phone"
+	ModalitySearch        Modality = "search"
+	ModalitySts           Modality = "sts"
+	ModalityStt           Modality = "stt"
+	ModalityTts           Modality = "tts"
 )
 
 // Valid indicates whether the value is a known member of the Modality enum.
 func (e Modality) Valid() bool {
 	switch e {
+	case ModalityDecisionModel:
+		return true
 	case ModalityImage:
 		return true
 	case ModalityKnowledge:
-		return true
-	case ModalityLcm:
 		return true
 	case ModalityLlm:
 		return true
@@ -2450,8 +2468,6 @@ type AgentChannels struct {
 
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
-	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
-
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -2463,9 +2479,11 @@ type AgentConfig struct {
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
 	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
-	EpisodeCards *bool   `json:"episode_cards,omitempty"`
-	Greeting     *string `json:"greeting,omitempty"`
-	Guardrail    *string `json:"guardrail,omitempty"`
+	EpisodeCards *bool `json:"episode_cards,omitempty"`
+
+	// Greeting What the agent says as it joins, before anyone speaks.
+	Greeting  *Greeting `json:"greeting,omitempty"`
+	Guardrail *string   `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 	Harness            *Harness     `json:"harness,omitempty"`
@@ -2480,9 +2498,7 @@ type AgentConfig struct {
 	Mode         AgentMode      `json:"mode"`
 	Name         string         `json:"name"`
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
-
-	// ProgressiveTools Whether tools from plugins, MCP servers and connectors are offered by a summary, the first call to each returning its full description instead of running it.
-	ProgressiveTools *bool `json:"progressive_tools,omitempty"`
+	Plugins      *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2491,28 +2507,27 @@ type AgentConfig struct {
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 	Skills         *[]string       `json:"skills,omitempty"`
-	Speed          *float64        `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
-	Sts *string `json:"sts,omitempty"`
-	Stt *string `json:"stt,omitempty"`
+	Sts      *string `json:"sts,omitempty"`
+	Stt      *string `json:"stt,omitempty"`
+	Subagent *string `json:"subagent,omitempty"`
 
 	// SyncHash Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
-	SyncHash     *string            `json:"sync_hash,omitempty"`
-	Tags         *map[string]string `json:"tags,omitempty"`
-	ThinkingLlm  *string            `json:"thinking_llm,omitempty"`
-	Tts          *string            `json:"tts,omitempty"`
-	UpdatedAt    time.Time          `json:"updated_at"`
-	UserPlugins  *[]PluginEntry     `json:"user_plugins,omitempty"`
-	Video        *SessionVideo      `json:"video,omitempty"`
-	VisibleTools *[]string          `json:"visible_tools,omitempty"`
-	Voice        *string            `json:"voice,omitempty"`
+	SyncHash *string            `json:"sync_hash,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
+
+	// Tools How an agent is offered its plugin, MCP server and connector tools.
+	Tools        *AgentTools   `json:"tools,omitempty"`
+	Tts          *string       `json:"tts,omitempty"`
+	UpdatedAt    time.Time     `json:"updated_at"`
+	Video        *SessionVideo `json:"video,omitempty"`
+	VisibleTools *[]string     `json:"visible_tools,omitempty"`
+	Voice        *string       `json:"voice,omitempty"`
 }
 
 // AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
 type AgentConfigPatch struct {
-	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
-
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -2522,7 +2537,9 @@ type AgentConfigPatch struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch     *AgentDispatch `json:"dispatch,omitempty"`
 	EpisodeCards *bool          `json:"episode_cards,omitempty"`
-	Greeting     *string        `json:"greeting,omitempty"`
+
+	// Greeting What the agent says as it joins, before anyone speaks.
+	Greeting *Greeting `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.
 	Guardrail *string `json:"guardrail,omitempty"`
@@ -2539,9 +2556,9 @@ type AgentConfigPatch struct {
 	Mode *AgentMode `json:"mode,omitempty"`
 
 	// Name What the config is called, which is unique among the customer's own.
-	Name             *string        `json:"name,omitempty"`
-	PluginEvents     *[]PluginEvent `json:"plugin_events,omitempty"`
-	ProgressiveTools *bool          `json:"progressive_tools,omitempty"`
+	Name         *string        `json:"name,omitempty"`
+	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+	Plugins      *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2550,18 +2567,17 @@ type AgentConfigPatch struct {
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 	Skills         *[]string       `json:"skills,omitempty"`
+	Sts            *string         `json:"sts,omitempty"`
+	Stt            *string         `json:"stt,omitempty"`
 
-	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
-	Speed *float64           `json:"speed,omitempty"`
-	Sts   *string            `json:"sts,omitempty"`
-	Stt   *string            `json:"stt,omitempty"`
-	Tags  *map[string]string `json:"tags,omitempty"`
+	// Subagent Only a voice agent names one. Switching an agent to text drops it.
+	Subagent *string            `json:"subagent,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
 
-	// ThinkingLlm Only a voice agent names one. Switching an agent to text drops it.
-	ThinkingLlm *string        `json:"thinking_llm,omitempty"`
-	Tts         *string        `json:"tts,omitempty"`
-	UserPlugins *[]PluginEntry `json:"user_plugins,omitempty"`
-	Video       *SessionVideo  `json:"video,omitempty"`
+	// Tools How an agent is offered its plugin, MCP server and connector tools.
+	Tools *AgentTools   `json:"tools,omitempty"`
+	Tts   *string       `json:"tts,omitempty"`
+	Video *SessionVideo `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -2570,9 +2586,6 @@ type AgentConfigPatch struct {
 
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
-	// AgentPlugins Hosted MCP servers this agent may reach with the app's own login, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for.
-	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
-
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -2583,10 +2596,12 @@ type AgentConfigRequest struct {
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
 	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
-	EpisodeCards *bool   `json:"episode_cards,omitempty"`
-	Greeting     *string `json:"greeting,omitempty"`
+	EpisodeCards *bool `json:"episode_cards,omitempty"`
 
-	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
+	// Greeting What the agent says as it joins, before anyone speaks.
+	Greeting *Greeting `json:"greeting,omitempty"`
+
+	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
@@ -2614,8 +2629,8 @@ type AgentConfigRequest struct {
 	// PluginEvents MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
-	// ProgressiveTools Whether the agent is offered its plugin, MCP server and connector tools by the first line of each one's description, with its arguments' descriptions left out, and the first call to a tool returns its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
-	ProgressiveTools *bool `json:"progressive_tools,omitempty"`
+	// Plugins Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2629,27 +2644,22 @@ type AgentConfigRequest struct {
 	// Skills Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set.
 	Skills *[]string `json:"skills,omitempty"`
 
-	// Speed Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
-	//
-	// Example: 0.9
-	Speed *float64 `json:"speed,omitempty"`
-
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts *string `json:"sts,omitempty"`
 
 	// Stt A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it.
 	Stt *string `json:"stt,omitempty"`
 
+	// Subagent The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent.
+	Subagent *string `json:"subagent,omitempty"`
+
 	// Tags Cost labels, carried onto every request a session using it makes.
 	Tags *map[string]string `json:"tags,omitempty"`
 
-	// ThinkingLlm The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default thinking model.
-	ThinkingLlm *string `json:"thinking_llm,omitempty"`
-	Tts         *string `json:"tts,omitempty"`
-
-	// UserPlugins Hosted MCP servers each end user connects with their own account, named from the built-in catalog like agent_plugins. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
-	UserPlugins *[]PluginEntry `json:"user_plugins,omitempty"`
-	Video       *SessionVideo  `json:"video,omitempty"`
+	// Tools How an agent is offered its plugin, MCP server and connector tools.
+	Tools *AgentTools   `json:"tools,omitempty"`
+	Tts   *string       `json:"tts,omitempty"`
+	Video *SessionVideo `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -2795,6 +2805,12 @@ type AgentResponsePage struct {
 
 	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
 	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// AgentTools How an agent is offered its plugin, MCP server and connector tools.
+type AgentTools struct {
+	// Progressive Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
+	Progressive *bool `json:"progressive,omitempty"`
 }
 
 // AppSettings What the router does for the calling app. It never carries a secret.
@@ -3162,16 +3178,16 @@ type Call struct {
 	// SttUsed The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over.
 	SttUsed *string `json:"stt_used,omitempty"`
 
+	// Subagent The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too.
+	Subagent *string `json:"subagent,omitempty"`
+
+	// SubagentUsed The provider/model delegated work ran on. Empty when nothing was handed over, or when the subagent was never reached.
+	SubagentUsed *string `json:"subagent_used,omitempty"`
+
 	// Summary What a model made of the call, written once it was over.
-	Summary *string            `json:"summary,omitempty"`
-	Tags    *map[string]string `json:"tags,omitempty"`
-
-	// ThinkingLlm The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too.
-	ThinkingLlm *string `json:"thinking_llm,omitempty"`
-
-	// ThinkingLlmUsed The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached.
-	ThinkingLlmUsed *string `json:"thinking_llm_used,omitempty"`
-	ToNumber        *string `json:"to_number,omitempty"`
+	Summary  *string            `json:"summary,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
+	ToNumber *string            `json:"to_number,omitempty"`
 
 	// Tts The voice target, on the same terms as stt.
 	Tts *string `json:"tts,omitempty"`
@@ -3919,7 +3935,7 @@ type ConnectorEventDestination struct {
 	ConnectorId *string    `json:"connector_id,omitempty"`
 	CreatedAt   *time.Time `json:"created_at,omitempty"`
 
-	// Forward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+	// Forward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there. A Slack reply that does not mention the bot, in a thread the agent is not in yet, is unhandled when it arrives. If the mention that starts the thread arrives within 10 minutes, as when Slack retries the mention, the agent answers the reply too. The forward is not taken back, and no event says that the agent answered it.
 	Forward ConnectorEventForward `json:"forward"`
 	Id      *string               `json:"id,omitempty"`
 
@@ -3942,7 +3958,7 @@ type ConnectorEventDestinationPage struct {
 
 // ConnectorEventDestinationRequest An event destination to create. An unknown field is refused rather than ignored.
 type ConnectorEventDestinationRequest struct {
-	// Forward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+	// Forward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there. A Slack reply that does not mention the bot, in a thread the agent is not in yet, is unhandled when it arrives. If the mention that starts the thread arrives within 10 minutes, as when Slack retries the mention, the agent answers the reply too. The forward is not taken back, and no event says that the agent answered it.
 	Forward ConnectorEventForward `json:"forward"`
 
 	// Url A public https URL. One that is or resolves to a private, loopback or link-local address is refused.
@@ -3958,7 +3974,7 @@ type ConnectorEventDestinationSecret struct {
 	Secret string `json:"secret"`
 }
 
-// ConnectorEventForward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+// ConnectorEventForward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there. A Slack reply that does not mention the bot, in a thread the agent is not in yet, is unhandled when it arrives. If the mention that starts the thread arrives within 10 minutes, as when Slack retries the mention, the agent answers the reply too. The forward is not taken back, and no event says that the agent answered it.
 type ConnectorEventForward string
 
 // ConnectorInput defines model for ConnectorInput.
@@ -4181,8 +4197,8 @@ type CreateSessionRequest struct {
 	// Description A longer note about the conversation, searched alongside the title.
 	Description *string `json:"description,omitempty"`
 
-	// Greeting Said on joining without going through the model. Empty means the agent waits to be spoken to.
-	Greeting *string `json:"greeting,omitempty"`
+	// Greeting What the agent says as it joins, before anyone speaks.
+	Greeting *Greeting `json:"greeting,omitempty"`
 
 	// History The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
 	History *[]HistoryMessage `json:"history,omitempty"`
@@ -4457,6 +4473,18 @@ type GeneratedImageMediaType string
 
 // Granularity defines model for Granularity.
 type Granularity string
+
+// Greeting What the agent says as it joins, before anyone speaks.
+type Greeting struct {
+	// Mode exact says the text word for word. variation has the model say its own variation of it on every call, so callers do not hear the same opening each time. A speech-to-speech model cannot say exact words, so it always says its own rendering of the text.
+	Mode *GreetingMode `json:"mode,omitempty"`
+
+	// Text What the agent says on joining. Empty means the agent waits to be spoken to.
+	Text string `json:"text"`
+}
+
+// GreetingMode exact says the text word for word. variation has the model say its own variation of it on every call, so callers do not hear the same opening each time. A speech-to-speech model cannot say exact words, so it always says its own rendering of the text.
+type GreetingMode string
 
 // GuestUser defines model for GuestUser.
 type GuestUser struct {
@@ -4914,7 +4942,7 @@ type McpServer struct {
 	// Url Its Streamable HTTP endpoint, over https.
 	Url string `json:"url"`
 
-	// User Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for user_plugins, rather than the app once, from the dashboard. Only a server that needs a login may set it.
+	// User Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
 	User *bool `json:"user,omitempty"`
 }
 
@@ -4942,7 +4970,7 @@ type MessageContent0 = string
 // MessageContent1 defines model for MessageContent.1.
 type MessageContent1 = []ContentPart
 
-// Modality What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// Modality What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 type Modality string
 
 // ModelCallTiming defines model for ModelCallTiming.
@@ -5255,7 +5283,7 @@ type PluginConnection struct {
 	// Status The app's login. Always not_connected for a plugin with user, which the app does not log into.
 	Status PluginConnectionStatus `json:"status"`
 
-	// User True when the config names the plugin under user_plugins only: each end user connects their own account in the conversation.
+	// User True when the config names the plugin with user: each end user connects their own account in the conversation.
 	User *bool `json:"user,omitempty"`
 }
 
@@ -5281,7 +5309,7 @@ type PluginEvent struct {
 	// Instructions What the agent does with the event when it arrives, added to its instructions for that conversation.
 	Instructions *string `json:"instructions,omitempty"`
 
-	// Plugin A catalog plugin the config names under agent_plugins or user_plugins.
+	// Plugin A catalog plugin the config names under plugins.
 	Plugin string `json:"plugin"`
 }
 
@@ -5310,6 +5338,9 @@ type PluginWithOptions struct {
 
 	// Toolsets Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
 	Toolsets *[]string `json:"toolsets,omitempty"`
+
+	// User Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
+	User *bool `json:"user,omitempty"`
 }
 
 // Policy What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off.
@@ -5325,7 +5356,7 @@ type Policy struct {
 	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
 
-	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
+	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
 
 	// RequireOwnStreamApp Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
@@ -5792,12 +5823,12 @@ type Session struct {
 	// Stt The provider and model transcribing, once somebody has been heard.
 	Stt *string `json:"stt,omitempty"`
 
-	// Text The conversation is held in writing rather than on a call.
-	Text *bool `json:"text,omitempty"`
+	// Subagent The provider and model delegated work runs on.
+	Subagent *string `json:"subagent,omitempty"`
 
-	// ThinkingLlm The provider and model delegated work runs on.
-	ThinkingLlm *string `json:"thinking_llm,omitempty"`
-	Title       *string `json:"title,omitempty"`
+	// Text The conversation is held in writing rather than on a call.
+	Text  *bool   `json:"text,omitempty"`
+	Title *string `json:"title,omitempty"`
 
 	// Tts The provider and model speaking.
 	Tts    *string       `json:"tts,omitempty"`
@@ -6011,7 +6042,7 @@ type SetPluginClientRequest struct {
 	// ClientSecret The client secret the provider issued. Left out for a public client.
 	ClientSecret *string `json:"client_secret,omitempty"`
 
-	// User Also name the plugin under the config's user_plugins, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it under agent_plugins.
+	// User Also name the plugin under the config's plugins with user, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it as the app's.
 	User *bool `json:"user,omitempty"`
 }
 
@@ -6647,9 +6678,6 @@ type SttOptions struct {
 
 // SyncAgentRequest An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 type SyncAgentRequest struct {
-	// AgentPlugins Plugins the agent reaches with the app's own login: a catalog id, or an object naming it with how it is reached.
-	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
-
 	// BaseChange The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
 	BaseChange *string `json:"base_change,omitempty"`
 
@@ -6664,7 +6692,9 @@ type SyncAgentRequest struct {
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
-	Greeting *string        `json:"greeting,omitempty"`
+
+	// Greeting What the agent says as it joins, before anyone speaks.
+	Greeting *Greeting `json:"greeting,omitempty"`
 
 	// Guardrail The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`
@@ -6694,8 +6724,8 @@ type SyncAgentRequest struct {
 	// PluginEvents MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
-	// ProgressiveTools Whether plugin, MCP server and connector tools are offered by a summary, the first call to each returning its full description and input schema instead of running it.
-	ProgressiveTools *bool `json:"progressive_tools,omitempty"`
+	// Plugins Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
+	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -6708,22 +6738,19 @@ type SyncAgentRequest struct {
 	Simulations *[]SimulationDeclaration `json:"simulations,omitempty"`
 	Skills      *[]SkillRequest          `json:"skills,omitempty"`
 
-	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
-	Speed *float64 `json:"speed,omitempty"`
-
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
-	Sts  *string            `json:"sts,omitempty"`
-	Stt  *string            `json:"stt,omitempty"`
-	Tags *map[string]string `json:"tags,omitempty"`
+	Sts *string `json:"sts,omitempty"`
+	Stt *string `json:"stt,omitempty"`
 
-	// ThinkingLlm Only a voice agent names one: a text agent runs everything on its llm.
-	ThinkingLlm *string `json:"thinking_llm,omitempty"`
-	Tts         *string `json:"tts,omitempty"`
+	// Subagent Only a voice agent names one: a text agent runs everything on its llm.
+	Subagent *string            `json:"subagent,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
 
-	// UserPlugins Plugins each end user connects with their own account, from the conversation, the first time the agent needs one. Each is named like agent_plugins.
-	UserPlugins *[]PluginEntry `json:"user_plugins,omitempty"`
-	Video       *SessionVideo  `json:"video,omitempty"`
-	Voice       *string        `json:"voice,omitempty"`
+	// Tools How an agent is offered its plugin, MCP server and connector tools.
+	Tools *AgentTools   `json:"tools,omitempty"`
+	Tts   *string       `json:"tts,omitempty"`
+	Video *SessionVideo `json:"video,omitempty"`
+	Voice *string       `json:"voice,omitempty"`
 }
 
 // SyncAgentResult defines model for SyncAgentResult.
@@ -8758,7 +8785,7 @@ type ClientInterface interface {
 
 	// ListConfigPlugins The plugin logins this agent holds
 	//
-	// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+	// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
 	//
 	// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
 	ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10072,7 +10099,7 @@ type ClientInterface interface {
 
 	// ClassifyWithBody Ask a classifier typed questions about a piece of text
 	//
-	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+	// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 	// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 	// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 	//
@@ -10083,7 +10110,7 @@ type ClientInterface interface {
 
 	// Classify Ask a classifier typed questions about a piece of text
 	//
-	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+	// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 	// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 	// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 	//
@@ -11626,7 +11653,7 @@ func (c *Client) GetAgentChanges(ctx context.Context, id string, reqEditors ...R
 
 // ListConfigPlugins The plugin logins this agent holds
 //
-// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
 //
 // Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
 func (c *Client) ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -14360,7 +14387,7 @@ func (c *Client) QueryAudit(ctx context.Context, body QueryAuditJSONRequestBody,
 
 // ClassifyWithBody Ask a classifier typed questions about a piece of text
 //
-// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 // Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 // A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 //
@@ -14381,7 +14408,7 @@ func (c *Client) ClassifyWithBody(ctx context.Context, contentType string, body 
 
 // Classify Ask a classifier typed questions about a piece of text
 //
-// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 // Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 // A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 //
@@ -26051,7 +26078,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListConfigPluginsWithResponse The plugin logins this agent holds
 	//
-	// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+	// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27507,7 +27534,7 @@ type ClientWithResponsesInterface interface {
 
 	// ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
 	//
-	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+	// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 	// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 	// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 	//
@@ -27518,7 +27545,7 @@ type ClientWithResponsesInterface interface {
 
 	// ClassifyWithResponse Ask a classifier typed questions about a piece of text
 	//
-	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+	// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 	// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 	// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 	//
@@ -44136,7 +44163,7 @@ func (c *ClientWithResponses) GetAgentChangesWithResponse(ctx context.Context, i
 
 // ListConfigPluginsWithResponse The plugin logins this agent holds
 //
-// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -46444,7 +46471,7 @@ func (c *ClientWithResponses) QueryAuditWithResponse(ctx context.Context, body Q
 
 // ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
 //
-// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 // Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 // A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 //
@@ -46461,7 +46488,7 @@ func (c *ClientWithResponses) ClassifyWithBodyWithResponse(ctx context.Context, 
 
 // ClassifyWithResponse Ask a classifier typed questions about a piece of text
 //
-// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 // Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 // A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 //

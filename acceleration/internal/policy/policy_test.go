@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -29,16 +29,16 @@ type classifier struct {
 	err error
 }
 
-func (c *classifier) Classify(_ context.Context, request lcm.Request) (lcm.Result, error) {
+func (c *classifier) Classify(_ context.Context, request decisionmodel.Request) (decisionmodel.Result, error) {
 	if c.err != nil {
-		return lcm.Result{}, c.err
+		return decisionmodel.Result{}, c.err
 	}
-	answers := map[string]lcm.Answer{}
+	answers := map[string]decisionmodel.Answer{}
 	for id := range request.Questions {
-		answers[id] = lcm.Answer{Type: lcm.TypeNoul, Yes: 0.01}
+		answers[id] = decisionmodel.Answer{Type: decisionmodel.TypeNoul, Yes: 0.01}
 	}
-	answers["prompt_extraction"] = lcm.Answer{Type: lcm.TypeNoul, Yes: c.yes}
-	return lcm.Result{Model: "judge-1.0", Answers: answers}, nil
+	answers["prompt_extraction"] = decisionmodel.Answer{Type: decisionmodel.TypeNoul, Yes: c.yes}
+	return decisionmodel.Result{Model: "judge-1.0", Answers: answers}, nil
 }
 
 func (c *classifier) Start(context.Context) error { return nil }
@@ -96,10 +96,10 @@ func (s *PolicySuite) save(scope store.PolicyScope, id string, document store.Po
 	s.Require().NoError(s.enforcer.Save(s.ctx, scope, id, document))
 }
 
-func (s *PolicySuite) router(provider *classifier) *lcmrouter.Router {
-	registry := lcmrouter.NewRegistry()
-	registry.Register("stub", func(routing.Spec) (lcm.Provider, error) { return provider, nil })
-	router, err := lcmrouter.New(lcmrouter.Options{
+func (s *PolicySuite) router(provider *classifier) *decisionrouter.Router {
+	registry := decisionrouter.NewRegistry()
+	registry.Register("stub", func(routing.Spec) (decisionmodel.Provider, error) { return provider, nil })
+	router, err := decisionrouter.New(decisionrouter.Options{
 		Config: routing.ModalityConfig{
 			Providers: []routing.ProviderConfig{{
 				Provider: "stub", Model: "judge", Languages: []string{"en"},

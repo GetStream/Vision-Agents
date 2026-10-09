@@ -77,7 +77,7 @@ config = await stream.define_agent(
     name="docs-agent",
     instructions=INSTRUCTIONS,
     llm="llm-fast",
-    thinking_llm="llm-smart",
+    subagent="llm-smart",
     skills=SKILLS,
     knowledge="docs",
 )
@@ -91,7 +91,7 @@ the dashboard without any of them repeating the configuration.
 `define_agent` finds the config and its skills by name before writing, so running the
 example twice edits what is stored rather than storing another copy of it.
 
-Without a `thinking_llm` the fast model answers everything itself and the skills mean nothing,
+Without a `subagent` the fast model answers everything itself and the skills mean nothing,
 because there is nobody to hand the work to.
 
 ### Skills are prompts for a slower model

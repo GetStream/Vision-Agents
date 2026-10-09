@@ -19,10 +19,10 @@ A text agent on most of the router's plugin catalog, plus Blender in the router'
 TableJourney, which knows where to eat, is an MCP server the router has never heard of.
 
 `agent.yaml` is where all of it is set up, and each kind is set up differently. Sentry,
-GitHub, HubSpot and Salesforce are under `agent_plugins`: the company connects each once,
-on the dashboard, and every conversation reads the same accounts. Linear, Google Calendar,
-Drive and Docs, Calendly, Cal.com and Slack are under `user_plugins`: each person connects
-their own, and the agent asks for one in the conversation the first time it needs it. In a
+GitHub, HubSpot and Salesforce are under `plugins`: the company connects each once, on the
+dashboard, and every conversation reads the same accounts. Linear, Google Calendar, Drive
+and Docs, Calendly, Cal.com and Slack are there too, and since they reach a person's own
+account the catalog has each person connect their own, and the agent asks for one in the conversation the first time it needs it. In a
 chat that request is a `plugin_authorization` attachment, a button with the plugin's logo on
 it; here it is the URL, printed. Blender is no MCP server at all: `sandbox_options` builds it into the
 router's Daytona sandbox, and `skills/render.md` is what the subagent writes its scene

@@ -242,11 +242,17 @@ func (b *Bridge) Close() {
 // called then, for those destinations to have it (AI-924).
 //
 // A message that links its thread brings the replies that waited for that link (take), which
-// are handled after it, in this delivery.
+// are handled after it, in this delivery. unanswered is not called for them: each came in a
+// delivery of its own, which no agent answered then, so those destinations got that delivery
+// when it arrived (AI-1001). This delivery is not the one that carries them.
 func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage, unanswered func()) (answered bool, err error) {
 	queue := slices.Clone(messages)
 	for i := 0; i < len(queue); i++ {
 		message := queue[i]
+		failed := unanswered
+		if i >= len(messages) {
+			failed = nil
+		}
 		thread, config, fresh, waited, err := b.take(ctx, app, &message)
 		if err != nil {
 			return false, err
@@ -286,8 +292,8 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		b.working.Add(1)
 		go func() {
 			defer b.working.Done()
-			if !b.write(thread, config, episode, message) && unanswered != nil {
-				unanswered()
+			if !b.write(thread, config, episode, message) && failed != nil {
+				failed()
 			}
 		}()
 	}

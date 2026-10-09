@@ -1,34 +1,37 @@
-package lcmrouter
+package decisionrouter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
 // stubClassifier stands in for a real provider so routing can be driven without credentials.
 type stubClassifier struct {
 	model    string
-	answered lcm.Result
+	answered decisionmodel.Result
 	err      error
 
-	asked  []lcm.Request
+	asked  []decisionmodel.Request
 	closed bool
 }
 
 func (s *stubClassifier) Classify(
-	_ context.Context, request lcm.Request,
-) (lcm.Result, error) {
+	_ context.Context, request decisionmodel.Request,
+) (decisionmodel.Result, error) {
 	s.asked = append(s.asked, request)
 	if s.err != nil {
-		return lcm.Result{}, s.err
+		return decisionmodel.Result{}, s.err
 	}
 	return s.answered, nil
 }
@@ -74,7 +77,7 @@ func (s *ClassifierRouterSuite) config() routing.ModalityConfig {
 }
 
 func (s *ClassifierRouterSuite) newRouter(
-	factories map[string]routing.Factory[lcm.Provider],
+	factories map[string]routing.Factory[decisionmodel.Provider],
 ) *Router {
 	registry := NewRegistry()
 	for name, factory := range factories {
@@ -92,29 +95,29 @@ func (s *ClassifierRouterSuite) newRouter(
 }
 
 // allowed is an answer to one noul, which is the shape a guardrail asks for.
-func allowed(probability float64) lcm.Result {
-	return lcm.Result{
+func allowed(probability float64) decisionmodel.Result {
+	return decisionmodel.Result{
 		Model: "judge-1.0",
-		Answers: map[string]lcm.Answer{
-			"violates": {Type: lcm.TypeNoul, Yes: probability},
+		Answers: map[string]decisionmodel.Answer{
+			"violates": {Type: decisionmodel.TypeNoul, Yes: probability},
 		},
-		Usage: lcm.Usage{InputTokens: 312},
+		Usage: decisionmodel.Usage{InputTokens: 312},
 	}
 }
 
 func (s *ClassifierRouterSuite) TestATargetResolvesAndAnswers() {
 	provider := &stubClassifier{model: "judge", answered: allowed(0.92)}
-	router := s.newRouter(map[string]routing.Factory[lcm.Provider]{
-		"quick": func(routing.Spec) (lcm.Provider, error) { return provider, nil },
+	router := s.newRouter(map[string]routing.Factory[decisionmodel.Provider]{
+		"quick": func(routing.Spec) (decisionmodel.Provider, error) { return provider, nil },
 	})
 
 	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "classify-fast"})
 	s.Require().NoError(err)
 
-	answered, err := session.Classify(s.ctx, lcm.Request{
+	answered, err := session.Classify(s.ctx, decisionmodel.Request{
 		State: "how do I make a pizza",
-		Questions: map[string]lcm.Question{
-			"violates": lcm.Noul("Is this off topic?", "", ""),
+		Questions: map[string]decisionmodel.Question{
+			"violates": decisionmodel.Noul("Is this off topic?", "", ""),
 		},
 	})
 	s.Require().NoError(err)
@@ -130,8 +133,8 @@ func (s *ClassifierRouterSuite) TestNamingNoTargetTakesTheFastRoute() {
 	// A judgement on the live path of a conversation is wanted quickly above all else, so
 	// a caller who says nothing gets the low-latency tier rather than a refusal.
 	provider := &stubClassifier{model: "judge", answered: allowed(0.1)}
-	router := s.newRouter(map[string]routing.Factory[lcm.Provider]{
-		"quick": func(routing.Spec) (lcm.Provider, error) { return provider, nil },
+	router := s.newRouter(map[string]routing.Factory[decisionmodel.Provider]{
+		"quick": func(routing.Spec) (decisionmodel.Provider, error) { return provider, nil },
 	})
 
 	session, err := router.Start(s.ctx, Request{CustomerID: "acme"})
@@ -144,11 +147,11 @@ func (s *ClassifierRouterSuite) TestAProviderWithoutAKeyDropsToTheNextCandidate(
 	// A provider is built when the session opens, so a deployment holding a key for one
 	// of two still judges rather than refusing every turn it was meant to screen.
 	spare := &stubClassifier{model: "judge"}
-	router := s.newRouter(map[string]routing.Factory[lcm.Provider]{
-		"quick": func(routing.Spec) (lcm.Provider, error) {
+	router := s.newRouter(map[string]routing.Factory[decisionmodel.Provider]{
+		"quick": func(routing.Spec) (decisionmodel.Provider, error) {
 			return nil, errors.New("QUICK_API_KEY is required")
 		},
-		"spare": func(routing.Spec) (lcm.Provider, error) { return spare, nil },
+		"spare": func(routing.Spec) (decisionmodel.Provider, error) { return spare, nil },
 	})
 
 	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "classify-fast"})
@@ -158,11 +161,11 @@ func (s *ClassifierRouterSuite) TestAProviderWithoutAKeyDropsToTheNextCandidate(
 }
 
 func (s *ClassifierRouterSuite) TestNoProviderAtAllSaysWhatEachOneComplainedAbout() {
-	router := s.newRouter(map[string]routing.Factory[lcm.Provider]{
-		"quick": func(routing.Spec) (lcm.Provider, error) {
+	router := s.newRouter(map[string]routing.Factory[decisionmodel.Provider]{
+		"quick": func(routing.Spec) (decisionmodel.Provider, error) {
 			return nil, errors.New("QUICK_API_KEY is required")
 		},
-		"spare": func(routing.Spec) (lcm.Provider, error) {
+		"spare": func(routing.Spec) (decisionmodel.Provider, error) {
 			return nil, errors.New("SPARE_API_KEY is required")
 		},
 	})
@@ -179,16 +182,16 @@ func (s *ClassifierRouterSuite) TestAJudgementThatFailedIsReportedRatherThanRetr
 	// this judgement is holding, and a second provider's latency on top of the first one's
 	// failure is a longer silence than letting the turn's own policy decide.
 	provider := &stubClassifier{model: "judge", err: errors.New("rate limited")}
-	router := s.newRouter(map[string]routing.Factory[lcm.Provider]{
-		"quick": func(routing.Spec) (lcm.Provider, error) { return provider, nil },
+	router := s.newRouter(map[string]routing.Factory[decisionmodel.Provider]{
+		"quick": func(routing.Spec) (decisionmodel.Provider, error) { return provider, nil },
 	})
 
 	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "classify-fast"})
 	s.Require().NoError(err)
 
-	_, err = session.Classify(s.ctx, lcm.Request{
+	_, err = session.Classify(s.ctx, decisionmodel.Request{
 		State:     "anything",
-		Questions: map[string]lcm.Question{"violates": lcm.Noul("Off topic?", "", "")},
+		Questions: map[string]decisionmodel.Question{"violates": decisionmodel.Noul("Off topic?", "", "")},
 	})
 
 	s.ErrorContains(err, "rate limited")
@@ -197,8 +200,8 @@ func (s *ClassifierRouterSuite) TestAJudgementThatFailedIsReportedRatherThanRetr
 
 func (s *ClassifierRouterSuite) TestClosingASessionClosesTheProvider() {
 	provider := &stubClassifier{model: "judge"}
-	router := s.newRouter(map[string]routing.Factory[lcm.Provider]{
-		"quick": func(routing.Spec) (lcm.Provider, error) { return provider, nil },
+	router := s.newRouter(map[string]routing.Factory[decisionmodel.Provider]{
+		"quick": func(routing.Spec) (decisionmodel.Provider, error) { return provider, nil },
 	})
 
 	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "classify-fast"})
@@ -215,8 +218,8 @@ func (s *ClassifierRouterSuite) TestTheDefaultRegistryHasEveryProviderTheConfigD
 	config, err := routing.DefaultConfig()
 	s.Require().NoError(err)
 
-	section, ok := config[routing.LCM]
-	s.Require().True(ok, "lcm is a routed modality")
+	section, ok := config[routing.DecisionModel]
+	s.Require().True(ok, "decision_model is a routed modality")
 
 	registry := DefaultRegistry()
 	for _, provider := range section.Providers {
@@ -231,6 +234,53 @@ func (s *ClassifierRouterSuite) TestTheDefaultConfigOffersTheRouteAGuardrailAsks
 	config, err := routing.DefaultConfig()
 	s.Require().NoError(err)
 
-	section := config[routing.LCM]
+	section := config[routing.DecisionModel]
 	s.Contains(section.Aliases, "classify-fast")
+}
+
+func (s *ClassifierRouterSuite) TestTheGuardrailRouteStaysOnJevWhileJevIsUp() {
+	// Every guardrail threshold in use was tuned against Jev. Ten models share the fast
+	// tier, and health alone would hand a guardrail to whichever answered quickest last.
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+
+	s.Equal("typesafe/jev-latest", config[routing.DecisionModel].Aliases["classify-fast"].Prefer)
+}
+
+func (s *ClassifierRouterSuite) TestEachVendorIsAskedAtItsOwnEndpointWithItsOwnKey() {
+	// The vendors share a protocol, so the one thing that tells them apart on the wire is
+	// where the questions go and which key opens it.
+	vendors := map[string]struct{ keyEnv, baseEnv, path, model string }{
+		"typesafe":   {"TYPESAFE_API_KEY", "TYPESAFE_BASE_URL", "/v1/systemone", "jev-latest"},
+		"openrouter": {"OPENROUTER_API_KEY", "OPENROUTER_BASE_URL", "/api/alpha/decisions", "cloudflare/clef-flash"},
+		"perplexity": {"PERPLEXITY_API_KEY", "PERPLEXITY_BASE_URL", "/v1/decisions", "pplx-decider-v1-27b"},
+	}
+	for provider, vendor := range vendors {
+		s.Run(provider, func() {
+			var path, auth string
+			var body map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				path, auth = r.URL.Path, r.Header.Get("Authorization")
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				_, _ = w.Write([]byte(`{"model":"m","answers":{"heard":{"type":"noul","noul":0.9}},"usage":{}}`))
+			}))
+			s.T().Cleanup(server.Close)
+			s.T().Setenv(vendor.keyEnv, provider+"-key")
+			s.T().Setenv(vendor.baseEnv, server.URL)
+
+			built, err := DefaultRegistry().Build(provider, routing.Spec{Model: vendor.model})
+			s.Require().NoError(err)
+			answered, err := built.Classify(s.ctx, decisionmodel.Request{
+				State:     "hello?",
+				Questions: map[string]decisionmodel.Question{"heard": decisionmodel.Noul("Did anyone speak?", "", "")},
+			})
+			s.Require().NoError(err)
+
+			s.Equal(provider, built.Provider())
+			s.Equal(vendor.path, path)
+			s.Equal("Bearer "+provider+"-key", auth)
+			s.Equal(vendor.model, body["model"])
+			s.InDelta(0.9, answered.Answers["heard"].Yes, 0.001)
+		})
+	}
 }
