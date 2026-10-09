@@ -581,6 +581,18 @@ func (s *PhoneSuite) TestAFactoryThatFailsIsNotCached() {
 	s.Equal(2, failures, "a failure is retried, not remembered")
 }
 
+func (s *PhoneSuite) TestAVendorErrorSaysEverythingTheLogNeeds() {
+	refused := &VendorError{Vendor: "twilio", Path: "/2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		Status: 400, Code: "21631", Message: "Phone Number Requires an Address"}
+	s.Equal("twilio: /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json: 400 Bad Request 21631: "+
+		"Phone Number Requires an Address", refused.Error())
+
+	cause := errors.New("connection refused")
+	unreached := &VendorError{Vendor: "twilio", Path: "/x.json", Message: "no answer", Cause: cause}
+	s.Equal("twilio: /x.json: no answer: connection refused", unreached.Error())
+	s.ErrorIs(unreached, cause)
+}
+
 func (s *PhoneSuite) config() Config {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
