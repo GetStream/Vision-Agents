@@ -17,6 +17,8 @@ type Digest struct {
 	Network string
 	Started time.Time
 	Rows    []DigestRow
+	// Results is each run's trials counted by pack and scenario type, in the order of Runs.
+	Results []Results
 }
 
 // DigestRow is one headline metric across the runs.
@@ -83,6 +85,7 @@ func BuildDigest(runs []LabeledRun) Digest {
 	packs := map[string]bool{}
 	for i, run := range runs {
 		d.Runs = append(d.Runs, run.Label)
+		d.Results = append(d.Results, SummarizeResults(run.Summary.Calls))
 		for _, pack := range run.Summary.Packs {
 			packs[pack.Pack] = true
 		}
@@ -157,6 +160,18 @@ func (d Digest) SlackText(title string) string {
 			cells = append(cells, text)
 		}
 		fmt.Fprintf(&b, "• %s: %s%s\n", row.Name, strings.Join(cells, " · "), row.verdict(d.Runs))
+	}
+	runs := make([]string, 0, len(d.Results))
+	for i, results := range d.Results {
+		packs := make([]string, 0, len(results.ByPack))
+		for _, pack := range results.ByPack {
+			packs = append(packs, pack.Name+" "+pack.ScoreText())
+		}
+		runs = append(runs, fmt.Sprintf("%s %s · score %s (%s)",
+			d.Runs[i], results.Overall.Text(), results.ScoreText(), strings.Join(packs, ", ")))
+	}
+	if len(runs) > 0 {
+		fmt.Fprintf(&b, "• Passed: %s\n", strings.Join(runs, " · "))
 	}
 	return b.String()
 }

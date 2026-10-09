@@ -35,7 +35,7 @@ func (d Digest) HTML(title string, card []byte, runs []LabeledRun) (string, erro
 		}
 		page.Rows = append(page.Rows, out)
 	}
-	for _, run := range runs {
+	for i, run := range runs {
 		calls := append([]CallResult(nil), run.Summary.Calls...)
 		sort.SliceStable(calls, func(i, j int) bool {
 			if calls[i].Pack != calls[j].Pack {
@@ -44,6 +44,9 @@ func (d Digest) HTML(title string, card []byte, runs []LabeledRun) (string, erro
 			return calls[i].ScenarioID < calls[j].ScenarioID
 		})
 		section := digestPageRun{Label: run.Label, Pipeline: pipelineOf(run.Summary.Manifest)}
+		if i < len(d.Results) {
+			section.Results = d.Results[i]
+		}
 		for _, call := range calls {
 			section.Calls = append(section.Calls, digestPageCall{
 				Scenario: call.ScenarioID,
@@ -135,6 +138,7 @@ type digestPageCell struct {
 type digestPageRun struct {
 	Label    string
 	Pipeline string
+	Results  Results
 	Calls    []digestPageCall
 }
 
@@ -197,6 +201,14 @@ var digestTemplate = template.Must(template.New("digest").Parse(`<!doctype html>
   <section>
     <h2>{{.Label}}</h2>
     <div class="meta">{{.Pipeline}}</div>
+    {{with .Results}}<div class="panel"><table>
+      <tr><th>Group</th><th>Passed</th><th>Invalid</th><th>Score</th></tr>
+      <tr><td><strong>All</strong></td><td><strong>{{.Overall.Passed}}/{{.Overall.Valid}}</strong></td><td>{{.Overall.Invalid}}</td><td><strong>{{.ScoreText}}</strong></td></tr>
+      <tr><th colspan="4">By pack</th></tr>
+      {{range .ByPack}}<tr><td>{{.Name}}</td><td>{{.Passed}}/{{.Valid}}</td><td>{{.Invalid}}</td><td>{{.ScoreText}}</td></tr>{{end}}
+      <tr><th colspan="4">By scenario</th></tr>
+      {{range .ByKind}}<tr><td>{{.Name}}</td><td>{{.Passed}}/{{.Valid}}</td><td>{{.Invalid}}</td><td>{{.ScoreText}}</td></tr>{{end}}
+    </table><div class="why">Score is the pass rate on 0-100 over trials that produced a verdict. The overall score is the mean of the packs, so each pack counts the same.</div></div>{{end}}
     <div class="panel"><table>
       <tr><th>Scenario</th><th>Outcome</th><th>Reply P50</th><th>First response</th><th>Tools</th></tr>
       {{range .Calls}}<tr>
