@@ -85,10 +85,11 @@ func (s *ToolsSuite) TestTheSentenceBeforeACallOpensWithTheHoldPhraseAndRunsOnIn
 }
 
 func (s *ToolsSuite) TestAResultIsAnsweredFromWithoutAnotherHoldPhrase() {
-	// The wait has one hold phrase, however many tools it takes: a sentence before each
-	// link queues behind the last, and the answer waits behind them all.
+	// The wait has one hold phrase. The tools a result calls for are called in the same reply,
+	// together when they do not need each other, so a request with several steps is not one
+	// spoken sentence and one model turn per tool.
 	s.Contains(usePolicy, "After a result, answer from it")
-	s.Contains(usePolicy, "if the request needs another tool, call it without a word")
+	s.Contains(usePolicy, "call them straight away without a word, together when independent")
 }
 
 func (s *ToolsSuite) TestTheUsePolicyIsShortAndNamesNoToolOrDeployment() {

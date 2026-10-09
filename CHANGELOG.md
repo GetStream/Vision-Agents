@@ -1774,6 +1774,13 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A voice agent with tools finishes a request that takes several of them while the caller is
+  still on the line. A result that called for another tool was given its own sentence, so a
+  request with several steps was a hold phrase, a read-back and a model turn per tool, and a
+  caller who asked for an appointment to be moved and their insurance and pharmacy updated was
+  gone before the last one ran. After a result the reply model now calls the tools the request
+  still needs straight away, without another hold phrase, and together when they do not need
+  each other.
 - A phone vendor's own error no longer reaches the client. The `/v1/phone/*` endpoints
   answered a Twilio, Telnyx, Bandwidth or Sinch failure with `400 invalid_request` and the
   vendor's full text, which held the vendor account id. The router now logs that text and
