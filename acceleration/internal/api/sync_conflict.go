@@ -23,6 +23,32 @@ func unsyncedChangesError(lost []string) APIError {
 	}
 }
 
+// driftedSinceSync reports whether a sync whose hash matches the stored one has anything
+// left to do: somebody changed the agent since that sync, so the directory and the stored
+// agent no longer agree however unchanged the directory is.
+//
+// Without this the hash alone answers, and the two ways out of a conflict both break on an
+// untouched directory: the caller is told its files are what the agent runs on when they
+// are not, and an overwrite writes nothing, leaving the edits it was told to replace.
+//
+// Only a caller taking part in the change protocol is answered this way. One that asks for
+// neither check_changes nor base_change cannot act on the answer, and writes nothing over
+// anybody either way, so it keeps the cheap comparison its hash is for.
+func (s *Server) driftedSinceSync(
+	ctx context.Context, customerID, configID string, body SyncAgentRequest,
+) (bool, error) {
+	if !value(body.CheckChanges) && value(body.BaseChange) == "" {
+		return false, nil
+	}
+	// Measured from the last sync rather than from base_change: an acknowledged change is
+	// one the caller means to write over, which is work to do rather than none.
+	changes, _, err := s.unsyncedChanges(ctx, customerID, configID, "")
+	if err != nil {
+		return false, err
+	}
+	return len(changes) > 0, nil
+}
+
 // syncConflict reports what a sync would write over that somebody changed since the last
 // one, if anything.
 //
@@ -55,7 +81,10 @@ func (s *Server) syncConflict(
 		}
 	}
 	if body.Knowledge != nil && existing.KnowledgeNamespace != "" {
-		if documents, err = s.store.CustomerKnowledgeDocuments(ctx, customerID, existing.KnowledgeNamespace); err != nil {
+		// With their text: conflictingDocument asks whether the directory holds what is
+		// stored, which is a question about the text.
+		documents, err = s.store.CustomerKnowledgeDocumentsWithText(ctx, customerID, existing.KnowledgeNamespace)
+		if err != nil {
 			return APIError{}, false, err
 		}
 	}

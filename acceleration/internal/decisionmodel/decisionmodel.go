@@ -1,6 +1,6 @@
-// Package lcm is what a routed classifier can be asked and what it answers.
+// Package decisionmodel is what a routed decision model can be asked and what it answers.
 //
-// A classifier is not a language model with a narrow prompt. It is asked named questions
+// A decision model is not a language model with a narrow prompt. It is asked named questions
 // about a piece of state and answers each with a typed value and the distribution behind
 // it: the probability a condition holds, which of a set of options fits, where something
 // falls on a described scale. There is no generated text, so there is nothing to stream
@@ -10,7 +10,7 @@
 // That is why this is a modality of its own rather than a corner of internal/llm. What a
 // caller wants from it - a threshold it can act on - is not what a caller wants from a
 // model that writes prose, and a request shaped for one is the wrong shape for the other.
-package lcm
+package decisionmodel
 
 import (
 	"context"
@@ -23,11 +23,11 @@ import (
 
 // ErrRateLimited is a provider saying it is being asked too often. Waiting and asking again
 // is worth it, which is why it is told apart from a question that was wrong.
-var ErrRateLimited = errors.New("lcm: the provider is rate limiting")
+var ErrRateLimited = errors.New("decisionmodel: the provider is rate limiting")
 
 // ErrUnavailable is a provider that could not answer now but may shortly: overloaded,
 // moving a model, or not reached at all.
-var ErrUnavailable = errors.New("lcm: the provider is unavailable")
+var ErrUnavailable = errors.New("decisionmodel: the provider is unavailable")
 
 // QuestionType is the shape of the answer a question asks for.
 type QuestionType string
@@ -133,16 +133,16 @@ type Request struct {
 // Validate reports what would make a request meaningless, so a provider does not have to.
 func (r Request) Validate() error {
 	if len(r.Questions) == 0 {
-		return stack.Wrap(errors.New("lcm: at least one question is required"))
+		return stack.Wrap(errors.New("decisionmodel: at least one question is required"))
 	}
 	for id, question := range r.Questions {
 		if strings.TrimSpace(question.Instructions) == "" {
-			return stack.Wrap(fmt.Errorf("lcm: question %q has no instructions", id))
+			return stack.Wrap(fmt.Errorf("decisionmodel: question %q has no instructions", id))
 		}
 		switch question.Type {
 		case TypeChoice, TypeScore, TypeNoul:
 		default:
-			return stack.Wrap(fmt.Errorf("lcm: question %q asks for %q, which is not a question type",
+			return stack.Wrap(fmt.Errorf("decisionmodel: question %q asks for %q, which is not a question type",
 				id, question.Type))
 		}
 	}

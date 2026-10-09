@@ -98,7 +98,7 @@ export interface Declaration {
   llm?: string;
   harness?: Schemas["Harness"];
   /** The model a voice agent hands its skills to. A text agent runs on its llm alone. */
-  thinking_llm?: string;
+  subagent?: string;
   search?: string;
   greeting?: string;
   sandbox?: Schemas["Sandbox"];
@@ -424,7 +424,7 @@ export class Agent {
     const declared = this.folder?.settings ?? {};
     const skills = this.harness?.skills ?? this.folder?.skills ?? [];
     const harness = this.harness?.name ?? declared.harness;
-    const thinking = this.harness?.subagents?.["default"] ?? declared.thinking_llm;
+    const thinking = this.harness?.subagents?.["default"] ?? declared.subagent;
     const sandbox = this.harness?.vm?.provider ?? declared.sandbox;
     const simulations = this.folder?.simulations;
     const tags = { ...declared.tags, ...this.options.costTracking };
@@ -453,7 +453,7 @@ export class Agent {
       ...(pipeline.greeting ? { greeting: pipeline.greeting } : {}),
       ...(pipeline.video ? { video: pipeline.video } : {}),
       ...(harness ? { harness } : {}),
-      ...(thinking ? { thinking_llm: thinking } : {}),
+      ...(thinking ? { subagent: thinking } : {}),
       ...(sandbox ? { sandbox } : {}),
       ...(Object.keys(tags).length > 0 ? { tags } : {}),
     };

@@ -489,7 +489,7 @@ const SCALARS = new Set([
   "speed",
   "llm",
   "harness",
-  "thinking_llm",
+  "subagent",
   "search",
   "greeting",
   "sandbox",

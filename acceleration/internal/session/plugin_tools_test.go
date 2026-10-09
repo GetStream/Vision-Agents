@@ -143,16 +143,16 @@ func (s *UserPluginsSuite) TestAUserIsToldAPluginTheAgentHasNoClientForIsNotAvai
 
 	s.JSONEq(plugins.UnavailableResult(s.calendar), result)
 	_, ok := plugins.RequestedAuthorization("google_calendar__list_tools", result,
-		Logins(Spec{UserPlugins: []store.PluginEntry{{Name: "google_calendar"}}}))
+		Logins(Spec{Plugins: []store.PluginEntry{{Name: "google_calendar", User: true}}}))
 	s.False(ok, "there is nothing for the user to press")
 }
 
 func (s *UserPluginsSuite) TestTheAppsLoginToAPluginEachUserConnectsIsNotHandedToEverySession() {
 	s.login("", s.calendar, "", "good-token")
 	spec := Spec{
-		CustomerID:  s.runner.customerID,
-		ConfigID:    s.runner.configID,
-		UserPlugins: []store.PluginEntry{{Name: "google_calendar"}},
+		CustomerID: s.runner.customerID,
+		ConfigID:   s.runner.configID,
+		Plugins:    []store.PluginEntry{{Name: "google_calendar", User: true}},
 	}
 
 	runtime, tools, unconnected := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.DiscardHandler))
@@ -176,9 +176,9 @@ func (s *UserPluginsSuite) TestTheAppsLoginToAnAgentPluginIsOpenedUnlessABinding
 	s.Require().True(found)
 	s.login("", shopify, strings.TrimPrefix(shop.URL, "https://"), "good-token")
 	spec := Spec{
-		CustomerID:   s.runner.customerID,
-		ConfigID:     s.runner.configID,
-		AgentPlugins: []store.PluginEntry{{Name: "shopify"}},
+		CustomerID: s.runner.customerID,
+		ConfigID:   s.runner.configID,
+		Plugins:    []store.PluginEntry{{Name: "shopify"}},
 	}
 	open := func(spec Spec) (*plugins.Runtime, []harness.Tool) {
 		runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: shop.Client()}, slog.New(slog.DiscardHandler))
@@ -364,8 +364,7 @@ func (s *UserPluginsSuite) TestAServerTheAppHasNotLoggedIntoFailsWithHowToConnec
 
 func (s *UserPluginsSuite) TestOnlyTheServersEachUserLogsIntoMayAskForALoginInTheChat() {
 	spec := Spec{
-		AgentPlugins: []store.PluginEntry{{Name: "sentry"}},
-		UserPlugins:  []store.PluginEntry{{Name: "google_calendar"}},
+		Plugins: []store.PluginEntry{{Name: "sentry"}, {Name: "google_calendar", User: true}},
 		MCPServers: []store.MCPServer{
 			{Name: "notes", URL: "https://notes.example.com/mcp", User: true},
 			{Name: "crm", URL: "https://crm.example.com/mcp", NeedsLogin: &needsLogin},
@@ -458,7 +457,7 @@ func (s *UserPluginsSuite) connect(token string) {
 
 func (s *UserPluginsSuite) asksToConnect(result string) {
 	found, ok := plugins.RequestedAuthorization("google_calendar__list_tools", result,
-		Logins(Spec{UserPlugins: []store.PluginEntry{{Name: "google_calendar"}}}))
+		Logins(Spec{Plugins: []store.PluginEntry{{Name: "google_calendar", User: true}}}))
 	s.Require().True(ok, result)
 	s.True(strings.HasPrefix(found.AuthorizeURL, "https://accounts.example/auth?"), found.AuthorizeURL)
 	s.Equal("Connect Google Calendar", found.Title)

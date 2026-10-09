@@ -11,7 +11,7 @@ delegated to the `vision` skill, which runs on the subagent with retained raw
 frames and returns findings while the conversation stays responsive. Predictions
 carry separate timestamps; the displayed boxes may lag the current camera frame.
 
-`agent.yaml` keeps `llm: llm-fast`, sets `thinking_llm: vlm` so the subagent can see,
+`agent.yaml` keeps `llm: llm-fast`, sets `subagent: vlm` so the subagent can see,
 and selects `video.source: roboflow_streaming` with one frame per analysis. Set
 `max_frames` to 2–8 to supply a recent sequence instead.
 

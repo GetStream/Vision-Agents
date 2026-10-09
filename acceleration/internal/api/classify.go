@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/danielgtaylor/huma/v2"
@@ -24,7 +24,7 @@ func (s *Server) classify(ctx context.Context, request *classifyRequest) (*class
 	if !ok {
 		return nil, errMissingCustomer
 	}
-	if s.streams == nil || s.streams.LCM == nil {
+	if s.streams == nil || s.streams.DecisionModel == nil {
 		return nil, notFound("this deployment does not route classification")
 	}
 	if request.Body == nil {
@@ -34,7 +34,7 @@ func (s *Server) classify(ctx context.Context, request *classifyRequest) (*class
 		return nil, invalidRequest("there is nothing to judge")
 	}
 
-	asked, err := lcmRequestOf(request.Body)
+	asked, err := decisionRequestOf(request.Body)
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
@@ -47,11 +47,11 @@ func (s *Server) classify(ctx context.Context, request *classifyRequest) (*class
 	}
 
 	held := options.Classifier{Target: value(request.Body.Target)}
-	if _, err := s.streams.LCM.Resolve(ctx, held.Route(), nil); err != nil {
+	if _, err := s.streams.DecisionModel.Resolve(ctx, held.Route(), nil); err != nil {
 		return nil, notFound(err.Error())
 	}
 
-	session, err := s.streams.LCM.Start(ctx, lcmrouter.Request{
+	session, err := s.streams.DecisionModel.Start(ctx, decisionrouter.Request{
 		CustomerID: customerID,
 		Tags:       tags,
 		Options:    held,
@@ -88,49 +88,49 @@ func (s *Server) classify(ctx context.Context, request *classifyRequest) (*class
 // request's fault; anything else is.
 func classifyFailed(err error) error {
 	switch {
-	case errors.Is(err, lcm.ErrRateLimited):
+	case errors.Is(err, decisionmodel.ErrRateLimited):
 		return rateLimited(err.Error())
-	case errors.Is(err, lcm.ErrUnavailable):
+	case errors.Is(err, decisionmodel.ErrUnavailable):
 		return unavailable(err.Error())
 	}
 	return invalidRequest(err.Error())
 }
 
-// lcmRequestOf builds the questions through lcm's constructors, which are what keep each
+// decisionRequestOf builds the questions through decisionmodel's constructors, which are what keep each
 // type paired with the criteria it means. A choice with nothing to choose from or a score
 // with nowhere to land is refused here, since a classifier would answer it with nonsense.
-func lcmRequestOf(body *ClassifyRequest) (lcm.Request, error) {
-	questions := make(map[string]lcm.Question, len(body.Questions))
+func decisionRequestOf(body *ClassifyRequest) (decisionmodel.Request, error) {
+	questions := make(map[string]decisionmodel.Question, len(body.Questions))
 	for id, question := range body.Questions {
 		switch question.Type {
 		case Noul:
-			questions[id] = lcm.Noul(question.Instructions, value(question.Yes), value(question.No))
+			questions[id] = decisionmodel.Noul(question.Instructions, value(question.Yes), value(question.No))
 		case Choice:
 			options := value(question.Options)
 			if len(options) < 2 {
-				return lcm.Request{}, stack.Wrap(fmt.Errorf("question %q is a choice with fewer than two options", id))
+				return decisionmodel.Request{}, stack.Wrap(fmt.Errorf("question %q is a choice with fewer than two options", id))
 			}
-			questions[id] = lcm.Choice(question.Instructions, options)
+			questions[id] = decisionmodel.Choice(question.Instructions, options)
 		case Score:
 			levels := value(question.Levels)
 			if len(levels) < 2 {
-				return lcm.Request{}, stack.Wrap(fmt.Errorf("question %q is a score with fewer than two levels", id))
+				return decisionmodel.Request{}, stack.Wrap(fmt.Errorf("question %q is a score with fewer than two levels", id))
 			}
-			questions[id] = lcm.Score(question.Instructions, levels)
+			questions[id] = decisionmodel.Score(question.Instructions, levels)
 		default:
-			return lcm.Request{}, stack.Wrap(fmt.Errorf("question %q asks for %q, which is not a question type", id, question.Type))
+			return decisionmodel.Request{}, stack.Wrap(fmt.Errorf("question %q asks for %q, which is not a question type", id, question.Type))
 		}
 	}
-	return lcm.Request{State: body.State, Questions: questions}, nil
+	return decisionmodel.Request{State: body.State, Questions: questions}, nil
 }
 
 // classifyAnswerOf fills only the fields the question's type carries, so a noul does not
 // come back with a confidence of zero that means nothing.
-func classifyAnswerOf(asked lcm.QuestionType, answer lcm.Answer) ClassifyAnswer {
+func classifyAnswerOf(asked decisionmodel.QuestionType, answer decisionmodel.Answer) ClassifyAnswer {
 	switch asked {
-	case lcm.TypeNoul:
+	case decisionmodel.TypeNoul:
 		return ClassifyAnswer{Type: Noul, Yes: &answer.Yes}
-	case lcm.TypeChoice:
+	case decisionmodel.TypeChoice:
 		return ClassifyAnswer{
 			Type:          Choice,
 			Chosen:        &answer.Chosen,
@@ -155,8 +155,8 @@ func (s *Server) registerClassify(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/v1/classify",
 		Summary:     "Ask a classifier typed questions about a piece of text",
-		Description: "The lcm modality, reachable on its own rather than only inside a guardrail. Every " +
-			"question is put to the classifier at once and each comes back as a typed answer with " +
+		Description: "The decision_model modality, reachable on its own rather than only inside a guardrail. Every " +
+			"question is put to the decision model at once and each comes back as a typed answer with " +
 			"the distribution behind it: the probability a noul is true, which option of a choice " +
 			"fits, where a score lands. There is no generated text, so there is nothing to stream: " +
 			"routed, failed over and billed like search, one request one stat row.\n" +

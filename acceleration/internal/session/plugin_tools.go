@@ -24,8 +24,8 @@ import (
 // URL that need no login or the app's, and returns their tools. A server that will not start
 // is skipped so a broken Slack login does not refuse the call. A server named by URL that
 // needs the app's login and has none is returned in unconnected. A nil transport reaches
-// only public hosts. A plugin the config names only under user_plugins is each end user's,
-// so an app's login to it is not used.
+// only public hosts. A plugin the config names with user set is each end user's, so an
+// app's login to it is not used.
 func attachPlugins(ctx context.Context, spec Spec, db *store.Store, pluginAuth *plugins.Auth, logger *slog.Logger) (runtime *plugins.Runtime, tools []harness.Tool, unconnected []string) {
 	var transport *http.Client
 	if pluginAuth != nil {
@@ -43,14 +43,15 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, pluginAuth *
 				logins[conn.PluginID] = conn
 				continue
 			}
-			if store.NamesPlugin(spec.UserPlugins, conn.PluginID) && !store.NamesPlugin(spec.AgentPlugins, conn.PluginID) {
+			entry := EntryFor(conn.PluginID, spec.Plugins)
+			if entry.User {
 				continue
 			}
 			// A connector binding for the same provider wins (Spec.Normalize).
 			if spec.boundProvider(conn.PluginID) {
 				continue
 			}
-			plugin, err := ConfiguredPlugin(EntryFor(conn.PluginID, spec.AgentPlugins, spec.UserPlugins))
+			plugin, err := ConfiguredPlugin(entry)
 			if err != nil {
 				logger.Warn("plugin is not usable", "plugin", conn.PluginID, "error", err)
 				continue
@@ -146,14 +147,12 @@ func ConfiguredPlugin(entry store.PluginEntry) (plugins.Plugin, error) {
 	})
 }
 
-// EntryFor is the first entry naming id in lists, or one with nothing but its name. An
-// app's login may be for a plugin its config does not name yet, which is the catalog's.
-func EntryFor(id string, lists ...[]store.PluginEntry) store.PluginEntry {
-	for _, entries := range lists {
-		for _, entry := range entries {
-			if entry.Name == id {
-				return entry
-			}
+// EntryFor is the entry naming id, or one with nothing but its name. An app's login may be
+// for a plugin its config does not name yet, which is the catalog's.
+func EntryFor(id string, entries []store.PluginEntry) store.PluginEntry {
+	for _, entry := range entries {
+		if entry.Name == id {
+			return entry
 		}
 	}
 	return store.PluginEntry{Name: id}
@@ -167,11 +166,11 @@ func ServerPlugin(server store.MCPServer) plugins.Plugin {
 	}
 }
 
-// Logins are the servers each end user logs into in the conversation: the user_plugins and
-// the servers named by URL with user set. Only they may ask for a login there; the app logs
+// Logins are the servers each end user logs into in the conversation: the plugins and the
+// servers named by URL with user set. Only they may ask for a login there; the app logs
 // into the rest on the dashboard.
 func Logins(spec Spec) []string {
-	ids := store.PluginNames(spec.UserPlugins)
+	ids := store.PluginNames(store.UserPlugins(spec.Plugins))
 	for _, server := range spec.MCPServers {
 		if server.User {
 			ids = append(ids, server.Name)
@@ -260,7 +259,7 @@ func renewToken(ctx context.Context, db *store.Store, renewer *plugins.Auth, con
 // so a login made under it would be anybody's who used the same name.
 func (m *Manager) userPlugins(spec Spec, next agent.ToolRunner) *userPluginRunner {
 	var offered []plugins.Plugin
-	for _, entry := range spec.UserPlugins {
+	for _, entry := range store.UserPlugins(spec.Plugins) {
 		if plugin, err := ConfiguredPlugin(entry); err == nil {
 			offered = append(offered, plugin)
 		}
@@ -275,7 +274,7 @@ func (m *Manager) userPlugins(spec Spec, next agent.ToolRunner) *userPluginRunne
 	}
 	if spec.Caller.UserID == "" || spec.CallerKind == auth.KindAnonymous {
 		m.logger.Warn("not offering user plugins to a session with no verified end user",
-			"config", spec.ConfigID, "plugins", store.PluginNames(spec.UserPlugins))
+			"config", spec.ConfigID, "plugins", store.PluginNames(store.UserPlugins(spec.Plugins)))
 		return nil
 	}
 	named := map[string]plugins.Plugin{}

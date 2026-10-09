@@ -16,7 +16,7 @@ import (
 // judgeInstructions is what the judging model is told.
 //
 // It is asked for a probability rather than a verdict so that one threshold means the same
-// thing whichever backend is judging: a policy can be moved between llm and lcm
+// thing whichever backend is judging: a policy can be moved between llm and decision_model
 // without its threshold changing meaning. A model's number is not calibrated the way a
 // classifier's is, and that difference is the reason to prefer the classifier rather than a
 // reason to ask this one a different question.

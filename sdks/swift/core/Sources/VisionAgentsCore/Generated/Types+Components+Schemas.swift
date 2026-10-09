@@ -338,10 +338,8 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/description`.
             internal var description: Swift.String?
-            /// Said on joining without going through the model. Empty means the agent waits to be spoken to.
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/greeting`.
-            internal var greeting: Swift.String?
+            internal var greeting: Components.Schemas.Greeting?
             /// The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/history`.
@@ -470,7 +468,7 @@ extension Components {
             ///   - conversationId: Stream Chat CID to resume; returned for persistent text sessions.
             ///   - custom: Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
             ///   - description: A longer note about the conversation, searched alongside the title.
-            ///   - greeting: Said on joining without going through the model. Empty means the agent waits to be spoken to.
+            ///   - greeting:
             ///   - history: The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
             ///   - id: The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
             ///   - incognito: Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
@@ -510,7 +508,7 @@ extension Components {
                 conversationId: Swift.String? = nil,
                 custom: Components.Schemas.CreateSessionRequest.CustomPayload? = nil,
                 description: Swift.String? = nil,
-                greeting: Swift.String? = nil,
+                greeting: Components.Schemas.Greeting? = nil,
                 history: [Components.Schemas.HistoryMessage]? = nil,
                 id: Swift.String? = nil,
                 incognito: Swift.Bool? = nil,
@@ -871,6 +869,40 @@ extension Components {
                 case responseId = "response_id"
                 case title
             }
+        }
+        /// What the agent says as it joins, before anyone speaks.
+        ///
+        /// - Remark: Generated from `#/components/schemas/Greeting`.
+        internal struct Greeting: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/Greeting/mode`.
+            internal var mode: Components.Schemas.GreetingMode?
+            /// What the agent says on joining. Empty means the agent waits to be spoken to.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Greeting/text`.
+            internal var text: Swift.String
+            /// Creates a new `Greeting`.
+            ///
+            /// - Parameters:
+            ///   - mode:
+            ///   - text: What the agent says on joining. Empty means the agent waits to be spoken to.
+            internal init(
+                mode: Components.Schemas.GreetingMode? = nil,
+                text: Swift.String
+            ) {
+                self.mode = mode
+                self.text = text
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case mode
+                case text
+            }
+        }
+        /// exact says the text word for word. variation has the model say its own variation of it on every call, so callers do not hear the same opening each time. A speech-to-speech model cannot say exact words, so it always says its own rendering of the text.
+        ///
+        /// - Remark: Generated from `#/components/schemas/GreetingMode`.
+        internal enum GreetingMode: String, Codable, Hashable, Sendable, CaseIterable {
+            case exact = "exact"
+            case variation = "variation"
         }
         /// - Remark: Generated from `#/components/schemas/HistoryMessage`.
         internal struct HistoryMessage: Codable, Hashable, Sendable {
@@ -1427,14 +1459,14 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Session/stt`.
             internal var stt: Swift.String?
+            /// The provider and model delegated work runs on.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/subagent`.
+            internal var subagent: Swift.String?
             /// The conversation is held in writing rather than on a call.
             ///
             /// - Remark: Generated from `#/components/schemas/Session/text`.
             internal var text: Swift.Bool?
-            /// The provider and model delegated work runs on.
-            ///
-            /// - Remark: Generated from `#/components/schemas/Session/thinking_llm`.
-            internal var thinkingLlm: Swift.String?
             /// - Remark: Generated from `#/components/schemas/Session/title`.
             internal var title: Swift.String?
             /// The provider and model speaking.
@@ -1476,8 +1508,8 @@ extension Components {
             ///   - state:
             ///   - sts: The provider and model holding a native conversation, once routing has picked one.
             ///   - stt: The provider and model transcribing, once somebody has been heard.
+            ///   - subagent: The provider and model delegated work runs on.
             ///   - text: The conversation is held in writing rather than on a call.
-            ///   - thinkingLlm: The provider and model delegated work runs on.
             ///   - title:
             ///   - tts: The provider and model speaking.
             ///   - userId:
@@ -1508,8 +1540,8 @@ extension Components {
                 state: Components.Schemas.SessionState,
                 sts: Swift.String? = nil,
                 stt: Swift.String? = nil,
+                subagent: Swift.String? = nil,
                 text: Swift.Bool? = nil,
-                thinkingLlm: Swift.String? = nil,
                 title: Swift.String? = nil,
                 tts: Swift.String? = nil,
                 userId: Swift.String,
@@ -1540,8 +1572,8 @@ extension Components {
                 self.state = state
                 self.sts = sts
                 self.stt = stt
+                self.subagent = subagent
                 self.text = text
-                self.thinkingLlm = thinkingLlm
                 self.title = title
                 self.tts = tts
                 self.userId = userId
@@ -1573,8 +1605,8 @@ extension Components {
                 case state
                 case sts
                 case stt
+                case subagent
                 case text
-                case thinkingLlm = "thinking_llm"
                 case title
                 case tts
                 case userId = "user_id"

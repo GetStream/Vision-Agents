@@ -1,4 +1,4 @@
-package typesafe
+package systemone
 
 import (
 	"context"
@@ -11,10 +11,10 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
 )
 
-// web stands in for the System One endpoint, so the wire contract can be tested without a key.
+// web stands in for a vendor's endpoint, so the wire contract can be tested without a key.
 type web struct {
 	server *httptest.Server
 
@@ -51,42 +51,51 @@ func newWeb() *web {
 }
 
 // questions digs the questions back out of what was sent.
-func (s *TypeSafeSuite) questions() map[string]any {
+func (s *SystemOneSuite) questions() map[string]any {
 	asked, ok := s.web.body["questions"].(map[string]any)
 	s.Require().True(ok, "the request carried no questions")
 	return asked
 }
 
-func (s *TypeSafeSuite) question(id string) map[string]any {
+func (s *SystemOneSuite) question(id string) map[string]any {
 	asked, ok := s.questions()[id].(map[string]any)
 	s.Require().True(ok, "the request did not ask %q", id)
 	return asked
 }
 
 // ask puts a state and its questions to the client, which every test here does.
-func (s *TypeSafeSuite) ask(
-	state any, questions map[string]lcm.Question,
-) (lcm.Result, error) {
-	return s.client.Classify(s.ctx, lcm.Request{State: state, Questions: questions})
+func (s *SystemOneSuite) ask(
+	state any, questions map[string]decisionmodel.Question,
+) (decisionmodel.Result, error) {
+	return s.client.Classify(s.ctx, decisionmodel.Request{State: state, Questions: questions})
 }
 
-type TypeSafeSuite struct {
+// vendor is an endpoint no real vendor has, so nothing here passes because it happens to
+// match TypeSafe's defaults.
+var vendor = Endpoint{
+	Provider:     "acme",
+	APIKeyEnvVar: "ACME_DECISIONS_API_KEY",
+	Path:         "/v2/decide",
+	DefaultModel: "judge-latest",
+}
+
+type SystemOneSuite struct {
 	suite.Suite
 	ctx    context.Context
 	web    *web
 	client *Client
 }
 
-func TestTypeSafeSuite(t *testing.T) {
-	suite.Run(t, new(TypeSafeSuite))
+func TestSystemOneSuite(t *testing.T) {
+	suite.Run(t, new(SystemOneSuite))
 }
 
-func (s *TypeSafeSuite) SetupTest() {
+func (s *SystemOneSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.web = newWeb()
 	s.T().Cleanup(s.web.server.Close)
 
-	client, err := New(Options{
+	client, err := New(vendor, Options{
 		APIKey:  "test-key",
 		BaseURL: s.web.server.URL,
 		Logger:  slog.New(slog.DiscardHandler),
@@ -95,34 +104,52 @@ func (s *TypeSafeSuite) SetupTest() {
 	s.client = client
 }
 
-func (s *TypeSafeSuite) TestAKeyIsRequired() {
-	s.T().Setenv("TYPESAFE_API_KEY", "")
+func (s *SystemOneSuite) TestAKeyIsRequired() {
+	s.T().Setenv(vendor.APIKeyEnvVar, "")
 
-	_, err := New(Options{})
+	_, err := New(vendor, Options{})
 
-	s.ErrorContains(err, "TYPESAFE_API_KEY")
+	s.ErrorContains(err, vendor.APIKeyEnvVar)
 }
 
-func (s *TypeSafeSuite) TestTheNewestStableModelIsAskedWhenNoneIsNamed() {
+func (s *SystemOneSuite) TestTheNewestStableModelIsAskedWhenNoneIsNamed() {
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"heard":{"type":"noul","noul":0.8}}}`
 
-	_, err := s.ask("anything", map[string]lcm.Question{
-		"heard": lcm.Noul("Did anyone speak?", "", ""),
+	_, err := s.ask("anything", map[string]decisionmodel.Question{
+		"heard": decisionmodel.Noul("Did anyone speak?", "", ""),
 	})
 	s.Require().NoError(err)
 
-	s.Equal(DefaultModel, s.client.Model())
-	s.Equal(DefaultModel, s.web.body["model"])
+	s.Equal(vendor.DefaultModel, s.client.Model())
+	s.Equal(vendor.DefaultModel, s.web.body["model"])
 	s.Equal("Bearer test-key", s.web.auth)
-	s.Equal("/v1/systemone", s.web.path)
+	s.Equal(vendor.Path, s.web.path)
 }
 
-func (s *TypeSafeSuite) TestTheVendorIsWhatThisIsNamedByRatherThanTheModel() {
-	// Stats and health are keyed by the provider name, and "jev" is a model TypeSafe serve.
-	s.Equal("typesafe", s.client.Provider())
+func (s *SystemOneSuite) TestTheVendorIsWhatThisIsNamedByRatherThanTheModel() {
+	// Stats and health are keyed by the provider name, and "jev" is a model several vendors
+	// serve.
+	s.Equal("acme", s.client.Provider())
 }
 
-func (s *TypeSafeSuite) TestEveryQuestionGoesInOneRequest() {
+func (s *SystemOneSuite) TestAFailureSaysWhichVendorRefused() {
+	// Three vendors answer on the same protocol, so an error that did not name one would
+	// leave a log reader guessing which key to check.
+	s.web.status = http.StatusPaymentRequired
+	s.web.respond = `{"error":{"message":"Insufficient credits"}}`
+
+	_, err := s.ask("anything", map[string]decisionmodel.Question{
+		"heard": decisionmodel.Noul("Did anyone speak?", "", ""),
+	})
+
+	var refused *StatusError
+	s.Require().ErrorAs(err, &refused)
+	s.Equal("acme", refused.Provider)
+	s.ErrorContains(err, "acme: the API returned 402")
+	s.False(refused.Retryable(), "credits do not come back by waiting")
+}
+
+func (s *SystemOneSuite) TestEveryQuestionGoesInOneRequest() {
 	// Questions in one request share the state's tokens between them rather than paying for
 	// it each, which is what makes asking one whose answer may not be needed close to free.
 	s.web.respond = `{"model":"jev-1.13.0","answers":{
@@ -132,16 +159,16 @@ func (s *TypeSafeSuite) TestEveryQuestionGoesInOneRequest() {
 	}}`
 
 	answers, err := s.ask(map[string]any{"heard": "book a table for four"},
-		map[string]lcm.Question{
-			"disposition": lcm.Choice("What should happen to these words?", map[string]string{
+		map[string]decisionmodel.Question{
+			"disposition": decisionmodel.Choice("What should happen to these words?", map[string]string{
 				"respond": "A complete thought addressed to the agent.",
 				"wait":    "Probably unfinished.",
 			}),
-			"floor": lcm.Choice("Who should hold the floor?", map[string]string{
+			"floor": decisionmodel.Choice("Who should hold the floor?", map[string]string{
 				"continue": "",
 				"stop":     "",
 			}),
-			"addressed": lcm.Noul("Were these words meant for the agent?", "", ""),
+			"addressed": decisionmodel.Noul("Were these words meant for the agent?", "", ""),
 		})
 	s.Require().NoError(err)
 
@@ -154,13 +181,13 @@ func (s *TypeSafeSuite) TestEveryQuestionGoesInOneRequest() {
 	s.InDelta(0.9, answers.Answers["disposition"].Probabilities["respond"], 0.001)
 }
 
-func (s *TypeSafeSuite) TestAChoiceSendsItsOptionsAndTheirDescriptions() {
+func (s *SystemOneSuite) TestAChoiceSendsItsOptionsAndTheirDescriptions() {
 	// An option the model was not given cannot be answered with, so what reaches the wire is
 	// the whole of what it may say.
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"floor":{"type":"choice","choice":"stop"}}}`
 
-	_, err := s.ask("wait, make it six", map[string]lcm.Question{
-		"floor": lcm.Choice("Who should hold the floor?", map[string]string{
+	_, err := s.ask("wait, make it six", map[string]decisionmodel.Question{
+		"floor": decisionmodel.Choice("Who should hold the floor?", map[string]string{
 			"stop":     "A correction or a direct interruption.",
 			"shorten":  "A related addition.",
 			"continue": "",
@@ -179,13 +206,13 @@ func (s *TypeSafeSuite) TestAChoiceSendsItsOptionsAndTheirDescriptions() {
 	s.Nil(criteria["continue"])
 }
 
-func (s *TypeSafeSuite) TestAScoreSendsItsLevelsInOrder() {
+func (s *SystemOneSuite) TestAScoreSendsItsLevelsInOrder() {
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"finished":{"type":"score","score":1.4,
 		"legend":{"0":"Mid-word","1":"Mid-sentence","2":"Finished"},
 		"probabilities":{"0":0.1,"1":0.4,"2":0.5},"confidence":0.55}}}`
 
-	answers, err := s.ask("my member id is four four", map[string]lcm.Question{
-		"finished": lcm.Score("How finished is this?",
+	answers, err := s.ask("my member id is four four", map[string]decisionmodel.Question{
+		"finished": decisionmodel.Score("How finished is this?",
 			[]string{"Mid-word", "Mid-sentence", "Finished"}),
 	})
 	s.Require().NoError(err)
@@ -197,14 +224,14 @@ func (s *TypeSafeSuite) TestAScoreSendsItsLevelsInOrder() {
 	s.Equal("Finished", answers.Answers["finished"].Legend["2"])
 }
 
-func (s *TypeSafeSuite) TestANoulSaysWhatYesAndNoMeanOnlyWhenTold() {
+func (s *SystemOneSuite) TestANoulSaysWhatYesAndNoMeanOnlyWhenTold() {
 	s.web.respond = `{"model":"jev-1.13.0","answers":{
 		"menu":{"type":"noul","noul":0.7},"plain":{"type":"noul","noul":0.2}}}`
 
-	_, err := s.ask("press one for billing", map[string]lcm.Question{
-		"menu": lcm.Noul("Is this a recorded menu?",
+	_, err := s.ask("press one for billing", map[string]decisionmodel.Question{
+		"menu": decisionmodel.Noul("Is this a recorded menu?",
 			"A recording listing options.", "A person talking."),
-		"plain": lcm.Noul("Is anyone shouting?", "", ""),
+		"plain": decisionmodel.Noul("Is anyone shouting?", "", ""),
 	})
 	s.Require().NoError(err)
 
@@ -215,7 +242,7 @@ func (s *TypeSafeSuite) TestANoulSaysWhatYesAndNoMeanOnlyWhenTold() {
 	s.NotContains(s.question("plain"), "criteria")
 }
 
-func (s *TypeSafeSuite) TestTheStateReachesTheWireWithItsPartsNamed() {
+func (s *SystemOneSuite) TestTheStateReachesTheWireWithItsPartsNamed() {
 	// A question points at a part of the state by path, so the parts have to survive as
 	// parts rather than being flattened into one string on the way out.
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"heard":{"type":"noul","noul":0.5}}}`
@@ -223,8 +250,8 @@ func (s *TypeSafeSuite) TestTheStateReachesTheWireWithItsPartsNamed() {
 	_, err := s.ask(map[string]any{
 		"agent_speaking": true,
 		"heard":          "hang on",
-	}, map[string]lcm.Question{
-		"heard": lcm.Noul("Is `heard` an interruption?", "", ""),
+	}, map[string]decisionmodel.Question{
+		"heard": decisionmodel.Noul("Is `heard` an interruption?", "", ""),
 	})
 	s.Require().NoError(err)
 
@@ -234,26 +261,26 @@ func (s *TypeSafeSuite) TestTheStateReachesTheWireWithItsPartsNamed() {
 	s.Equal("hang on", state["heard"])
 }
 
-func (s *TypeSafeSuite) TestARequestWithNoQuestionsIsNotSent() {
-	_, err := s.ask("anything", map[string]lcm.Question{})
+func (s *SystemOneSuite) TestARequestWithNoQuestionsIsNotSent() {
+	_, err := s.ask("anything", map[string]decisionmodel.Question{})
 
 	s.ErrorContains(err, "at least one question")
 	s.Zero(s.web.calls)
 }
 
-func (s *TypeSafeSuite) TestAQuestionWithNothingAskedIsNotSent() {
-	_, err := s.ask("anything", map[string]lcm.Question{
-		"floor": {Type: lcm.TypeChoice, Instructions: "  "},
+func (s *SystemOneSuite) TestAQuestionWithNothingAskedIsNotSent() {
+	_, err := s.ask("anything", map[string]decisionmodel.Question{
+		"floor": {Type: decisionmodel.TypeChoice, Instructions: "  "},
 	})
 
 	s.ErrorContains(err, "floor")
 	s.Zero(s.web.calls)
 }
 
-func (s *TypeSafeSuite) TestAQuestionOfNoKnownTypeIsNotSent() {
+func (s *SystemOneSuite) TestAQuestionOfNoKnownTypeIsNotSent() {
 	// A type the API does not know comes back as a 422, which is a round trip spent finding
 	// out something the question itself says.
-	_, err := s.ask("anything", map[string]lcm.Question{
+	_, err := s.ask("anything", map[string]decisionmodel.Question{
 		"floor": {Type: "vibes", Instructions: "Who has the floor?"},
 	})
 
@@ -261,76 +288,76 @@ func (s *TypeSafeSuite) TestAQuestionOfNoKnownTypeIsNotSent() {
 	s.Zero(s.web.calls)
 }
 
-func (s *TypeSafeSuite) TestAnUnansweredQuestionIsAFailureRatherThanAZero() {
+func (s *SystemOneSuite) TestAnUnansweredQuestionIsAFailureRatherThanAZero() {
 	// A missing answer read as a zero value is a floor decision of "" and an agent that does
 	// nothing about a caller talking over it, which is worse than the error.
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"disposition":{"type":"choice","choice":"respond"}}}`
 
-	_, err := s.ask("make it six", map[string]lcm.Question{
-		"disposition": lcm.Choice("What now?", map[string]string{"respond": "", "wait": ""}),
-		"floor":       lcm.Choice("Who has the floor?", map[string]string{"stop": "", "continue": ""}),
+	_, err := s.ask("make it six", map[string]decisionmodel.Question{
+		"disposition": decisionmodel.Choice("What now?", map[string]string{"respond": "", "wait": ""}),
+		"floor":       decisionmodel.Choice("Who has the floor?", map[string]string{"stop": "", "continue": ""}),
 	})
 
 	s.ErrorContains(err, "floor")
 }
 
-func (s *TypeSafeSuite) TestARateLimitIsWorthAskingAgainAndABadQuestionIsNot() {
+func (s *SystemOneSuite) TestARateLimitIsWorthAskingAgainAndABadQuestionIsNot() {
 	s.web.status = http.StatusTooManyRequests
 	s.web.respond = `{"detail":"slow down"}`
 
-	_, err := s.ask("anything", map[string]lcm.Question{
-		"heard": lcm.Noul("Did anyone speak?", "", ""),
+	_, err := s.ask("anything", map[string]decisionmodel.Question{
+		"heard": decisionmodel.Noul("Did anyone speak?", "", ""),
 	})
 
 	var refused *StatusError
 	s.Require().ErrorAs(err, &refused)
 	s.Equal(http.StatusTooManyRequests, refused.StatusCode)
 	s.True(refused.Retryable())
-	s.ErrorIs(err, lcm.ErrRateLimited)
+	s.ErrorIs(err, decisionmodel.ErrRateLimited)
 	s.ErrorContains(err, "slow down")
 
 	// The outage seen in practice: the model is being moved and comes back on its own.
 	s.web.status = http.StatusServiceUnavailable
 	s.web.respond = `{"detail":{"error_type":"model_unavailable","message":"The model is unavailable."}}`
 
-	_, err = s.ask("anything", map[string]lcm.Question{
-		"heard": lcm.Noul("Did anyone speak?", "", ""),
+	_, err = s.ask("anything", map[string]decisionmodel.Question{
+		"heard": decisionmodel.Noul("Did anyone speak?", "", ""),
 	})
 
 	s.Require().ErrorAs(err, &refused)
 	s.True(refused.Retryable())
-	s.ErrorIs(err, lcm.ErrUnavailable)
+	s.ErrorIs(err, decisionmodel.ErrUnavailable)
 
 	s.web.status = http.StatusUnprocessableEntity
-	_, err = s.ask("anything", map[string]lcm.Question{
-		"heard": lcm.Noul("Did anyone speak?", "", ""),
+	_, err = s.ask("anything", map[string]decisionmodel.Question{
+		"heard": decisionmodel.Noul("Did anyone speak?", "", ""),
 	})
 
 	s.Require().ErrorAs(err, &refused)
 	s.False(refused.Retryable())
-	s.NotErrorIs(err, lcm.ErrRateLimited)
-	s.NotErrorIs(err, lcm.ErrUnavailable)
+	s.NotErrorIs(err, decisionmodel.ErrRateLimited)
+	s.NotErrorIs(err, decisionmodel.ErrUnavailable)
 }
 
-func (s *TypeSafeSuite) TestAnAPINobodyCanReachIsUnavailable() {
-	client, err := New(Options{APIKey: "k", BaseURL: "http://127.0.0.1:1"})
+func (s *SystemOneSuite) TestAnAPINobodyCanReachIsUnavailable() {
+	client, err := New(vendor, Options{APIKey: "k", BaseURL: "http://127.0.0.1:1"})
 	s.Require().NoError(err)
 
-	_, err = client.Classify(context.Background(), lcm.Request{
+	_, err = client.Classify(context.Background(), decisionmodel.Request{
 		State:     "anything",
-		Questions: map[string]lcm.Question{"heard": lcm.Noul("Did anyone speak?", "", "")},
+		Questions: map[string]decisionmodel.Question{"heard": decisionmodel.Noul("Did anyone speak?", "", "")},
 	})
 
-	s.ErrorIs(err, lcm.ErrUnavailable)
+	s.ErrorIs(err, decisionmodel.ErrUnavailable)
 }
 
-func (s *TypeSafeSuite) TestTheModelThatAnsweredIsReportedRatherThanTheAliasThatWasAsked() {
+func (s *SystemOneSuite) TestTheModelThatAnsweredIsReportedRatherThanTheAliasThatWasAsked() {
 	// An alias moves when a release ships, so the answer says which version made it.
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"heard":{"type":"noul","noul":0.5}},
 		"usage":{"input_tokens":312,"output_tokens":48}}`
 
-	answers, err := s.ask("anything", map[string]lcm.Question{
-		"heard": lcm.Noul("Did anyone speak?", "", ""),
+	answers, err := s.ask("anything", map[string]decisionmodel.Question{
+		"heard": decisionmodel.Noul("Did anyone speak?", "", ""),
 	})
 	s.Require().NoError(err)
 

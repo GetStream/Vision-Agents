@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -19,22 +19,22 @@ type stubClassifier struct {
 	probability float64
 	err         error
 
-	asked []lcm.Request
+	asked []decisionmodel.Request
 }
 
 func (s *stubClassifier) Classify(
-	_ context.Context, request lcm.Request,
-) (lcm.Result, error) {
+	_ context.Context, request decisionmodel.Request,
+) (decisionmodel.Result, error) {
 	s.asked = append(s.asked, request)
 	if s.err != nil {
-		return lcm.Result{}, s.err
+		return decisionmodel.Result{}, s.err
 	}
-	return lcm.Result{
+	return decisionmodel.Result{
 		Model: "stub-1.0",
-		Answers: map[string]lcm.Answer{
-			violates: {Type: lcm.TypeNoul, Yes: s.probability},
+		Answers: map[string]decisionmodel.Answer{
+			violates: {Type: decisionmodel.TypeNoul, Yes: s.probability},
 		},
-		Usage: lcm.Usage{InputTokens: 120},
+		Usage: decisionmodel.Usage{InputTokens: 120},
 	}, nil
 }
 
@@ -57,13 +57,13 @@ func (s *ClassifierSuite) SetupTest() {
 }
 
 // router routes every check to one stub.
-func (s *ClassifierSuite) router(stub *stubClassifier) *lcmrouter.Router {
-	registry := lcmrouter.NewRegistry()
-	registry.Register("stub", func(routing.Spec) (lcm.Provider, error) {
+func (s *ClassifierSuite) router(stub *stubClassifier) *decisionrouter.Router {
+	registry := decisionrouter.NewRegistry()
+	registry.Register("stub", func(routing.Spec) (decisionmodel.Provider, error) {
 		return stub, nil
 	})
 
-	router, err := lcmrouter.New(lcmrouter.Options{
+	router, err := decisionrouter.New(decisionrouter.Options{
 		Config: routing.ModalityConfig{
 			Providers: []routing.ProviderConfig{{
 				Provider: "stub", Model: "judge", Languages: []string{"en"},
@@ -84,7 +84,7 @@ func (s *ClassifierSuite) router(stub *stubClassifier) *lcmrouter.Router {
 // guardrail builds a classifier guardrail over the stub, at the given threshold.
 func (s *ClassifierSuite) guardrail(stub *stubClassifier, threshold float64) Guardrail {
 	screening, err := New(s.ctx, Policy{
-		Kind:      KindClassifier,
+		Kind:      KindDecisionModel,
 		Mode:      ModeParallel,
 		Threshold: threshold,
 		Refusal:   "I can only help with questions about Stream.",
@@ -145,7 +145,7 @@ func (s *ClassifierSuite) TestThePolicyAndTheMessageAreAskedAboutAsTwoThings() {
 	s.Equal("how do I install stream-chat-react", state["message"])
 
 	asked := stub.asked[0].Questions[violates]
-	s.Equal(lcm.TypeNoul, asked.Type)
+	s.Equal(decisionmodel.TypeNoul, asked.Type)
 	s.Contains(asked.Instructions, "`policy`")
 	s.Contains(asked.Instructions, "`message`")
 }
@@ -180,9 +180,9 @@ func (s *ClassifierSuite) TestAPolicyWithNothingToRouteItIsRefusedWhenBuilt() {
 	// reach its classifier allows every turn, which is an unguarded agent that looks
 	// guarded.
 	_, err := New(s.ctx, Policy{
-		Kind: KindClassifier, Mode: ModeParallel, Threshold: 0.6,
+		Kind: KindDecisionModel, Mode: ModeParallel, Threshold: 0.6,
 		Refusal: "No.", Text: "Only Stream questions.",
 	}, Deps{Owner: routing.Owner{CustomerID: "acme"}, Logger: slog.New(slog.DiscardHandler)})
 
-	s.ErrorContains(err, "lcm")
+	s.ErrorContains(err, "decision model")
 }

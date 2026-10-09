@@ -33,7 +33,7 @@ func (s *SocketSessionSuite) starts(greeting string) (*websocket.Conn, map[strin
 	connection := s.serverClient.opens("/v1/agents/socket")
 	s.Require().NoError(connection.WriteJSON(map[string]any{
 		"type": "start", "sample_rate": 24_000,
-		"session": map[string]any{"greeting": greeting},
+		"session": map[string]any{"greeting": map[string]any{"text": greeting}},
 	}))
 	answered := s.readFrame(connection)
 	s.Require().Equal("session", answered["type"], "the socket answered %v", answered)
@@ -217,7 +217,7 @@ func (s *SocketSessionSuite) TestADeviceOpensASocketSessionWithoutAHistory() {
 			greeting := s.utils.uuid()
 			connection := device.opens("/v1/agents/socket")
 			s.Require().NoError(connection.WriteJSON(map[string]any{
-				"type": "start", "session": map[string]any{"greeting": greeting},
+				"type": "start", "session": map[string]any{"greeting": map[string]any{"text": greeting}},
 			}))
 
 			answered := s.readFrame(connection)

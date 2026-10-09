@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
 )
 
 // ClassifySuite covers asking a classifier several questions at once: how the answers come
@@ -57,7 +57,7 @@ func (s *ClassifySuite) TestEveryQuestionIsAskedInOneRequest() {
 	asked, ruled := classifiers.quick.ruledOn(complaint)
 	s.Require().True(ruled)
 	s.Len(asked.Questions, 3)
-	s.Equal(lcm.Score("How soon does this need an answer?", []string{"can wait", "this week", "today"}),
+	s.Equal(decisionmodel.Score("How soon does this need an answer?", []string{"can wait", "this week", "today"}),
 		asked.Questions["urgency"])
 }
 

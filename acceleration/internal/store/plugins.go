@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -174,16 +175,22 @@ func (s *Store) DeletePluginConnection(ctx context.Context, customerID, configID
 	return nil
 }
 
-// AddConfigPlugin names a plugin on a config if it is not already there.
+// AddConfigPlugin names a plugin on a config as the app's if it is not already there. One
+// each end user connected becomes the app's, keeping its options.
 func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, pluginID string) error {
 	config, err := s.AgentConfig(ctx, customerID, configID)
 	if err != nil {
 		return err
 	}
-	if NamesPlugin(config.AgentPlugins, pluginID) {
+	at := slices.IndexFunc(config.Plugins, func(entry PluginEntry) bool { return entry.Name == pluginID })
+	switch {
+	case at < 0:
+		config.Plugins = append(config.Plugins, PluginEntry{Name: pluginID})
+	case config.Plugins[at].User:
+		config.Plugins[at].User = false
+	default:
 		return nil
 	}
-	config.AgentPlugins = append(config.AgentPlugins, PluginEntry{Name: pluginID})
 	return s.UpdateAgentConfig(ctx, &config)
 }
 
@@ -304,8 +311,7 @@ func (s *Store) EveryPluginClient(ctx context.Context, customerID string) ([]Plu
 }
 
 // AgentConfigsNamingPlugins reads every live agent config of the customer, or of every
-// customer when customerID is empty, that names a plugin in agent_plugins or user_plugins or
-// subscribes to a plugin event, for router plugins migrate. It only reads.
+// customer when customerID is empty, that names a plugin or subscribes to a plugin event, for router plugins migrate. It only reads.
 func (s *Store) AgentConfigsNamingPlugins(ctx context.Context, customerID string) ([]AgentConfig, error) {
 	var configs []AgentConfig
 	query := s.db.NewSelect().Model(&configs)
@@ -314,7 +320,7 @@ func (s *Store) AgentConfigsNamingPlugins(ctx context.Context, customerID string
 	}
 	err := query.
 		Where("deleted_at IS NULL").
-		Where("(jsonb_array_length(agent_plugins) > 0 OR jsonb_array_length(user_plugins) > 0 OR jsonb_array_length(plugin_events) > 0)").
+		Where("(jsonb_array_length(plugins) > 0 OR jsonb_array_length(plugin_events) > 0)").
 		Order("customer_id", "id").
 		Scan(ctx)
 	if err != nil {

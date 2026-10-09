@@ -101,7 +101,7 @@ async def main() -> None:
         name="docs-agent",
         instructions=INSTRUCTIONS,
         llm="llm-fast",
-        thinking_llm="llm-smart",
+        subagent="llm-smart",
         skills=SKILLS,
         knowledge=KNOWLEDGE,
     )
