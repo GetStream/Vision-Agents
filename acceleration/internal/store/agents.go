@@ -39,6 +39,13 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 		if err := refuseUnbindable(missing, nil); err != nil {
 			return err
 		}
+		undefined, err := lockCustomDefinitions(ctx, tx, config.CustomerID, boundConnectors(config.Connectors))
+		if err != nil {
+			return err
+		}
+		if err := refuseUndefined(undefined, nil); err != nil {
+			return err
+		}
 		if _, err := tx.NewInsert().Model(config).Exec(ctx); err != nil {
 			if constraint(err) == "agent_configs_name_idx" {
 				return ErrNameTaken
@@ -83,8 +90,12 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 		if err != nil {
 			return err
 		}
+		undefined, err := lockCustomDefinitions(ctx, tx, config.CustomerID, boundConnectors(config.Connectors))
+		if err != nil {
+			return err
+		}
 		var stored AgentConfig
-		if len(missing) > 0 {
+		if len(missing) > 0 || len(undefined) > 0 {
 			err := tx.NewSelect().Model(&stored).Column("connectors").
 				Where("id = ?", config.ID).
 				Where("customer_id = ?", config.CustomerID).
@@ -95,6 +106,9 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 			}
 		}
 		if err := refuseUnbindable(missing, stored.Connectors); err != nil {
+			return err
+		}
+		if err := refuseUndefined(undefined, stored.Connectors); err != nil {
 			return err
 		}
 		result, err := tx.NewUpdate().Model(config).
@@ -138,6 +152,13 @@ func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID st
 			return err
 		}
 		if err := refuseUnbindable(missing, nil); err != nil {
+			return err
+		}
+		undefined, err := lockCustomDefinitions(ctx, tx, customerID, []string{binding.ConnectorID})
+		if err != nil {
+			return err
+		}
+		if err := refuseUndefined(undefined, nil); err != nil {
 			return err
 		}
 		err = tx.NewSelect().Model(&config).
@@ -222,6 +243,28 @@ func refuseUnbindable(missing []string, kept []ConnectorBinding) error {
 			return binding.Connection.Type == "fixed" && binding.Connection.ConnectionID == id
 		}) {
 			return stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
+		}
+	}
+	return nil
+}
+
+// boundConnectors are the connector ids bindings name.
+func boundConnectors(bindings []ConnectorBinding) []string {
+	ids := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		ids = append(ids, binding.ConnectorID)
+	}
+	return ids
+}
+
+// refuseUndefined refuses a binding to a custom connector the customer has no definition of,
+// unless kept, the bindings stored before this write, names it already: a forced connector
+// delete leaves its bindings behind on purpose (DeleteConnectorDefinition), and a save that
+// keeps one is not a new bind, as refuseUnbindable keeps a forced connection delete's.
+func refuseUndefined(undefined []string, kept []ConnectorBinding) error {
+	for _, id := range undefined {
+		if !slices.ContainsFunc(kept, func(binding ConnectorBinding) bool { return binding.ConnectorID == id }) {
+			return stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorDefinition, id))
 		}
 	}
 	return nil

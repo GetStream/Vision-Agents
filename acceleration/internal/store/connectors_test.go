@@ -8,7 +8,11 @@ import (
 	"strings"
 	"sync"
 	"testing/fstest"
+	"time"
 
+	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 )
 
@@ -473,4 +477,401 @@ func definitionIDs(definitions []ConnectorDefinition) []string {
 		ids = append(ids, definition.ID)
 	}
 	return ids
+}
+
+// customCRM is a custom definition that takes the customer's own OAuth client and the
+// test_key scheme testSchemes registers.
+const customCRM = `
+id: custom_crm
+revision: 1
+name: CRM
+endpoints:
+  mcp: https://mcp.crm.example/mcp
+schemes: [oauth2_code, test_key]
+client:
+  registration: [customer]
+sources:
+  - kind: mcp
+    endpoint: mcp
+`
+
+// crm stores custom_crm as the customer's own and returns its id.
+func (s *StoreSuite) crm(customerID string) string {
+	_, err := s.store.CreateConnectorDefinition(s.ctx, customerID, parsed(s.T(), customCRM))
+	s.Require().NoError(err)
+	return "custom_crm"
+}
+
+// crmConnection is an app-owned connection of the customer's to custom_crm.
+func (s *StoreSuite) crmConnection(customerID string) ConnectorConnection {
+	connection := &ConnectorConnection{CustomerID: customerID, ConnectorID: "custom_crm", DefinitionRevision: 1,
+		OwnerType: OwnerApp, AuthScheme: "test_key"}
+	s.Require().NoError(s.store.CreateConnectorConnection(s.ctx, testSchemes, connection))
+	return *connection
+}
+
+// crmBinding is a binding of custom_crm under alias, fixed to connectionID or, when it is
+// empty, chosen per session.
+func crmBinding(alias, connectionID string) ConnectorBinding {
+	binding := ConnectorBinding{Name: alias, ConnectorID: "custom_crm", Connection: ConnectionBinding{Type: "session"}, Tools: []ToolGrant{}}
+	if connectionID != "" {
+		binding.Connection = ConnectionBinding{Type: "fixed", ConnectionID: connectionID}
+	}
+	return binding
+}
+
+// secretsOf counts the customer's rows naming the connector in each table that holds a sealed
+// secret for it.
+func (s *StoreSuite) secretsOf(customerID, connectorID string) map[string]int {
+	counts := map[string]int{}
+	for _, table := range []string{"connector_oauth_clients", "connector_config_tokens", "connector_event_destinations"} {
+		var count int
+		s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+			"SELECT count(*) FROM "+table+" WHERE customer_id = ? AND connector_id = ?", customerID, connectorID).Scan(&count))
+		counts[table] = count
+	}
+	return counts
+}
+
+func (s *StoreSuite) TestAnUnusedCustomDefinitionGoesWithEveryRevisionAndMayBeMadeAgain() {
+	id := s.crm("acme-app")
+	_, err := s.store.CreateConnectorDefinition(s.ctx, "acme-app",
+		parsed(s.T(), strings.Replace(customCRM, "name: CRM", "name: Our CRM", 1)))
+	s.Require().NoError(err)
+
+	deleted, err := s.store.DeleteConnectorDefinition(s.ctx, "acme-app", id, false)
+
+	s.Require().NoError(err)
+	s.Empty(deleted.Connections)
+	for _, revision := range []int{1, 2} {
+		_, err = s.store.ConnectorDefinition(s.ctx, "acme-app", id, revision)
+		s.ErrorIs(err, ErrNoConnectorDefinition, "revision %d", revision)
+	}
+	again, err := s.store.CreateConnectorDefinition(s.ctx, "acme-app", parsed(s.T(), customCRM))
+	s.Require().NoError(err)
+	s.Equal(1, again.Revision, "a new connector, numbered from the start")
+}
+
+func (s *StoreSuite) TestABuiltInOrAnotherCustomersDefinitionIsNotDeleted() {
+	s.seed(acmeManifest)
+	s.crm("other-app")
+
+	_, builtin := s.store.DeleteConnectorDefinition(s.ctx, "acme-app", "acme", true)
+	_, others := s.store.DeleteConnectorDefinition(s.ctx, "acme-app", "custom_crm", true)
+
+	s.ErrorIs(builtin, ErrNoConnectorDefinition)
+	s.ErrorIs(others, ErrNoConnectorDefinition)
+	s.Len(s.revisions("acme"), 1)
+	_, err := s.store.LatestConnectorDefinition(s.ctx, "other-app", "custom_crm")
+	s.NoError(err, "the other customer's is still there")
+}
+
+func (s *StoreSuite) TestAnUnforcedDeleteOfAUsedDefinitionNamesItsUsersAndChangesNothing() {
+	id := s.crm("acme-app")
+	connection := s.crmConnection("acme-app")
+	user := s.crmConnection("acme-app")
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE connector_connections SET owner_type = 'user', owner_id = 'u1' WHERE id = ?", user.ID)
+	s.Require().NoError(err)
+	config := s.boundConfig("acme-app", crmBinding("inbox", ""), crmBinding("crm", connection.ID))
+
+	deleted, err := s.store.DeleteConnectorDefinition(s.ctx, "acme-app", id, false)
+
+	s.ErrorIs(err, ErrConnectorDefinitionInUse)
+	s.Equal([]string{connection.ID, user.ID}, deleted.Uses.Connections, "the oldest first")
+	s.Equal([]ConnectorBindingUse{
+		{ConfigID: config.ID, ConfigName: config.Name, Binding: "crm"},
+		{ConfigID: config.ID, ConfigName: config.Name, Binding: "inbox"},
+	}, deleted.Uses.Bindings)
+	s.Empty(deleted.Connections)
+	_, err = s.store.LatestConnectorDefinition(s.ctx, "acme-app", id)
+	s.NoError(err)
+	_, err = s.store.ConnectorConnection(s.ctx, "acme-app", connection.ID)
+	s.NoError(err)
+}
+
+func (s *StoreSuite) TestABindingAloneKeepsAnUnforcedDeleteOff() {
+	id := s.crm("acme-app")
+	s.boundConfig("acme-app", crmBinding("inbox", ""))
+
+	_, err := s.store.DeleteConnectorDefinition(s.ctx, "acme-app", id, false)
+
+	s.ErrorIs(err, ErrConnectorDefinitionInUse)
+}
+
+func (s *StoreSuite) TestAForcedDeleteDeletesItsConnectionsAndLeavesTheBindings() {
+	id := s.crm("acme-app")
+	granted := s.crmConnection("acme-app")
+	_, err := s.store.DB().ExecContext(s.ctx,
+		"UPDATE connector_connections SET credentials_sealed = 'sealed', credentials_kek_version = 1, status = 'connected' WHERE id = ?", granted.ID)
+	s.Require().NoError(err)
+	pending := s.crmConnection("acme-app")
+	config := s.boundConfig("acme-app", crmBinding("crm", granted.ID))
+
+	deleted, err := s.store.DeleteConnectorDefinition(s.ctx, "acme-app", id, true)
+
+	s.Require().NoError(err)
+	s.Equal([]DeletedConnection{
+		{ID: granted.ID, ConnectorID: id, OwnerType: OwnerApp, HadGrant: true},
+		{ID: pending.ID, ConnectorID: id, OwnerType: OwnerApp, HadGrant: false},
+	}, deleted.Connections)
+	for _, gone := range []string{granted.ID, pending.ID} {
+		_, err = s.store.ConnectorConnection(s.ctx, "acme-app", gone)
+		s.ErrorIs(err, ErrNoConnectorConnection)
+	}
+	var sealed []byte
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+		"SELECT credentials_sealed FROM connector_connections WHERE id = ?", granted.ID).Scan(&sealed))
+	s.Empty(sealed, "the credentials went with the connection")
+	read, err := s.store.AgentConfig(s.ctx, "acme-app", config.ID)
+	s.Require().NoError(err)
+	s.Equal([]ConnectorBinding{crmBinding("crm", granted.ID)}, read.Connectors, "left in place, as a forced connection delete leaves it")
+}
+
+func (s *StoreSuite) TestADeleteLeavesNoSecretOfTheConnectorBehind() {
+	for _, customer := range []string{"acme-app", "other-app"} {
+		s.crm(customer)
+		_, err := s.store.PutConnectorOAuthClient(s.ctx, &ConnectorOAuthClient{CustomerID: customer, ConnectorID: "custom_crm",
+			Registration: core.ClientCustomer, ClientID: "client", SecretSealed: []byte("sealed secret"), KEKVersion: 1})
+		s.Require().NoError(err)
+		s.configToken(customer, "custom_crm", "sealed", s.base)
+		s.eventDestination(customer, "custom_crm", newID(), "all")
+	}
+
+	_, err := s.store.DeleteConnectorDefinition(s.ctx, "acme-app", "custom_crm", false)
+
+	s.Require().NoError(err)
+	none := map[string]int{"connector_oauth_clients": 0, "connector_config_tokens": 0, "connector_event_destinations": 0}
+	s.Equal(none, s.secretsOf("acme-app", "custom_crm"))
+	s.Equal(map[string]int{"connector_oauth_clients": 1, "connector_config_tokens": 1, "connector_event_destinations": 1},
+		s.secretsOf("other-app", "custom_crm"), "another customer's are its own")
+}
+
+// The connection's create has locked the definition and is held at its INSERT by a SHARE lock
+// on connector_connections (table 13.2,
+// https://www.postgresql.org/docs/current/explicit-locking.html). The delete waits for it,
+// then sees the connection.
+func (s *StoreSuite) TestADeleteWaitsForAConnectionInProgressAndIsRefused() {
+	id := s.crm("acme-app")
+	held := s.begin()
+	_, err := held.ExecContext(s.ctx, "LOCK TABLE connector_connections IN SHARE MODE")
+	s.Require().NoError(err)
+
+	creator := s.router()
+	created := make(chan error, 1)
+	connection := &ConnectorConnection{CustomerID: "acme-app", ConnectorID: id, DefinitionRevision: 1, OwnerType: OwnerApp, AuthScheme: "test_key"}
+	go func() { created <- creator.CreateConnectorConnection(s.ctx, testSchemes, connection) }()
+	// The two seconds and the ten milliseconds are assertTheWaitEnded's (credentials_test.go).
+	s.Require().Eventually(func() bool { return s.waitingForTable("connector_connections") == 1 },
+		2*time.Second, 10*time.Millisecond, "the create waits at its INSERT")
+	deleter := s.router()
+	deleted := make(chan error, 1)
+	go func() {
+		_, err := deleter.DeleteConnectorDefinition(s.ctx, "acme-app", id, false)
+		deleted <- err
+	}()
+	s.Eventually(func() bool { return s.waitingForALock() == 2 },
+		2*time.Second, 10*time.Millisecond, "the delete waits for the create's lock on the definition")
+	s.Require().NoError(held.Commit())
+
+	s.Require().NoError(<-created)
+	s.ErrorIs(<-deleted, ErrConnectorDefinitionInUse)
+	_, err = s.store.ConnectorConnection(s.ctx, "acme-app", connection.ID)
+	s.NoError(err)
+}
+
+// deleteHeld starts an unforced delete of the customer's custom_crm and holds it, past its lock
+// on the definition, at its DELETE of the OAuth clients, by a SHARE lock on that table. held
+// lets it go once committed.
+func (s *StoreSuite) deleteHeld(customerID string) (held bun.Tx, deleted chan error) {
+	held = s.begin()
+	_, err := held.ExecContext(s.ctx, "LOCK TABLE connector_oauth_clients IN SHARE MODE")
+	s.Require().NoError(err)
+	deleter := s.router()
+	deleted = make(chan error, 1)
+	go func() {
+		_, err := deleter.DeleteConnectorDefinition(s.ctx, customerID, "custom_crm", false)
+		deleted <- err
+	}()
+	s.Require().Eventually(func() bool { return s.waitingForTable("connector_oauth_clients") == 1 },
+		2*time.Second, 10*time.Millisecond, "the delete waits at its DELETE")
+	return held, deleted
+}
+
+func (s *StoreSuite) TestAConnectionWaitsForADeleteInProgressAndIsRefused() {
+	id := s.crm("acme-app")
+	held, deleted := s.deleteHeld("acme-app")
+
+	creator := s.router()
+	created := make(chan error, 1)
+	go func() {
+		created <- creator.CreateConnectorConnection(s.ctx, testSchemes, &ConnectorConnection{
+			CustomerID: "acme-app", ConnectorID: id, DefinitionRevision: 1, OwnerType: OwnerApp, AuthScheme: "test_key"})
+	}()
+	s.Eventually(func() bool { return s.waitingForALock() == 2 },
+		2*time.Second, 10*time.Millisecond, "the create waits for the delete's lock on the definition")
+	s.Require().NoError(held.Commit())
+
+	s.NoError(<-deleted)
+	s.ErrorIs(<-created, ErrNoConnectorDefinition)
+	connections, err := s.store.ConnectorConnectionsByOwner(s.ctx, "acme-app", ConnectionFilter{OwnerType: OwnerApp})
+	s.Require().NoError(err)
+	s.Empty(connections, "no connection to a deleted connector is stored")
+}
+
+// The config save has locked the definition and is held at its INSERT by a SHARE lock on
+// agent_configs, which lets the delete's read of the table through (table 13.2).
+func (s *StoreSuite) TestADeleteWaitsForABindingInProgressAndIsRefused() {
+	id := s.crm("acme-app")
+	held := s.begin()
+	_, err := held.ExecContext(s.ctx, "LOCK TABLE agent_configs IN SHARE MODE")
+	s.Require().NoError(err)
+
+	saver := s.router()
+	saved := make(chan error, 1)
+	go func() {
+		saved <- saver.CreateAgentConfig(s.ctx, &AgentConfig{CustomerID: "acme-app", Name: "bound",
+			Connectors: []ConnectorBinding{crmBinding("crm", "")}})
+	}()
+	s.Require().Eventually(func() bool { return s.waitingForTable("agent_configs") == 1 },
+		2*time.Second, 10*time.Millisecond, "the save waits at its INSERT")
+	deleter := s.router()
+	deleted := make(chan error, 1)
+	go func() {
+		_, err := deleter.DeleteConnectorDefinition(s.ctx, "acme-app", id, false)
+		deleted <- err
+	}()
+	s.Eventually(func() bool { return s.waitingForALock() == 2 },
+		2*time.Second, 10*time.Millisecond, "the delete waits for the save's lock on the definition")
+	s.Require().NoError(held.Commit())
+
+	s.Require().NoError(<-saved)
+	s.ErrorIs(<-deleted, ErrConnectorDefinitionInUse)
+}
+
+func (s *StoreSuite) TestABindingWaitsForADeleteInProgressAndIsRefused() {
+	s.crm("acme-app")
+	held, deleted := s.deleteHeld("acme-app")
+
+	saver := s.router()
+	saved := make(chan error, 1)
+	go func() {
+		saved <- saver.CreateAgentConfig(s.ctx, &AgentConfig{CustomerID: "acme-app", Name: "bound",
+			Connectors: []ConnectorBinding{crmBinding("crm", "")}})
+	}()
+	s.Eventually(func() bool { return s.waitingForALock() == 2 },
+		2*time.Second, 10*time.Millisecond, "the save waits for the delete's lock on the definition")
+	s.Require().NoError(held.Commit())
+
+	s.NoError(<-deleted)
+	s.ErrorIs(<-saved, ErrNoConnectorDefinition)
+	configs, err := s.store.CustomerAgentConfigs(s.ctx, "acme-app")
+	s.Require().NoError(err)
+	s.Empty(configs, "no binding to the deleted connector is stored")
+}
+
+// A forced delete leaves its bindings behind on purpose, and saving the config for anything
+// else keeps the binding rather than failing until it is removed.
+func (s *StoreSuite) TestAnUpdateKeepsABindingAForcedConnectorDeleteLeftBehind() {
+	id := s.crm("acme-app")
+	config := s.boundConfig("acme-app", crmBinding("inbox", ""))
+	_, err := s.store.DeleteConnectorDefinition(s.ctx, "acme-app", id, true)
+	s.Require().NoError(err)
+
+	config.Instructions = "be brief"
+	s.Require().NoError(s.store.UpdateAgentConfig(s.ctx, &config))
+	other := config
+	other.Connectors = append(other.Connectors, ConnectorBinding{Name: "erp", ConnectorID: "custom_erp", Connection: ConnectionBinding{Type: "session"}, Tools: []ToolGrant{}})
+	s.ErrorIs(s.store.UpdateAgentConfig(s.ctx, &other), ErrNoConnectorDefinition, "a binding to a connector the customer has none of is refused")
+
+	read, err := s.store.AgentConfig(s.ctx, "acme-app", config.ID)
+	s.Require().NoError(err)
+	s.Equal("be brief", read.Instructions)
+	s.Equal([]ConnectorBinding{crmBinding("inbox", "")}, read.Connectors)
+}
+
+// The put has locked the definition and is held at its INSERT by the SHARE lock on
+// connector_oauth_clients. The delete waits for it, then deletes the client it stored.
+func (s *StoreSuite) TestAnOAuthClientPutInProgressGoesWithTheConnector() {
+	id := s.crm("acme-app")
+	held := s.begin()
+	_, err := held.ExecContext(s.ctx, "LOCK TABLE connector_oauth_clients IN SHARE MODE")
+	s.Require().NoError(err)
+
+	putter := s.router()
+	put := make(chan error, 1)
+	go func() {
+		_, err := putter.PutConnectorOAuthClient(s.ctx, &ConnectorOAuthClient{CustomerID: "acme-app", ConnectorID: id,
+			Registration: core.ClientCustomer, ClientID: "client", SecretSealed: []byte("sealed secret"), KEKVersion: 1})
+		put <- err
+	}()
+	s.Require().Eventually(func() bool { return s.waitingForTable("connector_oauth_clients") == 1 },
+		2*time.Second, 10*time.Millisecond, "the put waits at its INSERT")
+	deleter := s.router()
+	deleted := make(chan error, 1)
+	go func() {
+		_, err := deleter.DeleteConnectorDefinition(s.ctx, "acme-app", id, false)
+		deleted <- err
+	}()
+	s.Eventually(func() bool { return s.waitingForALock() == 2 },
+		2*time.Second, 10*time.Millisecond, "the delete waits for the put's lock on the definition")
+	s.Require().NoError(held.Commit())
+
+	s.Require().NoError(<-put)
+	s.Require().NoError(<-deleted)
+	s.Equal(0, s.secretsOf("acme-app", id)["connector_oauth_clients"], "no client secret outlives its connector")
+}
+
+func (s *StoreSuite) TestAnOAuthClientPutWaitsForADeleteInProgressAndIsRefused() {
+	id := s.crm("acme-app")
+	held, deleted := s.deleteHeld("acme-app")
+
+	putter := s.router()
+	put := make(chan error, 1)
+	go func() {
+		_, err := putter.PutConnectorOAuthClient(s.ctx, &ConnectorOAuthClient{CustomerID: "acme-app", ConnectorID: id,
+			Registration: core.ClientCustomer, ClientID: "client", SecretSealed: []byte("sealed secret"), KEKVersion: 1})
+		put <- err
+	}()
+	s.Eventually(func() bool { return s.waitingForALock() == 2 },
+		2*time.Second, 10*time.Millisecond, "the put waits for the delete's lock on the definition")
+	s.Require().NoError(held.Commit())
+
+	s.NoError(<-deleted)
+	s.ErrorIs(<-put, ErrNoConnectorDefinition)
+	s.Equal(0, s.secretsOf("acme-app", id)["connector_oauth_clients"])
+}
+
+// A config save binding a connection locks it FOR KEY SHARE before it locks the connector's
+// definition, and a forced delete locks the definition before the connection. The delete
+// takes the connection FOR NO KEY UPDATE, which does not wait for FOR KEY SHARE (table 13.3,
+// https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS), so the two do
+// not wait on each other in a cycle. Another transaction holds the connection FOR NO KEY
+// UPDATE so the delete is caught between its two locks while the save takes the connection.
+func (s *StoreSuite) TestAForcedDeleteAndASaveBindingItsConnectionDoNotDeadlock() {
+	id := s.crm("acme-app")
+	connection := s.crmConnection("acme-app")
+	held := s.begin()
+	_, err := held.ExecContext(s.ctx, "SELECT id FROM connector_connections WHERE id = ? FOR NO KEY UPDATE", connection.ID)
+	s.Require().NoError(err)
+
+	deleter := s.router()
+	deleted := make(chan error, 1)
+	go func() {
+		_, err := deleter.DeleteConnectorDefinition(s.ctx, "acme-app", id, true)
+		deleted <- err
+	}()
+	s.Require().Eventually(func() bool { return s.waitingForALock() == 1 },
+		2*time.Second, 10*time.Millisecond, "the delete holds the definition and waits for the connection")
+	saver := s.router()
+	saved := make(chan error, 1)
+	go func() {
+		saved <- saver.CreateAgentConfig(s.ctx, &AgentConfig{CustomerID: "acme-app", Name: "bound",
+			Connectors: []ConnectorBinding{crmBinding("crm", connection.ID)}})
+	}()
+	s.Eventually(func() bool { return s.waitingForALock() == 2 },
+		2*time.Second, 10*time.Millisecond, "the save holds the connection and waits for the definition")
+	s.Require().NoError(held.Commit())
+
+	s.NoError(<-deleted)
+	s.ErrorIs(<-saved, ErrNoConnectorDefinition, "the connector is gone")
 }

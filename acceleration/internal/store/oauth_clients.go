@@ -89,19 +89,32 @@ func (s *Store) PutConnectorOAuthClient(ctx context.Context, client *ConnectorOA
 	if err := checkOAuthClient(client); err != nil {
 		return false, err
 	}
-	definition, err := s.LatestConnectorDefinition(ctx, client.CustomerID, client.ConnectorID)
-	if err != nil {
-		return false, err
-	}
-	if !slices.Contains(definition.Manifest.Client.Registration, client.Registration) {
-		return false, stack.Wrap(fmt.Errorf("%w: %s lists %v, not %s", ErrOAuthClientRegistrationNotListed,
-			client.ConnectorID, definition.Manifest.Client.Registration, client.Registration))
+	if client.CustomerID == "" || client.ConnectorID == "" {
+		return false, stack.Wrap(errors.New("store: a customer and a connector id are required"))
 	}
 	// Truncated to what Postgres keeps, so the created_at an insert returns equals it.
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	var createdAt time.Time
 	var pin sql.NullInt64
-	err = s.db.NewRaw(`
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// A custom definition is held until the client is stored, so a delete of the connector
+		// waits and then deletes it too, or went first and leaves no definition to find
+		// (DeleteConnectorDefinition): no client secret outlives its connector.
+		if _, err := lockCustomDefinitions(ctx, tx, client.CustomerID, []string{client.ConnectorID}); err != nil {
+			return err
+		}
+		definition, err := latestDefinition(ctx, tx, []string{BuiltinCustomer, client.CustomerID}, client.ConnectorID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %s", ErrNoConnectorDefinition, client.ConnectorID)
+		}
+		if err != nil {
+			return fmt.Errorf("store: latest connector definition: %w", err)
+		}
+		if !slices.Contains(definition.Manifest.Client.Registration, client.Registration) {
+			return fmt.Errorf("%w: %s lists %v, not %s", ErrOAuthClientRegistrationNotListed,
+				client.ConnectorID, definition.Manifest.Client.Registration, client.Registration)
+		}
+		err = tx.NewRaw(`
 INSERT INTO connector_oauth_clients AS coc
     (customer_id, connector_id, registration, client_id, auth_method, secret_sealed, kek_version,
      provider_app_id, stream_app_pk, signing_secret_sealed, signing_kek_version, created_at, updated_at)
@@ -117,20 +130,25 @@ SET client_id = EXCLUDED.client_id,
     updated_at = EXCLUDED.updated_at
 WHERE coc.registration = EXCLUDED.registration
 RETURNING coc.created_at, coc.stream_app_pk`,
-		client.CustomerID, client.ConnectorID, client.Registration, client.ClientID, client.AuthMethod,
-		client.SecretSealed, client.KEKVersion, client.ProviderAppID, nullablePin(client.StreamAppPK),
-		client.SigningSecretSealed, client.SigningKEKVersion, now, now).Scan(ctx, &createdAt, &pin)
-	// The conflict's WHERE kept the row, so nothing was written or returned.
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, stack.Wrap(fmt.Errorf("%w: %s", ErrOAuthClientRegistration, client.ConnectorID))
-	}
-	// ON CONFLICT arbitrates the primary key alone, so another customer's row with the app
-	// fails the unique index (20261006195500_connector_oauth_clients_provider_app.sql).
-	if constraint(err) == "connector_oauth_clients_provider_app" {
-		return false, stack.Wrap(fmt.Errorf("%w: %s %s", ErrProviderAppTaken, client.ConnectorID, client.ProviderAppID))
-	}
+			client.CustomerID, client.ConnectorID, client.Registration, client.ClientID, client.AuthMethod,
+			client.SecretSealed, client.KEKVersion, client.ProviderAppID, nullablePin(client.StreamAppPK),
+			client.SigningSecretSealed, client.SigningKEKVersion, now, now).Scan(ctx, &createdAt, &pin)
+		// The conflict's WHERE kept the row, so nothing was written or returned.
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %s", ErrOAuthClientRegistration, client.ConnectorID)
+		}
+		// ON CONFLICT arbitrates the primary key alone, so another customer's row with the app
+		// fails the unique index (20261006195500_connector_oauth_clients_provider_app.sql).
+		if constraint(err) == "connector_oauth_clients_provider_app" {
+			return fmt.Errorf("%w: %s %s", ErrProviderAppTaken, client.ConnectorID, client.ProviderAppID)
+		}
+		if err != nil {
+			return fmt.Errorf("store: put connector oauth client: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return false, stack.Wrap(fmt.Errorf("store: put connector oauth client: %w", err))
+		return false, stack.Wrap(err)
 	}
 	client.CreatedAt, client.UpdatedAt, client.StreamAppPK = createdAt, now, pin.Int64
 	return createdAt.Equal(now), nil
