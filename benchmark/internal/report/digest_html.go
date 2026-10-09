@@ -43,16 +43,18 @@ func (d Digest) HTML(title string, card []byte, runs []LabeledRun) (string, erro
 			}
 			return calls[i].ScenarioID < calls[j].ScenarioID
 		})
-		section := digestPageRun{Label: run.Label, Pipeline: pipelineOf(run.Summary.Manifest)}
+		section := digestPageRun{Label: run.Label, Pipeline: pipelineOf(run.Summary.Manifest), Stages: packStages(run.Summary)}
 		if i < len(d.Results) {
 			section.Results = d.Results[i]
 		}
 		for _, call := range calls {
+			detail := LoadCallDetail(call, d.scenario(call.ScenarioID))
 			section.Calls = append(section.Calls, digestPageCall{
 				Scenario: call.ScenarioID,
 				Trial:    call.Trial,
 				Outcome:  callOutcome(call),
-				Failed:   strings.Join(CallFailures(call), "; "),
+				Cause:    detail.Cause(),
+				Detail:   detail,
 				Reply:    callReplyP50(call),
 				First:    callFirstResponse(call),
 				Tools:    call.Metrics.ToolCount,
@@ -139,6 +141,7 @@ type digestPageRun struct {
 	Label    string
 	Pipeline string
 	Results  Results
+	Stages   []packStage
 	Calls    []digestPageCall
 }
 
@@ -146,10 +149,40 @@ type digestPageCall struct {
 	Scenario string
 	Trial    int
 	Outcome  string
-	Failed   string
+	Cause    string
+	Detail   CallDetail
 	Reply    string
 	First    string
 	Tools    int
+}
+
+// packStage is a pack's median time in each stage of a router turn.
+type packStage struct {
+	Pack    string
+	Samples int
+	Stages  []Stage
+}
+
+// stageLabels name the router's stages as a reader would.
+var stageLabels = map[string]string{
+	"stt_ms": "STT settle", "cadence_ms": "cadence", "decision_ms": "decision",
+	"model_to_first_text_ms": "model to first text", "text_to_tts_ms": "text to TTS",
+	"tts_to_audio_ms": "TTS to audio", "roundtrip_ms": "roundtrip",
+}
+
+func packStages(sum Summary) []packStage {
+	var out []packStage
+	for _, pack := range sum.Packs {
+		if pack.StageSamples == 0 {
+			continue
+		}
+		row := packStage{Pack: pack.Pack, Samples: pack.StageSamples}
+		for _, name := range stageNames {
+			row.Stages = append(row.Stages, Stage{Name: stageLabels[name], Ms: pack.StageP50[name]})
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 var digestTemplate = template.Must(template.New("digest").Parse(`<!doctype html>
@@ -182,6 +215,15 @@ var digestTemplate = template.Must(template.New("digest").Parse(`<!doctype html>
   .fail { background: var(--fail-bg); color: var(--fail); }
   .invalid { background: var(--invalid-bg); color: var(--muted); }
   .why { color: var(--muted); font-size: 13px; }
+  .cause { background: var(--invalid-bg); color: var(--ink); }
+  .failures { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+  .failures .cascade { color: var(--muted); }
+  details { font-size: 13px; }
+  details summary { cursor: pointer; color: var(--muted); }
+  details h3 { font-size: 13px; margin: 12px 0 4px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .missed { color: var(--fail); font-weight: 600; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-word; }
+  .sub td { border-top: 0; padding-top: 0; }
 </style>
 </head>
 <body>
@@ -208,14 +250,38 @@ var digestTemplate = template.Must(template.New("digest").Parse(`<!doctype html>
       {{range .ByPack}}<tr><td>{{.Name}}</td><td>{{.Passed}}/{{.Valid}}</td><td>{{.Invalid}}</td><td>{{.ScoreText}}</td></tr>{{end}}
       <tr><th colspan="4">By scenario</th></tr>
       {{range .ByKind}}<tr><td>{{.Name}}</td><td>{{.Passed}}/{{.Valid}}</td><td>{{.Invalid}}</td><td>{{.ScoreText}}</td></tr>{{end}}
-    </table><div class="why">Score is the pass rate on 0-100 over trials that produced a verdict. The overall score is the mean of the packs, so each pack counts the same.</div></div>{{end}}
+    </table><div class="why">Score is the pass rate on 0-100 over trials that produced a verdict. The overall score is the mean of the packs, so each pack counts the same.</div></div>
+    {{if .Causes}}<div class="panel"><table>
+      <tr><th>Why it failed</th><th>Calls</th></tr>
+      {{range .Causes}}<tr><td><span class="pill cause">{{.Cause}}</span></td><td>{{.Calls}}</td></tr>{{end}}
+    </table><div class="why">Each failed call counted once, by its first failure that is not a consequence of another. Heard wrong: the caller said a value the agent's speech-to-text never heard. Did wrong: the agent heard it and acted wrongly or not at all. Said wrong: a policy or say-do break, or a value read back wrong. Turn-taking: talking over the caller, not stopping, no filler. Infra: no verdict.</div></div>{{end}}{{end}}
+    {{if .Stages}}<div class="panel"><table>
+      <tr><th>Where the time goes (P50)</th>{{range (index .Stages 0).Stages}}<th>{{.Name}}</th>{{end}}</tr>
+      {{range .Stages}}<tr><td>{{.Pack}} <span class="why">n={{.Samples}}</span></td>{{range .Stages}}<td>{{.Ms}} ms</td>{{end}}</tr>{{end}}
+    </table><div class="why">The router's median for each stage of a caller turn, pooled over every turn it timed. Roundtrip is the sum the caller waited.</div></div>{{end}}
     <div class="panel"><table>
       <tr><th>Scenario</th><th>Outcome</th><th>Reply P50</th><th>First response</th><th>Tools</th></tr>
       {{range .Calls}}<tr>
         <td>{{.Scenario}}{{if gt .Trial 1}} #{{.Trial}}{{end}}</td>
-        <td><span class="pill {{.Outcome}}">{{.Outcome}}</span>{{if .Failed}}<div class="why">{{.Failed}}</div>{{end}}</td>
+        <td><span class="pill {{.Outcome}}">{{.Outcome}}</span>{{if .Cause}} <span class="pill cause">{{.Cause}}</span>{{end}}
+          {{with .Detail.Failures}}<ul class="failures">{{range .}}<li{{if .Cascade}} class="cascade"{{end}}>{{.Message}} <span class="why">({{.Gate}}{{if .Cascade}}, follows from above{{end}})</span></li>{{end}}</ul>{{end}}</td>
         <td>{{.Reply}}</td><td>{{.First}}</td><td>{{.Tools}}</td>
-      </tr>{{end}}
+      </tr>
+      <tr class="sub"><td colspan="5"><details><summary>What happened</summary>
+        {{with .Detail.Caller}}<h3>Caller said, agent heard</h3><table>
+          {{range .}}<tr><td class="why">{{.TurnID}}</td><td>{{.Script}}</td><td>{{if .Heard}}{{.Heard}}{{else}}<span class="why">nothing heard</span>{{end}}{{range .Missed}} <span class="missed">missed {{.}}</span>{{end}}</td></tr>{{end}}
+        </table>{{end}}
+        {{with .Detail.Agent}}<h3>Agent turns</h3><table>
+          {{range .}}<tr><td>{{if .AfterTool}}<span class="why">after a tool:</span> {{end}}{{if .Said}}{{.Said}}{{else}}<span class="why">(no words recorded)</span>{{end}}{{if .Interrupted}} <span class="why">(interrupted)</span>{{end}}
+            {{with .Models}}<div class="why">{{range .}}{{.}}<br>{{end}}</div>{{end}}</td>
+            <td class="why">{{range .Stages}}{{.Name}} {{.Ms}} ms<br>{{end}}</td></tr>{{end}}
+        </table>{{end}}
+        {{with .Detail.Tools}}<h3>Tool calls</h3><table>
+          {{range .}}<tr><td><strong>{{.Name}}</strong> <span class="why">{{.DurationMs}} ms</span></td><td class="mono">{{.Args}}</td><td class="mono">{{if .Error}}<span class="missed">{{.Error}}</span>{{else}}{{.Result}}{{end}}</td></tr>{{end}}
+        </table>{{end}}
+        {{with .Detail.TurnTaking}}<h3>Turn-taking</h3><ul class="failures">{{range .}}<li>{{.}}</li>{{end}}</ul>{{end}}
+        {{with .Detail.JudgeNotes}}<h3>Judge</h3><div>{{.}}</div>{{end}}
+      </details></td></tr>{{end}}
     </table></div>
   </section>
   {{end}}

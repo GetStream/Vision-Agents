@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 )
 
 // Digest is a comparison cut down to what a chat message carries: the headline rows of
@@ -19,6 +21,9 @@ type Digest struct {
 	Rows    []DigestRow
 	// Results is each run's trials counted by pack and scenario type, in the order of Runs.
 	Results []Results
+	// Scenarios are the scripts the calls followed, by id, so the report can set what the
+	// caller said beside what the agent heard. Without them it shows what was heard alone.
+	Scenarios map[string]scenario.Scenario
 }
 
 // DigestRow is one headline metric across the runs.
@@ -145,6 +150,29 @@ func digestSamples(row string, st runStats) int {
 	return len(st.nonTool)
 }
 
+// ReadCauses reads each call's artifacts and counts the failed calls of every run by why
+// they failed, against the scripts in d.Scenarios.
+func (d *Digest) ReadCauses(runs []LabeledRun) {
+	for i, run := range runs {
+		if i >= len(d.Results) {
+			return
+		}
+		var details []CallDetail
+		for _, call := range run.Summary.Calls {
+			details = append(details, LoadCallDetail(call, d.scenario(call.ScenarioID)))
+		}
+		d.Results[i].Causes = CauseCounts(details)
+	}
+}
+
+// scenario is the script a call followed, or nil when it is not known.
+func (d Digest) scenario(id string) *scenario.Scenario {
+	if sc, ok := d.Scenarios[id]; ok {
+		return &sc
+	}
+	return nil
+}
+
 // SlackText is the message that goes with the digest image, in Slack's mrkdwn.
 func (d Digest) SlackText(title string) string {
 	var b strings.Builder
@@ -172,6 +200,15 @@ func (d Digest) SlackText(title string) string {
 	}
 	if len(runs) > 0 {
 		fmt.Fprintf(&b, "• Passed: %s\n", strings.Join(runs, " · "))
+	}
+	var why []string
+	for i, results := range d.Results {
+		if len(results.Causes) > 0 {
+			why = append(why, d.Runs[i]+" "+CausesText(results.Causes))
+		}
+	}
+	if len(why) > 0 {
+		fmt.Fprintf(&b, "• Why it failed: %s\n", strings.Join(why, " · "))
 	}
 	return b.String()
 }
