@@ -278,3 +278,36 @@ func (s *OpenAISuite) TestAToolWithEveryPropertyRequiredIsSentAsBefore() {
 
 	s.Nil(sent.Strict)
 }
+
+// TestAPropertiesKeyThatIsDataIsNotASchema reads an object under default, enum, const or
+// examples as a value: its properties key names no property, so nothing is optional.
+func (s *OpenAISuite) TestAPropertiesKeyThatIsDataIsNotASchema() {
+	data := map[string]any{"properties": map[string]any{"x": 1}}
+	for _, keyword := range []string{"default", "enum", "const", "examples"} {
+		s.Run(keyword, func() {
+			value := any(data)
+			if keyword == "enum" || keyword == "examples" {
+				value = []any{data}
+			}
+			sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"config": map[string]any{"type": "object", keyword: value}},
+				"required":   []string{"config"},
+			}})
+
+			s.Nil(sent.Strict)
+		})
+	}
+}
+
+// TestAnArgumentNamedPropertiesIsAProperty reads a property called properties as one more
+// property, not as a properties keyword holding the schema's other keywords.
+func (s *OpenAISuite) TestAnArgumentNamedPropertiesIsAProperty() {
+	sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"properties": map[string]any{"type": "string"}},
+		"required":   []string{"properties"},
+	}})
+
+	s.Nil(sent.Strict)
+}
