@@ -23,14 +23,14 @@ type timelineEntry struct {
 	SpeechEndToAudioMs *float64 `json:"speech_end_to_audio_ms"`
 }
 
-// captureRouterTimeline writes the router's timeline of a call and returns the caller turns
-// in it. The router times every turn as consecutive stages, which is the only place to see
+// captureRouterTimeline writes the router's timeline of a call and returns the replies in
+// it. The router times every turn as consecutive stages, which is the only place to see
 // where the wait between the caller stopping and the agent starting went.
 func captureRouterTimeline(cfg Config, callID, callDir string) ([]score.StageTiming, error) {
 	if cfg.TargetName != "accelerated" && cfg.TargetName != "acceleration" {
 		return nil, nil
 	}
-	base := strings.TrimRight(envOr("STREAM_ACCELERATION_URL", "http://127.0.0.1:8080"), "/")
+	base := routerBase(cfg)
 	customer := envOr("STREAM_ACCELERATION_CUSTOMER_ID", "voicebench")
 	sessionID, err := resolveHeardCallID(base, customer, callID)
 	if err != nil {
@@ -47,13 +47,18 @@ func captureRouterTimeline(cfg Config, callID, callDir string) ([]score.StageTim
 	if err := json.Unmarshal(body, &entries); err != nil {
 		return nil, err
 	}
-	return callerStages(entries), nil
+	return replyStages(entries), nil
 }
 
-// callerStages keeps the turns a caller's words started. A turn the agent began on its own,
-// such as the greeting or the reply to a tool coming back, has no transcript to settle and is
-// not a reply to anybody.
-func callerStages(entries []timelineEntry) []score.StageTiming {
+// toolTurnPrefix starts the id of the reply the agent begins when a tool returns.
+const toolTurnPrefix = "tool-"
+
+// replyStages keeps the turns that answered something: the ones a caller's words started, and
+// the replies the agent started after a tool returned, which are marked as such. The latter
+// have no transcript to settle, so they only have the stages from the model on, and count once
+// they reached audio. A turn the agent began on its own, such as the greeting, is a reply to
+// nobody.
+func replyStages(entries []timelineEntry) []score.StageTiming {
 	ms := func(v *float64) int {
 		if v == nil {
 			return 0
@@ -62,11 +67,17 @@ func callerStages(entries []timelineEntry) []score.StageTiming {
 	}
 	var stages []score.StageTiming
 	for _, entry := range entries {
-		if entry.SttLatencyMs == nil || entry.RoundtripMs == nil {
+		tool := strings.HasPrefix(entry.TurnID, toolTurnPrefix)
+		if tool {
+			if entry.TtsToAudioMs == nil {
+				continue
+			}
+		} else if entry.SttLatencyMs == nil || entry.RoundtripMs == nil {
 			continue
 		}
 		stages = append(stages, score.StageTiming{
 			TurnID:          entry.TurnID,
+			Tool:            tool,
 			STTMs:           ms(entry.SttLatencyMs),
 			CadenceMs:       ms(entry.CadenceMs),
 			DecisionMs:      ms(entry.DecisionMs),
