@@ -22,7 +22,8 @@ T = TypeVar("T", bound="AgentConnectorBinding")
 @_attrs_define
 class AgentConnectorBinding:
     """A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists
-    are offered, each pinned to the schema it was reviewed against.
+    are offered, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name
+    alone, to the schema its connection first offered it with.
 
         Attributes:
             connection (AgentConnectorSelection): Which connection a binding's tools are called through.
@@ -32,7 +33,8 @@ class AgentConnectorBinding:
                 or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first
                 __, so a __ inside the alias or a _ at its end would split it in the wrong place.
             tools (list[ConnectorToolGrant]): The exact tools allowed, each named once. There is no wildcard, and an empty
-                list grants none.
+                list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on
+                first use.
             events (list[ConnectorBindingEvent] | Unset): MCP events the binding's fixed connection is subscribed to, each
                 opening a text conversation from the config when it arrives. Subscribed when the connection is next validated.
                 Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an
