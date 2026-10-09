@@ -251,6 +251,10 @@ var (
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}}
 	toolEcho = &mcpsdk.Tool{Name: "echo", Description: "Answers with the note it was sent.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"note": map[string]any{"type": "string"}}}}
+	// toolOpen takes any key besides its note, so a model chooses the names of some arguments.
+	toolOpen = &mcpsdk.Tool{Name: "open", Description: "Takes a note and whatever else it is sent.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"note": map[string]any{"type": "string"}},
+			"additionalProperties": true}}
 	toolFails = &mcpsdk.Tool{Name: "fails", Description: "Reports its own failure.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}}
 	// toolGuarded is never run: the provider refuses every call of it with a 403 that asks for
@@ -259,7 +263,7 @@ var (
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
 			"scope": map[string]any{"type": "string"}, "claims": map[string]any{"type": "string"}}}}
 	providerTools = map[string]*mcpsdk.Tool{"whoami": toolWhoami, "secret": toolSecret, "slow": toolSlow,
-		"echo": toolEcho, "fails": toolFails, "guarded": toolGuarded}
+		"echo": toolEcho, "open": toolOpen, "fails": toolFails, "guarded": toolGuarded}
 )
 
 // grants grant each of the provider's tools by name, at its digest.
@@ -325,6 +329,9 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 			}
 			_ = json.Unmarshal(request.Params.Arguments, &sent)
 			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "you said " + sent.Note}}}, nil
+		})
+		server.AddTool(toolOpen, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "opened"}}}, nil
 		})
 		server.AddTool(toolFails, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 			return &mcpsdk.CallToolResult{IsError: true, Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the record is locked"}}}, nil

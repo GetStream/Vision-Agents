@@ -37,10 +37,10 @@ func (*ConnectionInvocation) TransformSchema(_ huma.Registry, schema *huma.Schem
 // InvocationArgument is one top-level argument of a connector tool call without its value
 // (store.ArgumentShape, AI-990 F40).
 type InvocationArgument struct {
-	Name string `json:"name"`
+	Name string `json:"name" doc:"The argument's name, when the tool's input schema declares it under properties. The arguments it does not declare, whose names a model may choose, are one entry named (undeclared): type object, length their count."`
 	// RFC 8259 section 3's six types of a JSON value.
 	Type   string `json:"type" enum:"object,array,string,number,boolean,null" doc:"The argument's JSON type."`
-	Length *int   `json:"length,omitempty" doc:"A string's characters (Unicode code points) or an array's elements. Absent for any other type."`
+	Length *int   `json:"length,omitempty" doc:"A string's characters (Unicode code points) or an array's elements, or for (undeclared) the number of undeclared arguments. Absent for any other type."`
 }
 
 func (*InvocationArgument) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

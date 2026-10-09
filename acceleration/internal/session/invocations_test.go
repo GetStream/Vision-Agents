@@ -315,6 +315,24 @@ func (s *InvocationLogSuite) TestARefusedCallKeepsTheShapeOfWhatItWasAsked() {
 	s.Equal([]store.ArgumentShape{{Name: "note", Type: "number"}}, row.Arguments)
 }
 
+// TestAKeyTheModelChoseIsNeverRecordedByName: the tool takes additionalProperties, so a key can
+// be content. Its row names the declared argument and counts the rest.
+func (s *InvocationLogSuite) TestAKeyTheModelChoseIsNeverRecordedByName() {
+	app := s.connection("", "primary")
+	d, _, _, err := s.attach(s.spec(s.config(s.fixed("crm", app, "open")), "", nil))
+	s.Require().NoError(err)
+
+	_, err = s.call(d, "crm__open", `{"note": "hi", "alice@example.com": "x", "bob@example.com": 1}`)
+
+	s.Require().NoError(err)
+	length, count := 2, 2
+	s.Equal([]store.ArgumentShape{
+		{Name: "(undeclared)", Type: "object", Length: &count},
+		{Name: "note", Type: "string", Length: &length},
+	}, s.logged(app, 1)[0].Arguments)
+	s.NotContains(s.stored(app), "example.com")
+}
+
 func (s *InvocationLogSuite) TestARecordedSessionsRowHoldsNoArgumentOrResultEither() {
 	app := s.connection("", "primary")
 	d, _, _, err := s.attach(s.spec(s.config(s.fixed("crm", app, "echo")), "", nil))
