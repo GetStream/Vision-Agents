@@ -54,6 +54,7 @@ type Config struct {
 	NetworkProfile    string
 	Frozen            bool
 	Short             bool
+	Extended          bool
 	Target            benchtarget.Target
 	SkipSTT           bool
 	SkipJudge         bool
@@ -108,13 +109,22 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 		}
 		scenarios = filtered
 	}
-	if cfg.Frozen && cfg.Short {
-		return report.Summary{}, fmt.Errorf("run: --frozen and --short are separate scenario sets, pick one")
+	sets := 0
+	for _, picked := range []bool{cfg.Frozen, cfg.Short, cfg.Extended} {
+		if picked {
+			sets++
+		}
 	}
-	if cfg.Frozen || cfg.Short {
+	if sets > 1 {
+		return report.Summary{}, fmt.Errorf("run: --frozen, --short and --extended are separate scenario sets, pick one")
+	}
+	if sets == 1 {
 		list := scenario.FrozenPath(cfg.Root)
-		if cfg.Short {
+		switch {
+		case cfg.Short:
 			list = scenario.ShortPath(cfg.Root)
+		case cfg.Extended:
+			list = scenario.ExtendedPath(cfg.Root)
 		}
 		ids, err := scenario.LoadIDList(list)
 		if err != nil {
@@ -222,7 +232,7 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 
 	audioMap := map[string][]int16{}
 	for _, text := range sc.SpeechTexts() {
-		pcm, err := synth.LoadOrSynth(cfg.Root, "", text)
+		pcm, err := synth.LoadOrSynth(cfg.Root, sc.VoiceOf(text), text)
 		if err != nil {
 			return result, fmt.Errorf("run: tts required for caller speech: %w", err)
 		}
@@ -275,6 +285,7 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 	metrics.BargeInStopMS = score.BargeInStopMS(rec)
 	metrics.OverlapChecks = score.ScoreOverlaps(rec)
 	metrics.SelectivityHold = score.SelectivityHold(metrics.OverlapChecks)
+	metrics.CheckInFail = score.CheckInFail(rec.Events)
 	metrics.HoldThroughOverlap = score.HoldThroughOverlap(metrics.OverlapChecks)
 	metrics.FalseCutoff = score.FalseCutoff(rec)
 	result.Metrics = metrics

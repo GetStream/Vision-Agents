@@ -493,3 +493,16 @@ func TestTalkingOverALongTurnFailsOnlyWhereTheFloorMustBeHeld(t *testing.T) {
 		t.Fatalf("talking into a long turn must fail it: passed=%v notes=%v", monologue.Passed, monologue.GateNotes)
 	}
 }
+
+func TestAnAgentThatLetsTheCallerSitInSilenceFails(t *testing.T) {
+	events := []caller.Event{{TurnID: "found_card", CheckIn: true}, {TurnID: "move"}}
+	m := Metrics{SelectivityHold: true, HoldThroughOverlap: true, CheckInFail: CheckInFail(events)}
+	ApplyGates(&m, scenario.Scenario{})
+	if m.Passed || strings.Join(m.CheckInFail, ",") != "found_card" {
+		t.Fatalf("passed=%v check_in_fail=%v notes=%v", m.Passed, m.CheckInFail, m.GateNotes)
+	}
+	events[0].CheckedIn = true
+	if got := CheckInFail(events); len(got) != 0 {
+		t.Fatalf("a check-in that happened is not a failure: %v", got)
+	}
+}

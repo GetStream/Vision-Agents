@@ -1,0 +1,50 @@
+id: telecom.dictation
+pack: telecom
+category: entity_dense
+name: Account details dictated digit by digit
+persona: A careful subscriber who reads every number one digit at a time and spells the street.
+max_duration_s: 180
+turns:
+  - id: pin
+    text: "Hi, my internet is down. Account PIN is four, four, seven, one."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: last4
+    text: "Last four of the card, nine, eight, two, one."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: address
+    text: "Service address is one four Cedar Lane, that's C, E, D, A, R."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: reboot
+    text: "Gateway shows error eight four zero. I rebooted it, still down."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  # The agent may confirm before it acts, as it should with a real caller; this is the yes.
+  - id: go_ahead
+    text: "Yes, that's right. Please go ahead."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  outage: false
+  reboot_succeeds: false
+  gateway_error: "840"
+  accounts:
+    - {id: acc1, pin: "4471", last4: "9821", address: "14 Cedar Lane", plan: "fiber-500"}
+end_state:
+  - path: reboot_attempted
+    eq: true
+  - path: ticket.id
+    exists: true
+expected_tools:
+  - name: verify_account
+    args: {pin: "4471", last4: "9821", address: "14 Cedar Lane"}
+  - name: walk_reboot
+    args: {}
+  - name: create_ticket
+    args: {}
+entities:
+  - {name: pin, value: "4471", in_tools: true, in_speech: false, tool: verify_account, arg: pin}
+  - {name: last4, value: "9821", in_tools: true, in_speech: false, tool: verify_account, arg: last4}
+policy:
+  - Assemble numbers read out digit by digit exactly as given.
+  - Reboot before a truck roll.
+agent_replies:
+  - "Internet support, how can I help?"
+  - "Verified 14 Cedar Lane. The restart didn't help, so I've opened ticket T-1842."

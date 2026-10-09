@@ -1,0 +1,52 @@
+id: restaurant.terse
+pack: restaurant
+category: checklist
+name: One- and two-word answers
+persona: A caller who answers in as few words as possible.
+max_duration_s: 180
+instructions: Book four people on Saturday at 7:30 on the patio with a peanut allergy, name Alvarez, answering in fragments.
+turns:
+  - id: intro
+    text: "Table, please."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: party
+    text: "Four people."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: when
+    text: "Saturday, 7:30."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: seating
+    text: "Patio."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: allergen
+    text: "Peanut allergy."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: name
+    text: "Alvarez."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: go_ahead
+    text: "Yes."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  slots:
+    - {time: "7:30", patio: true, available: true, capacity: 6}
+end_state:
+  - path: reservation.party_size
+    eq: 4
+  - path: reservation.time
+    eq: "7:30"
+  - path: reservation.allergen
+    eq: peanut
+expected_tools:
+  - name: create_reservation
+    args: {time: "7:30", party_size: 4, patio: true, allergen: peanut, name: Alvarez}
+entities:
+  - {name: last_name, value: Alvarez, in_speech: true, in_tools: true, tool: create_reservation, arg: name}
+policy:
+  - Treat a short answer as an answer. Do not ask again for what the caller already said.
+  - Allergen must be recorded on the reservation.
+judge:
+  task: Build the booking from fragments without making the caller repeat themselves.
+agent_replies:
+  - "Copper Spoon, how can I help?"
+  - "Booked Alvarez, Saturday 7:30 on the patio for four, peanut allergy noted."

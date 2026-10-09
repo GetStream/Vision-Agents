@@ -53,6 +53,10 @@ type Event struct {
 	Overlap      bool   `json:"overlap"`
 	Text         bool   `json:"caller_speech"`
 	OverlapSound string `json:"overlap_sound,omitempty"`
+	// CheckIn marks a turn the caller held back to see whether the agent would check in, and
+	// CheckedIn whether it did.
+	CheckIn   bool `json:"check_in,omitempty"`
+	CheckedIn bool `json:"checked_in,omitempty"`
 }
 
 // Result is the dual-leg recording plus turn timing.
@@ -519,6 +523,7 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 		if err := ctx.Err(); err != nil {
 			return finish(), err
 		}
+		checkedIn := false
 		kind := turn.Trigger.Kind
 		if kind == "" {
 			kind = scenario.TriggerAfterAgent
@@ -536,7 +541,17 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 			if delay == 0 {
 				delay = 400 * time.Millisecond
 			}
-			time.Sleep(delay)
+			if turn.CheckIn {
+				// The caller stays silent. An agent that speaks into the silence has checked in;
+				// the caller lets it finish, then answers.
+				drain(agentStarted)
+				if checkedIn = isLive() || waitCh(agentStarted, delay); checkedIn {
+					waitSilence()
+					time.Sleep(400 * time.Millisecond)
+				}
+			} else {
+				time.Sleep(delay)
+			}
 		case scenario.TriggerBargeIn, scenario.TriggerDuringAgent:
 			wait := time.Duration(turn.Trigger.AfterMS) * time.Millisecond
 			if wait == 0 {
@@ -560,7 +575,12 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 			}
 			pcm = cached
 		}
-		overlap := kind != scenario.TriggerBargeIn && turn.OverlapSound == "" && isLive()
+		// An aside is someone else in the room, scored like an overlap sound.
+		sound := turn.OverlapSound
+		if turn.Aside {
+			sound = "aside"
+		}
+		overlap := kind != scenario.TriggerBargeIn && sound == "" && isLive()
 		recStart, recEnd, err := playClip(pcm)
 		if err != nil {
 			return finish(), err
@@ -570,10 +590,12 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 			Kind:         kind,
 			RecStartMs:   recStart,
 			RecEndMs:     recEnd,
-			BargeIn:      kind == scenario.TriggerBargeIn || turn.OverlapSound != "",
+			BargeIn:      kind == scenario.TriggerBargeIn || sound != "",
 			Overlap:      overlap,
 			Text:         turn.Text != "",
-			OverlapSound: turn.OverlapSound,
+			OverlapSound: sound,
+			CheckIn:      turn.CheckIn,
+			CheckedIn:    checkedIn,
 		})
 	}
 

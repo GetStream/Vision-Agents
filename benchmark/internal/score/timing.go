@@ -92,6 +92,9 @@ type Metrics struct {
 	CallerWER           float64        `json:"caller_wer,omitempty"`
 	CallerWERNormalized float64        `json:"caller_wer_normalized,omitempty"`
 	ExtraTools          []string       `json:"extra_tools,omitempty"`
+	// CheckInFail names the turns the caller held back in silence without the agent checking
+	// in on them.
+	CheckInFail []string `json:"check_in_fail,omitempty"`
 	// ArgsRight of ArgsExpected are the expected tool arguments the agent got right; with
 	// RepeatedTools and UnknownTools they say how well the tools were used, without gating.
 	ArgsRight     int      `json:"args_right"`
@@ -573,6 +576,9 @@ func ApplyGates(m *Metrics, sc scenario.Scenario) {
 	if sc.HoldFloor && m.FalseCutoff > 0 {
 		notes = append(notes, "false_cutoff")
 	}
+	if len(m.CheckInFail) > 0 {
+		notes = append(notes, "check_in")
+	}
 	m.GateNotes = notes
 	m.Passed = len(notes) == 0
 }
@@ -637,4 +643,15 @@ func ExtraToolNames(tools []world.ToolCall, expected []scenario.ExpectedTool) []
 	}
 	sort.Strings(extra)
 	return extra
+}
+
+// CheckInFail names the turns held back for a check-in that the agent let pass in silence.
+func CheckInFail(events []caller.Event) []string {
+	var out []string
+	for _, event := range events {
+		if event.CheckIn && !event.CheckedIn {
+			out = append(out, event.TurnID)
+		}
+	}
+	return out
 }

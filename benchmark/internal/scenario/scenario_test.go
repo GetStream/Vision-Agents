@@ -252,3 +252,47 @@ turns:
 		t.Fatalf("a turn with text and segments must be refused, got %v", err)
 	}
 }
+
+func TestALineIsSpokenInItsTurnsVoiceElseTheScenarios(t *testing.T) {
+	sc := Scenario{Voice: "caller-voice", Turns: []Turn{
+		{ID: "intro", Text: "Table for three."},
+		{ID: "kid", Text: "Mom, look!", Voice: "child-voice", Aside: true},
+	}}
+	if sc.VoiceOf("Table for three.") != "caller-voice" || sc.VoiceOf("Mom, look!") != "child-voice" {
+		t.Fatalf("voices = %q, %q", sc.VoiceOf("Table for three."), sc.VoiceOf("Mom, look!"))
+	}
+	if !strings.Contains(sc.CallerTranscript(), "(someone else in the room, not to the agent) Mom, look!") {
+		t.Fatalf("the judge should know the aside is not for the agent: %q", sc.CallerTranscript())
+	}
+}
+
+func TestTheExtendedSetIsOutsideTheFrozenOne(t *testing.T) {
+	root := findRepoRoot(t)
+	extended, err := LoadIDList(ExtendedPath(root))
+	if err != nil || len(extended) == 0 {
+		t.Fatalf("extended = %v, %v", extended, err)
+	}
+	frozen, err := LoadIDList(FrozenPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inFrozen := map[string]bool{}
+	for _, id := range frozen {
+		inFrozen[id] = true
+	}
+	all := map[string]bool{}
+	for _, pack := range Packs() {
+		scenarios, err := LoadPack(filepath.Join(root, "scenarios", pack))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, sc := range scenarios {
+			all[sc.ID] = true
+		}
+	}
+	for _, id := range extended {
+		if inFrozen[id] || !all[id] {
+			t.Fatalf("%s should be a scenario outside the frozen set", id)
+		}
+	}
+}

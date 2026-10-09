@@ -122,6 +122,42 @@ func ConversationNoise(samples int, seed int64) []int16 {
 	return out
 }
 
+// MusicNoise is background music: a four-chord loop with a bass line and a soft beat, the way
+// a bar or a radio sounds behind a caller.
+func MusicNoise(samples int, seed int64) []int16 {
+	rng := newLCG(seed)
+	// I-V-vi-IV in C, two seconds a chord.
+	chords := [][]float64{{261.6, 329.6, 392.0}, {196.0, 246.9, 293.7}, {220.0, 261.6, 329.6}, {174.6, 220.0, 261.6}}
+	offset := rng.float64() * 8
+	out := make([]int16, samples)
+	for i := range out {
+		t := float64(i)/Rate + offset
+		chord := chords[int(t/2)%len(chords)]
+		v := 0.0
+		for _, f := range chord {
+			v += math.Sin(2*math.Pi*f*t) + 0.25*math.Sin(2*math.Pi*2*f*t)
+		}
+		v *= 0.25
+		v += 0.6 * math.Sin(2*math.Pi*chord[0]/2*t)
+		beat := math.Mod(t, 0.5)
+		v += math.Exp(-beat*30) * math.Sin(2*math.Pi*60*beat) * 1.4
+		out[i] = clip(v * 4200)
+	}
+	return out
+}
+
+// TVNoise is a television in the room: music under someone talking.
+func TVNoise(samples int, seed int64) []int16 {
+	rng := newLCG(seed)
+	music := MusicNoise(samples, seed+1)
+	voice := voicedTalker(samples, 120+rng.float64()*20, 4.4, rng, 0.7)
+	out := make([]int16, samples)
+	for i := range out {
+		out[i] = clip(float64(music[i])*0.45 + float64(voice[i])*0.7)
+	}
+	return out
+}
+
 // Talker is a ~1.2s other-conversation clip for mid-utterance overlap.
 func Talker(seed int64) []int16 {
 	n := Rate * 6 / 5
@@ -214,6 +250,10 @@ func NoiseNamed(name string, samples int, seed int64) []int16 {
 		return Backchannel()
 	case "talker":
 		return Talker(seed)
+	case "music":
+		return MusicNoise(samples, seed)
+	case "tv":
+		return TVNoise(samples, seed)
 	default:
 		return Silence(samples)
 	}
