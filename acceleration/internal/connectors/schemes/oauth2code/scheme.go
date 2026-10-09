@@ -106,7 +106,8 @@ type Config struct {
 	// Tests that run against a loopback fake pass one that lets the fake's host through.
 	PublicEndpoint func(ctx context.Context, raw string) error
 	// Logger gets Retrieve's warning that a connection is about to need a reconnect; nil is
-	// slog.Default(). Nothing logged names a token.
+	// slog.Default(). A token is logged only as its fingerprint (core.Fingerprint, through
+	// Fingerprints), never as any of its characters.
 	Logger *slog.Logger
 }
 
@@ -122,8 +123,9 @@ type Scheme struct {
 }
 
 var (
-	_ core.Scheme   = (*Scheme)(nil)
-	_ core.Exporter = (*Scheme)(nil)
+	_ core.Scheme        = (*Scheme)(nil)
+	_ core.Exporter      = (*Scheme)(nil)
+	_ core.Fingerprinter = (*Scheme)(nil)
 )
 
 // New checks cfg and returns the scheme.
