@@ -36,7 +36,9 @@ type Session struct {
 	Pack       string
 	State      map[string]any
 	Tools      []ToolCall
-	Delays     map[string]time.Duration
+	// UnknownTools are the names the agent called that this world has no tool for.
+	UnknownTools []string
+	Delays       map[string]time.Duration
 	// Contacted records whether the target reached the world server at all.
 	// Voicebench itself reads state in process, so only a target sets this.
 	Contacted bool
@@ -113,6 +115,7 @@ func (s *Server) Snapshot() *Session {
 	copySess := *s.session
 	copySess.State = cloneMap(s.session.State)
 	copySess.Tools = append([]ToolCall(nil), s.session.Tools...)
+	copySess.UnknownTools = append([]string(nil), s.session.UnknownTools...)
 	return &copySess
 }
 
@@ -205,6 +208,11 @@ func (s *Server) postTool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
+		s.mu.Lock()
+		if s.session == sess {
+			sess.UnknownTools = append(sess.UnknownTools, name)
+		}
+		s.mu.Unlock()
 		http.Error(w, "unknown tool "+name, http.StatusNotFound)
 		return
 	}
@@ -392,12 +400,10 @@ func CheckAssertions(state map[string]any, assertions []scenario.Assertion) []st
 			}
 			continue
 		}
-		if a.Eq != nil {
-			gotNorm := normalize(got)
-			want := normalize(a.Eq)
-			if !ok || fmt.Sprint(gotNorm) != fmt.Sprint(want) {
-				fails = append(fails, fmt.Sprintf("%s want %v got %v", a.Path, a.Eq, got))
-			}
+		// World state is matched like tool arguments: "peanuts" is the allergen "peanut", and
+		// "19:30" the time "7:30".
+		if a.Eq != nil && (!ok || !MatchExpectedValue(got, a.Eq)) {
+			fails = append(fails, fmt.Sprintf("%s want %v got %v", a.Path, a.Eq, got))
 		}
 	}
 	return fails
@@ -527,6 +533,42 @@ func CheckExpectedTools(tools []ToolCall, expected []scenario.ExpectedTool) []st
 		fails = append(fails, want.Name+" not called")
 	}
 	return fails
+}
+
+// ArgAccuracy counts the expected arguments the agent got right, taking for each expected
+// tool the call of it that got the most right. A tool never called gets none of its own.
+func ArgAccuracy(tools []ToolCall, expected []scenario.ExpectedTool) (right, total int) {
+	for _, want := range expected {
+		total += len(want.Args)
+		best := 0
+		for _, got := range tools {
+			if got.Name != want.Name {
+				continue
+			}
+			best = max(best, len(want.Args)-len(expectedArgFails(got.Args, want, tools)))
+		}
+		right += best
+	}
+	return right, total
+}
+
+// RepeatedTools names the tools called more than once and how often, as "name ×n".
+func RepeatedTools(tools []ToolCall) []string {
+	counts := map[string]int{}
+	var order []string
+	for _, tool := range tools {
+		if counts[tool.Name] == 0 {
+			order = append(order, tool.Name)
+		}
+		counts[tool.Name]++
+	}
+	var out []string
+	for _, name := range order {
+		if counts[name] > 1 {
+			out = append(out, fmt.Sprintf("%s ×%d", name, counts[name]))
+		}
+	}
+	return out
 }
 
 func expectedArgFails(args map[string]any, want scenario.ExpectedTool, tools []ToolCall) []string {
