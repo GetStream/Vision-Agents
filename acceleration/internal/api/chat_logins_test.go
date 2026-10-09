@@ -188,6 +188,67 @@ func (s *ChatLoginsSuite) TestAConnectionThatNeedsReauthorizationAsksForAReconne
 	s.Equal(ConnectionStatus(store.ConnectionConnected), s.connectionOf(s.client, mine).Status)
 }
 
+// TestARejectedTokenBeginsNoConsentAndAReplacedOneIsUsed: the caller chose their own connection
+// that holds a token, as a GitHub personal access token, and the provider rejected it (AI-990).
+// No consent can fix that, so none is begun: the app is told credential_rejected and the model
+// to have it replaced. Once the backend puts a new token, the next call runs on it.
+func (s *ChatLoginsSuite) TestARejectedTokenBeginsNoConsentAndAReplacedOneIsUsed() {
+	connector, grant := s.connectorOf(oauth2code.Name+", "+bearer.Name, "scopes:\n  list: [chat:write]\n")
+	mine := s.withToken(s.client, connector, "not-a-token-the-fake-issued")
+	s.Require().Equal(codeCredentialRejected, s.validate(mine).Code)
+	opened := s.client.createSession(s.session(s.config(connector, grant), map[string]string{"crm": mine}))
+	events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+
+	left := s.await(events, "connector_unavailable")
+	s.ask(opened.Id)
+	told := s.carryOn(events).ran["result"]
+
+	s.Equal("credential_rejected", left["reason"])
+	s.Contains(told, `"status":"credential_rejected"`)
+	s.Zero(s.attemptsOn(mine), "no consent was begun")
+	s.Equal(1, s.connectionsOf(s.client, connector), "nor a connection made for one")
+
+	as := s.serverClient.actingFor(s.client)
+	s.Require().Equal(http.StatusOK, as.do(http.MethodPut, "/v1/agents/connections/"+mine+"/credentials",
+		map[string]any{"expected_revision": s.connectionOf(s.client, mine).Revision,
+			"values": map[string]string{bearer.SuppliedToken: s.token}}, nil))
+	s.ask(opened.Id)
+	s.Equal(connectorEchoText, s.carryOn(events).ran["result"], "the replaced token is used")
+}
+
+// TestAChatLoginPassesOverATokenForAConsent: a connector that takes a consent or a token, as
+// github does (AI-990), and a caller who holds a token connection to it but chose none. The
+// login the chat begins is a consent, on a connection that takes one, not on the token's.
+func (s *ChatLoginsSuite) TestAChatLoginPassesOverATokenForAConsent() {
+	connector, grant := s.connectorOf(oauth2code.Name+", "+bearer.Name, "scopes:\n  list: [chat:write]\n")
+	token := s.withToken(s.client, connector, s.token)
+	opened := s.client.createSession(s.session(s.config(connector, grant), nil))
+	events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+
+	s.ask(opened.Id)
+	asked := s.loginOn(events, "")
+
+	s.NotEqual(token, asked["connection_id"])
+	s.Equal(oauth2code.Name, s.connectionOf(s.client, asked["connection_id"].(string)).AuthScheme)
+	s.Zero(s.attemptsOn(token))
+}
+
+// TestAChatMakesNoConnectionForAConnectorThatTakesOnlyAToken: a connector whose one scheme is a
+// static token, and a caller who chose no connection. The chat cannot ask for a token, so it
+// makes no connection that could only wait for one (AI-990), and the model is told the
+// connector is not available here, as before.
+func (s *ChatLoginsSuite) TestAChatMakesNoConnectionForAConnectorThatTakesOnlyAToken() {
+	connector, grant := s.connectorOf(bearer.Name, "")
+	opened := s.client.createSession(s.session(s.config(connector, grant), nil))
+	events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+
+	s.ask(opened.Id)
+	told := s.carryOn(events).ran["result"]
+
+	s.Contains(told, `"status":"unavailable"`)
+	s.Zero(s.connectionsOf(s.client, connector))
+}
+
 // TestEachPersonIsAskedForTheirOwnConnection: Bob's session on the same config asks Bob, on a
 // connection of Bob's, and Alice's consent carries on in Alice's session only.
 func (s *ChatLoginsSuite) TestEachPersonIsAskedForTheirOwnConnection() {
@@ -436,6 +497,18 @@ func (s *ChatLoginsSuite) echoedOn(id string) int {
 	return ran
 }
 
+// withToken is a connection of user's to connector, by bearer, holding token.
+func (s *ChatLoginsSuite) withToken(user *testClient, connector, token string) string {
+	as := s.serverClient.actingFor(user)
+	sent := userOwned(connector, user)
+	sent["auth_scheme"] = bearer.Name
+	var created Connection
+	s.Require().Equal(http.StatusCreated, as.do(http.MethodPost, "/v1/agents/connections", sent, &created))
+	s.Require().Equal(http.StatusOK, as.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials",
+		map[string]any{"expected_revision": created.Revision, "values": map[string]string{bearer.SuppliedToken: token}}, nil))
+	return created.ID
+}
+
 // connectionsOf is how many live connections user has to connector.
 func (s *ChatLoginsSuite) connectionsOf(user *testClient, connector string) int {
 	connections, err := s.store.ConnectorConnectionsByOwner(context.Background(), s.customerID(),
@@ -456,8 +529,13 @@ scopes:
 
 // connectorWith is connector with more manifest YAML: its scopes, captures and identity.
 func (s *ChatLoginsSuite) connectorWith(extra string) (string, map[string]any) {
+	return s.connectorOf(oauth2code.Name, extra)
+}
+
+// connectorOf is connectorWith whose manifest lists schemes, comma separated.
+func (s *ChatLoginsSuite) connectorOf(schemes, extra string) (string, map[string]any) {
 	id := "custom_crm" + strings.ReplaceAll(s.utils.uuid(), "-", "")
-	s.define(id, oauth2code.Name, `
+	s.define(id, schemes, `
 client:
   registration: [operator]
   auth_method: client_secret_post

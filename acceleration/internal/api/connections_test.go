@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 )
 
 // ConnectionsSuite is about connections: who may make, read, list and delete one, whose
@@ -24,12 +25,14 @@ func TestConnectionsSuite(t *testing.T) {
 	runSuite(t, new(ConnectionsSuite))
 }
 
-// SetupSuite registers oauth2_code, which the built-ins name, and test_key, so a connector
-// can allow two schemes; and seeds the built-ins as a router start does.
+// SetupSuite registers oauth2_code, which the built-ins name, test_key, so a connector can
+// allow two schemes, and bearer, the static one github allows beside oauth2_code; and seeds
+// the built-ins as a router start does.
 func (s *ConnectionsSuite) SetupSuite() {
 	s.connectors = core.Registry{Schemes: map[string]core.Scheme{
 		"oauth2_code": namedScheme("oauth2_code"),
 		"test_key":    namedScheme("test_key"),
+		bearer.Name:   bearer.New(),
 	}}
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
@@ -294,6 +297,23 @@ func (s *ConnectionsSuite) TestAConnectorWithSeveralSchemesNeedsOneNamed() {
 	sent := appOwned(id, "shop", "acme")
 	sent["auth_scheme"] = "test_key"
 	s.Equal("test_key", s.create(s.serverClient, sent).AuthScheme)
+}
+
+// TestGitHubTakesAPersonalAccessTokenBesideAConsent: github's built-in lists bearer beside
+// oauth2_code (AI-990). A connection that names no scheme still gets oauth2_code, as when it
+// was github's only one, since bearer is a static token; one that names bearer takes a token.
+func (s *ConnectionsSuite) TestGitHubTakesAPersonalAccessTokenBesideAConsent() {
+	github := s.connector("github")
+	s.Equal([]string{"oauth2_code", bearer.Name}, github.Schemes)
+	sent := appOwned("github")
+	sent["auth_scheme"] = bearer.Name
+
+	byConsent := s.create(s.serverClient, appOwned("github"))
+	byToken := s.create(s.serverClient, sent)
+
+	s.Equal("oauth2_code", byConsent.AuthScheme, "its one scheme that is not a static token")
+	s.Equal(bearer.Name, byToken.AuthScheme)
+	s.Equal(github.Revision, byToken.DefinitionRevision)
 }
 
 func (s *ConnectionsSuite) TestASchemeTheConnectorDoesNotAllowIsRefused() {

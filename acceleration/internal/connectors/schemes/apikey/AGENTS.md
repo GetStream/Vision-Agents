@@ -14,6 +14,7 @@ Wrap       header: key on a clone of each request; a credential it did not issue
 Export     -> ExportedCredential{header, key, no client}: the key is the app's own; a credential it did not issue is refused
 Classify   oauth2code.ClassifyStatic: oauth2code.Classify, then a bare 401 -> InvalidGrant
 Revoke     -> ErrNotRevocable: nothing sent, the key lives on at the provider
+Static     core.Static: a rejected key is replaced with PUT .../credentials, never consented to
 ```
 
 ## Rules
