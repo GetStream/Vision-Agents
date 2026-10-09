@@ -263,6 +263,16 @@ go run ./cmd/voicebench noise out/<run1> out/<run2> out/<run3> out/<run4> out/<r
 
 Repeat for `healthcare` and `telecom`, since `run` takes one pack at a time. It refuses runs that differ in commit, `k`, network profile, scenarios or contracts, and writes `baselines/<target>/noise-<pack>.json`: for pass rate, V2V P50, non-tool P50 and P95, tool-turn P50 and first response P50, the value in each run and the MDE, the largest difference between any two of them. That is the smallest change the bench can detect for that target and pack. A difference between our stack and either LiveKit arm counts as real only if it is bigger than that spread. Store the `accelerated` run you compare against with `--store-baseline`, then pass the file to `compare --mde`: against a baseline it flags each metric that moved by more than its MDE, and says so when the baseline is from another series than the one the noise floor measured.
 
+### Load
+
+Every call above runs alone. `scripts/load.sh` measures how reply time holds up when calls share the router and the Gemma deployment: it runs one pack's set at several concurrency levels, each copy its own `voicebench run` with its own agent and world server on one router built from the checkout, and digests the levels side by side as `accelerated ×1`, `accelerated ×3` and so on, with their intervals:
+
+```bash
+VOICEBENCH_CONCURRENCY="1 3 5" VOICEBENCH_PACK=restaurant VOICEBENCH_SET=short scripts/load.sh
+```
+
+Caller audio is synthesized before the copies start, so they never write the same cache file at once. `VOICEBENCH_LOAD_POST=1` posts the digest to Slack. Load runs are by hand; the nightly stays one call at a time.
+
 ### Posting to Slack
 
 `voicebench digest` reads run directories, folds each system's per-pack runs into one, and writes a scorecard (`voicebench.png`) and a full report (`voicebench.html`): pass rate, reply time P50 and P95, tool-turn P50 and first response, each with its 95% interval, then every call with what failed it. A row names a winner only when the intervals clear; otherwise it says the gap is within noise. With `--slack` it posts the summary, the scorecard and the report in one message, as a Slack app's bot. The app needs the `chat:write` and `files:write` scopes and has to be in the channel. Put its token and the channel id in `.env`:
