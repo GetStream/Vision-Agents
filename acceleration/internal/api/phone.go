@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -105,7 +106,7 @@ func (s *Server) searchPhoneNumbers(ctx context.Context, request *searchPhoneNum
 		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 
 	result := NumberSearchResult{
@@ -174,7 +175,7 @@ func (s *Server) listPhoneNumbers(ctx context.Context, request *listPhoneNumbers
 	includeReleased := request.IncludeReleased.ptr() != nil && *request.IncludeReleased.ptr()
 	held, err := s.phone.Numbers(ctx, customerID, includeReleased)
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 
 	numbers := make([]PhoneNumber, 0, len(held))
@@ -216,7 +217,7 @@ func (s *Server) buyPhoneNumber(ctx context.Context, request *buyPhoneNumberRequ
 		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 	return &buyPhoneNumberResponse{Body: phoneNumber(bought)}, nil
 }
@@ -236,7 +237,7 @@ func (s *Server) releasePhoneNumber(ctx context.Context, request *releasePhoneNu
 		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 	return nil, nil
 }
@@ -272,7 +273,7 @@ func (s *Server) attachPhoneNumber(ctx context.Context, request *attachPhoneNumb
 		return nil, err
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 
 	return &attachPhoneNumberResponse{Body: AttachedNumber{TrunkId: attached.TrunkID,
@@ -336,7 +337,7 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 		return nil, err
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 
 	return &placePhoneCallResponse{Body: PlacedCall{VendorCallId: placed.VendorCallID,
@@ -415,7 +416,7 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 		return nil, err
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 
 	return &transferPhoneCallResponse{Body: PlacedCall{VendorCallId: placed.VendorCallID,
@@ -439,7 +440,7 @@ func (s *Server) pressPhoneDigits(ctx context.Context, request *pressPhoneDigits
 		return nil, notFound(err.Error())
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, phoneFailure(s.logger, err)
 	}
 	return nil, nil
 }
@@ -453,6 +454,29 @@ func sipTrunk(trunk store.SIPTrunk) SipTrunk {
 		Codecs: trunk.Codecs, HasPassword: trunk.HasPassword(),
 		CreatedAt: trunk.CreatedAt, UpdatedAt: trunk.UpdatedAt,
 	}
+}
+
+var (
+	errNumberNeedsAddress = APIError{Type: ErrorTypeInvalidRequest, Code: codePhoneNumberNeedsAddress,
+		Message: "This number needs a verified address, which is not supported. Choose a number in the US or Canada, or contact support."}
+	errPhoneVendorFailed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
+		Message: "The phone vendor could not complete the request. Try again, or contact support if it keeps failing."}
+)
+
+// phoneFailure is the answer to a phone operation that failed. A vendor's own error is logged
+// in full and answered without its words, which can hold an account id. Anything else is the
+// router's or Stream's and says what the client can fix.
+func phoneFailure(logger *slog.Logger, err error) error {
+	if errors.Is(err, phone.ErrAddressRequired) {
+		logger.Info("a phone number needs an address", "error", err)
+		return errNumberNeedsAddress
+	}
+	if refused, ok := errors.AsType[*phone.VendorError](err); ok {
+		logger.Error("a phone vendor failed", "vendor", refused.Vendor, "path", refused.Path,
+			"status", refused.Status, "code", refused.Code, "message", refused.Message, "error", err)
+		return errPhoneVendorFailed
+	}
+	return invalidRequest(err.Error())
 }
 
 // sipTrunkFailure turns what the phone service said into the status a caller can act on.
