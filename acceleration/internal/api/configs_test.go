@@ -1139,9 +1139,12 @@ func (s *ConfigsSuite) TestAFixedBindingThroughAnotherConnectorsConnectionIsRefu
 	s.Contains(failure, slack)
 }
 
+// A binding called what a plugin is, to another connector: the session keeps the plugin
+// (Spec.withoutBoundPlugins drops only a plugin whose connector a binding names), and both
+// would offer linear__<tool>.
 func (s *ConfigsSuite) TestABindingCalledWhatAPluginOfTheConfigIsIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "support", "agent_plugins": []string{"slack"}, "connectors": []map[string]any{sessionSlack("slack")},
+		"name": "support", "agent_plugins": []string{"linear"}, "connectors": []map[string]any{sessionSlack("linear")},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
@@ -1150,11 +1153,30 @@ func (s *ConfigsSuite) TestABindingCalledWhatAPluginOfTheConfigIsIsRefused() {
 
 func (s *ConfigsSuite) TestABindingCalledWhatAUserPluginOfTheConfigIsIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "support", "user_plugins": []string{"slack"}, "connectors": []map[string]any{sessionSlack("slack")},
+		"name": "support", "user_plugins": []string{"linear"}, "connectors": []map[string]any{sessionSlack("linear")},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, `plugin "slack"`)
+	s.Contains(failure, `plugin "linear"`)
+}
+
+// TestABindingToThePluginsOwnConnectorIsCalledWhatThePluginIs: router plugins migrate binds
+// a plugin entry under the plugin's id, to the connector of that id, and keeps the entry
+// (AI-994 F42). The session drops the entry for the binding (Spec.withoutBoundPlugins), so the
+// two never offer the same name, and the config stays editable.
+func (s *ConfigsSuite) TestABindingToThePluginsOwnConnectorIsCalledWhatThePluginIs() {
+	for _, list := range []string{"agent_plugins", "user_plugins"} {
+		created := s.createConfig(map[string]any{
+			"name": "support-" + s.utils.uuid(), list: []string{"slack"}, "connectors": []map[string]any{sessionSlack("slack")},
+		})
+
+		s.Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+			map[string]any{"instructions": "Answer briefly."}, nil), list)
+
+		read := s.read(created.Id)
+		s.Equal("Answer briefly.", value(read.Instructions), list)
+		s.Len(value(read.Connectors), 1, list)
+	}
 }
 
 func (s *ConfigsSuite) TestABindingCalledWhatAnMCPServerOfTheConfigIsIsRefused() {
@@ -1179,10 +1201,10 @@ func (s *ConfigsSuite) TestABindingWithANullToolsListIsRefused() {
 }
 
 func (s *ConfigsSuite) TestPatchingInAPluginABindingIsCalledIsRefused() {
-	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("slack")}})
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("linear")}})
 
 	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-		map[string]any{"agent_plugins": []string{"slack"}})
+		map[string]any{"agent_plugins": []string{"linear"}})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "plugin")
@@ -1190,10 +1212,10 @@ func (s *ConfigsSuite) TestPatchingInAPluginABindingIsCalledIsRefused() {
 }
 
 func (s *ConfigsSuite) TestUpdatingInAPluginAKeptBindingIsCalledIsRefused() {
-	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("slack")}})
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("linear")}})
 
 	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
-		map[string]any{"name": "support", "agent_plugins": []string{"slack"}})
+		map[string]any{"name": "support", "agent_plugins": []string{"linear"}})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "plugin")
