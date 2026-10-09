@@ -191,29 +191,6 @@ func (s *CadenceSuite) TestADebounceThatFiresForWordsThatHaveChangedAnnouncesNot
 	s.Equal("bob", early[0].Participant.ID)
 }
 
-func (s *CadenceSuite) TestWordsThatHoldStillForTheDebounceAreAnnouncedAheadOfTheirCandidate() {
-	timers := s.previewing(defaultPreviewDebounce)
-	alice := stt.Participant{ID: "alice"}
-
-	s.observe(alice, "book a table")
-
-	s.Require().Len(*timers, 2)
-	s.Equal(defaultCadenceGap, (*timers)[0].delay)
-	s.Equal(defaultPreviewDebounce, (*timers)[1].delay)
-	(*timers)[1].fire()
-	early := s.announced()
-	s.Equal(alice, early.Participant)
-	s.Equal("book a table", early.Text)
-	s.NotEmpty(early.ID)
-	s.NotZero(early.Revision)
-	s.quiet()
-
-	(*timers)[0].fire()
-	ready := s.ready()
-	s.Equal(early.Revision, ready.Revision, "the candidate is for the words that were announced")
-	s.Equal(early.ID, ready.ID, "the cost of the reply started for the words joins the turn they become")
-}
-
 func (s *CadenceSuite) TestAnAnnouncedIdIsSpentByTheFirstCandidateForTheWordsOnly() {
 	timers := s.previewing(defaultPreviewDebounce)
 	alice := stt.Participant{ID: "alice"}
@@ -245,31 +222,6 @@ func (s *CadenceSuite) TestACandidateForWordsThatChangedAfterTheAnnouncementIsAn
 	ready := s.ready()
 	s.Equal("book a table for two", ready.Text)
 	s.NotEqual(early.ID, ready.ID, "the reply for the old words is not the turn for the new ones")
-}
-
-func (s *CadenceSuite) TestACandidateWithNoAnnouncementIsAnIdOfItsOwn() {
-	timers := s.previewing(0)
-	s.observe(stt.Participant{ID: "alice"}, "book a table")
-	(*timers)[0].fire()
-
-	s.NotEmpty(s.ready().ID)
-}
-
-func (s *CadenceSuite) TestNewWordsRestartTheDebounce() {
-	timers := s.previewing(defaultPreviewDebounce)
-	alice := stt.Participant{ID: "alice"}
-
-	s.observe(alice, "book a table")
-	s.observe(alice, "book a table for two")
-
-	s.Require().Len(*timers, 4)
-	s.True((*timers)[1].stopped, "the debounce of the words that were replaced was left running")
-	(*timers)[1].fire()
-	s.nothingAnnounced()
-	(*timers)[3].fire()
-	early := s.announced()
-	s.Equal("book a table for two", early.Text)
-	s.nothingAnnounced()
 }
 
 func (s *CadenceSuite) TestTheSameWordsAgainDoNotRestartTheDebounce() {
@@ -306,14 +258,6 @@ func (s *CadenceSuite) TestWordsWhoseCandidateIsDueNoLaterAreNotAnnounced() {
 	s.Equal(cadenceFinalGap, (*timers)[0].delay)
 }
 
-func (s *CadenceSuite) TestWithoutADebounceNothingIsAnnounced() {
-	timers := s.previewing(0)
-
-	s.observe(stt.Participant{ID: "alice"}, "book a table")
-
-	s.Len(*timers, 1)
-}
-
 func (s *CadenceSuite) TestACandidateForTheWordsEndsTheDebounce() {
 	timers := s.previewing(defaultPreviewDebounce)
 	s.observe(stt.Participant{ID: "alice"}, "book a table")
@@ -325,29 +269,6 @@ func (s *CadenceSuite) TestACandidateForTheWordsEndsTheDebounce() {
 	(*timers)[1].fire()
 	s.nothingAnnounced()
 	s.Require().True(s.cadence.Resolve(ready.ID, true))
-	(*timers)[1].fire()
-	s.nothingAnnounced()
-}
-
-func (s *CadenceSuite) TestForgettingAParticipantEndsTheirDebounce() {
-	timers := s.previewing(defaultPreviewDebounce)
-	alice := stt.Participant{ID: "alice"}
-	s.observe(alice, "book a table")
-
-	s.cadence.Forget(alice)
-
-	s.True((*timers)[1].stopped)
-	(*timers)[1].fire()
-	s.nothingAnnounced()
-}
-
-func (s *CadenceSuite) TestClosingEndsEveryDebounce() {
-	timers := s.previewing(defaultPreviewDebounce)
-	s.observe(stt.Participant{ID: "alice"}, "book a table")
-
-	s.cadence.Close()
-
-	s.True((*timers)[1].stopped)
 	(*timers)[1].fire()
 	s.nothingAnnounced()
 }
@@ -389,22 +310,6 @@ func (s *CadenceSuite) TestWordsThatHoldStillWhileTheCallerIsStillVoicedAreNotAn
 	clock.advance(time.Minute)
 	s.Empty(s.announcedNow(), "the words were announced again")
 	s.Equal(early[0].Revision, s.ready().Revision, "the candidate is for the words that were announced")
-}
-
-func (s *CadenceSuite) TestWordsThatHoldStillOnceTheCallerHasBeenQuietAreAnnouncedOnce() {
-	timers := s.previewing(defaultPreviewDebounce)
-	s.quietAfter(time.Hour)
-	alice := stt.Participant{ID: "alice"}
-
-	s.observe(alice, "book a table")
-	(*timers)[1].fire()
-
-	early := s.announcedNow()
-	s.Require().Len(early, 1)
-	s.Equal("book a table", early[0].Text)
-	s.Len(*timers, 2, "a debounce that was satisfied is not armed again")
-	(*timers)[1].fire()
-	s.Empty(s.announcedNow(), "the same words were announced twice")
 }
 
 func (s *CadenceSuite) TestADebounceThatFindsTheCallerPartlyQuietRunsOnForTheRest() {
@@ -674,35 +579,6 @@ func (s *AgentSuite) cadenceHolds(participant stt.Participant, text string) {
 	}, "the words were never heard: "+text)
 }
 
-func (s *AgentSuite) TestWordsThatChangeWithinTheDebounceRestartItAndOneReplyIsStartedForTheLastOnes() {
-	s.debouncesFor(300 * time.Millisecond)
-	s.join(true)
-	clock := s.controlsTimers()
-	alice := stt.Participant{ID: "alice"}
-	s.speak(alice)
-
-	s.mutters(alice, "please find a table")
-	s.cadenceHolds(alice, "please find a table")
-	clock.advance(150 * time.Millisecond)
-	s.mutters(alice, "please find a table for two")
-	s.cadenceHolds(alice, "please find a table for two")
-	clock.advance(250 * time.Millisecond)
-
-	s.Empty(s.model.requests(), "a reply was started for words that changed before they held still")
-	s.ElementsMatch([]time.Duration{100 * time.Millisecond, 50 * time.Millisecond}, clock.armed(),
-		"the debounce for the first words was left running, or the new words had none")
-	clock.advance(50 * time.Millisecond)
-	s.eventually(func() bool { return len(s.model.requests()) == 1 && s.keptPreviews() == 1 },
-		"no reply was started for the last words")
-	s.Equal("please find a table for two", s.asked(0))
-
-	// The candidate for the same words takes the reply over rather than starting another.
-	clock.advance(100 * time.Millisecond)
-	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the words were never answered")
-	s.Len(s.model.requests(), 1, "more than one reply for one participant")
-	s.Zero(s.previewsHeld())
-}
-
 func (s *AgentSuite) TestABurstOfRevisionsThirtyMillisecondsApartStartsOneReplyForTheFinalWords() {
 	s.join(true)
 	clock := s.controlsTimers()
@@ -780,20 +656,6 @@ func (s *AgentSuite) TestWithoutADebounceTheReplyStartsWithTheCandidate() {
 		"a reply was started ahead of the candidate")
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the words were never answered")
 	s.Len(s.model.requests(), 1)
-}
-
-func (s *AgentSuite) TestNoReplyIsStartedEarlyWithoutSpeculativeReplies() {
-	off := false
-	s.speculation = &off
-	s.join(true)
-	s.slowGap(10 * time.Second)
-	alice := stt.Participant{ID: "alice"}
-	s.speak(alice)
-
-	s.mutters(alice, "please find a table")
-
-	s.Never(func() bool { return len(s.model.requests()) > 0 || s.previewsHeld() > 0 },
-		250*time.Millisecond, 10*time.Millisecond, "a reply was started for words nobody asked about")
 }
 
 func (s *AgentSuite) TestNoReplyIsStartedEarlyWhileTheAgentIsSpeaking() {

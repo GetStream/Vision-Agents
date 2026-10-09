@@ -1266,7 +1266,7 @@ type TimelineEntry struct {
 	LlmTtftMs            *float64           `json:"llm_ttft_ms,omitempty" doc:"The wait between asking the model and its first token." nullable:"true"`
 	ModelCalls           *[]ModelCallTiming `json:"model_calls,omitempty" doc:"Individual model requests for this turn, including flow and delegated work."`
 	ModelToFirstTextMs   *float64           `json:"model_to_first_text_ms,omitempty" doc:"Main model request to the first text delta admitted to the voice pipeline."`
-	ReplyHoldMs          *float64           `json:"reply_hold_ms,omitempty" doc:"How long the reply's audio was held for the caller to have been quiet, before its first sound and before each sentence that followed a pause in it, added together. A hold before the first sound is inside tts_to_audio_ms, roundtrip_ms and the fields that run to the first frame; one before a later sentence comes after them and is inside none. Absent where nothing was held." nullable:"true"`
+	ReplyHoldMs          *float64           `json:"reply_hold_ms,omitempty" doc:"First-audio silence hold in milliseconds, included in tts_to_audio_ms and roundtrip_ms. Absent when nothing was held." nullable:"true"`
 	RoundtripMs          *float64           `json:"roundtrip_ms,omitempty" doc:"Last transcript revision to first audio published; includes cadence settling and any hold of its first audio for the caller to have been quiet."`
 	Said                 *string            `json:"said,omitempty" doc:"What the agent answered."`
 	SpeechEndToAudioMs   *float64           `json:"speech_end_to_audio_ms,omitempty" doc:"Last input audio to first output audio, estimated using provider STT processing time plus roundtrip. It excludes network transport and playback." nullable:"true"`

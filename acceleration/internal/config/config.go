@@ -217,13 +217,6 @@ type Agent struct {
 	// ReplyConfidentScore is the acoustic end-of-turn score from which the turn is taken to have
 	// ended for sure. Between 0 and 1, 0.9 by default; 0 turns the shorter silence off.
 	ReplyConfidentScore float64 `koanf:"reply_confident_score"`
-	// ReplyResumeGap is how long a reply must have been silent, once some of it has been let out,
-	// for the next sound it makes to wait for the caller the way the first one does: it is let out
-	// once the caller has been quiet for reply_silence_confident, and held for no more than
-	// reply_silence_max in all for the turn. A caller who starts talking in a pause between
-	// sentences, or over the end of one, is not spoken into. 200ms by default; 0 lets every
-	// sentence out as it comes.
-	ReplyResumeGap time.Duration `koanf:"reply_resume_gap"`
 	// PreviewDebounce is how long a caller's words have to hold still before the reply to them
 	// is started, ahead of the wait that decides whether they have finished. Words that change
 	// again restart it. It applies wherever SpeculativeReplies does. 60ms by default; 0 starts
@@ -328,7 +321,6 @@ var variables = map[string]string{
 	"agent.reply_silence_max":       "ROUTER_REPLY_SILENCE_MAX",
 	"agent.reply_silence_confident": "ROUTER_REPLY_SILENCE_CONFIDENT",
 	"agent.reply_confident_score":   "ROUTER_REPLY_CONFIDENT_SCORE",
-	"agent.reply_resume_gap":        "ROUTER_REPLY_RESUME_GAP",
 	"agent.preview_debounce":        "ROUTER_PREVIEW_DEBOUNCE",
 	"agent.preview_quiet":           "ROUTER_PREVIEW_QUIET",
 	"agent.reply_hedge":             "ROUTER_REPLY_HEDGE",
@@ -363,7 +355,6 @@ func Defaults() Config {
 			ReplySilenceMax:       time.Second,
 			ReplySilenceConfident: 300 * time.Millisecond,
 			ReplyConfidentScore:   0.9,
-			ReplyResumeGap:        0,
 			PreviewDebounce:       60 * time.Millisecond,
 			PreviewQuiet:          120 * time.Millisecond,
 			ReplyHedge:            1200 * time.Millisecond,
@@ -517,9 +508,6 @@ func (c Config) validate() error {
 	if math.IsNaN(c.Agent.ReplyConfidentScore) || c.Agent.ReplyConfidentScore < 0 || c.Agent.ReplyConfidentScore > 1 {
 		return fmt.Errorf("config: agent.reply_confident_score must be between 0 and 1, got %v", c.Agent.ReplyConfidentScore)
 	}
-	if c.Agent.ReplyResumeGap < 0 {
-		return fmt.Errorf("config: agent.reply_resume_gap cannot be negative, got %s", c.Agent.ReplyResumeGap)
-	}
 	if c.Agent.PreviewDebounce < 0 {
 		return fmt.Errorf("config: agent.preview_debounce cannot be negative, got %s", c.Agent.PreviewDebounce)
 	}
@@ -630,7 +618,6 @@ func (c Config) export() error {
 		"agent.reply_silence_max":       c.Agent.ReplySilenceMax.String(),
 		"agent.reply_silence_confident": c.Agent.ReplySilenceConfident.String(),
 		"agent.reply_confident_score":   fmt.Sprint(c.Agent.ReplyConfidentScore),
-		"agent.reply_resume_gap":        c.Agent.ReplyResumeGap.String(),
 		"agent.preview_debounce":        c.Agent.PreviewDebounce.String(),
 		"agent.preview_quiet":           c.Agent.PreviewQuiet.String(),
 		"agent.reply_hedge":             c.Agent.ReplyHedge.String(),

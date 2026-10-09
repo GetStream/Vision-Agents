@@ -878,147 +878,26 @@ is on by default, and `ROUTER_SPECULATIVE_REPLIES=false` asks for the reply only
 ruling is in. A dropped reply is still paid for, and on a pause-heavy call most of them are
 dropped.
 
-### A wait keeps the reply started for the words
+### Voice replies start early and wait for caller silence (#749)
 
-A ruling or acoustic score that waited on a caller's words used to throw away the reply
-started beside it, and the next check of the same words started it again. The reply is now
-kept for that check, which takes it over without asking the model a second time. It is let go
-if the words change, the floor changes, the caller leaves, the call ends, a check does not
-answer, or the patience for the words runs out.
+Stable transcripts can start a reply after `ROUTER_PREVIEW_DEBOUNCE` (60ms) and
+`ROUTER_PREVIEW_QUIET` (120ms of caller silence). Incomplete endings wait longer.
+A reply survives a wait decision for the same words; revisions, a floor change or
+expired patience discard it. At most three early replies are started per utterance.
 
-### A reply waits for the caller to have been quiet: `ROUTER_REPLY_SILENCE`
+The first audio waits for `ROUTER_REPLY_SILENCE` (700ms), capped by
+`ROUTER_REPLY_SILENCE_MAX` (1s). Acoustic scores at or above
+`ROUTER_REPLY_CONFIDENT_SCORE` (0.9) shorten this to
+`ROUTER_REPLY_SILENCE_CONFIDENT` (300ms). New voice restarts the silence window;
+new words can cancel the unheard reply. Other synthesis events keep draining.
 
-A caller who pauses at the end of a sentence or between the items of a list can be taken for
-finished, and a reply that was already on its way then began to be heard before they carried
-on, and had to be cut off. The first sound of a reply to a caller's words is now let out only
-once that caller's audio has been quiet for `ROUTER_REPLY_SILENCE`, `700ms` by default,
-since it last carried a voice. A reply that is ready sooner waits for the silence to be
-confirmed. A voice while it waits, a cough or a word, only restarts the count: the wait delays
-the reply and never drops it, and a caller who really goes on cancels it with their words, the
-way they cancel any other reply, before any of it is heard. Nothing of a reply that was cancelled
-unheard is kept in the conversation as having been said. Quiet is judged on each participant's
-audio, with a level detector that follows their background noise, and not on transcripts. Later
-frames of a reply are held only after a pause in it, as described below, and a greeting, a murmur
-and a turn the agent takes without having been spoken to are not held. `first_frame_queued_ms`
-and `first_audible_frame_ms` include the wait. `0` lets a reply start the moment it is ready, and
-the agent option `ReplySilence` is the same setting.
+Low acoustic scores retry after 200ms only when fresh audio arrives, with one
+request in flight per participant. After 2.5s of uncertainty the agent asks a
+short clarifying question. Semantic waits retain their 700ms retry.
 
-A line that never goes quiet, because of a conversation in the room or a steady babble, never
-confirms the silence, and a reply could be held for as long as that lasted. A reply is now
-held for at most `ROUTER_REPLY_SILENCE_MAX` after it is ready, `1s` by default,
-and plays when that has passed. It must be longer than zero while `ROUTER_REPLY_SILENCE` is
-on, and the agent option `ReplySilenceMax` is the same setting.
-
-### A reply to an ending that is sure is held for less: `ROUTER_REPLY_SILENCE_CONFIDENT`, `ROUTER_REPLY_CONFIDENT_SCORE`
-
-The silence is there for the endings that are in doubt. When a turn was decided by a successful
-acoustic end-of-turn score of at least `ROUTER_REPLY_CONFIDENT_SCORE`, `0.9` by default, the reply
-to it is held for `ROUTER_REPLY_SILENCE_CONFIDENT` instead, `300ms` by default, or for
-`ROUTER_REPLY_SILENCE` if that is shorter, and the longest hold still applies. A lower score, a turn the flow
-controller decided and a score that could not be read keep `ROUTER_REPLY_SILENCE`. A score of `0`
-for `ROUTER_REPLY_CONFIDENT_SCORE` turns the shorter silence off, `0` for
-`ROUTER_REPLY_SILENCE_CONFIDENT` lets such a reply out as soon as it is ready, and the agent
-options `ReplyConfidentScore` and `ReplySilenceConfident` are the same settings. The reply
-silence settings are also flags of `cmd/agent`: `-reply-silence`, `-reply-silence-max`,
-`-reply-silence-confident`, `-reply-confident-score`, `-reply-resume-gap`, `-preview-debounce`
-and `-preview-quiet`.
-
-### A sentence after a pause in a reply waits for the caller too: `ROUTER_REPLY_RESUME_GAP`
-
-The wait for the caller to have been quiet only covered the first sound of a reply. A caller who
-started to talk in a pause between two of its sentences, or who was talking over the reply when it
-reached the end of one, was spoken into by the next sentence, which went on until their words had
-been read and cancelled it. Each turn now follows the audio it lets out: when it has been silent
-for `ROUTER_REPLY_RESUME_GAP` (off by default: a cough or a second voice in the room is judged as the caller, and holding the next sentence for it makes the reply stop mid-answer; `200ms` is the setting it was measured with), and the next sound it makes carries a voice, that
-sound is held, with the rest of what the voice says of the turn, until the caller's audio has been
-quiet for `ROUTER_REPLY_SILENCE_CONFIDENT`, or for `ROUTER_REPLY_SILENCE` if that is shorter. What
-the turn has let out is counted on the clock it is heard on, so silence inside the audio counts
-towards the gap, and a sentence that the voice sent while the one before it was still playing is
-carrying on and not held. Like the wait for the first sound it only delays: nothing is dropped
-because of a voice, and a caller who really took the floor cancels the held sentence and the rest
-of the reply with their words, which leave the reply in the conversation as one that was
-interrupted. A turn is held this way for at most `ROUTER_REPLY_SILENCE_MAX` in all, `1s` by
-default, after which its later sentences are let out as they come, so a line that never goes quiet
-cannot stall a reply sentence after sentence. A greeting, a murmur and any turn nobody is
-answering are not held. `0` for `ROUTER_REPLY_RESUME_GAP` turns this off, `0` for
-`ROUTER_REPLY_SILENCE` turns it off with the rest of the wait, and the agent option
-`ReplyResumeGap` is the same setting. `reply_hold_ms` now adds these holds to the one before the
-first sound. A hold before the first sound is inside `tts_to_audio_ms`, `roundtrip_ms` and the
-fields that run to the first frame, as before; one before a later sentence comes after them and is
-inside none.
-
-### A reply starts when the words hold still, not after the wait: `ROUTER_PREVIEW_DEBOUNCE`
-
-The reply to a caller's words used to be started when they became a candidate, which is after
-the cadence wait that decides whether the caller has finished, so the model began late. It is
-now started once a transcript revision has held still for `ROUTER_PREVIEW_DEBOUNCE`, `60ms`
-by default, and the candidate for the same words takes it over through the adoption a kept
-reply already uses, and takes the id it was started under, so what the reply cost is reported
-against the turn it became. It is not one model call per turn: a reply started for words that
-then change is thrown away, and the reply for the words that were answered is a second call.
-Words that change again restart the debounce, so revisions arriving closer together than it
-are started once, for the last of them, and a debounce that fires for words that have since
-changed does nothing. Words that end on a comma, a joining word or a hesitation, or in digits
-that may still be growing, are not started at all. There is never more than one for a
-participant: new words let go of the reply for the old ones, and every other cause that lets go
-of a kept reply (the floor changing, the caller leaving, the call ending, the models being moved,
-a check that does not answer, the patience for the words running out) lets go of this one too. It
-applies wherever `ROUTER_SPECULATIVE_REPLIES` does, and a reply for words that are never
-answered is paid for like any other dropped one. `0` starts the reply with the candidate, as
-before, and the agent option `PreviewDebounce` is the same setting.
-
-### A reply is started early only for a caller who has gone quiet: `ROUTER_PREVIEW_QUIET`
-
-Words hold still while a caller is still voiced, in a breath, a hesitation or a sound that is
-not speech, and a reply started then was thrown away when the next revision arrived, each one
-paid for. A reply is now started ahead of the wait only when the words have held still for
-`ROUTER_PREVIEW_DEBOUNCE` and the caller's audio has also been quiet for `ROUTER_PREVIEW_QUIET`,
-`120ms` by default, which is checked again when the debounce runs out: for a caller who is still
-voiced it runs on for the rest of the quiet. At most three replies are started this way for one
-run of a caller's words, counted from the last turn that was answered, and after that the reply is
-started with the candidate. No debounce is armed at all when replies are not previewed, in a text
-conversation, for a speech-to-speech model, or while the next turn is being given longer to
-settle after an overlap. `0` looks at the words alone, and the agent option `PreviewQuiet` is the
-same setting.
-
-### Words that stop mid-thought are waited on longer
-
-A transcript that ends where the caller is plainly about to say more is a pause in the middle
-of a turn, a list being read out or a clause being joined on, far more often than the end of
-one. Such words wait the retry gap, `700ms`, instead of the usual gap or the short wait for a
-transcript the provider finalized, and a final that ends that way is not sent to the acoustic
-scorer ahead of its wait, as one ending in digits that may still be growing already was. They
-are words ending on a comma, matched as a character in any language (the fullwidth, ideographic
-and Arabic commas too, and a comma that a closing quotation mark follows), and, in a transcript
-that is in English or does not say what language it is in, on `and`, `or`, `but`, `because`,
-`um`, `uh` or `er`, matched as whole words ignoring case and the punctuation after them. `so` is
-not one of them: it ends a sentence as often as it joins one.
-
-### A low acoustic score is asked again sooner, and patience is shorter
-
-When the acoustic end-of-turn score rules a caller's words unfinished, it is now put again after
-200 ms instead of 700 ms, but only once new audio has arrived since the last score: audio that
-was already scored is not copied, scored or previewed again, and at most one score is in flight
-for a participant. The retries share the patience of the words they are about, which is now 2.5 s
-instead of 3 s, and when it runs out the words are answered with a short question. The flow
-controller's waits keep the 700 ms retry.
-
-### A held reply no longer holds up the voice, and a turn says how long it was held
-
-The first audio of a reply that is waiting for the caller to have been quiet was held by the
-goroutine that reads the voice, so everything else the voice said, the audio and the end of
-other utterances and the statistics recorded as the voice's events went by, waited behind it for
-as long as the hold lasted. It is now held in a buffer of its own, with the events of its
-utterance that follow it, while the events of every other turn carry on being read, and
-the buffer is acted on in the order it arrived in when the hold ends. A reply that is abandoned
-while it is held, or whose pipeline stops, is given up with its audio counted as dropped.
-
-A turn also says how long its reply was held: `reply_hold_ms` on the `turn` event of the
-session socket, in the turn log, in the `turns` table and in `GET /v1/agents/calls/{id}/timeline`,
-absent where the reply was not held. The hold before the first audio is inside `tts_to_audio_ms`
-and so inside `roundtrip_ms`, the turn log's `transcript_to_audio_ms` and `speech_end_to_audio_ms`,
-and the first-frame fields, which already included the wait. With `ROUTER_CHAT_TIMINGS` on, the
-timing line after a held reply ends with how long it was held, such as `· hold 300`.
+`reply_hold_ms` reports the first-audio hold in session events, call timelines and
+turn storage. It is included in `tts_to_audio_ms` and `roundtrip_ms`; chat timing
+lines display it when enabled. See the acceleration README for configuration.
 
 ### A turn says when its reply could first be heard
 
@@ -1933,42 +1812,14 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
-- In `primary` mode the agent no longer answers words that were not meant for it. The acoustic
-  score hears that an utterance ended, not who it was said to, and it decided the turn without
-  the flow controller, which used to be the one to set aside somebody else talking in the room
-  or a sound the transcriber wrote words for. A transcript with no words in it, only a note
-  about a sound or only hesitations, is now never put to the score or the controller and starts
-  no reply, nor does it stop one. For every other turn the score decides, the flow controller is
-  asked beside the reply, once per turn, and is never waited for: if it rules the words were not
-  meant for the agent before any of the reply has been let out, the reply is cancelled unheard
-  and the words are left out of the conversation. A ruling that is slow, fails or arrives after
-  the reply has begun to be heard changes nothing. Words in another voice were already never
-  decided by the score alone, and still go to the flow controller, which is told the voice
-  differs.
-
-- A turn that already carries a clock time or a number said in words stays with the fast model.
-  Only digits were recognised as a complete clock time, member id or phone number, so "seven
-  thirty" and "five one two five five five zero one four two" were handed to the slower colleague
-  and the caller waited for it. Spoken clock times ("seven thirty", "half past seven", "quarter
-  to eight", "seven o'clock", "seven pm") and runs of four or more spoken digits, with "oh",
-  "double" and "triple", are now recognised too, without allocating.
-
-- A reply that is still held for the caller to have been quiet is replaced, not followed, by what the
-  caller says in the meantime. The flow controller was told the agent was speaking and could let
-  the words wait behind the reply, so the held reply was let out and the answer to the later words
-  came straight after it, so the caller was asked for what they had just said. Words that are more than a
-  murmur now take the floor from a reply none of which was heard, whatever the controller made of
-  it, and the reply is cancelled unheard. A murmur still lets the reply be heard first.
-
-- A reply that is still held is no longer taken for something the caller has heard. A caller who
-  went on with words the held reply happened to contain, "for two at seven" to a reply that asked
-  "...for two at seven, under what name?", was taken for an echo of an agent they had not heard,
-  and the answer to their words waited behind the reply. The flow controller was likewise shown
-  the held reply as what the agent had so far said. It is now told that none of the reply has
-  reached the caller yet, and is shown neither the reply nor its entry in the conversation. When
-  the caller's next words restate or grow the ones a held reply was cancelled for ("find a
-  table", then "find a table for four"), the conversation keeps one turn for them and not two.
-  Different words still follow the earlier ones as a turn of their own.
+- Primary EOT checks whether words were addressed to the agent alongside the reply.
+  An ignore decision cancels it only before audio starts. Noise-only transcripts
+  start no reply and do not interrupt one. (#749)
+- Complete spoken times and digit sequences stay with the fast model instead of
+  being delegated as incomplete identifiers. (#749)
+- Words extending a caller turn replace its unheard reply and history entry. Held
+  text is excluded from echo detection and the flow controller's spoken context;
+  acknowledgements still let the pending reply finish. (#749)
 
 - Interrupted voice replies retain their unfinished generated text as conversation
   context, so the next caller turn can be answered naturally and explicit continuation
@@ -1987,7 +1838,6 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - Standalone agent demo links now select the actual call type and the `agent` chat
   channel, allowing Pronto to display conversation messages when transcript storage
   is configured. (#749)
-
 
 - A voice agent with tools finishes a request that takes several of them while the caller is
   still on the line. A result that called for another tool was given its own sentence, so a

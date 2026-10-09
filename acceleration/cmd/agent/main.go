@@ -139,8 +139,6 @@ func parseOptions(args []string) (options, bool, error) {
 		"the silence instead for a turn the acoustic end-of-turn score was sure had ended")
 	flags.Float64Var(&parsed.replyConfidentScore, "reply-confident-score", timing.ReplyConfidentScore,
 		"the acoustic end-of-turn score from which a turn is taken to have ended for sure, 0 turns the shorter silence off")
-	flags.DurationVar(&parsed.replyResumeGap, "reply-resume-gap", timing.ReplyResumeGap,
-		"how long a reply must have been silent for the sentence that follows to wait for the caller to be quiet, 0 lets every sentence out as it comes")
 	flags.DurationVar(&parsed.previewDebounce, "preview-debounce", timing.PreviewDebounce,
 		"how long the caller's words must hold still before the reply to them is started ahead of the wait, 0 starts it with the wait")
 	flags.DurationVar(&parsed.previewQuiet, "preview-quiet", timing.PreviewQuiet,
@@ -185,7 +183,6 @@ type options struct {
 	replySilenceMax       time.Duration
 	replySilenceConfident time.Duration
 	replyConfidentScore   float64
-	replyResumeGap        time.Duration
 	previewDebounce       time.Duration
 	previewQuiet          time.Duration
 	replyHedge            time.Duration
@@ -337,7 +334,6 @@ func run(options options, logger *slog.Logger) error {
 		ReplySilenceMax:       &options.replySilenceMax,
 		ReplySilenceConfident: &options.replySilenceConfident,
 		ReplyConfidentScore:   &options.replyConfidentScore,
-		ReplyResumeGap:        &options.replyResumeGap,
 		PreviewDebounce:       &options.previewDebounce,
 		PreviewQuiet:          &options.previewQuiet,
 	})

@@ -14,18 +14,17 @@ import (
 const maxEOTParticipants = 16
 
 type eotGate struct {
-	candidateID         string
-	participantID       string
-	ready               candidate
-	turn                harness.FlowTurn
-	primary             bool
-	pipeline            *pipeline
-	harness             *harness.Harness
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	approved            bool
-	held                *harness.Decided
-	snapshotDiagnostics eotSnapshotDiagnostics
+	candidateID   string
+	participantID string
+	ready         candidate
+	turn          harness.FlowTurn
+	primary       bool
+	pipeline      *pipeline
+	harness       *harness.Harness
+	ctx           context.Context
+	cancel        context.CancelFunc
+	approved      bool
+	held          *harness.Decided
 }
 
 func (a *Agent) eotCandidateCurrentLocked(gate *eotGate) bool {
@@ -52,7 +51,6 @@ type eotResult struct {
 	attempts        int
 	budgetExhausted bool
 	latency         time.Duration
-	snapshotOrdinal uint64
 }
 
 func (a *Agent) cancelEOTPreviews(gates []*eotGate) {
@@ -63,10 +61,6 @@ func (a *Agent) cancelEOTPreviews(gates []*eotGate) {
 }
 
 func (a *Agent) retainEOTAudio(participantID string, sampleRate, channels int, samples []int16) {
-	a.retainEOTAudioTimed(participantID, sampleRate, channels, samples, AudioTiming{})
-}
-
-func (a *Agent) retainEOTAudioTimed(participantID string, sampleRate, channels int, samples []int16, timing AudioTiming) {
 	if a.options.EOT == nil || participantID == "" || sampleRate != eotSampleRate || channels != 1 || len(samples) == 0 {
 		return
 	}
@@ -85,7 +79,7 @@ func (a *Agent) retainEOTAudioTimed(participantID string, sampleRate, channels i
 		a.audioHistory[participantID] = ring
 	}
 	a.mu.Unlock()
-	ring.appendTimed(samples, timing)
+	ring.append(samples)
 }
 
 func (a *Agent) eotAudioSnapshot(participantID string) []byte {
@@ -180,11 +174,9 @@ func (a *Agent) startEOT(gate *eotGate, snapshot eotScoringSnapshot) {
 	// The WaitGroup Add is serialized with releasePipeline under Agent.mu.
 	a.running.Add(1)
 	gate.pipeline.running.Add(1)
-	diagnostics := snapshot.claim()
-	a.eotSnapshotOrdinal++
-	diagnostics.ordinal = a.eotSnapshotOrdinal
-	gate.snapshotDiagnostics = diagnostics
-	snapshotOrdinal := gate.snapshotDiagnostics.ordinal
+	snapshot.ring.mu.Lock()
+	snapshot.ring.lastScoredGeneration = max(snapshot.ring.lastScoredGeneration, snapshot.generation)
+	snapshot.ring.mu.Unlock()
 	a.mu.Unlock()
 	pcm := snapshot.pcm
 
@@ -195,57 +187,12 @@ func (a *Agent) startEOT(gate *eotGate, snapshot eotScoringSnapshot) {
 		result := eotResult{
 			gate: gate, score: score, err: err, errorClass: failureClass,
 			attempts: attempts, budgetExhausted: budgetExhausted, latency: latency,
-			snapshotOrdinal: snapshotOrdinal,
 		}
 		select {
 		case gate.pipeline.eotResults <- result:
 		case <-gate.pipeline.ctx.Done():
 		}
-		a.logEOTAudioSnapshot(gate.snapshotDiagnostics)
 	}()
-}
-
-func (a *Agent) logEOTAudioSnapshot(snapshot eotSnapshotDiagnostics) {
-	timing := snapshot.timing
-	const milliseconds = float64(time.Millisecond)
-	a.logger.Info("EOT audio snapshot diagnostics",
-		"timing_valid", snapshot.timingValid,
-		"snapshot_ordinal", snapshot.ordinal,
-		"generation", snapshot.generation,
-		"generation_advance", snapshot.generationAdvance,
-		"snapshot_generation_unchanged", snapshot.snapshotGenerationUnchanged,
-		"samples", snapshot.samples,
-		"clock_epoch", timing.Epoch,
-		"pts_ms", float64(timing.PTS)/milliseconds,
-		"source_age_valid", snapshot.sourceAgeValid,
-		"source_age_ms", float64(snapshot.sourceAge)/milliseconds,
-		"append_age_valid", snapshot.appendAgeValid,
-		"append_age_ms", float64(snapshot.appendAge)/milliseconds,
-		"timestamp_gap_delta_ms", float64(snapshot.timestampGapDelta)/milliseconds,
-		"timestamp_gap_ms", float64(timing.TimestampGap)/milliseconds,
-		"timestamp_only_gap_delta_ms", float64(snapshot.timestampOnlyGapDelta)/milliseconds,
-		"timestamp_only_gap_ms", float64(timing.TimestampOnlyGap)/milliseconds,
-		"sequence_loss_delta", snapshot.sequenceLossDelta,
-		"sequence_loss", timing.SequenceLoss,
-		"clock_resets_delta", snapshot.clockResetsDelta,
-		"clock_resets", timing.ClockResets,
-		"ambiguous_gaps_delta", snapshot.ambiguousGapsDelta,
-		"ambiguous_gaps", timing.AmbiguousGaps,
-		"overlap_delta_ms", float64(snapshot.overlapDelta)/milliseconds,
-		"overlap_ms", float64(timing.Overlap)/milliseconds,
-		"tail_100ms_samples", snapshot.tail100ms.samples,
-		"tail_100ms_rms", snapshot.tail100ms.rms,
-		"tail_100ms_peak", snapshot.tail100ms.peak,
-		"tail_100ms_zero_fraction", snapshot.tail100ms.zeroFraction,
-		"tail_500ms_samples", snapshot.tail500ms.samples,
-		"tail_500ms_rms", snapshot.tail500ms.rms,
-		"tail_500ms_peak", snapshot.tail500ms.peak,
-		"tail_500ms_zero_fraction", snapshot.tail500ms.zeroFraction,
-		"tail_1000ms_samples", snapshot.tail1000ms.samples,
-		"tail_1000ms_rms", snapshot.tail1000ms.rms,
-		"tail_1000ms_peak", snapshot.tail1000ms.peak,
-		"tail_1000ms_zero_fraction", snapshot.tail1000ms.zeroFraction,
-	)
 }
 
 func scoreEOTAttempts(ctx context.Context, client *EOTClient, requestID string, pcm []byte, primary bool) (EOTScore, error, int, eotFailureClass, time.Duration, bool) {
@@ -472,7 +419,7 @@ func (a *Agent) refreshedPrimaryFlowTurnLocked(gate *eotGate, speechPending bool
 	return turn
 }
 
-func (a *Agent) fallbackPrimaryEOT(gate *eotGate, reason string, latency time.Duration, attempts int, failureClass eotFailureClass, budgetExhausted bool, snapshotOrdinal uint64) {
+func (a *Agent) fallbackPrimaryEOT(gate *eotGate, reason string, latency time.Duration, attempts int, failureClass eotFailureClass, budgetExhausted bool) {
 	speechPending := a.speechPending()
 	a.mu.Lock()
 	if a.eotGates[gate.candidateID] != gate || gate.pipeline != a.pipe || gate.harness != a.harness {
@@ -501,8 +448,7 @@ func (a *Agent) fallbackPrimaryEOT(gate *eotGate, reason string, latency time.Du
 	gate.cancel()
 	err := gate.harness.Decide(turn)
 	a.mu.Unlock()
-	attrs := []any{"candidate", gate.candidateID, "snapshot_ordinal", snapshotOrdinal,
-		"reason", reason, "attempts", attempts,
+	attrs := []any{"candidate", gate.candidateID, "reason", reason, "attempts", attempts,
 		"aggregate_latency_ms", float64(latency) / float64(time.Millisecond),
 		"budget_exhausted", budgetExhausted}
 	if failureClass != "" {
@@ -537,7 +483,7 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 	if result.err != nil {
 		if gate.primary {
 			a.mu.Unlock()
-			a.fallbackPrimaryEOT(gate, "service_unavailable", result.latency, result.attempts, result.errorClass, result.budgetExhausted, result.snapshotOrdinal)
+			a.fallbackPrimaryEOT(gate, "service_unavailable", result.latency, result.attempts, result.errorClass, result.budgetExhausted)
 			return
 		}
 		delete(a.eotGates, gate.candidateID)
@@ -546,7 +492,6 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 		a.mu.Unlock()
 		a.logger.Debug("acoustic endpoint score unavailable; using the flow decision",
 			"candidate", gate.candidateID, "error_class", string(result.errorClass),
-			"snapshot_ordinal", result.snapshotOrdinal,
 			"attempts", result.attempts,
 			"aggregate_latency_ms", float64(result.latency)/float64(time.Millisecond),
 			"budget_exhausted", result.budgetExhausted)
@@ -559,7 +504,7 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 		result.score.Probability < 0 || result.score.Probability > 1 {
 		if gate.primary {
 			a.mu.Unlock()
-			a.fallbackPrimaryEOT(gate, "invalid_score", result.latency, result.attempts, eotFailureInvalidResponse, result.budgetExhausted, result.snapshotOrdinal)
+			a.fallbackPrimaryEOT(gate, "invalid_score", result.latency, result.attempts, eotFailureInvalidResponse, result.budgetExhausted)
 			return
 		}
 		delete(a.eotGates, gate.candidateID)
@@ -567,8 +512,7 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 		held := gate.held
 		a.mu.Unlock()
 		a.logger.Debug("acoustic endpoint score unavailable; using the flow decision",
-			"candidate", gate.candidateID, "snapshot_ordinal", result.snapshotOrdinal,
-			"reason", "invalid_score")
+			"candidate", gate.candidateID, "reason", "invalid_score")
 		if held != nil {
 			a.rule(*held)
 		}
@@ -577,14 +521,12 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 	threshold := a.options.EOTThreshold
 	if gate.primary {
 		a.logger.Info("primary EOT score received", "candidate", gate.candidateID,
-			"snapshot_ordinal", result.snapshotOrdinal,
 			"probability", result.score.Probability, "threshold", threshold,
 			"samples", result.score.Samples, "attempts", result.attempts,
 			"aggregate_latency_ms", float64(result.latency)/float64(time.Millisecond),
 			"budget_exhausted", result.budgetExhausted)
 	} else {
 		a.logger.Debug("acoustic endpoint score received", "candidate", gate.candidateID,
-			"snapshot_ordinal", result.snapshotOrdinal,
 			"probability", result.score.Probability, "threshold", threshold,
 			"samples", result.score.Samples, "attempts", result.attempts,
 			"aggregate_latency_ms", float64(result.latency)/float64(time.Millisecond),
@@ -594,13 +536,13 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 		if gate.primary {
 			a.mu.Unlock()
 			if !a.primaryEOTEligible(gate) {
-				a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency, result.attempts, "", false, result.snapshotOrdinal)
+				a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency, result.attempts, "", false)
 				return
 			}
 			a.mu.Lock()
 			if !a.eotPrimaryStateLocked(gate) {
 				a.mu.Unlock()
-				a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency, result.attempts, "", false, result.snapshotOrdinal)
+				a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency, result.attempts, "", false)
 				return
 			}
 		}
@@ -624,13 +566,13 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 	if gate.primary {
 		a.mu.Unlock()
 		if !a.primaryEOTEligible(gate) {
-			a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency, result.attempts, "", false, result.snapshotOrdinal)
+			a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency, result.attempts, "", false)
 			return
 		}
 		a.mu.Lock()
 		if !a.eotPrimaryStateLocked(gate) {
 			a.mu.Unlock()
-			a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency, result.attempts, "", false, result.snapshotOrdinal)
+			a.fallbackPrimaryEOT(gate, "candidate_or_floor_changed", result.latency, result.attempts, "", false)
 			return
 		}
 		delete(a.eotGates, gate.candidateID)
@@ -757,7 +699,7 @@ func (a *Agent) eotAudioUnchanged(participantID string) bool {
 	}
 	ring.mu.Lock()
 	defer ring.mu.Unlock()
-	return ring.hasScoredSnapshot && ring.generation == ring.lastScoredGeneration
+	return ring.generation != 0 && ring.generation == ring.lastScoredGeneration
 }
 
 // waitForFreshAudio leaves a candidate the acoustic score already ruled unfinished until

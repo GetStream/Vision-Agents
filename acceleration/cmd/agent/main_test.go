@@ -151,7 +151,6 @@ func TestParseOptionsExposesTheReplyTimingSettings(t *testing.T) {
 	if parsed.replySilence != defaults.ReplySilence || parsed.replySilenceMax != defaults.ReplySilenceMax ||
 		parsed.replySilenceConfident != defaults.ReplySilenceConfident ||
 		parsed.replyConfidentScore != defaults.ReplyConfidentScore ||
-		parsed.replyResumeGap != defaults.ReplyResumeGap ||
 		parsed.previewDebounce != defaults.PreviewDebounce || parsed.previewQuiet != defaults.PreviewQuiet ||
 		parsed.replyHedge != defaults.ReplyHedge {
 		t.Fatalf("the CLI should start from the router's defaults, got %+v", parsed)
@@ -160,7 +159,7 @@ func TestParseOptionsExposesTheReplyTimingSettings(t *testing.T) {
 	parsed, _, err = parseOptions([]string{
 		"-call", "demo-call",
 		"-reply-silence=400ms", "-reply-silence-max=2s", "-reply-silence-confident=150ms",
-		"-reply-confident-score=0.8", "-reply-resume-gap=0s", "-preview-debounce=0s", "-preview-quiet=0s",
+		"-reply-confident-score=0.8", "-preview-debounce=0s", "-preview-quiet=0s",
 		"-reply-hedge=0s",
 	})
 	if err != nil {
@@ -168,7 +167,7 @@ func TestParseOptionsExposesTheReplyTimingSettings(t *testing.T) {
 	}
 	if parsed.replySilence != 400*time.Millisecond || parsed.replySilenceMax != 2*time.Second ||
 		parsed.replySilenceConfident != 150*time.Millisecond || parsed.replyConfidentScore != 0.8 ||
-		parsed.replyResumeGap != 0 || parsed.previewDebounce != 0 || parsed.previewQuiet != 0 ||
+		parsed.previewDebounce != 0 || parsed.previewQuiet != 0 ||
 		parsed.replyHedge != 0 {
 		t.Fatalf("the flags were not read: %+v", parsed)
 	}

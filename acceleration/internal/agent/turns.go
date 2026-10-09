@@ -178,28 +178,13 @@ func (t *turnTracker) firstAudio(turnID string, at time.Time) {
 	current.roundtripMs = msBetween(current.transcriptAt, at)
 }
 
-// held records how long audio of a reply waited for the caller to have been quiet, and adds it
-// to what the turn has waited so far: a reply is held before its first audio and again before the
-// sentences that follow a pause. The wait before the first audio is inside the turn's roundtrip
-// and the legs from its text to its audio, which it explains; one before a later sentence comes
-// after them and is inside neither.
+// held records the first-audio silence hold, already included in roundtrip timing.
 func (t *turnTracker) held(turnID string, waited time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if current := t.open[turnID]; current != nil {
 		current.holdMs += float64(waited.Microseconds()) / 1000
 	}
-}
-
-// participantOf is who the reply of an open turn is for, or the zero participant for a turn that
-// is not open, which is any that nobody was answering.
-func (t *turnTracker) participantOf(turnID string) stt.Participant {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if current := t.open[turnID]; current != nil {
-		return current.participant
-	}
-	return stt.Participant{}
 }
 
 // marksFor returns what an edge reports the first frames of a reply to, or nil when the turn

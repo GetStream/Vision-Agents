@@ -14,30 +14,6 @@ type InboundAudio struct {
 	// Audio must be 16 kHz mono, which is what every speech-to-text provider accepts.
 	// Whatever the transport carried is the edge's problem to convert.
 	Audio audio.PcmData
-	// Timing describes transport timing when the edge can provide it. Its zero value
-	// leaves timing diagnostics unavailable without changing how audio is retained.
-	Timing AudioTiming
-}
-
-// AudioTiming carries optional source timing for one inbound audio chunk.
-//
-// PTS may legitimately be zero when Valid is true. Epoch is a unique identity for the
-// lifetime of the inbound track. Gap and event counters are cumulative for that track,
-// including across decoder clock resets; ClockResets records those resets.
-type AudioTiming struct {
-	Valid      bool
-	PTS        time.Duration
-	ReceivedAt time.Time
-	Epoch      uint64
-	// TimestampGap is the cumulative decoded positive timestamp gap.
-	TimestampGap time.Duration
-	// TimestampOnlyGap is an observed clock gap, not proof of acoustic silence.
-	TimestampOnlyGap time.Duration
-	// SequenceLoss counts raw missing sequence numbers even when RED or PLC recovers them.
-	SequenceLoss  uint64
-	ClockResets   uint64
-	AmbiguousGaps uint64
-	Overlap       time.Duration
 }
 
 // Edge is where the conversation happens. It is deliberately four methods wide, so the

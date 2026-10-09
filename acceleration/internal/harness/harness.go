@@ -409,9 +409,10 @@ func (h *Harness) AdoptPreview(turn Turn, model *llmrouter.Session) bool {
 }
 
 func (h *Harness) PreviewModel() *llmrouter.Session {
+	working := h.Working()
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.notes) != 0 {
+	if len(h.notes) != 0 || len(working) != 0 {
 		return nil
 	}
 	return h.options.Model

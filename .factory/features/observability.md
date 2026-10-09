@@ -22,7 +22,7 @@ serves the rollups in `turn_stats_hourly` and `turn_stats_daily`, with per-leg p
 | `llm_ttft_ms`          | Wait for the first token                                          |
 | `tts_ttfb_ms`          | Wait for the first audio                                          |
 | `roundtrip_ms`         | Finishing a sentence to hearing the answer start, including any hold of its first audio for the caller to have been quiet |
-| `reply_hold_ms`        | How long the reply's audio was held for the caller to have been quiet, before its first sound and before each sentence that followed a pause in it, added together. A hold before the first sound is inside `tts_to_audio_ms`, `roundtrip_ms` and the columns that run to the first frame; one before a later sentence is inside none of them. Null where nothing was held |
+| `reply_hold_ms` | First-audio silence hold, included in `tts_to_audio_ms` and `roundtrip_ms`. Null when nothing was held |
 | `speech_end_to_audio_ms` | Voice in to voice out                                           |
 | `first_frame_queued_ms` | Finishing a sentence to the first frame of the answer being queued for the outgoing track |
 | `first_audible_frame_ms` | Finishing a sentence to the track taking the first frame that was not silence |

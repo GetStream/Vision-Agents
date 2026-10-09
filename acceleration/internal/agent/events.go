@@ -207,10 +207,7 @@ type Turn struct {
 	// SpeechEndToAudioMs is voice in to voice out: the roundtrip plus the time the
 	// transcriber spent deciding the participant had stopped.
 	SpeechEndToAudioMs float64
-	// ReplyHoldMs is how long the reply's audio was held for the caller to have been quiet, before
-	// its first sound and before each sentence that followed a pause in it, added together. A hold
-	// before the first sound is inside TTSToAudioMs, RoundtripMs and the legs that run to the audio;
-	// one before a later sentence comes after them and is inside none. Zero where nothing was held.
+	// ReplyHoldMs is the first-audio silence hold, included in TTSToAudioMs and RoundtripMs.
 	ReplyHoldMs float64
 	// FirstFrameQueuedMs and FirstAudibleFrameMs run from the last transcript revision, like
 	// RoundtripMs, to the two moments publishing returning stands in for: the edge queueing the

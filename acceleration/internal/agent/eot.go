@@ -149,14 +149,14 @@ type EOTScore struct {
 }
 
 type eotResponse struct {
-	RequestID     *string  `json:"request_id"`
-	Model         *string  `json:"model"`
-	Release       *string  `json:"release"`
+	RequestID     string   `json:"request_id"`
+	Model         string   `json:"model"`
+	Release       string   `json:"release"`
 	Probability   *float64 `json:"probability"`
 	Wait          *float64 `json:"wait_probability"`
-	SampleRate    *int     `json:"sample_rate"`
-	Samples       *int     `json:"samples"`
-	WindowSamples *int     `json:"window_samples"`
+	SampleRate    int      `json:"sample_rate"`
+	Samples       int      `json:"samples"`
+	WindowSamples int      `json:"window_samples"`
 }
 
 type eotRequestBody struct {
@@ -330,21 +330,13 @@ func (c *EOTClient) Score(ctx context.Context, requestID string, pcm []byte) (EO
 		return EOTScore{}, &eotAttemptError{class: eotFailureInvalidResponse}
 	}
 	var decoded eotResponse
-	decoder := json.NewDecoder(strings.NewReader(string(responseBytes)))
-	if err := decoder.Decode(&decoded); err != nil {
-		return EOTScore{}, &eotAttemptError{class: eotFailureInvalidResponse}
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := json.Unmarshal(responseBytes, &decoded); err != nil {
 		return EOTScore{}, &eotAttemptError{class: eotFailureInvalidResponse}
 	}
 	wantedSamples := len(pcm) / 2
-	if decoded.RequestID == nil || *decoded.RequestID != requestID ||
-		decoded.Model == nil || *decoded.Model != eotModel ||
-		decoded.Release == nil || *decoded.Release != eotRelease ||
+	if decoded.RequestID != requestID || decoded.Model != eotModel || decoded.Release != eotRelease ||
 		decoded.Probability == nil || decoded.Wait == nil ||
-		decoded.SampleRate == nil || *decoded.SampleRate != eotSampleRate ||
-		decoded.Samples == nil || *decoded.Samples != wantedSamples ||
-		decoded.WindowSamples == nil || *decoded.WindowSamples != wantedSamples ||
+		decoded.SampleRate != eotSampleRate || decoded.Samples != wantedSamples || decoded.WindowSamples != wantedSamples ||
 		!validProbability(*decoded.Probability) || !validProbability(*decoded.Wait) ||
 		math.Abs(*decoded.Wait-(1-*decoded.Probability)) > 1e-6 {
 		return EOTScore{}, &eotAttemptError{class: eotFailureInvalidResponse}
@@ -412,26 +404,13 @@ func parseEOTRetryAfter(value string, now time.Time) (time.Duration, bool) {
 		if err != nil {
 			return 24 * time.Hour, true
 		}
-		if seconds < 0 {
-			return 0, false
-		}
-		if seconds > int64((24*time.Hour)/time.Second) {
-			return 24 * time.Hour, true
-		}
-		return time.Duration(seconds) * time.Second, true
+		return time.Duration(min(seconds, 86400)) * time.Second, true
 	}
 	when, err := http.ParseTime(value)
 	if err != nil {
 		return 0, false
 	}
-	delay := when.Sub(now)
-	if delay < 0 {
-		delay = 0
-	}
-	if delay > 24*time.Hour {
-		delay = 24 * time.Hour
-	}
-	return delay, true
+	return min(max(when.Sub(now), 0), 24*time.Hour), true
 }
 
 func (c *EOTClient) token(ctx context.Context) (string, error) {
@@ -469,24 +448,13 @@ func (c *EOTClient) token(ctx context.Context) (string, error) {
 	if c.flight == nil {
 		flight := &tokenFlight{done: make(chan struct{})}
 		c.flight = flight
+		source := c.tokens
 		go func() {
 			authClient := &http.Client{Timeout: eotClientLimit}
 			sourceCtx := context.WithValue(context.Background(), oauth2.HTTPClient, authClient)
-			c.tokenMu.Lock()
-			source := c.tokens
-			c.tokenMu.Unlock()
 			var err error
 			if source == nil {
 				source, err = idtoken.NewTokenSource(sourceCtx, c.audience)
-				if err == nil {
-					c.tokenMu.Lock()
-					if c.tokens == nil {
-						c.tokens = source
-					} else {
-						source = c.tokens
-					}
-					c.tokenMu.Unlock()
-				}
 			}
 			var token *oauth2.Token
 			if err == nil {
@@ -500,15 +468,14 @@ func (c *EOTClient) token(ctx context.Context) (string, error) {
 				result.err = errors.New("empty token")
 			}
 			c.tokenMu.Lock()
+			c.tokens = source
 			if result.err == nil && token != nil {
 				copy := *token
 				c.cached = &copy
 			}
 			flight.result = result
 			close(flight.done)
-			if c.flight == flight {
-				c.flight = nil
-			}
+			c.flight = nil
 			c.tokenMu.Unlock()
 		}()
 	}
@@ -526,71 +493,21 @@ func (c *EOTClient) token(ctx context.Context) (string, error) {
 	}
 }
 
-// pcm16leRing holds a participant's most recent bounded audio without sharing mutable
-// storage with an in-flight request.
+// pcm16leRing retains the last 16 seconds of audio. Scoring takes an owned copy;
+// generation prevents retries from scoring the same audio again.
 type pcm16leRing struct {
-	mu     sync.Mutex
-	sample []int16
-	next   int
-	full   bool
-
-	generation            uint64
-	lastSourceAt          time.Time
-	lastAppendAt          time.Time
-	lastAppendTimingValid bool
-	timing                AudioTiming
-	lastScoredGeneration  uint64
-	lastScoredTiming      AudioTiming
-	hasScoredSnapshot     bool
-}
-
-type eotTailStats struct {
-	samples      int
-	rms          float64
-	peak         int
-	zeroFraction float64
-}
-
-type eotSnapshotObservation struct {
-	timingValid bool
-	timing      AudioTiming
-	generation  uint64
-	samples     int
-	sourceAt    time.Time
-	appendAt    time.Time
-	capturedAt  time.Time
-	tail100ms   eotTailStats
-	tail500ms   eotTailStats
-	tail1000ms  eotTailStats
-}
-
-type eotSnapshotDiagnostics struct {
-	timingValid                 bool
-	timing                      AudioTiming
-	ordinal                     uint64
-	generation                  uint64
-	generationAdvance           uint64
-	snapshotGenerationUnchanged bool
-	samples                     int
-	sourceAgeValid              bool
-	appendAgeValid              bool
-	sourceAge                   time.Duration
-	appendAge                   time.Duration
-	timestampGapDelta           time.Duration
-	timestampOnlyGapDelta       time.Duration
-	sequenceLossDelta           uint64
-	clockResetsDelta            uint64
-	ambiguousGapsDelta          uint64
-	overlapDelta                time.Duration
-	tail100ms                   eotTailStats
-	tail500ms                   eotTailStats
-	tail1000ms                  eotTailStats
+	mu                   sync.Mutex
+	sample               []int16
+	next                 int
+	full                 bool
+	generation           uint64
+	lastScoredGeneration uint64
 }
 
 type eotScoringSnapshot struct {
-	pcm         []byte
-	ring        *pcm16leRing
-	observation eotSnapshotObservation
+	pcm        []byte
+	ring       *pcm16leRing
+	generation uint64
 }
 
 func newPCM16LERing() *pcm16leRing {
@@ -598,10 +515,6 @@ func newPCM16LERing() *pcm16leRing {
 }
 
 func (r *pcm16leRing) append(samples []int16) {
-	r.appendTimed(samples, AudioTiming{})
-}
-
-func (r *pcm16leRing) appendTimed(samples []int16, timing AudioTiming) {
 	if len(samples) == 0 {
 		return
 	}
@@ -616,169 +529,34 @@ func (r *pcm16leRing) appendTimed(samples []int16, timing AudioTiming) {
 		}
 	}
 	r.generation++
-	r.lastAppendAt = time.Now()
-	r.lastAppendTimingValid = timing.Valid
-	if timing.Valid {
-		r.timing = timing
-		r.lastSourceAt = timing.ReceivedAt
-	} else {
-		r.timing = AudioTiming{}
-		r.lastSourceAt = time.Time{}
-	}
 }
 
 func (r *pcm16leRing) snapshot() []byte {
-	pcm, _ := r.copySnapshot(false)
-	return pcm
+	snapshot, _ := r.scoringSnapshot()
+	return snapshot.pcm
 }
 
 func (r *pcm16leRing) scoringSnapshot() (eotScoringSnapshot, bool) {
-	pcm, observation := r.copySnapshot(true)
-	if len(pcm) == 0 {
-		return eotScoringSnapshot{}, false
-	}
-	return eotScoringSnapshot{pcm: pcm, ring: r, observation: observation}, true
-}
-
-func (s eotScoringSnapshot) claim() eotSnapshotDiagnostics {
-	r := s.ring
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	observed := s.observation
-	diagnostics := eotSnapshotDiagnostics{
-		timingValid:    observed.timingValid,
-		timing:         observed.timing,
-		generation:     observed.generation,
-		samples:        observed.samples,
-		sourceAgeValid: !observed.sourceAt.IsZero(),
-		appendAgeValid: !observed.appendAt.IsZero(),
-		sourceAge:      ageAt(observed.capturedAt, observed.sourceAt),
-		appendAge:      ageAt(observed.capturedAt, observed.appendAt),
-		tail100ms:      observed.tail100ms,
-		tail500ms:      observed.tail500ms,
-		tail1000ms:     observed.tail1000ms,
-	}
-	if observed.generation >= r.lastScoredGeneration {
-		diagnostics.generationAdvance = observed.generation - r.lastScoredGeneration
-		diagnostics.snapshotGenerationUnchanged = r.hasScoredSnapshot && observed.generation == r.lastScoredGeneration
-		if observed.timingValid {
-			previousTiming := r.lastScoredTiming
-			if !previousTiming.Valid || observed.timing.Epoch != previousTiming.Epoch {
-				previousTiming = AudioTiming{}
-			}
-			diagnostics.timestampGapDelta = durationDelta(observed.timing.TimestampGap, previousTiming.TimestampGap)
-			diagnostics.timestampOnlyGapDelta = durationDelta(observed.timing.TimestampOnlyGap, previousTiming.TimestampOnlyGap)
-			diagnostics.sequenceLossDelta = counterDelta(observed.timing.SequenceLoss, previousTiming.SequenceLoss)
-			diagnostics.clockResetsDelta = counterDelta(observed.timing.ClockResets, previousTiming.ClockResets)
-			diagnostics.ambiguousGapsDelta = counterDelta(observed.timing.AmbiguousGaps, previousTiming.AmbiguousGaps)
-			diagnostics.overlapDelta = durationDelta(observed.timing.Overlap, previousTiming.Overlap)
-			r.lastScoredTiming = observed.timing
-		}
-		r.lastScoredGeneration = observed.generation
-		r.hasScoredSnapshot = true
-	}
-	return diagnostics
-}
-
-func (r *pcm16leRing) copySnapshot(withStats bool) ([]byte, eotSnapshotObservation) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	count := r.next
-	start := 0
+	count, start := r.next, 0
 	if r.full {
-		count = len(r.sample)
-		start = r.next
+		count, start = len(r.sample), r.next
 	}
 	if count < eotMinSamples {
-		return nil, eotSnapshotObservation{}
+		return eotScoringSnapshot{}, false
 	}
 	pcm := make([]byte, count*2)
-	var tailCounts [3]int
-	var tailSquares [3]uint64
-	var tailPeaks [3]int
-	var tailZeros [3]int
-	tailWindows := [3]int{eotSampleRate / 10, eotSampleRate / 2, eotSampleRate}
-	for i := 0; i < count; i++ {
-		sample := r.sample[(start+i)%len(r.sample)]
-		binary.LittleEndian.PutUint16(pcm[i*2:], uint16(sample))
-		fromEnd := count - i
-		if !withStats || fromEnd > tailWindows[2] {
-			continue
-		}
-		amplitude := int64(sample)
-		if amplitude < 0 {
-			amplitude = -amplitude
-		}
-		for window := range tailWindows {
-			if fromEnd > tailWindows[window] {
-				continue
-			}
-			tailCounts[window]++
-			tailSquares[window] += uint64(amplitude * amplitude)
-			if sample == 0 {
-				tailZeros[window]++
-			}
-			if int(amplitude) > tailPeaks[window] {
-				tailPeaks[window] = int(amplitude)
-			}
-		}
+	for i := range count {
+		binary.LittleEndian.PutUint16(pcm[i*2:], uint16(r.sample[(start+i)%len(r.sample)]))
 	}
-	if !withStats {
-		return pcm, eotSnapshotObservation{}
-	}
-	observation := eotSnapshotObservation{
-		timingValid: r.lastAppendTimingValid,
-		timing:      r.timing,
-		generation:  r.generation,
-		samples:     count,
-		sourceAt:    r.lastSourceAt,
-		appendAt:    r.lastAppendAt,
-		capturedAt:  time.Now(),
-	}
-	observation.tail100ms = tailStats(tailCounts[0], tailSquares[0], tailPeaks[0], tailZeros[0])
-	observation.tail500ms = tailStats(tailCounts[1], tailSquares[1], tailPeaks[1], tailZeros[1])
-	observation.tail1000ms = tailStats(tailCounts[2], tailSquares[2], tailPeaks[2], tailZeros[2])
-	return pcm, observation
+	return eotScoringSnapshot{pcm: pcm, ring: r, generation: r.generation}, true
 }
 
 func (r *pcm16leRing) clear() {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	clear(r.sample)
 	r.next, r.full = 0, false
 	r.generation++
-	r.lastSourceAt = time.Time{}
-	r.lastAppendAt = time.Time{}
-	r.lastAppendTimingValid = false
-	r.timing = AudioTiming{}
-	r.mu.Unlock()
-}
-
-func tailStats(samples int, sumSquares uint64, peak int, zeroSamples int) eotTailStats {
-	stats := eotTailStats{samples: samples, peak: peak}
-	if samples > 0 {
-		stats.rms = math.Sqrt(float64(sumSquares) / float64(samples))
-		stats.zeroFraction = float64(zeroSamples) / float64(samples)
-	}
-	return stats
-}
-
-func ageAt(now, then time.Time) time.Duration {
-	if then.IsZero() || then.After(now) {
-		return 0
-	}
-	return now.Sub(then)
-}
-
-func durationDelta(current, previous time.Duration) time.Duration {
-	if current < previous {
-		return 0
-	}
-	return current - previous
-}
-
-func counterDelta(current, previous uint64) uint64 {
-	if current < previous {
-		return 0
-	}
-	return current - previous
 }

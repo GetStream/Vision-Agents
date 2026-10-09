@@ -575,6 +575,7 @@ func (s *HarnessSuite) TestAPreviewCannotHideWorkAlreadyRunning() {
 	s.eventually(func() bool { return s.harness.Delegating() }, "the task never started")
 
 	s.False(s.harness.AdoptPreview(turn, model), "the preview did not know about the running work")
+	s.Nil(s.harness.PreviewModel(), "running work prevents starting a preview")
 	preview, err := s.harness.Preview(s.ctx, turn)
 	s.Error(err)
 	s.Nil(preview)

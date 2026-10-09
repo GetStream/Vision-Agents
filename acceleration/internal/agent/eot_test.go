@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net/http"
@@ -214,4 +215,35 @@ func writeEOTResponse(t *testing.T, w http.ResponseWriter, id string, samples in
 	if _, err := io.WriteString(w, eotJSON(id, samples, probability)); err != nil {
 		t.Error(err)
 	}
+}
+
+func TestRetainEOTAudioKeepsZeroSamplesAndRejectsWrongFormat(t *testing.T) {
+	a := &Agent{
+		options:      Options{EOT: &EOTClient{}},
+		audioHistory: make(map[string]*pcm16leRing),
+	}
+	samples := make([]int16, eotMinSamples)
+	for i := range samples {
+		if i%4 == 0 {
+			samples[i] = 1234
+		}
+	}
+	a.retainEOTAudio("participant", eotSampleRate, 1, samples)
+	a.retainEOTAudio("participant", eotSampleRate/2, 1, samples)
+	a.retainEOTAudio("participant", eotSampleRate, 2, samples)
+
+	got := a.eotAudioSnapshot("participant")
+	require.Len(t, got, len(samples)*2)
+	require.Equal(t, samples, decodeEOTPCM(got), "zero-valued frames remain in the scoring window; no VAD filtering is applied")
+}
+
+func decodeEOTPCM(pcm []byte) []int16 {
+	if len(pcm)%2 != 0 {
+		panic("odd PCM byte length")
+	}
+	samples := make([]int16, len(pcm)/2)
+	for i := range samples {
+		samples[i] = int16(binary.LittleEndian.Uint16(pcm[i*2:]))
+	}
+	return samples
 }

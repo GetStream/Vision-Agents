@@ -6738,7 +6738,7 @@ type TimelineEntry struct {
 	// ModelToFirstTextMs Main model request to the first text delta admitted to the voice pipeline.
 	ModelToFirstTextMs *float64 `json:"model_to_first_text_ms,omitempty"`
 
-	// ReplyHoldMs How long the reply's audio was held for the caller to have been quiet, before its first sound and before each sentence that followed a pause in it, added together. A hold before the first sound is inside tts_to_audio_ms, roundtrip_ms and the fields that run to the first frame; one before a later sentence comes after them and is inside none. Absent where nothing was held.
+	// ReplyHoldMs First-audio silence hold in milliseconds, included in tts_to_audio_ms and roundtrip_ms. Absent when nothing was held.
 	ReplyHoldMs *float64 `json:"reply_hold_ms,omitempty"`
 
 	// RoundtripMs Last transcript revision to first audio published; includes cadence settling and any hold of its first audio for the caller to have been quiet.

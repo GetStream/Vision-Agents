@@ -387,9 +387,8 @@ func (e *Edge) listen(remote rtc.OnTrackReceived) {
 	}
 
 	codec := remote.Track.Codec().RTPCodecCapability
-	clock := newInboundClock(codec)
 	reader, err := audiortc.NewRTPReader(
-		observedRTPSource{source: remote.Track, clock: clock}, codec,
+		remote.Track, codec,
 		audiortc.ReaderConfig{Opus: opus.Config{SampleRate: stt.SampleRate}},
 	)
 	if err != nil {
@@ -411,12 +410,12 @@ func (e *Edge) listen(remote rtc.OnTrackReceived) {
 	e.mu.Unlock()
 
 	e.logger.Debug("listening to a participant", "participant", participant.UserID)
-	go e.hear(reader, clock, participant, stop)
+	go e.hear(reader, participant, stop)
 }
 
 // hear hands one participant's decoded audio to the agent until the track ends or stop is
 // closed.
-func (e *Edge) hear(reader *audiortc.TrackReader, clock *inboundClock, participant stt.Participant, stop <-chan struct{}) {
+func (e *Edge) hear(reader *audiortc.TrackReader, participant stt.Participant, stop <-chan struct{}) {
 	defer reader.Close()
 	for pcm, err := range reader.Frames() {
 		if err != nil {
@@ -428,7 +427,6 @@ func (e *Edge) hear(reader *audiortc.TrackReader, clock *inboundClock, participa
 			return
 		default:
 		}
-		timing := clock.timingForPCM(pcm.PTS, pcm.Duration())
 		e.inbound.Send(agent.InboundAudio{
 			Participant: participant,
 			Audio: audio.PcmData{
@@ -436,7 +434,6 @@ func (e *Edge) hear(reader *audiortc.TrackReader, clock *inboundClock, participa
 				SampleRate: stt.SampleRate,
 				Channels:   1,
 			},
-			Timing: timing,
 		})
 	}
 }

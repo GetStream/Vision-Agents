@@ -1373,7 +1373,6 @@ func buildSessions(
 
 		ReplySilenceConfident: &settings.Agent.ReplySilenceConfident,
 		ReplyConfidentScore:   &settings.Agent.ReplyConfidentScore,
-		ReplyResumeGap:        &settings.Agent.ReplyResumeGap,
 	})
 }
 

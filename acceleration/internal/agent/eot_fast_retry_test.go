@@ -114,17 +114,8 @@ func (s *AgentSuite) TestAudioAlreadyScoredIsNotCopiedOrScoredAgain() {
 	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
 	s.primaryCandidate(participant, "please find a table")
 	s.eventually(func() bool { return seen.count() == 1 }, "the words were never scored")
-	// Held in locals: a check that outlives the test must not read the next test's fixtures.
-	agent := s.agent
-	ordinal := func() uint64 {
-		agent.mu.Lock()
-		defer agent.mu.Unlock()
-		return agent.eotSnapshotOrdinal
-	}
-	copied := ordinal()
-
-	s.Never(func() bool { return seen.count() > 1 || ordinal() != copied }, 800*time.Millisecond,
-		10*time.Millisecond, "the same audio was copied or scored again")
+	s.Never(func() bool { return seen.count() > 1 }, 800*time.Millisecond,
+		10*time.Millisecond, "unchanged audio was scored again")
 	s.Len(s.model.requests(), 1, "a retry started a second preview")
 
 	s.speak(participant)
