@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -105,5 +107,41 @@ func learnDeploymentApp(ctx context.Context, clients *streamapp.Clients, logger 
 		case <-time.After(wait):
 		}
 		wait = min(wait*2, learnRetryMax)
+	}
+}
+
+// warnWithoutMessageHook says once, at startup, when the deployment's own Stream app sends
+// new messages nowhere this router answers them (AI-990 F19). Without that hook a written
+// message, such as one the slack_bot bridge writes into a thread channel, is stored and never
+// answered, and nothing else says why.
+//
+// It only reads: the app's hooks are one setting the whole app shares, the operator's to
+// point (`go run ./cmd/phone hooks -url`), so the warning carries that command rather than
+// the router changing them. It runs only with connectors on, which is when the bridge writes
+// into thread channels, and with a public URL, which the hook has to name. In app mode the
+// deployment's app is not where customers' messages arrive, so it says nothing. A read that fails
+// is a warning too, never a reason not to start.
+func warnWithoutMessageHook(ctx context.Context, settings config.Config, clients *streamapp.Clients, logger *slog.Logger) {
+	public := strings.TrimRight(settings.PublicURL, "/")
+	if !settings.Connectors.Enabled || public == "" || clients.PerApp() {
+		return
+	}
+	attempt, cancel := context.WithTimeout(ctx, learnTimeout)
+	defer cancel()
+	bound, err := clients.For(attempt, "")
+	if err != nil {
+		logger.Warn("stream: could not check where the Stream app sends its messages", "error", err)
+		return
+	}
+	hook := public + chat.MessageHookPath
+	pointed, err := chat.StreamOf(bound.Client).DeliversMessagesTo(attempt, hook)
+	switch {
+	case err != nil:
+		logger.Warn("stream: could not read the Stream app's hooks, so whether its messages reach this router is unknown",
+			"hook", hook, "error", err)
+	case !pointed:
+		logger.Warn("stream: the Stream app sends no new message to this router, so a message written "+
+			"in a thread channel is stored and never answered; point the hook with the command given",
+			"hook", hook, "command", "go run ./cmd/phone hooks -url "+public)
 	}
 }
