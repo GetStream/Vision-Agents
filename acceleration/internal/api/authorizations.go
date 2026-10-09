@@ -828,6 +828,13 @@ func connectionManifest(ctx context.Context, records *store.Store, connection st
 	if err != nil {
 		return core.ResolvedManifest{}, err
 	}
+	return definitionManifest(definition, connection)
+}
+
+// definitionManifest is definition resolved for the connection, as connectionManifest. Its
+// only error is Resolve's: definition does not take the connection's scheme, inputs or
+// captured values.
+func definitionManifest(definition store.ConnectorDefinition, connection store.ConnectorConnection) (core.ResolvedManifest, error) {
 	metadata := maps.Clone(connection.Metadata)
 	maps.DeleteFunc(metadata, func(name, _ string) bool {
 		return !slices.ContainsFunc(definition.Manifest.Capture, func(rule core.CaptureRule) bool { return rule.Name == name })

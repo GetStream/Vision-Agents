@@ -162,6 +162,10 @@ func (s *Server) registerConnectionTools(api huma.API) {
 			"must be the connection's revision as last read; a connection that moved past it is a " +
 			"409. The values are never shown again. Who may set them is who may read the " +
 			"connection.\n\n" +
+			"A bearer or api_key connection given its token or key again moves to its connector's " +
+			"latest revision, as a consent moves an OAuth one, when that revision takes the " +
+			"connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says " +
+			"why when that one is marked broken.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
 		Responses: map[string]*huma.Response{"200": {Description: "The connection, connected"}},
@@ -225,16 +229,37 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 	// imported OAuth grant stays on the revision it was made on.
 	revision := connection.DefinitionRevision
 	static := core.IsStatic(s.connectors.Schemes, connection.AuthScheme)
+	var manifest core.ResolvedManifest
+	moved := false
 	if static {
 		latest, err := s.store.LatestConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID)
 		if err != nil {
 			return nil, err
 		}
-		revision = latest.Revision
+		// The latest revision may no longer take the connection's scheme or inputs, which no
+		// write changes after create. A connection on a revision that still works keeps it, as
+		// before AI-1002; one on a broken revision has none it can read.
+		latestManifest, unfit := definitionManifest(latest, connection)
+		if unfit == nil {
+			revision, manifest, moved = latest.Revision, latestManifest, true
+		} else {
+			reason, broken, err := s.store.BrokenConnectorRevision(ctx, connection.ConnectorID, connection.DefinitionRevision)
+			if err != nil {
+				return nil, err
+			}
+			if broken {
+				return nil, invalidRequest(fmt.Sprintf("revision %d of %s is marked broken (%s), and its latest "+
+					"revision %d does not take this connection (%s); create a new connection",
+					connection.DefinitionRevision, connection.ConnectorID, reason, latest.Revision, unfit))
+			}
+		}
 	}
-	manifest, err := s.connectionManifest(ctx, connection, revision)
-	if err != nil {
-		return nil, err
+	if !moved {
+		var err error
+		manifest, err = s.connectionManifest(ctx, connection, revision)
+		if err != nil {
+			return nil, err
+		}
 	}
 	values := sent.Values
 	if values == nil {

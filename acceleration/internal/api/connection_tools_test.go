@@ -426,6 +426,87 @@ func (s *ConnectionToolsSuite) TestAnImportedGrantOnABrokenRevisionKeepsItsRevis
 	s.Empty(validation.Code)
 }
 
+// TestSavingAStaticTokenAgainMovesAnOutdatedConnection: a bearer connection on a revision a
+// later one replaced, broken or not, reads the latest one once its token is saved again
+// (AI-1002), and the token is completed against that revision's manifest: its identity, which
+// revision 1 lacked, is the connection's account now.
+func (s *ConnectionToolsSuite) TestSavingAStaticTokenAgainMovesAnOutdatedConnection() {
+	const line = "inputs:\n  - name: line\n    pattern: \"[+][0-9]+\"\n    default: \"+12025551234\"\n"
+	connector := s.builtin(bearer.Name, 1, line)
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	s.Require().Empty(s.get(id).AccountID)
+	s.builtin(bearer.Name, 2, line+"identity: [line]\n")
+	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), s.get(id).DefinitionStatus)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		s.bearerToken(s.get(id).Revision, s.token), &saved))
+
+	s.Equal(2, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), saved.DefinitionStatus)
+	s.Equal("+12025551234", saved.AccountID, "the account revision 2's identity makes")
+}
+
+// TestAStaticTokenKeepsItsRevisionWhenTheLatestDoesNotTakeIt: a later revision that drops the
+// connection's scheme, or declares a required input it was not created with, cannot be read
+// by it, and its inputs cannot change. Its token saved again keeps the revision it reads, as
+// on base c000cedc, rather than failing.
+func (s *ConnectionToolsSuite) TestAStaticTokenKeepsItsRevisionWhenTheLatestDoesNotTakeIt() {
+	for name, latest := range map[string]struct{ scheme, extra string }{
+		"another scheme":   {oauth2code.Name, ""},
+		"a required input": {bearer.Name, "inputs:\n  - name: region\n    enum: [us, eu]\n"},
+	} {
+		s.Run(name, func() {
+			connector := s.builtin(bearer.Name, 1, "")
+			id := s.connectionTo(connector)
+			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+			s.builtin(latest.scheme, 2, latest.extra)
+
+			var saved Connection
+			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+				s.bearerToken(s.get(id).Revision, s.token), &saved))
+
+			s.Equal(1, saved.DefinitionRevision)
+			s.Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), saved.DefinitionStatus)
+			s.Equal(ConnectionStatus(store.ConnectionConnected), saved.Status)
+		})
+	}
+}
+
+// TestAStaticTokenOnABrokenRevisionTheLatestDoesNotTakeIsRefused: the connection's own
+// revision is marked broken and the latest one dropped its scheme, so no revision is left for
+// it. Saving its token again says so, as a 400, and leaves it where it was.
+func (s *ConnectionToolsSuite) TestAStaticTokenOnABrokenRevisionTheLatestDoesNotTakeIsRefused() {
+	connector := s.builtin(bearer.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	s.builtin(oauth2code.Name, 2, brokenFirst)
+
+	status, message := s.serverClient.failure(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		s.bearerToken(s.get(id).Revision, s.token))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("revision 1 of "+connector+" is marked broken (reads the wrong path), and its latest revision 2 does "+
+		"not take this connection (manifest \""+connector+"\": scheme \"bearer\" is not one of [oauth2_code]); "+
+		"create a new connection", message)
+	s.Equal(1, s.get(id).DefinitionRevision)
+}
+
+// TestAPendingStaticConnectionOnABrokenRevisionValidatesAsPending: a bearer connection with no
+// token yet, on a revision marked broken since, still says it needs one. The broken-revision
+// answer is for a connected one (AI-1002); saving the first token moves this one anyway.
+func (s *ConnectionToolsSuite) TestAPendingStaticConnectionOnABrokenRevisionValidatesAsPending() {
+	connector := s.builtin(bearer.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.builtin(bearer.Name, 2, brokenFirst)
+
+	validation := s.validate(id)
+
+	s.Equal(validationPending, string(validation.Status))
+	s.Empty(validation.Code)
+}
+
 // TestABare401WhoseRefreshIsRefusedValidatesAsNeedsReauthorization: the MCP server refuses an
 // oauth2_code token with a bare 401 (resource_metadata, no error), as MCP servers do. The
 // transport refreshes, the refresh is refused with invalid_grant, and the validate reports

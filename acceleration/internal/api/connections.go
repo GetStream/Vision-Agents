@@ -38,7 +38,7 @@ var errNoSuchConnection = APIError{
 type Connection struct {
 	ID                     string                     `json:"id" readOnly:"true"`
 	ConnectorID            string                     `json:"connector_id"`
-	DefinitionRevision     int                        `json:"definition_revision" readOnly:"true" doc:"The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there; until then it keeps this one."`
+	DefinitionRevision     int                        `json:"definition_revision" readOnly:"true" doc:"The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again (PUT .../credentials) moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one."`
 	DefinitionStatus       ConnectionDefinitionStatus `json:"definition_status" readOnly:"true"`
 	DefinitionBrokenReason string                     `json:"definition_broken_reason,omitempty" readOnly:"true" doc:"Why the connector marked definition_revision broken. Present only when definition_status is broken."`
 	Owner                  ConnectionOwner            `json:"owner"`
@@ -122,7 +122,8 @@ func (ConnectionDefinitionStatus) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "ConnectionDefinitionStatus",
 		"current when the connection reads its connector's latest revision, outdated when a later "+
 			"one exists, and broken when a later one marked it as not working: the connection is "+
-			"given no credential until a consent connects it again, on the latest revision.",
+			"given no credential until it moves to the latest revision, by a consent that connects "+
+			"it again or, for a bearer or api_key connection, by saving its token or key again.",
 		store.DefinitionCurrent, store.DefinitionOutdated, store.DefinitionBroken)
 }
 
