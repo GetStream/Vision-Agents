@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -132,6 +134,82 @@ func (s *EventForwardingSuite) TestAMessageWhoseThreadChannelWriteFailsGoesToADe
 	s.Equal(http.StatusOK, status)
 	s.Equal(body, s.forwardedTo(target, 1)[0].body)
 	s.Empty(s.chat.Stored(s.threadChannel()), "the thread channel did not get it")
+}
+
+// AI-1001: a reply in a thread nobody linked yet is answered by no agent when it arrives, so a
+// destination of unhandled events gets it then. When the mention Slack retries links the thread,
+// the agent gets the reply as well; the forward is not taken back.
+func (s *EventForwardingSuite) TestAReplyThatWaitedIsForwardedWhenItArrivesAndAnsweredOnceItsThreadIsLinked() {
+	s.answering(s.connectedBot())
+	target := newDestination(s.T())
+	s.createDestination("slack_bot", target.URL, store.ForwardUnhandled)
+	reply := s.reply("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100")
+
+	s.deliver(reply, 0)
+	s.Equal(reply, s.forwardedTo(target, 1)[0].body, "unhandled when it arrives")
+	s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100"), 1)
+
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(s.threadChannel())) == 2 }, settleFor, 10*time.Millisecond,
+		"the agent's thread channel gets the mention and the reply")
+	s.Never(func() bool { return len(target.requests()) > 1 }, dropped, 20*time.Millisecond,
+		"the mention an agent answers is not unhandled")
+}
+
+// AI-1001: a reply that waited for its thread's link reached the destinations of unhandled
+// events when it arrived. When the mention that links the thread takes it and its write then
+// fails, they already have it: the mention's delivery, which an agent answered, is not sent
+// to them in its place.
+func (s *EventForwardingSuite) TestAReplyThatWaitedAndIsNotWrittenDoesNotForwardTheMentionInItsPlace() {
+	bot := s.connectedBot()
+	s.answering(bot)
+	target := newDestination(s.T())
+	s.createDestination("slack_bot", target.URL, store.ForwardUnhandled)
+	reply := s.reply("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100")
+	s.deliver(reply, 0)
+	s.Require().Equal(reply, s.forwardedTo(target, 1)[0].body)
+	// The mention's first delivery linked the thread and claimed the mention, then failed before
+	// it took the reply, so Slack's retry writes the reply alone.
+	thread := store.ChannelThread{
+		ChannelID: conversation.ThreadChannelPrefix + s.utils.uuid(), CustomerID: s.customerID(),
+		ConnectorID: "slack_bot", ProviderUnitID: s.workspace, ThreadKey: "C0000CHAN:1759740000.000100",
+		ConnectionID: bot, ThreadParts: map[string]string{"channel": "C0000CHAN", "thread_ts": "1759740000.000100"},
+		StreamAppPK: s.app.StreamAppPK,
+	}
+	_, err := s.store.LinkChannelThread(context.Background(), &thread)
+	s.Require().NoError(err)
+	_, err = s.store.ClaimChannelThreadMessage(context.Background(), thread.ChannelID, store.ClaimInbound, "1759740000.000100")
+	s.Require().NoError(err)
+	// Stream refuses every write of the customer's, as in the test above.
+	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
+
+	status, _ := s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100"), 1)
+
+	s.Equal(http.StatusOK, status)
+	s.Never(func() bool { return len(target.requests()) > 1 }, dropped, 20*time.Millisecond,
+		"the destination got the mention's delivery as unhandled")
+	s.Empty(s.chat.Stored(thread.ChannelID), "the reply was not written")
+}
+
+// AI-1001: only the messages a take brought skip unanswered. In a delivery of two original
+// messages (WhatsApp batches them), the second one's failed write still calls it.
+func (s *EventForwardingSuite) TestABatchsSecondMessageThatIsNotWrittenCallsUnanswered() {
+	s.answering(s.connectedBot())
+	inbound := func(ts string) core.InboundMessage {
+		return core.InboundMessage{ConnectorID: "slack_bot", ProviderUnitID: s.workspace, ThreadKey: "C0000CHAN:" + ts,
+			AuthorID: "U0000ALICE", Text: "hi", ProviderMessageID: ts, Raw: s.message("U0000ALICE", "hi", ts)}
+	}
+	first, second := inbound("1759740000.000100"), inbound("1759740000.000300")
+	var calls atomic.Int32
+	_, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{first}, nil)
+	s.Require().NoError(err)
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(s.threadChannel())) == 1 }, settleFor, 10*time.Millisecond)
+	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
+
+	answered, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{first, second}, func() { calls.Add(1) })
+
+	s.Require().NoError(err)
+	s.True(answered)
+	s.Eventually(func() bool { return calls.Load() == 1 }, settleFor, 10*time.Millisecond, "the second original message's failed write calls unanswered")
 }
 
 // Slack's event_id is «A unique identifier for this specific event»
@@ -297,6 +375,14 @@ func (s *EventForwardingSuite) event(inner string) []byte {
 // starts a thread (AI-989).
 func (s *EventForwardingSuite) message(user, text, ts string) []byte {
 	raw, err := json.Marshal(map[string]string{"type": "message", "channel": "C0000CHAN", "user": user, "text": botMention + text, "ts": ts, "channel_type": "channel"})
+	s.Require().NoError(err)
+	return s.event(string(raw))
+}
+
+// reply is a reply by user in the thread of threadTS in C0000CHAN, which does not mention the
+// bot (https://docs.slack.dev/reference/events/message.channels, thread_ts).
+func (s *EventForwardingSuite) reply(user, text, ts, threadTS string) []byte {
+	raw, err := json.Marshal(map[string]string{"type": "message", "channel": "C0000CHAN", "user": user, "text": text, "ts": ts, "thread_ts": threadTS, "channel_type": "channel"})
 	s.Require().NoError(err)
 	return s.event(string(raw))
 }
