@@ -408,3 +408,30 @@ func TestSessionContactedTracksTargetCalls(t *testing.T) {
 		t.Fatal("contact leaked into the next trial")
 	}
 }
+
+func TestToolActivityCoversADelayedCall(t *testing.T) {
+	srv := New(nil)
+	if err := srv.ListenAndServe("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	srv.Seed(scenario.Scenario{
+		ID: "restaurant.tool_filler", Pack: "restaurant",
+		ToolDelayMS: map[string]int{"check_availability": 300},
+		Seed:        map[string]any{"slots": []any{map[string]any{"time": "7:30", "patio": true, "available": true, "capacity": 6}}},
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		postTool(t, srv.Addr, "check_availability", map[string]any{"time": "7:30", "party_size": 4, "patio": true})
+	}()
+	time.Sleep(150 * time.Millisecond)
+	if inFlight, _ := srv.ToolActivity(); inFlight != 1 {
+		t.Fatalf("in flight during the delay = %d, want 1", inFlight)
+	}
+	<-done
+	inFlight, lastEnded := srv.ToolActivity()
+	if inFlight != 0 || lastEnded.IsZero() {
+		t.Fatalf("after the call: in flight %d, last ended %v", inFlight, lastEnded)
+	}
+}

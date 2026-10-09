@@ -164,7 +164,7 @@ func TestWebRTCJoinFailsWithoutCredentials(t *testing.T) {
 	t.Setenv("STREAM_API_KEY", "")
 	t.Setenv("STREAM_API_SECRET", "")
 	t.Setenv("STREAM_USER_TOKEN", "")
-	_, err := runWebRTC(context.Background(), Config{}, scenario.Scenario{ID: "restaurant.golden"}, nil, 1, "")
+	_, err := runWebRTC(context.Background(), Config{}, scenario.Scenario{ID: "restaurant.golden"}, nil, 1, "", nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}

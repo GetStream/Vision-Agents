@@ -47,9 +47,12 @@ type Server struct {
 	mu       sync.Mutex
 	session  *Session
 	handlers map[string]handler
-	http     *http.Server
-	Addr     string
-	Logger   *slog.Logger
+	// inFlight and lastEnded are the tool calls still running and when the last one returned.
+	inFlight  int
+	lastEnded time.Time
+	http      *http.Server
+	Addr      string
+	Logger    *slog.Logger
 }
 
 // New builds a world server with pack handlers registered.
@@ -87,8 +90,17 @@ func (s *Server) Seed(sc scenario.Scenario) *Session {
 	}
 	s.mu.Lock()
 	s.session = sess
+	s.lastEnded = time.Time{}
 	s.mu.Unlock()
 	return sess
+}
+
+// ToolActivity reports the tool calls still running and when the last one returned, so the
+// caller does not hang up on an agent that is still working on what it was asked.
+func (s *Server) ToolActivity() (int, time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inFlight, s.lastEnded
 }
 
 // Snapshot returns a copy of the active session.
@@ -196,11 +208,16 @@ func (s *Server) postTool(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown tool "+name, http.StatusNotFound)
 		return
 	}
+	s.mu.Lock()
+	s.inFlight++
+	s.mu.Unlock()
 	started := time.Now()
 	if d := sess.Delays[name]; d > 0 {
 		time.Sleep(d)
 	}
 	s.mu.Lock()
+	s.inFlight--
+	s.lastEnded = time.Now()
 	if s.session != sess {
 		s.mu.Unlock()
 		http.Error(w, "session changed", http.StatusConflict)
