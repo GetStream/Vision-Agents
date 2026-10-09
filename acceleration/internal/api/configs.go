@@ -1753,7 +1753,8 @@ const (
 func (AgentConnectorSelectionType) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "AgentConnectorSelectionType", "fixed is the app's own connection named by "+
 		"connection_id, the same for every session. session is the connection the session's verified end "+
-		"user picks when the session is created, which has to be their own.",
+		"user picks when the session is created, which has to be their own. When they pick none, it is "+
+		"their connection to the connector if exactly one of theirs is connected.",
 		string(AgentConnectorSelectionTypeFixed), string(AgentConnectorSelectionTypeSession))
 }
 

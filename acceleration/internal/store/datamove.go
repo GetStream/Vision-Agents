@@ -55,9 +55,11 @@ type dataTable struct {
 // channel_threads, contact_map, episodes and episode_activity: the thread channels,
 // omni-channels and cards they point at live in the Stream app, which a move does not carry
 // either; and channel_thread_waiting, replies in flight for minutes. And
-// connector_invocations and connector_audit, with connector_audit_credentials: this
-// deployment's record of what it did with credentials sealed under its own key. And connector_tool_pins: the deployment a connection
-// moves to pins its tools again on first use.
+// connector_invocations and connector_audit, with connector_audit_credentials and
+// connector_invocation_arguments: this deployment's record of what it did with credentials
+// sealed under its own key. And connector_tool_pins: the deployment a connection moves to pins
+// its tools again on first use. And connector_connection_clients: the next consent of the
+// connection where it moved to records its client again.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},

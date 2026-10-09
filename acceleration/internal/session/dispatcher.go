@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -66,6 +68,9 @@ type route struct {
 	// limit is the key the provider's rate limit counts the call under
 	// (core.ResolvedManifest.RateLimitKey), "" when its manifest names none.
 	limit string
+	// declared are the argument names the tool's input schema lists under properties: the only
+	// names a call's row keeps (argumentShape).
+	declared map[string]bool
 }
 
 // Run calls a connector tool, or hands a name it does not own to next.
@@ -88,27 +93,99 @@ func (d *dispatcher) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 	}
 	started := time.Now()
 	if err := d.recheck(ctx, found); err != nil {
-		d.record(found, started, store.InvocationDenied)
+		d.record(found, call, started, store.InvocationDenied)
 		return nil, err
 	}
 	parts, failure, err := d.call(ctx, found, call)
-	d.record(found, started, failure)
+	d.record(found, call, started, failure)
 	return parts, err
 }
 
 // record queues the row of one call that started at started and ended now, as failure says.
-// The row names the binding, the connection and the tool, never what the call was asked or
-// answered, and an incognito session's names no session.
-func (d *dispatcher) record(r route, started time.Time, failure string) {
+// The row names the binding, the connection and the tool, and the shape of call's arguments
+// (argumentShape), never what the call was asked or answered. An incognito session's names no
+// session and keeps no shape: the lengths come from the conversation.
+func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, failure string) {
 	sessionID := d.spec.ID
+	var arguments []store.ArgumentShape
 	if d.spec.Incognito {
 		sessionID = ""
+	} else {
+		arguments = argumentShape(call.Arguments, r.declared)
 	}
 	d.invocations.Record(store.ConnectorInvocation{
 		CustomerID: r.connection.CustomerID, ConnectionID: r.connection.ID, ConnectorID: r.binding.ConnectorID,
 		ConfigID: d.spec.ConfigID, Binding: r.binding.Name, Tool: r.tool, SessionID: sessionID,
 		StartedAt: started, LatencyMs: time.Since(started).Milliseconds(), ErrorType: failure,
+		Arguments: arguments,
 	})
+}
+
+// argumentShape is each top-level argument of a call's arguments with its JSON type and, for a
+// string or an array, its length, sorted by name, so a call can be told apart afterwards
+// without any value it was asked being kept (AI-990 F40): «thread_ts» sent as "" shows as a
+// string of length 0. Only names in declared are kept: a tool that takes additionalProperties
+// lets the model choose a key, which can be content (an email address), so the keys that are
+// not declared are one entry named undeclaredArguments, an object whose length is their count. Empty arguments are the empty object, as the MCP source sends them
+// (mcp.Toolset.Call). Arguments that are not a JSON object have no shape: nil.
+func argumentShape(arguments string, declared map[string]bool) []store.ArgumentShape {
+	raw := strings.TrimSpace(arguments)
+	if raw == "" {
+		raw = "{}"
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &fields) != nil || fields == nil {
+		return nil
+	}
+	shape := make([]store.ArgumentShape, 0, len(fields))
+	undeclared := 0
+	for name, value := range fields {
+		if !declared[name] {
+			undeclared++
+			continue
+		}
+		argument := store.ArgumentShape{Name: name}
+		// RFC 8259 section 3: a value's first character says its type.
+		switch value[0] {
+		case '"':
+			var text string
+			_ = json.Unmarshal(value, &text)
+			length := utf8.RuneCountInString(text)
+			argument.Type, argument.Length = "string", &length
+		case '[':
+			var items []json.RawMessage
+			_ = json.Unmarshal(value, &items)
+			length := len(items)
+			argument.Type, argument.Length = "array", &length
+		case '{':
+			argument.Type = "object"
+		case 't', 'f':
+			argument.Type = "boolean"
+		case 'n':
+			argument.Type = "null"
+		default:
+			argument.Type = "number"
+		}
+		shape = append(shape, argument)
+	}
+	if undeclared > 0 {
+		shape = append(shape, store.ArgumentShape{Name: undeclaredArguments, Type: "object", Length: &undeclared})
+	}
+	slices.SortFunc(shape, func(a, b store.ArgumentShape) int { return strings.Compare(a.Name, b.Name) })
+	return shape
+}
+
+// undeclaredArguments is the name the row keeps for the arguments a tool's schema does not declare.
+const undeclaredArguments = "(undeclared)"
+
+// declaredArguments is the names in a tool's input schema under properties.
+func declaredArguments(parameters map[string]any) map[string]bool {
+	properties, _ := parameters["properties"].(map[string]any)
+	declared := make(map[string]bool, len(properties))
+	for name := range properties {
+		declared[name] = true
+	}
+	return declared
 }
 
 // correlated is ctx naming this session for the audit rows its calls cause, such as a

@@ -3,9 +3,12 @@
 package session
 
 import (
+	"bytes"
+	"log/slog"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -123,6 +126,128 @@ func (s *AttachConnectorsSuite) TestARequiredSessionBindingWithNoSelectionFailsT
 	_, _, _, err := s.attach(s.spec(s.config(required(s.chosen("crm", "whoami"))), "alice", nil))
 
 	s.ErrorContains(err, `required connector "crm" cannot be used: no_selection`)
+}
+
+// TestASessionBindingWithNoSelectionUsesTheCallersOnlyConnectedConnection is AI-994 (F41 of
+// the plugin migration run): a session created without connector_bindings, as an app created
+// one for user_plugins, opens on the caller's one connected connection to the connector. Her
+// newer connections that are pending, need reauthorization or were disconnected are not
+// counted. It is not kept as the session's selection, and the log says which it used.
+func (s *AttachConnectorsSuite) TestASessionBindingWithNoSelectionUsesTheCallersOnlyConnectedConnection() {
+	alice := s.connection("alice", "primary")
+	for _, status := range []string{store.ConnectionPending, store.ConnectionNeedsReauthorization, store.ConnectionDisconnected} {
+		other := s.connection("alice", "secondary")
+		s.setState(other, func(state *core.CredentialState) { state.Status = status })
+	}
+	spec := s.spec(s.config(required(s.chosen("crm", "whoami"))), "alice", nil)
+	manager := s.managerWith(fixtureRequestTimeout)
+	var logged bytes.Buffer
+	manager.logger = slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	d, tools, unavailable, err := manager.attachConnectors(s.ctx, &spec)
+
+	s.Require().NoError(err)
+	defer d.Close()
+	s.Empty(unavailable)
+	s.Equal([]string{"crm__whoami"}, names(tools))
+	said, err := s.call(d, "crm__whoami", "{}")
+	s.Require().NoError(err)
+	s.Equal("primary", said)
+	s.Empty(spec.ConnectorSelections, "implied, not kept as the session's choice")
+	s.Contains(logged.String(), "connection="+alice)
+	s.Zero(s.provider.calls("secondary"))
+}
+
+// TestNoSelectionImpliesNothingWithNoneOrTwoConnected: with none connected, a connection that
+// needs reauthorization only, or two connected, the session is opened as before: without it.
+func (s *AttachConnectorsSuite) TestNoSelectionImpliesNothingWithNoneOrTwoConnected() {
+	config := s.config(required(s.chosen("crm", "whoami")))
+	_, _, _, none := s.attach(s.spec(config, "alice", nil))
+	stale := s.connection("alice", "primary")
+	s.setState(stale, func(state *core.CredentialState) { state.Status = store.ConnectionNeedsReauthorization })
+	_, _, _, onlyStale := s.attach(s.spec(config, "alice", nil))
+	s.connection("alice", "primary")
+	s.connection("alice", "secondary")
+	_, _, _, two := s.attach(s.spec(config, "alice", nil))
+
+	for name, err := range map[string]error{"none": none, "only one needing reauthorization": onlyStale, "two": two} {
+		s.ErrorContains(err, `required connector "crm" cannot be used: no_selection`, name)
+	}
+	s.Empty(s.provider.sent("primary"))
+	s.Empty(s.provider.sent("secondary"))
+}
+
+// TestNoSelectionNeverImpliesAnotherUsersOrAnotherCustomersConnection: Bob's connection, and
+// the one connection of a user of the same id at another customer, are not hers here. Her id
+// is the test's own, so that one is the only connection under it anywhere.
+func (s *AttachConnectorsSuite) TestNoSelectionNeverImpliesAnotherUsersOrAnotherCustomersConnection() {
+	alice := "alice-" + uuid.NewString()
+	s.connection("bob", "secondary")
+	ours, revision := s.customerID, s.revision
+	s.SetupTest()
+	s.connection(alice, "moved")
+	s.customerID, s.revision = ours, revision
+
+	_, _, _, err := s.attach(s.spec(s.config(required(s.chosen("crm", "whoami"))), alice, nil))
+
+	s.ErrorContains(err, `required connector "crm" cannot be used: no_selection`)
+	s.Empty(s.provider.sent("secondary"))
+	s.Empty(s.provider.sent("moved"))
+}
+
+// TestNoSelectionImpliesNothingForAnUnverifiedCallerOrASharedConversation: Alice's one
+// connected connection is not used by a guest or an anonymous caller going by her name, nor in
+// a conversation more than one person writes in.
+func (s *AttachConnectorsSuite) TestNoSelectionImpliesNothingForAnUnverifiedCallerOrASharedConversation() {
+	s.connection("alice", "primary")
+	config := s.config(s.chosen("crm", "whoami"))
+	shared := s.spec(config, "alice", nil)
+	shared.ConversationID = "agent:" + persistent.ThreadChannelPrefix + "0199"
+	guest, anonymous := s.spec(config, "alice", nil), s.spec(config, "alice", nil)
+	guest.CallerKind, anonymous.CallerKind = auth.KindGuest, auth.KindAnonymous
+
+	for name, c := range map[string]struct {
+		spec   Spec
+		reason string
+	}{"shared": {shared, unavailableShared}, "guest": {guest, unavailableUnverified}, "anonymous": {anonymous, unavailableUnverified}} {
+		_, tools, unavailable, err := s.attach(c.spec)
+
+		s.Require().NoError(err, name)
+		s.Empty(tools, name)
+		s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: c.reason}}, unavailable, name)
+	}
+	s.Empty(s.provider.sent("primary"))
+}
+
+// TestAConnectionNamedAtSessionCreateWinsOverTheImpliedOne: one named is checked as before,
+// and the caller's one connected connection is not used in its place.
+func (s *AttachConnectorsSuite) TestAConnectionNamedAtSessionCreateWinsOverTheImpliedOne() {
+	s.connection("alice", "primary")
+	stale, bob := s.connection("alice", "secondary"), s.connection("bob", "moved")
+	s.setState(stale, func(state *core.CredentialState) { state.Status = store.ConnectionNeedsReauthorization })
+	config := s.config(required(s.chosen("crm", "whoami")))
+
+	_, _, _, staleErr := s.attach(s.spec(config, "alice", map[string]string{"crm": stale}))
+	_, _, _, bobErr := s.attach(s.spec(config, "alice", map[string]string{"crm": bob}))
+
+	s.ErrorContains(staleErr, `required connector "crm" cannot be used: needs_reauthorization`)
+	s.ErrorContains(bobErr, `required connector "crm" cannot be used: connection_unavailable`)
+	s.Empty(s.provider.sent("primary"), "the implied connection is not used in its place")
+}
+
+// TestWithConnectorsOffNoSelectionImpliesNothing: a deployment with no connection clients
+// leaves an optional binding out with no_selection, as before, not open_failed.
+func (s *AttachConnectorsSuite) TestWithConnectorsOffNoSelectionImpliesNothing() {
+	s.connection("alice", "primary")
+	spec := s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)
+	logger := slog.New(slog.DiscardHandler)
+	manager := &Manager{logger: logger, options: ManagerOptions{Store: s.store, Logger: logger}}
+
+	_, tools, unavailable, err := manager.attachConnectors(s.ctx, &spec)
+
+	s.Require().NoError(err)
+	s.Empty(tools)
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableNoSelection}}, unavailable)
 }
 
 func (s *AttachConnectorsSuite) TestAToolNotInTheGrantIsNotOffered() {

@@ -156,7 +156,9 @@ type ConnectionFilter struct {
 	OwnerType   string
 	OwnerID     string
 	ConnectorID string
-	Limit       int
+	// Status keeps only connections in that status (Connection*). Empty keeps every status.
+	Status string
+	Limit  int
 	// After is the last connection of the previous page.
 	After *ConnectionPosition
 }
@@ -474,6 +476,9 @@ func (s *Store) ConnectorConnectionsByOwner(ctx context.Context, customerID stri
 		Where("deleted_at IS NULL")
 	if filter.ConnectorID != "" {
 		query = query.Where("connector_id = ?", filter.ConnectorID)
+	}
+	if filter.Status != "" {
+		query = query.Where("status = ?", filter.Status)
 	}
 	if after := filter.After; after != nil {
 		query = query.Where("(created_at, id) < (?, ?)", after.CreatedAt, after.ID)

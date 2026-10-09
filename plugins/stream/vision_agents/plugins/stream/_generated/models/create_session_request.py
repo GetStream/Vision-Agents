@@ -42,9 +42,11 @@ class CreateSessionRequest:
             connector bindings chosen per session (connection.type session), by its alias. Each must be the verified
             caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-
             User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here,
-            and an alias the config does not declare is refused. A required binding left without one fails the session; an
-            optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections
-            again, against the config as it is then and the caller asking for the fork.
+            and an alias the config does not declare is refused. A session binding given none here uses the caller's own
+            connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than
+            one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable
+            event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller
+            asking for the fork.
         context_truncated (bool | Unset): Older history was omitted from the model context.
         conversation_id (str | Unset): Stream Chat CID to resume; returned for persistent text sessions.
         custom (CreateSessionRequestCustom | Unset): Anything the caller wants to remember about the session, handed

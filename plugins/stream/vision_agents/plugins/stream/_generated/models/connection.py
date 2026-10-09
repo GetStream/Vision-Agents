@@ -13,6 +13,7 @@ from ..models.connection_status import ConnectionStatus
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.connection_client import ConnectionClient
     from ..models.connection_inputs import ConnectionInputs
     from ..models.connection_metadata import ConnectionMetadata
     from ..models.connection_owner import ConnectionOwner
@@ -51,6 +52,8 @@ class Connection:
             connection, which deleting it would break. A binding a session fills with the caller's own connection names
             none, so it is never listed.
         account_id (str | Unset): The provider account, known once it is connected.
+        client (ConnectionClient | Unset): Which OAuth client a connection's grant was issued to, so a client the router
+            registered on the fly (RFC 7591) can be found at the provider. Its secret is never shown.
         definition_broken_reason (str | Unset): Why the connector marked definition_revision broken. Present only when
             definition_status is broken.
         expires_at (datetime.datetime | Unset): When the current credential expires. Absent when there is none or it
@@ -73,6 +76,7 @@ class Connection:
     updated_at: datetime.datetime
     used_by: list[ConnectionUse] | None
     account_id: str | Unset = UNSET
+    client: ConnectionClient | Unset = UNSET
     definition_broken_reason: str | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
     label: str | Unset = UNSET
@@ -122,6 +126,10 @@ class Connection:
 
         account_id = self.account_id
 
+        client: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.client, Unset):
+            client = self.client.to_dict()
+
         definition_broken_reason = self.definition_broken_reason
 
         expires_at: str | Unset = UNSET
@@ -152,6 +160,8 @@ class Connection:
         )
         if account_id is not UNSET:
             field_dict["account_id"] = account_id
+        if client is not UNSET:
+            field_dict["client"] = client
         if definition_broken_reason is not UNSET:
             field_dict["definition_broken_reason"] = definition_broken_reason
         if expires_at is not UNSET:
@@ -163,6 +173,7 @@ class Connection:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.connection_client import ConnectionClient
         from ..models.connection_inputs import ConnectionInputs
         from ..models.connection_metadata import ConnectionMetadata
         from ..models.connection_owner import ConnectionOwner
@@ -232,6 +243,13 @@ class Connection:
 
         account_id = d.pop("account_id", UNSET)
 
+        _client = d.pop("client", UNSET)
+        client: ConnectionClient | Unset
+        if isinstance(_client, Unset):
+            client = UNSET
+        else:
+            client = ConnectionClient.from_dict(_client)
+
         definition_broken_reason = d.pop("definition_broken_reason", UNSET)
 
         _expires_at = d.pop("expires_at", UNSET)
@@ -259,6 +277,7 @@ class Connection:
             updated_at=updated_at,
             used_by=used_by,
             account_id=account_id,
+            client=client,
             definition_broken_reason=definition_broken_reason,
             expires_at=expires_at,
             label=label,

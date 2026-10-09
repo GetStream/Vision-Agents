@@ -75,6 +75,9 @@ type Options struct {
 	// signed, such as calls another model made before a fallback, for a provider that
 	// refuses them unsigned.
 	UnsignedCall string
+	// ThoughtChannel is set for a model that writes its thinking into the answer as
+	// Gemma's thought channel, so it is reported as thinking and never spoken.
+	ThoughtChannel bool
 	// Timeout bounds one response.
 	Timeout time.Duration
 	// HTTPClient replaces the default transport.
@@ -178,7 +181,7 @@ func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Strea
 			Provider:   l.options.Provider,
 			Model:      l.options.StatsModel,
 		},
-		&puller{llm: l, id: id, upstream: upstream, cancel: cancel},
+		&puller{llm: l, id: id, upstream: upstream, cancel: cancel, channel: l.channelSplitter()},
 	), nil
 }
 
@@ -227,6 +230,15 @@ func (l *LLM) Model() string { return l.options.StatsModel }
 // Capabilities is what this model accepts.
 func (l *LLM) Capabilities() llm.Capabilities { return l.options.Capabilities }
 
+// channelSplitter is what separates the thought channel from one reply, or nil for a model
+// that keeps its thinking out of the answer.
+func (l *LLM) channelSplitter() *channelSplitter {
+	if !l.options.ThoughtChannel {
+		return nil
+	}
+	return &channelSplitter{}
+}
+
 // forget releases a response that has settled.
 func (l *LLM) forget(id uint64) {
 	l.mu.Lock()
@@ -240,6 +252,8 @@ type puller struct {
 	id       uint64
 	upstream *ssestream.Stream[openai.ChatCompletionChunk]
 	cancel   context.CancelFunc
+	// channel takes the thought channel out of the answer, when the model writes one.
+	channel *channelSplitter
 
 	err  error
 	done bool
@@ -278,7 +292,7 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 	}
 
 	for _, choice := range chunk.Choices {
-		w.OutputText(choice.Delta.Content)
+		p.text(w, choice.Delta.Content)
 		w.ReasoningText(reasoning(choice.Delta.JSON.ExtraFields))
 		for _, call := range choice.Delta.ToolCalls {
 			w.FunctionCall(
@@ -294,6 +308,17 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 		}
 	}
 	return true
+}
+
+// text records a piece of the answer, as thinking when it is inside the thought channel.
+func (p *puller) text(w *llm.ResponseWriter, delta string) {
+	if p.channel == nil {
+		w.OutputText(delta)
+		return
+	}
+	answer, thought := p.channel.Write(delta)
+	w.ReasoningText(thought)
+	w.OutputText(answer)
 }
 
 // slot is where a tool call fragment is recorded. Gemini streams every parallel call under
@@ -327,6 +352,11 @@ func (p *puller) Close() error {
 // finish releases the upstream and works out what ended it.
 func (p *puller) finish(w *llm.ResponseWriter) {
 	p.done = true
+	if p.channel != nil {
+		answer, thought := p.channel.Flush()
+		w.ReasoningText(thought)
+		w.OutputText(answer)
+	}
 
 	if err := p.upstream.Err(); err != nil && !errors.Is(err, context.Canceled) {
 		p.err = err

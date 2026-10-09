@@ -359,6 +359,81 @@ func (s *OAuthClientsSuite) TestAnUnknownConnectorIsNotFound() {
 		confidentialClient("secret"), nil))
 }
 
+func (s *OAuthClientsSuite) TestOnlyTheAppsBackendMayReadTheOAuthClient() {
+	s.assertPosture(serverOnly, func(as *testClient) int {
+		s.put("github", confidentialClient("secret-"+s.utils.uuid()))
+		return as.do(http.MethodGet, oauthClientPath("github"), nil, nil)
+	})
+}
+
+// AI-990 F15: a read says which client and app are stored and whether each secret is, and
+// carries neither secret.
+func (s *OAuthClientsSuite) TestReadingTheClientSaysWhichSecretsAreStoredAndShowsNone() {
+	app, clientSecret, signing := s.slackAppID(), "never-shown-"+s.utils.uuid(), "never-shown-signing-"+s.utils.uuid()
+	sent := slackApp(app, signing)
+	sent.ClientSecret = clientSecret
+	var put ConnectorOAuthClient
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPut, oauthClientPath("slack_bot"), sent, &put))
+
+	status, body := s.serverClient.call(http.MethodGet, oauthClientPath("slack_bot"), nil)
+
+	s.Require().Equal(http.StatusOK, status, string(body))
+	var read StoredConnectorOAuthClient
+	s.Require().NoError(json.Unmarshal(body, &read))
+	s.Equal(StoredConnectorOAuthClient{
+		ConnectorID: "slack_bot", Registration: ConnectorClientRegistrationMethod(core.ClientCustomer),
+		ClientID: "the-apps-client", ProviderAppID: app, HasClientSecret: true, HasSigningSecret: true,
+		CreatedAt: put.CreatedAt, UpdatedAt: put.UpdatedAt,
+	}, read)
+	s.NotContains(string(body), clientSecret)
+	s.NotContains(string(body), signing)
+}
+
+func (s *OAuthClientsSuite) TestReadingAPublicClientSaysNoSecretIsStored() {
+	s.put("github", ConnectorOAuthClientRequest{ClientID: "public", AuthMethod: "none"})
+
+	var read StoredConnectorOAuthClient
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, oauthClientPath("github"), nil, &read))
+
+	s.Equal("public", read.ClientID)
+	s.Equal(ConnectorOAuthClientAuthMethod(core.AuthNone), read.AuthMethod)
+	s.False(read.HasClientSecret)
+	s.False(read.HasSigningSecret)
+}
+
+func (s *OAuthClientsSuite) TestReadingTheClientTheRouterCreatedSaysItIsManaged() {
+	id := s.customConnector("  registration: [managed, customer]")
+	record := s.providerApp(id, core.ClientManaged, "the-routers-secret", "")
+
+	var read StoredConnectorOAuthClient
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, oauthClientPath(id), nil, &read))
+
+	s.Equal(ConnectorClientRegistrationMethod(core.ClientManaged), read.Registration)
+	s.Equal("created-by-the-router", read.ClientID)
+	s.Equal(record.ProviderAppID, read.ProviderAppID)
+	s.True(read.HasClientSecret)
+	s.False(read.HasSigningSecret)
+}
+
+func (s *OAuthClientsSuite) TestReadingAConnectorWithoutAClientIsNotFound() {
+	status, failure := s.serverClient.failure(http.MethodGet, oauthClientPath("github"), nil)
+	s.Equal(http.StatusNotFound, status)
+	s.Equal(noStoredOAuthClient, failure)
+
+	s.put("github", confidentialClient("secret"))
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, oauthClientPath("github"), nil, nil))
+
+	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodGet, oauthClientPath("github"), nil, nil), "removed")
+}
+
+func (s *OAuthClientsSuite) TestAnotherAppCannotReadTheAppsClient() {
+	s.put("github", confidentialClient("secret"))
+
+	s.assertHiddenFromOtherApps(func(as *testClient) int {
+		return as.do(http.MethodGet, oauthClientPath("github"), nil, nil)
+	})
+}
+
 func (s *OAuthClientsSuite) TestAnotherAppCannotSetAClientForTheAppsCustomConnector() {
 	id := s.customConnector("  registration: [customer]")
 

@@ -126,6 +126,7 @@ var (
 	_ core.Scheme        = (*Scheme)(nil)
 	_ core.Exporter      = (*Scheme)(nil)
 	_ core.Fingerprinter = (*Scheme)(nil)
+	_ core.ClientNamer   = (*Scheme)(nil)
 )
 
 // New checks cfg and returns the scheme.

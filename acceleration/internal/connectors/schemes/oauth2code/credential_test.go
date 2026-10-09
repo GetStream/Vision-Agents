@@ -252,6 +252,60 @@ func (s *OAuth2CodeSuite) TestFingerprintsNameTheStoredTokensAndNothingElse() {
 	s.Error(err)
 }
 
+// TestARegisteredClientIsLoggedAndNamedWithoutItsSecret (AI-990 F16): a client registered on
+// the fly (RFC 7591) gets one log line naming its client_id, the registration server's host,
+// the connector and the connection, and its stored credentials name it; its secret is in
+// neither.
+func (s *OAuth2CodeSuite) TestARegisteredClientIsLoggedAndNamedWithoutItsSecret() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.resolve("../../providers/linear.yaml", nil)
+	resolved.Endpoints = map[string]string{"mcp": srv.URL + fakeprovider.PathMCP}
+	resolved.Client.AuthMethod = core.AuthClientSecretPost
+	var log bytes.Buffer
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Logger: slog.New(slog.NewTextHandler(&log, nil))})
+
+	stored, _, err := s.connect(srv, scheme, resolved)
+
+	s.Require().NoError(err)
+	var payload struct {
+		Client struct {
+			ID     string `json:"id"`
+			Secret string `json:"secret"`
+		} `json:"client"`
+	}
+	s.Require().NoError(json.Unmarshal(stored.Payload, &payload))
+	s.Require().NotEmpty(payload.Client.ID)
+	s.Require().NotEmpty(payload.Client.Secret)
+	named, err := scheme.Client(stored)
+	s.Require().NoError(err)
+	s.Equal(core.OAuthClient{Registration: core.ClientDCR, ID: payload.Client.ID}, named)
+	host, err := url.Parse(srv.URL)
+	s.Require().NoError(err)
+	logged := log.String()
+	s.Equal(1, strings.Count(logged, `msg="registered an OAuth client"`))
+	s.Contains(logged, " client_id="+payload.Client.ID)
+	s.Contains(logged, " registration_host="+host.Host)
+	s.Contains(logged, " connector=linear")
+	s.Contains(logged, " connection="+s.ref.ConnectionID)
+	s.False(strings.Contains(logged, payload.Client.Secret), "the client secret was logged")
+}
+
+// TestAPreregisteredClientIsNamedAndNothingIsLogged: the operator's client is named by its
+// stored credentials too, and nothing was registered, so nothing is logged.
+func (s *OAuth2CodeSuite) TestAPreregisteredClientIsNamedAndNothingIsLogged() {
+	srv := fakeprovider.New(s.T())
+	var log bytes.Buffer
+	scheme, stored := s.connected(srv, s.preregistered(srv), slog.New(slog.NewTextHandler(&log, nil)))
+
+	named, err := scheme.Client(stored)
+
+	s.Require().NoError(err)
+	s.Equal(core.OAuthClient{Registration: core.ClientOperator, ID: srv.ClientID}, named)
+	s.NotContains(log.String(), "registered an OAuth client")
+	_, err = scheme.Client(core.StoredCredentials{Scheme: "bearer", Version: 1, Payload: stored.Payload})
+	s.Error(err)
+}
+
 func (s *OAuth2CodeSuite) TestAnExpiredTokenWithNoRefreshTokenIsInvalidGrant() {
 	srv := fakeprovider.New(s.T(), fakeprovider.NoRefreshToken)
 	resolved := s.preregistered(srv)

@@ -99,7 +99,10 @@ type Scheme struct {
 	oauth *oauth2code.Scheme
 }
 
-var _ core.Scheme = (*Scheme)(nil)
+var (
+	_ core.Scheme        = (*Scheme)(nil)
+	_ core.Fingerprinter = (*Scheme)(nil)
+)
 
 // New checks cfg and returns the scheme.
 func New(cfg Config) (*Scheme, error) {
@@ -458,6 +461,18 @@ func errorCode(raw []byte) string {
 		return ""
 	}
 	return body.Error
+}
+
+// Fingerprints names the access token last issued in stored, by core.Fingerprint, with its
+// expiry, so a renewal shows in the audit and the log as oauth2_code's does (AI-990). The
+// client credentials grant issues no refresh token (RFC 6749 section 4.4.3), and the client
+// secret is the connection's credential, not a token, so neither is named.
+func (*Scheme) Fingerprints(stored core.StoredCredentials) (core.CredentialFingerprints, error) {
+	p, err := open(stored)
+	if err != nil {
+		return core.CredentialFingerprints{}, err
+	}
+	return core.CredentialFingerprints{Access: core.Fingerprint(p.AccessToken), AccessExpiresAt: p.ExpiresAt}, nil
 }
 
 // open reads the payload this scheme sealed. Its errors never quote the payload.

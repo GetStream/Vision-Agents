@@ -48,7 +48,8 @@ const (
 // required binding fails the session with. Stable codes for a program to branch on; none
 // names a credential or says whose a connection is.
 const (
-	// unavailableNoSelection: a session binding the caller picked no connection for.
+	// unavailableNoSelection: a session binding the caller picked no connection for, and does
+	// not have exactly one connected connection to the connector of (impliedSelection).
 	unavailableNoSelection = "no_selection"
 	// unavailableShared: a session binding in a conversation more than one verified person
 	// writes in (Spec.Shared), which uses the app's connections only.
@@ -137,7 +138,15 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 	// covers those too.
 	opening := d.correlated(ctx)
 	for _, binding := range spec.ConnectorBindings {
-		reason, err := m.openBinding(opening, *spec, binding, selected[binding.Name], d)
+		selection := selected[binding.Name]
+		if selection == "" {
+			selection, err = m.impliedSelection(opening, *spec, binding)
+			if err != nil {
+				d.Close()
+				return nil, nil, nil, err
+			}
+		}
+		reason, err := m.openBinding(opening, *spec, binding, selection, d)
 		if err != nil {
 			d.Close()
 			return nil, nil, nil, err
@@ -152,9 +161,40 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 		}
 		m.logger.Warn("opening the session without a connector", "connector", binding.Name, "reason", reason)
 		unavailable = append(unavailable, ConnectorUnavailable{Name: binding.Name, ConnectorID: binding.ConnectorID, Reason: reason})
-		m.offerLogin(*spec, binding, reason, selected[binding.Name], d)
+		m.offerLogin(*spec, binding, reason, selection, d)
 	}
 	return d, d.tools, unavailable, nil
+}
+
+// impliedSelection is the connection a session binding the session named none for uses: the
+// verified caller's one connected connection to the binding's connector, of the session's
+// customer (Kanat's decision of 2026-10-09, AI-994), so an app that creates sessions without
+// connector_bindings, as it did with user_plugins, needs no new login after the plugin rows
+// move. Empty with none, or with more than one, which the caller has to choose between; a
+// connection pending, needing reauthorization or disconnected is not counted, since only a
+// connected one opens without a login. Not kept as the session's selection: a fork or a
+// reopened chat implies again from the connections as they are then. Nothing is implied for
+// a fixed binding, a shared conversation, an unverified caller, or with connectors off.
+//
+// Example: Alice's only connected Linear connection is the one the plugin migration moved, so
+// a session of a config binding linear as session opens on it with no connector_bindings.
+// Once she connects a second Linear account, a session has to name one.
+func (m *Manager) impliedSelection(ctx context.Context, spec Spec, binding store.ConnectorBinding) (string, error) {
+	if binding.Connection.Type != selectionSession || spec.Shared() || !verifiedCaller(spec) ||
+		m.options.Store == nil || m.options.Connectors.Transports == nil {
+		return "", nil
+	}
+	// Limit 1 lists at most two, enough to tell one from more than one.
+	connected, err := m.options.Store.ConnectorConnectionsByOwner(ctx, spec.CustomerID, store.ConnectionFilter{
+		OwnerType: store.OwnerUser, OwnerID: spec.Caller.UserID, ConnectorID: binding.ConnectorID,
+		Status: store.ConnectionConnected, Limit: 1,
+	})
+	if err != nil || len(connected) != 1 {
+		return "", err
+	}
+	m.logger.Debug("a session binding uses the caller's only connected connection", "connector", binding.Name,
+		"connection", connected[0].ID)
+	return connected[0].ID, nil
 }
 
 // selections are the caller's connections by alias. One for an alias the config does not
@@ -302,7 +342,7 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 				continue
 			}
 			d.routes[tool.Name] = route{binding: binding, connection: connection, toolset: toolset,
-				tool: name, digest: digests[name], timeout: timeout,
+				tool: name, digest: digests[name], timeout: timeout, declared: declaredArguments(tool.Parameters),
 				limit: manifest.RateLimitKey(connection.CustomerID, resolved.Connection)}
 			d.tools = append(d.tools, harness.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
 			offered++

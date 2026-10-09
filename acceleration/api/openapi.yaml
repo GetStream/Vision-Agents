@@ -494,7 +494,7 @@ components:
         - type
       type: object
     AgentConnectorSelectionType:
-      description: fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own.
+      description: fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected.
       enum:
         - fixed
         - session
@@ -1805,6 +1805,10 @@ components:
         auth_scheme:
           description: How the connection authenticates, one of its connector's schemes.
           type: string
+        client:
+          $ref: '#/components/schemas/ConnectionClient'
+          description: The OAuth client the connection's grant was issued to. Absent for a scheme without one, before the first consent, and for a connection last consented before the router kept it.
+          readOnly: true
         connector_id:
           type: string
         created_at:
@@ -1886,6 +1890,18 @@ components:
         - updated_at
         - used_by
       type: object
+    ConnectionClient:
+      description: Which OAuth client a connection's grant was issued to, so a client the router registered on the fly (RFC 7591) can be found at the provider. Its secret is never shown.
+      properties:
+        client_id:
+          description: The client identifier, which is not a secret (RFC 6749 section 2.2). For dcr, the one the provider issued when the router registered at the consent.
+          type: string
+        registration:
+          $ref: '#/components/schemas/ConnectorClientRegistrationMethod'
+      required:
+        - registration
+        - client_id
+      type: object
     ConnectionCredentials:
       additionalProperties: false
       description: Credentials for a connection, under the revision the caller last read. An unknown field is refused rather than ignored.
@@ -1911,8 +1927,14 @@ components:
         - broken
       type: string
     ConnectionInvocation:
-      description: 'One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept.'
+      description: 'One connector tool call a session ran through the connection: the binding, the tool, the shape of its arguments, how long it took and how it failed. No value the call was asked, and nothing it answered, is kept.'
       properties:
+        arguments:
+          description: The shape of what the call was asked, sorted by name. Absent for a call asked with no arguments, for an incognito session's call, for arguments that were not a JSON object, and for a call recorded before the router kept it.
+          items:
+            $ref: '#/components/schemas/InvocationArgument'
+          nullable: true
+          type: array
         binding:
           description: The alias the config binds the connector under.
           type: string
@@ -2239,14 +2261,14 @@ components:
         - proxy_call
       type: string
     ConnectorAuditCredential:
-      description: 'The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the token''s SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.'
+      description: 'The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the token''s SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.'
       properties:
         access_expires_at:
           description: When the access token expires. Absent when the provider did not say.
           format: date-time
           type: string
         access_fingerprint:
-          description: The access token the grant left, by fingerprint.
+          description: The access token the grant left, by fingerprint. On grant_revoked, the one that ended.
           type: string
         previous_access_fingerprint:
           description: The access token before it, by fingerprint. Absent for a first grant.
@@ -2259,7 +2281,7 @@ components:
           format: date-time
           type: string
         refresh_fingerprint:
-          description: The refresh token the grant left, by fingerprint. Absent when there is none.
+          description: The refresh token the grant left, by fingerprint. On grant_revoked, the one that ended. Absent when there is none.
           type: string
         rotated:
           description: The refresh token the connection already had was replaced, as a provider that rotates refresh tokens does on every refresh.
@@ -2285,7 +2307,7 @@ components:
           type: string
         credential:
           $ref: '#/components/schemas/ConnectorAuditCredential'
-          description: The tokens a grant row left, by fingerprint. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens.
+          description: The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens.
         id:
           type: string
         latency_ms:
@@ -2836,7 +2858,7 @@ components:
           description: An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
           type: string
         connector_bindings:
-          description: 'The connection to use for each of the agent config''s connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller''s own connection to the binding''s connector: an end user''s, or the one a backend names with X-Stream-User-Id, never an anonymous caller''s or a guest''s. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.'
+          description: 'The connection to use for each of the agent config''s connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller''s own connection to the binding''s connector: an end user''s, or the one a backend names with X-Stream-User-Id, never an anonymous caller''s or a guest''s. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A session binding given none here uses the caller''s own connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.'
           items:
             $ref: '#/components/schemas/SessionConnectorBinding'
           maxItems: 64
@@ -3601,6 +3623,30 @@ components:
           type: string
       required:
         - instructions
+      type: object
+    InvocationArgument:
+      description: 'One argument a connector tool call was asked with: its name, its JSON type and, for a string or an array, its length, so an empty string shows as length 0. Never its value.'
+      properties:
+        length:
+          description: A string's characters (Unicode code points) or an array's elements, or for (undeclared) the number of undeclared arguments. Absent for any other type.
+          format: int64
+          type: integer
+        name:
+          description: 'The argument''s name, when the tool''s input schema declares it under properties. The arguments it does not declare, whose names a model may choose, are one entry named (undeclared): type object, length their count.'
+          type: string
+        type:
+          description: The argument's JSON type.
+          enum:
+            - object
+            - array
+            - string
+            - number
+            - boolean
+            - "null"
+          type: string
+      required:
+        - name
+        - type
       type: object
     InvocationErrorType:
       description: 'customer_auth: the provider refused the connection''s credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding''s timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.'
@@ -6115,6 +6161,45 @@ components:
         - output_tokens_total
         - provider
         - request_count
+      type: object
+    StoredConnectorOAuthClient:
+      description: The OAuth client and provider app the router keeps for the app and one connector. It says whether each secret is stored, and never carries one.
+      properties:
+        auth_method:
+          $ref: '#/components/schemas/ConnectorOAuthClientAuthMethod'
+          description: Absent when the record leaves it to the connector.
+        client_id:
+          description: Empty for a provider app without an OAuth client, such as a Linq account.
+          type: string
+        connector_id:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        has_client_secret:
+          description: A client secret is stored, sealed. False for a public client.
+          type: boolean
+        has_signing_secret:
+          description: A signing secret for the provider app's events is stored, sealed.
+          type: boolean
+        provider_app_id:
+          description: The provider's id for the app the client belongs to. Absent when there is none.
+          type: string
+        registration:
+          $ref: '#/components/schemas/ConnectorClientRegistrationMethod'
+          description: 'customer: the app''s own, put through PUT /v1/agents/connectors/{id}/oauth-client. managed: the one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app). operator: this deployment''s own app, recorded for the app by Stream staff.'
+        updated_at:
+          description: When the client, its secrets or its method last changed.
+          format: date-time
+          type: string
+      required:
+        - connector_id
+        - registration
+        - client_id
+        - has_client_secret
+        - has_signing_secret
+        - created_at
+        - updated_at
       type: object
     StreamAppState:
       description: Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
@@ -10294,6 +10379,38 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Remove the app's own OAuth client for a connector
+    get:
+      description: |-
+        Says which OAuth client and provider app the app's connections to the connector use: the app's own, the one the router created for it, or this deployment's own app recorded for it. It says whether a client secret and a signing secret are stored, and never returns either. Not found when there is none: the connector then uses this deployment's client, or registers one per consent.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: getConnectorOAuthClient
+      parameters:
+        - description: The connector, such as github or custom_crm.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as github or custom_crm.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoredConnectorOAuthClient'
+          description: The client
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Read the OAuth client the router keeps for the app and a connector
     put:
       description: |-
         Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
