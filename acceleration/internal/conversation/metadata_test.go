@@ -475,9 +475,10 @@ func (s *DisplaySuite) TestAFinishedLoginMarksTheReplyThatAskedForIt() {
 	s.Require().True(ok)
 	s.Same(c, held)
 	s.Equal("google_calendar", pluginID)
-	saved(s.T(), c)
-
-	s.Contains(s.raw(asked.AssistantMessageID), `"status":"connected"`)
+	// The outbox updates the earlier reply independently of saving the current one.
+	s.Require().Eventually(func() bool {
+		return strings.Contains(s.raw(asked.AssistantMessageID), `"status":"connected"`)
+	}, 8*time.Second, 20*time.Millisecond, "the reply that asked is marked connected")
 	c.Release()
 	page, err := s.service.HistoryForCaller(s.T().Context(), "customer", "on_call", c.CID(), "", "employee")
 	s.Require().NoError(err)
