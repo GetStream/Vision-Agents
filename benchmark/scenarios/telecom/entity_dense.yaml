@@ -7,6 +7,10 @@ turns:
   - id: intro
     text: "PIN 4471, last four 9821, 14 Cedar Lane unit B, gateway error 840. Please open a ticket."
     trigger: {kind: after_agent_turn, delay_ms: 400}
+  # The agent may confirm before it acts, as it should with a real caller; this is the yes.
+  - id: go_ahead
+    text: "Yes, that's right. Please go ahead."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
 seed:
   outage: false
   reboot_succeeds: true
