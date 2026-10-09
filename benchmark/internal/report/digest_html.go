@@ -201,10 +201,12 @@ var digestTemplate = template.Must(template.New("digest").Parse(`<!doctype html>
   body { background: var(--bg); color: var(--ink); margin: 0;
          font: 15px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
   main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; display: grid; gap: 28px; }
-  h1 { font-size: 28px; margin: 0; } h2 { font-size: 20px; margin: 0 0 10px; }
+  h1 { font-size: 28px; margin: 0; } h2 { font-size: 20px; margin: 0; }
+  section { display: grid; gap: 16px; }
   .meta { color: var(--muted); }
   img { max-width: 100%; border-radius: 10px; border: 1px solid var(--rule); }
   .panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 4px 16px; overflow-x: auto; }
+  .panel > .why { padding: 4px 0 12px; }
   table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
   th, td { text-align: left; padding: 8px 10px; border-top: 1px solid var(--rule); vertical-align: top; }
   th { border-top: 0; color: var(--muted); font-size: 12px; letter-spacing: .05em; text-transform: uppercase; }
