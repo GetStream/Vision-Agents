@@ -24,12 +24,28 @@ type ConnectionInvocation struct {
 	StartedAt    time.Time            `json:"started_at"`
 	LatencyMs    int64                `json:"latency_ms" doc:"From the call reaching the router to its answer, the router's own checks included."`
 	ErrorType    *InvocationErrorType `json:"error_type,omitempty" doc:"How the call failed. Absent for a call that answered."`
+	Arguments    []InvocationArgument `json:"arguments,omitempty" doc:"The shape of what the call was asked, sorted by name. Absent for a call asked with no arguments, for an incognito session's call, for arguments that were not a JSON object, and for a call recorded before the router kept it."`
 }
 
 func (*ConnectionInvocation) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "One connector tool call a session ran through the connection: the " +
-		"binding, the tool, how long it took and how it failed. What the call was asked and " +
-		"answered is never kept."
+		"binding, the tool, the shape of its arguments, how long it took and how it failed. No " +
+		"value the call was asked, and nothing it answered, is kept."
+	return schema
+}
+
+// InvocationArgument is one top-level argument of a connector tool call without its value
+// (store.ArgumentShape, AI-990 F40).
+type InvocationArgument struct {
+	Name string `json:"name"`
+	// RFC 8259 section 3's six types of a JSON value.
+	Type   string `json:"type" enum:"object,array,string,number,boolean,null" doc:"The argument's JSON type."`
+	Length *int   `json:"length,omitempty" doc:"A string's characters (Unicode code points) or an array's elements. Absent for any other type."`
+}
+
+func (*InvocationArgument) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One argument a connector tool call was asked with: its name, its JSON type " +
+		"and, for a string or an array, its length, so an empty string shows as length 0. Never its value."
 	return schema
 }
 
@@ -72,14 +88,14 @@ type ConnectorAuditEvent struct {
 	LatencyMs    *int64                    `json:"latency_ms,omitempty" doc:"How long a proxy_call took until the provider's answer, in milliseconds. Absent for a grant."`
 	Target       string                    `json:"target,omitempty" doc:"The host a proxy_call reached. Absent for a grant."`
 	CreatedAt    time.Time                 `json:"created_at"`
-	Credential   *ConnectorAuditCredential `json:"credential,omitempty" doc:"The tokens a grant row left, by fingerprint. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens."`
+	Credential   *ConnectorAuditCredential `json:"credential,omitempty" doc:"The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens."`
 }
 
 // ConnectorAuditCredential is a grant row's tokens by fingerprint (store.ConnectorAuditCredential).
 type ConnectorAuditCredential struct {
-	AccessFingerprint          string     `json:"access_fingerprint,omitempty" doc:"The access token the grant left, by fingerprint."`
+	AccessFingerprint          string     `json:"access_fingerprint,omitempty" doc:"The access token the grant left, by fingerprint. On grant_revoked, the one that ended."`
 	PreviousAccessFingerprint  string     `json:"previous_access_fingerprint,omitempty" doc:"The access token before it, by fingerprint. Absent for a first grant."`
-	RefreshFingerprint         string     `json:"refresh_fingerprint,omitempty" doc:"The refresh token the grant left, by fingerprint. Absent when there is none."`
+	RefreshFingerprint         string     `json:"refresh_fingerprint,omitempty" doc:"The refresh token the grant left, by fingerprint. On grant_revoked, the one that ended. Absent when there is none."`
 	PreviousRefreshFingerprint string     `json:"previous_refresh_fingerprint,omitempty" doc:"The refresh token before it, by fingerprint. Absent for a first grant, or when there was none."`
 	Rotated                    bool       `json:"rotated" doc:"The refresh token the connection already had was replaced, as a provider that rotates refresh tokens does on every refresh."`
 	AccessExpiresAt            *time.Time `json:"access_expires_at,omitempty" doc:"When the access token expires. Absent when the provider did not say."`
@@ -87,7 +103,7 @@ type ConnectorAuditCredential struct {
 }
 
 func (*ConnectorAuditCredential) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the " +
+	schema.Description = "The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the " +
 		"token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a " +
 		"refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown."
 	return schema
@@ -227,6 +243,9 @@ func (s *Server) listConnectionInvocations(ctx context.Context, request *listCon
 		if row.ErrorType != "" {
 			failure := InvocationErrorType(row.ErrorType)
 			item.ErrorType = &failure
+		}
+		for _, argument := range row.Arguments {
+			item.Arguments = append(item.Arguments, InvocationArgument{Name: argument.Name, Type: argument.Type, Length: argument.Length})
 		}
 		listed.Items = append(listed.Items, item)
 	}
