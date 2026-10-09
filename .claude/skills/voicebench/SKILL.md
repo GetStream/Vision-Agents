@@ -73,12 +73,45 @@ database has migrations from another branch: point the run at a fresh database r
 touching that one, for example `ROUTER_POSTGRES_DSN=postgres://postgres:postgres@localhost:55432/voicebench_packs?sslmode=disable`
 after `createdb` on the same server.
 
-**Ports.** The router listens on 8080 and world servers on 8090 and up. `scripts/packs.sh` puts
-agents on 8000 and up and `scripts/load.sh` on 8001 and up (`VOICEBENCH_AGENT_PORT_BASE`); a
-local stream-api often holds 8000, so stop it or use `load.sh`'s base. A run killed half-way can
-leave a Python agent on its port: free it before the next run.
+**Leftovers.** A run killed half-way leaves its Python agents, router and world servers behind,
+holding their ports and sometimes still in a call. Look before every run and stop what you find
+(only processes a bench started: a local stream-api on 8000 is the user's):
 
-## 2. Run the smallest thing that answers the question
+```bash
+lsof -nP -iTCP -sTCP:LISTEN | grep -E ':(800[0-9]|8080|809[0-9]) '; pgrep -fl 'voicebench|simple_voice_ai|agents/accelerated' || true
+```
+
+The router listens on 8080 and world servers on 8090 and up. `scripts/packs.sh` puts agents on
+8000 and up, `scripts/digest.sh` and `scripts/load.sh` on 8001 and up (`VOICEBENCH_AGENT_PORT_BASE`).
+
+**Gemma is awake.** The probe above tells you whether Gemma answers; before placing calls, wait
+until it answers fast, the way the CI job does. A deployment scaled to zero takes minutes (`key`
+and `f` come from the checks above):
+
+```bash
+for i in $(seq 1 40); do t=$(curl -sS -m 60 -o /dev/null -w '%{http_code} %{time_total}' "$(key GEMMA_BASE_URL)/chat/completions" -H "Authorization: Bearer $(key BASETEN_API_KEY)" -H 'Content-Type: application/json' -d '{"model":"google/gemma-4-26B-A4B-it","max_tokens":1,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"Hi"}]}'); echo "Gemma $t"; case "$t" in 200\ 0.*|200\ 1.*) break;; esac; sleep 15; done
+```
+
+**Caller lines are cached.** Caller audio is ElevenLabs speech cached in `benchmark/cache/tts/`
+by voice and text; a line missing from the cache is synthesized during the call and spends
+quota then. Fill it up front, so a quota failure stops you here instead of half-way through:
+`go run ./cmd/voicebench synth --pack <pack>` (no `--pack` for all). The agent's own voice is
+never cached: every call spends ElevenLabs characters on it.
+
+## 2. Say what it will cost, then run the smallest thing that answers the question
+
+**Estimate first.** Count the calls: scenarios in the set for the chosen packs, times `k`, times
+the number of arms. A call takes about four minutes for coherence, a minute and a half for a
+monologue and under a minute for the rest, and is cut at its `max_duration_s` (180 or 240). The
+agent's voice spends a few hundred ElevenLabs characters a call; the judge, Deepgram and Gemma
+spend per call too.
+
+```bash
+set=short; packs="restaurant healthcare telecom"; k=1; for p in $packs; do echo "$p $(grep -c "^$p\." scenarios/$set.txt)"; done; echo "x k=$k"
+```
+
+Tell the user the call count and rough wall time before running, and ask before anything over
+about fifteen minutes or a frozen set at `k` above 1. A single scenario needs no asking.
 
 Native audio libraries (`brew install pkg-config opus opusfile libsoxr`) and CGO are needed for
 anything that places calls.
@@ -86,27 +119,39 @@ anything that places calls.
 | Question | Command | Time |
 |---|---|---|
 | Does one scenario work? | `CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run --pack restaurant --scenario restaurant.golden --k 1 --target accelerated --spawn --bin <router> --target-url http://127.0.0.1:8001` | ~2 min |
-| Quick check of every pack | `scripts/packs.sh` (short set, packs side by side, one router built from the checkout) | ~8 min |
-| The trend-line set | `VOICEBENCH_SET=frozen scripts/packs.sh` | ~35 min |
-| Harder callers and rooms | `VOICEBENCH_SET=extended scripts/packs.sh` | ~15 min |
+| Quick check of every pack | `VOICEBENCH_SET=short VOICEBENCH_LIVEKIT_ARMS= VOICEBENCH_DIGEST_POST=0 scripts/digest.sh` | ~10 min |
+| The trend-line set | `VOICEBENCH_LIVEKIT_ARMS= VOICEBENCH_DIGEST_POST=0 scripts/digest.sh` | ~15 min |
+| Harder callers and rooms | `VOICEBENCH_SET=extended VOICEBENCH_LIVEKIT_ARMS= VOICEBENCH_DIGEST_POST=0 scripts/digest.sh` | ~10 min |
 | Under load | `VOICEBENCH_CONCURRENCY="1 3" VOICEBENCH_PACK=restaurant scripts/load.sh` | per level, one set |
 | STT and TTS alone | `scripts/components.sh` (Flux on the scenarios' caller lines; ElevenLabs and Inworld on their agent lines) | ~15 min |
 
-`--k 3` repeats each scenario; one call is too few to call a change. Override the pipeline with
-`VOICEBENCH_STT`, `VOICEBENCH_MODEL`, `VOICEBENCH_TTS` (the subagent is `thinking_llm` in
-`agents/accelerated/<pack>/agent.yaml`). Build the router fresh for every run so you never test
-an old one; the scripts do.
+Prefer `scripts/digest.sh` over `scripts/packs.sh` for anything bigger than one scenario: both
+run the packs side by side against one router built from the checkout, but `digest.sh` stops a
+pack after `VOICEBENCH_PACK_TIMEOUT` seconds (25 minutes a trial) and kills everything it
+started, and renders the digest into the run directory. An empty `VOICEBENCH_LIVEKIT_ARMS` runs
+our stack alone; `VOICEBENCH_DIGEST_POST=0` keeps it off Slack.
 
-On CI instead, with the repo's keys: `gh workflow run voicebench.yml --ref accelerate -f set=short -f packs=restaurant`
-(`-f bench=components` for STT/TTS). The run's progress lines show each call as it finishes.
+`VOICEBENCH_K=3` repeats each scenario; one call is too few to call a change. Override the
+pipeline with `VOICEBENCH_STT`, `VOICEBENCH_MODEL`, `VOICEBENCH_TTS` (the subagent is
+`thinking_llm` in `agents/accelerated/<pack>/agent.yaml`). Build the router fresh for every run
+so you never test an old one; the scripts do.
+
+**Watch it, and stop a stuck call.** A run prints one progress line per call event,
+`voicebench: [3/8] restaurant.selectivity: started` then its verdict. Run it in the background
+and follow those lines. A call takes at most four minutes, so no new line for six means it is
+stuck: there is a known deadlock in the WebRTC receive path when the agent's track is
+resubscribed, and a stuck call ignores its deadline and Ctrl-C. Kill the whole tree, not just
+the parent (`pkill -TERM -P <pid>; kill -TERM <pid>`, then `-KILL` for what is left), check
+Leftovers again, and count that call as **infra**, not as an agent failure. `digest.sh` does
+this itself at its timeout.
 
 ## 3. Read the results
 
 Each run writes `out/<run>/`: `summary.json`, `report.md`, and a folder per call with the audio,
-transcripts, `heard.json` (what the agent's speech-to-text acted on), `tools.json`,
+`transcript.json`, `heard.json` (what the agent's speech-to-text acted on), `tools.json`,
 `timeline.json` (router stages per turn), `judge.json` and `metrics.json`.
 
-Render the report people read, the same one the nightly posts:
+Render the report people read, the same one the nightly posts (`digest.sh` already did):
 
 ```bash
 go run ./cmd/voicebench digest --title "Voicebench" --out out/digest out/<run-dir> [more run dirs]
@@ -123,12 +168,102 @@ calls and the judge's notes. Read the causes before blaming the model:
 - **said wrong**: a policy or say-do break.
 - **turn-taking**: talked over the caller, did not stop, no filler while a tool ran.
 
-`go run ./cmd/voicebench compare --baseline <old> <new>` sets runs side by side with intervals;
-a gap inside them is noise. `voicebench noise` over five repeat runs measures how big a change
-has to be before it is real.
+**Known signatures.** These have each been seen; match a failure against them before
+investigating from scratch:
 
-## 4. Report back
+| What the report shows | What it usually is | Where to look |
+|---|---|---|
+| Every call invalid, `quota_exceeded` or `INVALID_AUTH` in the error | A key (ElevenLabs quota, a stale Deepgram or Stream key) | Setup, section 1. Not the agent |
+| No reply, `0 tools`, on the first calls of a run | Gemma was waking | Wait for Gemma, rerun those calls |
+| Router exits at start, "column … already exists" | Local database migrated by another branch | A fresh `ROUTER_POSTGRES_DSN` |
+| Router cannot reach Redis | Redis not up on 56379 | `docker compose up -d --wait redis` |
+| `create_reservation not called`, the agent's last turn is a question | The agent asked to confirm and the caller hung up | `transcript.json` and `tools.json`; is the scenario's go-ahead line there? |
+| The agent says "all set", no write tool in `tools.json` | A booking claimed but never made | Model or prompt: a say-do break, even if the judge passed it |
+| `false_cutoff` on most calls, a large `decision` stage in `timeline.json` | End-of-turn detection cut into the caller's pauses | The router's turn-taking, not the prompt |
+| Filler gate fails, yet the agent spoke while the tool ran | The harness did not recognise the filler phrase (`fillerPhrases` in `internal/score/timing.go`) | Harness: report it, do not change the agent |
+| `missed <value>` under "caller said vs heard" | Speech-to-text | `heard.json`; keyterms or the STT choice |
+| `search … API_KEY` warnings in the agent log | No web-search provider configured | Harmless for these packs |
 
-Say what ran (pack, set, k, pipeline, commit), pass out of total, the main causes, and reply
-time P50 with its sample count. Separate setup failures from agent behaviour, and quote the
-call's own evidence (a tool call, a heard line, a judge note) for each claim.
+## 4. Look at one call
+
+When a cause is not obvious, open the call's folder and rerun only that scenario
+(`--scenario <id> --k 3`, it costs a few minutes):
+
+1. `result.json` and `metrics.json`: which gates failed and by how much.
+2. The caller's script (`scenarios/<pack>/<name>.yaml`) beside `heard.json`: did the agent hear
+   what was said?
+3. `transcript.json` and `tools.json`: what the agent said, and whether its words match its tool
+   calls (name, arguments, order).
+4. `timeline.json`: the router's stages per turn (`decision`, model to first text, TTS), to tell
+   a slow model from a slow turn decision.
+5. `judge.json`: the judge's notes; it is gpt-4.1-mini and can miss a say-do break.
+6. The audio (`mixed.wav` holds both sides): listen when a turn-taking gate fails, to hear
+   whether the agent really talked over the caller.
+
+## 5. Did a change help?
+
+One run says little. To answer "is the new version better":
+
+1. Fix everything but the change: same set, packs, `k` (3 at least), pipeline and network
+   profile, back to back on the same machine.
+2. Run the base commit, then the changed one, each with a fresh router build.
+3. Compare: `go run ./cmd/voicebench compare --baseline out/<base> out/<new>`, with
+   `--mde baselines/<target>/noise-<packs>.json` when a noise floor exists.
+4. A difference inside the intervals, or below the noise floor, is no difference: say so, do not
+   round it up. Measure the floor with five repeat runs and `voicebench noise <dirs>`.
+
+A different STT, model or TTS is a different series, not a regression or a win against the
+old one: label the runs (`--system`) and compare them as alternatives.
+
+## 6. Add or change a scenario
+
+A scenario is a YAML file in `scenarios/<pack>/`: the persona, its `turns` (a turn's `segments`
+make a long turn with pauses, `voice` changes the speaker, `aside` is someone else in the room,
+`check_in` holds the caller silent so the agent should check in), `hold_floor` for a monologue,
+the seeded world, `end_state`, `expected_tools`, `entities`, `policy`, and `agent_replies`, a
+reference reply that must pass the scenario's own gates. If the agent is expected to act without
+asking, give the caller a go-ahead line ("yes, go ahead and book it"), or the agent's
+confirmation question ends the call with nothing booked.
+
+New scenarios go into `scenarios/extended.txt`. `frozen.txt` is the trend line: changing it or
+a scenario in it changes the scenario hash and needs a methodology bump in `README.md`. After
+adding one, run `voicebench synth --pack <pack>` and then the scenario alone at `--k 3`.
+
+## 7. CI and Slack
+
+The workflow `.github/workflows/voicebench.yml` runs the frozen set nightly. By hand, with the
+repo's keys (the file is not on `main` yet, so name the branch):
+
+```bash
+gh workflow run voicebench.yml --ref accelerate -f set=short -f packs=restaurant
+```
+
+Inputs: `bench` (`agents` or `components`), `set` (`frozen`, `short`, `extended`), `packs`
+(`all` or one). Follow it with `gh run watch <id>` and the progress lines in the log
+(`gh run view <id> --log | grep 'voicebench: \['`); fetch the results with
+`gh run download <id> -n voicebench-nightly` (or `voicebench-components`) and render the digest
+locally as in section 3. A failed step named "Wake the Gemma deployment" is Gemma, not the
+agent.
+
+In Slack, `/agents-bench run [branch] set=frozen|short packs=<pack>` dispatches the same workflow, and
+`/agents-bench help` lists the options. Ask the user before posting to Slack (`--slack`, or
+`digest.sh` without `VOICEBENCH_DIGEST_POST=0`) and never set or change repository secrets:
+those are theirs to do.
+
+## 8. Report back
+
+Always in this shape, so reports compare:
+
+```
+Ran: <set> set, <packs>, k=<k>, <stt> / <model> / <tts>, commit <sha>, <local|CI run url>
+Result: <passed>/<valid> passed, score <0-100>; <n> invalid (<why>)
+Per pack: restaurant <p>/<v>, healthcare <p>/<v>, telecom <p>/<v>
+Causes: <n> heard wrong, <n> did wrong, <n> said wrong, <n> turn-taking
+Reply time: P50 <ms> over <n> turns (tool turns P50 <ms>)
+Failures:
+- <scenario>: <cause>. Evidence: "<a tool call, a heard line or a judge note, quoted>"
+Next: <the one thing to fix or rerun>
+```
+
+Keep setup failures out of the score and say what they were. Never claim a change helped
+without the comparison in section 5.
