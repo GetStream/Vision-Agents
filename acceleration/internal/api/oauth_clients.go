@@ -265,6 +265,10 @@ func (s *Server) setConnectorOAuthClient(ctx context.Context, request *oauthClie
 		record.SigningKEKVersion = s.connectorSecrets.CurrentVersion()
 	}
 	created, err := s.store.PutConnectorOAuthClient(ctx, record)
+	// Deleted since it was read above (DeleteConnectorDefinition), so answered as one never made.
+	if errors.Is(err, store.ErrNoConnectorDefinition) {
+		return nil, notFound("no such connector")
+	}
 	// 409: the request conflicts with the state of the resource (RFC 9110 section 15.5.10).
 	if errors.Is(err, store.ErrOAuthClientRegistration) {
 		return nil, conflict("the connector's OAuth client for the app is one this deployment's operator registered or the router created, and it cannot be replaced through the API")

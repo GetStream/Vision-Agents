@@ -5,11 +5,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
@@ -91,9 +94,27 @@ func (s *ConnectorsSuite) TestWhatTheRouterReadsToConnectIsNeverShown() {
 func (s *ConnectorsSuite) TestACustomConnectorsEndpointIsNeverShown() {
 	created := s.create(s.customConnector(s.customID()))
 
-	status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/connectors/"+created.ID, nil)
-	s.Require().Equal(http.StatusOK, status)
-	s.NotContains(string(raw), "8.8.8.8", "an MCP URL can carry a secret in its path")
+	for _, path := range []string{"/v1/agents/connectors/" + created.ID, "/v1/agents/connectors"} {
+		status, raw := s.serverClient.call(http.MethodGet, path, nil)
+		s.Require().Equal(http.StatusOK, status)
+		s.NotContains(string(raw), "8.8.8.8", "an MCP URL can carry a secret in its path")
+		s.NotContains(string(raw), `"endpoint"`)
+	}
+}
+
+// TestABuiltInReadsAsBeforeOnARouterWithoutAPublicURL is the control for AI-1046 and AI-1047:
+// the keys a built-in is answered with are the ones accelerate at 26051062 answered with,
+// probed there with this suite (pr-w7/author-1.md). Without ROUTER_PUBLIC_URL there is no
+// redirect URI.
+func (s *ConnectorsSuite) TestABuiltInReadsAsBeforeOnARouterWithoutAPublicURL() {
+	for _, id := range []string{"slack", "linear", "telnyx"} {
+		status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/connectors/"+id, nil)
+		s.Require().Equal(http.StatusOK, status)
+		var shown map[string]any
+		s.Require().NoError(json.Unmarshal(raw, &shown))
+		s.Equal([]string{"category", "client", "created_at", "custom", "description", "duration", "id", "inputs",
+			"name", "revision", "schemes", "scopes"}, slices.Sorted(maps.Keys(shown)), id)
+	}
 }
 
 func (s *ConnectorsSuite) TestACustomMCPConnectorIsStoredAndReadBack() {
@@ -388,6 +409,212 @@ func (s *ConnectorsSuite) TestOnlyTheAppsBackendMayAddAConnector() {
 	s.assertPosture(serverOnly, func(as *testClient) int {
 		return as.do(http.MethodPost, "/v1/agents/connectors", s.customConnector(s.customID()), nil)
 	})
+}
+
+func (s *ConnectorsSuite) TestOnlyTheAppsBackendMayDeleteAConnector() {
+	s.assertPosture(serverOnly, func(as *testClient) int {
+		return as.do(http.MethodDelete, "/v1/agents/connectors/"+s.create(s.customConnector(s.customID())).ID, nil, nil)
+	})
+}
+
+func (s *ConnectorsSuite) TestAnUnknownOrBuiltInConnectorIsNotFoundToDelete() {
+	unknown, missing := s.serverClient.failure(http.MethodDelete, "/v1/agents/connectors/custom_nobody", nil)
+	builtin, answered := s.serverClient.failure(http.MethodDelete, "/v1/agents/connectors/slack?force=true", nil)
+
+	s.Equal(http.StatusNotFound, unknown)
+	s.Equal(http.StatusNotFound, builtin)
+	s.Equal(missing, answered, "one answer for both")
+	s.Equal("Slack", s.get("slack").Name, "the built-in is untouched")
+}
+
+func (s *ConnectorsSuite) TestAnotherAppCannotDeleteTheAppsConnector() {
+	id := s.create(s.customConnector(s.customID())).ID
+
+	s.assertHiddenFromOtherApps(func(as *testClient) int {
+		return as.do(http.MethodDelete, "/v1/agents/connectors/"+id+"?force=true", nil, nil)
+	})
+	s.Equal(id, s.get(id).ID)
+}
+
+func (s *ConnectorsSuite) TestAnUnusedConnectorIsDeletedWithItsOAuthClientAndMayBeCreatedAgain() {
+	sent := s.customConnector(s.customID())
+	sent["client"] = map[string]any{"registration": []string{"customer"}}
+	id := s.create(sent).ID
+	sent["name"] = "Our CRM, renamed"
+	s.Require().Equal(2, s.create(sent).Revision)
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPut, "/v1/agents/connectors/"+id+"/oauth-client",
+		map[string]any{"client_id": "crm-client", "client_secret": "crm-secret"}, nil))
+
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/connectors/"+id, nil, nil))
+
+	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodGet, "/v1/agents/connectors/"+id, nil, nil))
+	s.NotContains(connectorIDs(s.list("").Items), id)
+	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodGet, "/v1/agents/connectors/"+id+"/oauth-client", nil, nil),
+		"the client and its sealed secret went with it")
+	s.Equal(1, s.create(sent).Revision, "created again, it starts over")
+}
+
+func (s *ConnectorsSuite) TestAConnectorAConnectionUsesIsRefusedNamingTheConnection() {
+	id := s.create(s.customConnector(s.customID())).ID
+	var connection Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(id), &connection))
+
+	status, raw := s.serverClient.call(http.MethodDelete, "/v1/agents/connectors/"+id, nil)
+
+	s.Equal(http.StatusConflict, status)
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(raw, &answered), "the error envelope: %s", raw)
+	s.Equal(ErrorTypeConflict, answered.Error.Type)
+	s.Equal("conflict", answered.Error.Code)
+	s.Equal(id+" is used by connections "+connection.ID+": delete or unbind them first, or delete with force=true",
+		answered.Error.Message)
+	s.Equal(id, s.get(id).ID)
+	s.Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+connection.ID, nil, nil))
+}
+
+func (s *ConnectorsSuite) TestAConnectorAConfigBindsIsRefusedNamingTheBinding() {
+	id := s.create(s.customConnector(s.customID())).ID
+	binding := sessionSlack("crm")
+	binding["connector_id"] = id
+	var config AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support-" + s.suffix(), "connectors": []map[string]any{binding}}, &config))
+
+	status, failure := s.serverClient.failure(http.MethodDelete, "/v1/agents/connectors/"+id, nil)
+
+	s.Equal(http.StatusConflict, status)
+	s.Equal(id+` is used by agent config bindings "`+config.Name+`" as crm: delete or unbind them first, or delete with force=true`, failure)
+}
+
+func (s *ConnectorsSuite) TestARefusalNamesTenUsersOfEachKindAndCountsTheRest() {
+	id := s.create(s.customConnector(s.customID())).ID
+	var ids []string
+	for range usesNamed + 2 {
+		var connection Connection
+		s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(id), &connection))
+		ids = append(ids, connection.ID)
+	}
+	var bound []string
+	for i := range usesNamed + 2 {
+		binding := sessionSlack(fmt.Sprintf("crm%02d", i))
+		binding["connector_id"] = id
+		var config AgentConfig
+		s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
+			map[string]any{"name": fmt.Sprintf("support-%02d-%s", i, s.suffix()), "connectors": []map[string]any{binding}}, &config))
+		bound = append(bound, fmt.Sprintf("%q as crm%02d", config.Name, i))
+	}
+
+	status, failure := s.serverClient.failure(http.MethodDelete, "/v1/agents/connectors/"+id, nil)
+
+	s.Equal(http.StatusConflict, status)
+	s.Equal(id+" is used by connections "+strings.Join(ids[:usesNamed], ", ")+
+		" and 2 more and by agent config bindings "+strings.Join(bound[:usesNamed], ", ")+
+		" and 2 more: delete or unbind them first, or delete with force=true", failure)
+}
+
+func (s *ConnectorsSuite) TestAForcedDeleteDeletesTheConnectionsAndLeavesTheBindings() {
+	id := s.create(s.customConnector(s.customID())).ID
+	var connection Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(id), &connection))
+	binding := sessionSlack("crm")
+	binding["connector_id"] = id
+	var config AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support-" + s.suffix(), "connectors": []map[string]any{binding}}, &config))
+
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/connectors/"+id+"?force=true", nil, nil))
+
+	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodGet, "/v1/agents/connectors/"+id, nil, nil))
+	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+connection.ID, nil, nil))
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+config.Id, nil, &read))
+	s.Require().Len(value(read.Connectors), 1, "left in place, as a forced connection delete leaves its binding")
+	s.Equal(id, value(read.Connectors)[0].ConnectorId)
+}
+
+// TestAConnectionToAConnectorDeletedMeanwhileIsRefusedAsUnknown: the create read the connector
+// before the delete committed and stores the connection after, so the store finds it gone.
+func (s *ConnectorsSuite) TestAConnectionToAConnectorDeletedMeanwhileIsRefusedAsUnknown() {
+	id := s.create(s.customConnector(s.customID())).ID
+
+	status, failure := s.duringADeleteOf(id, func() (int, string) {
+		return s.serverClient.failure(http.MethodPost, "/v1/agents/connections", appOwned(id))
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(`no such connector: "`+id+`"`, failure)
+}
+
+func (s *ConnectorsSuite) TestAnOAuthClientForAConnectorDeletedMeanwhileIsNotFound() {
+	sent := s.customConnector(s.customID())
+	sent["client"] = map[string]any{"registration": []string{"customer"}}
+	id := s.create(sent).ID
+
+	status, failure := s.duringADeleteOf(id, func() (int, string) {
+		return s.serverClient.failure(http.MethodPut, "/v1/agents/connectors/"+id+"/oauth-client",
+			map[string]any{"client_id": "crm-client", "client_secret": "crm-secret"})
+	})
+
+	s.Equal(http.StatusNotFound, status)
+	s.Equal("no such connector", failure)
+}
+
+func (s *ConnectorsSuite) TestABindingToAConnectorDeletedMeanwhileIsRefused() {
+	id := s.create(s.customConnector(s.customID())).ID
+	binding := sessionSlack("crm")
+	binding["connector_id"] = id
+
+	status, failure := s.duringADeleteOf(id, func() (int, string) {
+		return s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+			map[string]any{"name": "support-" + s.suffix(), "connectors": []map[string]any{binding}})
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, id)
+}
+
+// duringADeleteOf makes call while a delete of the app's connector id holds its lock on the
+// definition: a SHARE lock on connector_oauth_clients holds the delete at its DELETE there,
+// which comes after that lock (store.DeleteConnectorDefinition). The call is let go once it
+// waits for the definition, and it answers after the delete committed. Suites beside this one
+// may wait on the table meanwhile; the waits counted are the delete's and the call's alone.
+func (s *ConnectorsSuite) duringADeleteOf(id string, call func() (int, string)) (int, string) {
+	held, err := s.store.DB().BeginTx(context.Background(), nil)
+	s.Require().NoError(err)
+	defer held.Rollback() //nolint:errcheck // after the commit below there is nothing to roll back
+	_, err = held.ExecContext(context.Background(), "LOCK TABLE connector_oauth_clients IN SHARE MODE")
+	s.Require().NoError(err)
+	deleted := make(chan int, 1)
+	go func() { deleted <- s.serverClient.do(http.MethodDelete, "/v1/agents/connectors/"+id, nil, nil) }()
+	// The two seconds and the ten milliseconds are assertTheWaitEnded's (internal/store/credentials_test.go).
+	s.Require().Eventually(func() bool { return s.waitingFor("DELETE FROM connector_oauth_clients", id) == 1 },
+		2*time.Second, 10*time.Millisecond, "the delete waits at its DELETE")
+	type answer struct {
+		status  int
+		failure string
+	}
+	answered := make(chan answer, 1)
+	go func() {
+		status, failure := call()
+		answered <- answer{status, failure}
+	}()
+	s.Require().Eventually(func() bool { return s.waitingFor("FOR KEY SHARE", id) == 1 },
+		2*time.Second, 10*time.Millisecond, "the call waits for the delete's lock on the definition")
+	s.Require().NoError(held.Commit())
+	s.Require().Equal(http.StatusNoContent, <-deleted)
+	got := <-answered
+	return got.status, got.failure
+}
+
+// waitingFor counts the statements in this database waiting for a lock whose text holds both
+// statement and the connector id (https://www.postgresql.org/docs/current/monitoring-stats.html#WAIT-EVENT-TABLE).
+func (s *ConnectorsSuite) waitingFor(statement, id string) int {
+	var count int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(), `
+SELECT count(*) FROM pg_stat_activity
+WHERE datname = current_database() AND wait_event_type = 'Lock'
+  AND strpos(query, ?) > 0 AND strpos(query, ?) > 0`, statement, id).Scan(&count))
+	return count
 }
 
 // customConnector is a custom MCP connector the router accepts. Its endpoint is a public IP

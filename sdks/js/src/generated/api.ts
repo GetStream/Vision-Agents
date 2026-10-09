@@ -992,7 +992,13 @@ export type paths = {
         readonly get: operations["getConnector"];
         readonly put?: never;
         readonly post?: never;
-        readonly delete?: never;
+        /**
+         * Delete a custom connector
+         * @description Deletes one of the app's own connectors, every revision of it, with the app's OAuth client for it. A built-in cannot be deleted and is not found. A connector a live connection was made from, or an agent config binds, is refused with a 409 naming them, unless force is set: then its connections are deleted as a forced connection delete deletes one, credentials dropped at once, and the bindings are left in place. The same id may be created again, from revision 1.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteConnector"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -4766,6 +4772,11 @@ export type components = {
             /** @description What a connection is created with, such as a region or a shop. */
             readonly inputs: readonly components["schemas"]["ConnectorInput"][] | null;
             readonly name: string;
+            /**
+             * Format: uri
+             * @description The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then.
+             */
+            readonly redirect_uri?: string;
             /**
              * Format: int64
              * @description The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
@@ -10178,6 +10189,44 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly deleteConnector: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Delete it even while connections or agent config bindings use it. Its connections are deleted with it, and the bindings are left in place, naming a connector that no longer exists. */
+                readonly force?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The app's custom connector, such as custom_crm. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The connector is deleted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
         };
     };

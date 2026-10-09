@@ -251,7 +251,7 @@ func (s *Server) setConnectorProviderApp(ctx context.Context, request *providerA
 	}
 	template := slackapps.Template{
 		Name:                   request.Body.Name,
-		RedirectURL:            public + ConnectorCallbackPath,
+		RedirectURL:            connectorCallbackURL(public),
 		AllowedIPAddressRanges: request.Body.AllowedIPAddressRanges,
 	}
 	initial, err := slackapps.ManifestFor(manifest, template)
