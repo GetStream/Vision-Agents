@@ -33,6 +33,8 @@ const suiteConnectorTimeout = 10 * time.Second
 // its own connector and connection in the suite's app.
 type ConnectionToolsSuite struct {
 	RouterSuite
+	// logged is what the router logged, for a test of the credential event lines.
+	logged   *lockedLog
 	provider *fakeprovider.Server
 	// token is an access token the fake issued, which its MCP endpoint takes: the value a
 	// bearer connection is given. Synthetic, fresh per suite.
@@ -66,6 +68,8 @@ func (s *ConnectionToolsSuite) SetupSuite() {
 	}
 	s.connectorHTTP = s.provider.Client()
 	s.token = s.issue()
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -184,6 +188,57 @@ func (s *ConnectionToolsSuite) TestAnImportedGrantConnectsWithTheConnectorsEndpo
 	s.Equal(ConnectionStatus(store.ConnectionConnected), connection.Status)
 	s.Equal([]string{"chat:write"}, connection.GrantedScopes)
 	s.Equal(validationConnected, string(s.validate(id).Status))
+}
+
+// TestAnImportedGrantIsAuditedAndLoggedByTheTokensItReplaced: the credentials write names the
+// tokens it stored by fingerprint on its audit row and its log line, a second one those it
+// replaced, and the connector's refresh_ttl shows as when the refresh token expires (AI-990).
+// No token is logged.
+func (s *ConnectionToolsSuite) TestAnImportedGrantIsAuditedAndLoggedByTheTokensItReplaced() {
+	connector := s.connector(oauth2code.Name, "refresh:\n  refresh_ttl: 720h\n")
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	firstAccess, firstRefresh := "first-access-"+s.utils.uuid(), "first-refresh-"+s.utils.uuid()
+	secondAccess, secondRefresh := "second-access-"+s.utils.uuid(), "second-refresh-"+s.utils.uuid()
+	for revision, tokens := range [][2]string{{firstAccess, firstRefresh}, {secondAccess, secondRefresh}} {
+		grant := s.importedGrant(tokens[0], "chat:write")
+		grant["expected_revision"] = revision + 1
+		grant["values"].(map[string]string)[oauth2code.SuppliedRefreshToken] = tokens[1]
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials", grant, nil))
+	}
+
+	var page ConnectorAuditPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connector-audit?connection_id="+created.ID, nil, &page))
+	s.Require().Len(page.Items, 2)
+	first, second := page.Items[1].Credential, page.Items[0].Credential
+	s.Require().NotNil(first)
+	s.Require().NotNil(second)
+	s.Equal(core.Fingerprint(firstAccess), first.AccessFingerprint)
+	s.Equal(core.Fingerprint(firstRefresh), first.RefreshFingerprint)
+	s.Empty(first.PreviousAccessFingerprint)
+	s.Equal(core.Fingerprint(secondAccess), second.AccessFingerprint)
+	s.Equal(core.Fingerprint(firstAccess), second.PreviousAccessFingerprint)
+	s.Equal(core.Fingerprint(firstRefresh), second.PreviousRefreshFingerprint)
+	s.True(second.Rotated)
+	s.Require().NotNil(second.AccessExpiresAt)
+	s.Require().NotNil(second.RefreshExpiresAt, "the connector's refresh_ttl")
+	s.WithinDuration(time.Now().Add(720*time.Hour), *second.RefreshExpiresAt, time.Minute)
+
+	var line string
+	for l := range strings.Lines(s.logged.String()) {
+		if strings.Contains(l, "event=grant_created") && strings.Contains(l, " connection="+created.ID+" ") &&
+			strings.Contains(l, " access_fingerprint="+core.Fingerprint(secondAccess)) {
+			line = l
+		}
+	}
+	s.Require().NotEmpty(line, "one INFO line for the second credentials write")
+	s.Contains(line, "level=INFO")
+	s.Contains(line, " previous_access_fingerprint="+core.Fingerprint(firstAccess))
+	s.Contains(line, " refresh_fingerprint="+core.Fingerprint(secondRefresh))
+	s.Contains(line, " rotated=true")
+	for _, token := range []string{firstAccess, firstRefresh, secondAccess, secondRefresh} {
+		s.NotContains(s.logged.String(), token)
+	}
 }
 
 func (s *ConnectionToolsSuite) TestValidateListsTheToolsAndToolsReadsThemBack() {

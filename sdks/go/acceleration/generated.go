@@ -3749,6 +3749,30 @@ type Connector struct {
 // ConnectorAuditAction grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection.
 type ConnectorAuditAction string
 
+// ConnectorAuditCredential The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
+type ConnectorAuditCredential struct {
+	// AccessExpiresAt When the access token expires. Absent when the provider did not say.
+	AccessExpiresAt *time.Time `json:"access_expires_at,omitempty"`
+
+	// AccessFingerprint The access token the grant left, by fingerprint.
+	AccessFingerprint *string `json:"access_fingerprint,omitempty"`
+
+	// PreviousAccessFingerprint The access token before it, by fingerprint. Absent for a first grant.
+	PreviousAccessFingerprint *string `json:"previous_access_fingerprint,omitempty"`
+
+	// PreviousRefreshFingerprint The refresh token before it, by fingerprint. Absent for a first grant, or when there was none.
+	PreviousRefreshFingerprint *string `json:"previous_refresh_fingerprint,omitempty"`
+
+	// RefreshExpiresAt When the refresh token expires, by the connector's refresh_ttl. Absent when it does not say.
+	RefreshExpiresAt *time.Time `json:"refresh_expires_at,omitempty"`
+
+	// RefreshFingerprint The refresh token the grant left, by fingerprint. Absent when there is none.
+	RefreshFingerprint *string `json:"refresh_fingerprint,omitempty"`
+
+	// Rotated The refresh token the connection already had was replaced, as a provider that rotates refresh tokens does on every refresh.
+	Rotated bool `json:"rotated"`
+}
+
 // ConnectorAuditEvent One grant a connection got, renewed or lost, one export of its access credential, or one direct call sent through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
 type ConnectorAuditEvent struct {
 	// Action grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection.
@@ -3761,7 +3785,10 @@ type ConnectorAuditEvent struct {
 	ConnectionId string    `json:"connection_id"`
 	ConnectorId  string    `json:"connector_id"`
 	CreatedAt    time.Time `json:"created_at"`
-	Id           string    `json:"id"`
+
+	// Credential The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
+	Credential *ConnectorAuditCredential `json:"credential,omitempty"`
+	Id         string                    `json:"id"`
 
 	// LatencyMs How long a proxy_call took until the provider's answer, in milliseconds. Absent for a grant.
 	LatencyMs *int64 `json:"latency_ms,omitempty"`

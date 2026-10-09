@@ -233,6 +233,9 @@ type Outcome struct {
 	// Claims is, for ScopeRequired, a claims challenge to pass back on consent.
 	Claims     string
 	RetryAfter time.Duration
+	// Code is the error code the provider answered with, such as invalid_grant (RFC 6749
+	// section 5.2), for a log line; empty when it named none. Never its description or body.
+	Code string
 }
 
 // OutcomeError is a failed AccessCredential or Revoke with the outcome it was classified as, so the

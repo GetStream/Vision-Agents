@@ -90,6 +90,9 @@ type Config struct {
 	Schemes map[string]core.Scheme
 	// Now is the clock the cache is judged by; nil is time.Now.
 	Now func() time.Time
+	// Logger gets one line for each credential event, its tokens named only by
+	// core.Fingerprint; nil is slog.Default(), which cmd/router sets to its own.
+	Logger *slog.Logger
 }
 
 // Resolver implements core.Resolver.
@@ -127,9 +130,13 @@ func New(cfg Config) (*Resolver, error) {
 	if now == nil {
 		now = time.Now
 	}
-	// The router's own logger: cmd/router sets it as the default before it builds this.
+	logger := cfg.Logger
+	if logger == nil {
+		// The router's own logger: cmd/router sets it as the default before it builds this.
+		logger = slog.Default()
+	}
 	return &Resolver{store: cfg.Store, credentials: cfg.Credentials, schemes: cfg.Schemes, now: now,
-		logger: slog.Default(), cache: map[core.ConnectionRef]entry{}}, nil
+		logger: logger, cache: map[core.ConnectionRef]entry{}}, nil
 }
 
 // Resolve returns an access credential for ref.
@@ -197,19 +204,21 @@ func (r *Resolver) Invalidate(ctx context.Context, ref core.ConnectionRef, rejec
 		return nil
 	}
 	moved, revision := false, 0
+	var ended core.CredentialChange
 	err := r.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		if state.Status != store.ConnectionConnected || state.Revision != rejected.Revision {
 			return false, nil
 		}
 		state.Status, state.LastError = store.ConnectionNeedsReauthorization, lastError
 		moved, revision = true, state.Revision
+		ended.Current = core.FingerprintsOf(r.schemes, state.Credentials)
 		return true, nil
 	})
 	if err != nil {
 		return stack.Wrap(err)
 	}
 	if moved {
-		r.audit(ctx, ref, nil, store.AuditGrantRevoked, string(why.Kind), revision)
+		r.audit(ctx, ref, nil, store.AuditGrantRevoked, string(why.Kind), revision, ended)
 	}
 	return nil
 }
@@ -236,6 +245,7 @@ func (r *Resolver) Revoke(ctx context.Context, ref core.ConnectionRef, why core.
 	}
 	r.drop(ref)
 	moved, revision := false, 0
+	var ended core.CredentialChange
 	err := r.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		if state.Status != store.ConnectionConnected {
 			return false, nil
@@ -245,13 +255,14 @@ func (r *Resolver) Revoke(ctx context.Context, ref core.ConnectionRef, why core.
 		}
 		state.Status, state.LastError = store.ConnectionNeedsReauthorization, lastError
 		moved, revision = true, state.Revision
+		ended.Current = core.FingerprintsOf(r.schemes, state.Credentials)
 		return true, nil
 	})
 	if err != nil {
 		return stack.Wrap(err)
 	}
 	if moved {
-		r.audit(ctx, ref, nil, store.AuditGrantRevoked, string(why), revision)
+		r.audit(ctx, ref, nil, store.AuditGrantRevoked, string(why), revision, ended)
 	}
 	return nil
 }
@@ -273,8 +284,10 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 		cache      bool
 		before     core.CredentialState
 		committed  *core.CredentialState
-		// ended is the outcome a renewal failed with, which names why a grant ended.
+		// ended is the outcome a renewal failed with, which names why a grant ended, and code
+		// the provider's own word for it.
 		ended core.OutcomeKind
+		code  string
 	)
 	err := r.credentials.Update(ctx, ref, func(state *core.CredentialState, checkpoint func() error) (bool, error) {
 		committed = state
@@ -331,7 +344,7 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 			credential, cache = got, true
 		case errors.As(err, &outcome):
 			state.Status, state.LastError, failure = statusAfter(outcome, err)
-			ended = outcome.Outcome.Kind
+			ended, code = outcome.Outcome.Kind, outcome.Outcome.Code
 			// A renewal that failed before the old access credential expired hands that one
 			// back beside the error, for this call only (core.Scheme.Retrieve).
 			if got.Scheme != "" {
@@ -347,14 +360,27 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 	if err != nil {
 		return core.AccessCredential{}, stack.Wrap(err)
 	}
+	// A renewal the provider refused, or whose answer was lost, is logged whatever it left: the
+	// tokens it was asked to renew, and what the provider said.
+	if ended != "" {
+		held := core.FingerprintsOf(r.schemes, before.Credentials)
+		r.logger.Info("connector credential event", append([]any{"event", "refresh_failed",
+			"connection", ref.ConnectionID, "connector", connection.ConnectorID, "revision", committed.Revision,
+			"outcome", ended, "provider_code", code, "status", committed.Status},
+			core.CredentialChange{Previous: held, Current: held}.LogAttrs()...)...)
+	}
 	// A connection that was connected when fn ran and is committed otherwise lost its grant
 	// here; one at a new revision had its stored credentials renewed. A Retrieve that renewed
 	// nothing, the common case, writes no row.
 	switch {
 	case before.Status == store.ConnectionConnected && committed.Status != store.ConnectionConnected:
-		r.audit(ctx, ref, &connection, store.AuditGrantRevoked, string(ended), committed.Revision)
+		r.audit(ctx, ref, &connection, store.AuditGrantRevoked, string(ended), committed.Revision,
+			core.CredentialChange{Current: core.FingerprintsOf(r.schemes, before.Credentials)})
 	case before.Status == store.ConnectionConnected && committed.Revision != before.Revision:
-		r.audit(ctx, ref, &connection, store.AuditGrantRefreshed, "", committed.Revision)
+		r.audit(ctx, ref, &connection, store.AuditGrantRefreshed, "", committed.Revision, core.CredentialChange{
+			Previous: core.FingerprintsOf(r.schemes, before.Credentials),
+			Current:  core.FingerprintsOf(r.schemes, committed.Credentials),
+		})
 	}
 	if failure != nil {
 		return core.AccessCredential{}, failure
@@ -370,10 +396,11 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 }
 
 // audit records one change to a connection's grant, with the correlation ids ctx carries
-// (core.CorrelationOf). It runs after the change committed and detached from ctx, so a caller
-// that gave up still leaves its row; connection is read when nil. A row that cannot be
-// written is logged, and the change stands: the credential is what the caller needs.
-func (r *Resolver) audit(ctx context.Context, ref core.ConnectionRef, connection *store.ConnectorConnection, action, reason string, revision int) {
+// (core.CorrelationOf) and the tokens change names, and logs it as one line. It runs after the
+// change committed and detached from ctx, so a caller that gave up still leaves its row;
+// connection is read when nil. A row that cannot be written is logged, and the change stands:
+// the credential is what the caller needs.
+func (r *Resolver) audit(ctx context.Context, ref core.ConnectionRef, connection *store.ConnectorConnection, action, reason string, revision int, change core.CredentialChange) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditWriteTimeout)
 	defer cancel()
 	if connection == nil {
@@ -384,12 +411,19 @@ func (r *Resolver) audit(ctx context.Context, ref core.ConnectionRef, connection
 		}
 		connection = &read
 	}
+	r.logger.Info("connector credential event", append([]any{"event", action,
+		"connection", ref.ConnectionID, "connector", connection.ConnectorID, "revision", revision, "reason", reason},
+		change.LogAttrs()...)...)
 	correlation := core.CorrelationOf(ctx)
-	err := r.store.RecordConnectorAudit(ctx, &store.ConnectorAuditEvent{
+	event := &store.ConnectorAuditEvent{
 		CustomerID: ref.CustomerID, ConnectionID: ref.ConnectionID, ConnectorID: connection.ConnectorID,
 		OwnerType: connection.OwnerType, Action: action, Reason: reason, Revision: revision,
 		RequestID: correlation.RequestID, SessionID: correlation.SessionID,
-	})
+	}
+	if change != (core.CredentialChange{}) {
+		event.Credential = store.AuditCredential(change)
+	}
+	err := r.store.RecordConnectorAudit(ctx, event)
 	if err != nil {
 		r.logger.Error("could not record a connector audit row", "connection", ref.ConnectionID, "action", action, "error", err)
 	}

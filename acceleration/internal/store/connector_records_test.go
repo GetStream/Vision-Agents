@@ -4,6 +4,8 @@ package store
 
 import (
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 )
 
 // invocation records one call of connection's, started at offset past s.base.
@@ -97,6 +99,38 @@ func (s *StoreSuite) TestTheAuditListsTheCustomersRowsNewestFirstWholeOrForOneCo
 	s.Require().Len(rest, 1)
 	s.Equal(AuditGrantCreated, rest[0].Action)
 	s.Equal(AuditReasonConsent, rest[0].Reason)
+}
+
+// TestAnAuditRowKeepsTheFingerprintsOfItsTokens: a grant row's fingerprints come back with
+// it, and a row written without them comes back without.
+func (s *StoreSuite) TestAnAuditRowKeepsTheFingerprintsOfItsTokens() {
+	connection := s.connection("acme-app", nil)
+	expires := s.base.Add(12 * time.Hour)
+	refreshed := &ConnectorAuditEvent{CustomerID: "acme-app", ConnectionID: connection.ID, ConnectorID: "acme",
+		OwnerType: OwnerApp, Action: AuditGrantRefreshed, Revision: 3,
+		Credential: AuditCredential(core.CredentialChange{
+			Previous: core.CredentialFingerprints{Access: "0a0a0a0a", Refresh: "1b1b1b1b"},
+			Current:  core.CredentialFingerprints{Access: "2c2c2c2c", Refresh: "3d3d3d3d", AccessExpiresAt: expires},
+		})}
+	s.Require().NoError(s.store.RecordConnectorAudit(s.ctx, refreshed))
+	s.Require().NoError(s.store.RecordConnectorAudit(s.ctx, &ConnectorAuditEvent{CustomerID: "acme-app",
+		ConnectionID: connection.ID, ConnectorID: "acme", OwnerType: OwnerApp, Action: AuditProxyCall}))
+
+	rows, err := s.store.ConnectorAuditEvents(s.ctx, "acme-app", AuditFilter{ConnectionID: connection.ID})
+
+	s.Require().NoError(err)
+	s.Require().Len(rows, 2)
+	s.Nil(rows[0].Credential, "the proxy call names no token")
+	got := rows[1].Credential
+	s.Require().NotNil(got)
+	s.Equal(rows[1].ID, got.AuditID)
+	s.Equal("0a0a0a0a", got.PreviousAccessFingerprint)
+	s.Equal("2c2c2c2c", got.AccessFingerprint)
+	s.Equal("1b1b1b1b", got.PreviousRefreshFingerprint)
+	s.Equal("3d3d3d3d", got.RefreshFingerprint)
+	s.True(got.Rotated)
+	s.True(expires.Equal(got.AccessExpiresAt))
+	s.True(got.RefreshExpiresAt.IsZero(), "an expiry the provider did not give stays unknown")
 }
 
 func (s *StoreSuite) TestAnAuditRowWithAnUnknownActionIsRefused() {

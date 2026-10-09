@@ -2238,6 +2238,35 @@ components:
         - token_export
         - proxy_call
       type: string
+    ConnectorAuditCredential:
+      description: 'The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the token''s SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.'
+      properties:
+        access_expires_at:
+          description: When the access token expires. Absent when the provider did not say.
+          format: date-time
+          type: string
+        access_fingerprint:
+          description: The access token the grant left, by fingerprint.
+          type: string
+        previous_access_fingerprint:
+          description: The access token before it, by fingerprint. Absent for a first grant.
+          type: string
+        previous_refresh_fingerprint:
+          description: The refresh token before it, by fingerprint. Absent for a first grant, or when there was none.
+          type: string
+        refresh_expires_at:
+          description: When the refresh token expires, by the connector's refresh_ttl. Absent when it does not say.
+          format: date-time
+          type: string
+        refresh_fingerprint:
+          description: The refresh token the grant left, by fingerprint. Absent when there is none.
+          type: string
+        rotated:
+          description: The refresh token the connection already had was replaced, as a provider that rotates refresh tokens does on every refresh.
+          type: boolean
+      required:
+        - rotated
+      type: object
     ConnectorAuditEvent:
       description: One grant a connection got, renewed or lost, one export of its access credential, or one direct call sent through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
       properties:
@@ -2254,6 +2283,9 @@ components:
         created_at:
           format: date-time
           type: string
+        credential:
+          $ref: '#/components/schemas/ConnectorAuditCredential'
+          description: The tokens a grant row left, by fingerprint. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens.
         id:
           type: string
         latency_ms:
