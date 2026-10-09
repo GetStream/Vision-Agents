@@ -52,7 +52,7 @@ func (d Digest) HTML(title string, card []byte, runs []LabeledRun) (string, erro
 				Scenario: call.ScenarioID,
 				Trial:    call.Trial,
 				Outcome:  callOutcome(call),
-				Failed:   strings.Join(callFailures(call), "; "),
+				Failed:   strings.Join(CallFailures(call), "; "),
 				Reply:    callReplyP50(call),
 				First:    callFirstResponse(call),
 				Tools:    call.Metrics.ToolCount,
@@ -74,9 +74,9 @@ func interval(cell DigestCell, unit string) string {
 	return seconds(cell.Lo) + "–" + seconds(cell.Hi)
 }
 
-// callFailures is what failed a call, most telling first: the deterministic gates, then
+// CallFailures is what failed a call, most telling first: the deterministic gates, then
 // the judge's policy calls, then why a trial was not counted at all.
-func callFailures(call CallResult) []string {
+func CallFailures(call CallResult) []string {
 	m := call.Metrics
 	var out []string
 	out = append(out, m.EndStateFail...)

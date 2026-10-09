@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -57,6 +58,9 @@ type Config struct {
 	SkipSTT           bool
 	SkipJudge         bool
 	Logger            *slog.Logger
+	// Progress gets one line per call as it starts and as it finishes, prefixed "voicebench: ",
+	// so a long run can be followed without its logs. Nil prints nothing.
+	Progress io.Writer
 }
 
 // Run executes a pack and writes a report.
@@ -168,8 +172,10 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 	}
 
 	var calls []report.CallResult
+	total := len(scenarios) * cfg.K
 	for _, sc := range scenarios {
 		for trial := 1; trial <= cfg.K; trial++ {
+			progress(cfg.Progress, len(calls)+1, total, sc.ID, trial, cfg.K, "started")
 			res, err := runOnce(ctx, cfg, worldSrv, sc, trial, out)
 			if err != nil {
 				res.Error = err.Error()
@@ -192,6 +198,7 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 				res.InvalidReason = append(res.InvalidReason, persistErr.Error())
 			}
 			calls = append(calls, res)
+			progress(cfg.Progress, len(calls), total, sc.ID, trial, cfg.K, callProgress(res))
 		}
 	}
 	sum := report.BuildSummary(cfg.System, runID, cfg.K, calls)
@@ -412,4 +419,37 @@ func randomToken() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// progress writes one line about the call'th of total, naming the trial only when there are
+// several of each scenario.
+func progress(w io.Writer, call, total int, id string, trial, k int, what string) {
+	if w == nil {
+		return
+	}
+	if k > 1 {
+		id = fmt.Sprintf("%s #%d", id, trial)
+	}
+	fmt.Fprintf(w, "voicebench: [%d/%d] %s: %s\n", call, total, id, what)
+}
+
+// callProgress is how a finished call reads in a progress line: its outcome, its reply time
+// and tools, and what failed it.
+func callProgress(res report.CallResult) string {
+	parts := []string{res.Outcome}
+	if res.Metrics.V2VP50 > 0 {
+		parts = append(parts, fmt.Sprintf("reply P50 %.2f s", float64(res.Metrics.V2VP50)/1000))
+	}
+	tools := fmt.Sprintf("%d tools", res.Metrics.ToolCount)
+	if res.Metrics.ToolCount == 1 {
+		tools = "1 tool"
+	}
+	parts = append(parts, tools)
+	out := strings.Join(parts, " · ")
+	if res.Outcome != report.OutcomePass {
+		if why := report.CallFailures(res); len(why) > 0 {
+			out += " — " + why[0]
+		}
+	}
+	return out
 }
