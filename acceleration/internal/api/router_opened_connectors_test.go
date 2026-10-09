@@ -289,9 +289,9 @@ func (s *RouterOpenedConnectorsSuite) subscribed(connector string, grant map[str
 		"connectors": binding(connector, grant),
 	}
 	if userID == nil {
-		request["agent_plugins"] = []map[string]any{{"name": "sentry"}}
+		request["plugins"] = []map[string]any{{"name": "sentry", "user": false}}
 	} else {
-		request["user_plugins"] = []map[string]any{{"name": "sentry"}}
+		request["plugins"] = []map[string]any{{"name": "sentry", "user": true}}
 	}
 	var config AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", request, &config))
