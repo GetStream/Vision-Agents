@@ -44,7 +44,9 @@ const defaultTasks = 3
 
 // Options configures a Harness.
 type Options struct {
-	// Text selects skill delegation for written requests instead of speech repair.
+	// Text says the conversation is held in writing: skills are offered for written
+	// requests rather than speech repair, and the model is told its reply is read rather
+	// than heard, both when it hands a result over and before it calls a tool.
 	Text bool
 	// Model is the fast voice model. The harness holds it because a turn goes to the
 	// harness first and it is the harness that decides what to ask.
@@ -801,8 +803,12 @@ func (h *Harness) instructions(turn Turn, working []string) string {
 		}
 	}
 	// A reply carrying a colleague's question is offered no tools, so it is not told how to
-	// use them either.
-	if use := h.options.Tools.Prompt(); !h.asking && use != "" {
+	// use them either. Somebody reading needs no pause filled before a call.
+	use := h.options.Tools.Prompt()
+	if h.options.Text {
+		use = h.options.Tools.TextPrompt()
+	}
+	if !h.asking && use != "" {
 		parts = append(parts, use)
 	}
 	// Said on every turn rather than only those handing something over, so the

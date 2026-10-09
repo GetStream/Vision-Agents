@@ -1781,6 +1781,11 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
   gone before the last one ran. After a result the reply model now calls the tools the request
   still needs straight away, without another hold phrase, and together when they do not need
   each other.
+- An agent answering in writing no longer writes a line before each tool call. The tool
+  policy asked for a hold phrase before every call, which fills a silence on a call but stays
+  on the page in a chat, so a chain of lookups opened its answer with a run of near-identical
+  lines. A text session is now told to call its tools without announcing them; a voice
+  session is told what it was before.
 - A phone vendor's own error no longer reaches the client. The `/v1/phone/*` endpoints
   answered a Twilio, Telnyx, Bandwidth or Sinch failure with `400 invalid_request` and the
   vendor's full text, which held the vendor account id. The router now logs that text and
