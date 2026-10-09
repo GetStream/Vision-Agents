@@ -88,3 +88,13 @@ func TestASkipForOurOwnReasonKeepsItsWords(t *testing.T) {
 
 	require.Equal(t, "cannot search by region", skipReason(slog.New(slog.DiscardHandler), skip))
 }
+
+func TestAVendorErrorSayingNotANumberIsNotTakenForANumberWeDoNotHold(t *testing.T) {
+	vendors := stack.Wrap(&phone.VendorError{Vendor: "twilio", Path: "/2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		Status: http.StatusNotFound, Message: "+15125551234 is not a number on this account"})
+	ours := stack.Wrap(errors.New("phone: +15125551234 is not a number you hold"))
+
+	require.False(t, isNumberNotHeld(vendors))
+	require.True(t, isNumberNotHeld(ours))
+	require.False(t, isNumberNotHeld(nil))
+}

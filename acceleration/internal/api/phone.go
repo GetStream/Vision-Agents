@@ -233,7 +233,7 @@ func (s *Server) releasePhoneNumber(ctx context.Context, request *releasePhoneNu
 	}
 
 	err := s.phone.Release(ctx, customerID, request.E164)
-	if err != nil && strings.Contains(err.Error(), "is not a number") {
+	if isNumberNotHeld(err) {
 		return nil, notFound(err.Error())
 	}
 	if err != nil {
@@ -266,7 +266,7 @@ func (s *Server) attachPhoneNumber(ctx context.Context, request *attachPhoneNumb
 	}
 
 	attached, err := s.phone.Attach(ctx, attachment)
-	if err != nil && strings.Contains(err.Error(), "is not a number") {
+	if isNumberNotHeld(err) {
 		return nil, notFound(err.Error())
 	}
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
@@ -330,7 +330,7 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 	if errors.Is(err, dlc.ErrRefused) {
 		return nil, forbidden(err.Error())
 	}
-	if err != nil && strings.Contains(err.Error(), "is not a number") {
+	if isNumberNotHeld(err) {
 		return nil, notFound(err.Error())
 	}
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
@@ -409,7 +409,7 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 	transfer.StreamApp = app
 
 	placed, err := s.phone.Transfer(ctx, transfer)
-	if err != nil && strings.Contains(err.Error(), "is not a number") {
+	if isNumberNotHeld(err) {
 		return nil, notFound(err.Error())
 	}
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
@@ -477,6 +477,18 @@ func phoneFailure(logger *slog.Logger, err error) error {
 		return errPhoneVendorFailed
 	}
 	return invalidRequest(err.Error())
+}
+
+// isNumberNotHeld is the store's answer for a number the customer does not hold. A vendor's
+// error is never one, whatever its words, because those are not ours to show.
+func isNumberNotHeld(err error) bool {
+	if err == nil {
+		return false
+	}
+	if _, vendor := errors.AsType[*phone.VendorError](err); vendor {
+		return false
+	}
+	return strings.Contains(err.Error(), "is not a number")
 }
 
 // skipReason is why a vendor is missing from a search, in words a client may see.
