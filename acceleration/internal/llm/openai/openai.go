@@ -9,6 +9,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -601,6 +602,14 @@ func messageText(message llm.Message) string {
 }
 
 // tools renders the tools a request offers.
+//
+// A schema with an optional property, at any depth, is sent with strict false. Without it, the
+// Responses API turns the schema into strict mode by marking every property required, so the
+// model has to fill optional ones (an empty thread_ts that Slack refuses). "If you omit strict,
+// ... Responses requests will attempt to normalize your schema into strict mode when possible",
+// and strict mode needs "All fields in properties must be marked as required":
+// https://developers.openai.com/api/docs/guides/function-calling. A schema whose properties are
+// all required is sent as before, without strict: that normalization loses nothing from it.
 func tools(offered []llm.Tool) []responses.ToolUnionParam {
 	rendered := make([]responses.ToolUnionParam, 0, len(offered))
 	for _, tool := range offered {
@@ -610,10 +619,61 @@ func tools(offered []llm.Tool) []responses.ToolUnionParam {
 		}
 		if len(tool.Parameters) > 0 {
 			function.Parameters = tool.Parameters
+			if hasOptional(tool.Parameters) {
+				function.Strict = param.NewOpt(false)
+			}
 		}
 		rendered = append(rendered, responses.ToolUnionParam{OfFunction: function})
 	}
 	return rendered
+}
+
+// hasOptional reports whether a schema, or any schema inside it, has a property its required
+// list leaves out. The schema goes through JSON first so a Go literal's []string reads like a
+// decoded []any. It looks at every nested value, not only properties and items, so a word
+// that is not a schema can count too; that costs only OpenAI's strict normalization.
+func hasOptional(schema map[string]any) bool {
+	raw, err := json.Marshal(schema)
+	if err != nil {
+		return true
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return true
+	}
+	return optionalIn(decoded)
+}
+
+func optionalIn(node any) bool {
+	switch value := node.(type) {
+	case map[string]any:
+		if properties, ok := value["properties"].(map[string]any); ok {
+			required := map[string]bool{}
+			names, _ := value["required"].([]any)
+			for _, name := range names {
+				if name, ok := name.(string); ok {
+					required[name] = true
+				}
+			}
+			for name := range properties {
+				if !required[name] {
+					return true
+				}
+			}
+		}
+		for _, child := range value {
+			if optionalIn(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range value {
+			if optionalIn(child) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // cacheOptions renders the request's cache policy, returning nil when it asked for nothing
