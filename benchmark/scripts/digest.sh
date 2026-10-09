@@ -43,18 +43,36 @@ if [[ -n "${VOICEBENCH_TARGET_URL:-}" ]]; then
   ours+=(--target-url "$VOICEBENCH_TARGET_URL")
 fi
 
+# run_logged runs one voicebench run with its whole output in the named log, showing only
+# its per-call progress lines as they happen. On GitHub Actions the whole log follows in a
+# collapsed group, so it can be read without downloading the artifact.
+run_logged() {
+  local name="$1" log="$2"
+  shift 2
+  "$@" 2>&1 | tee "$log" | grep --line-buffered '^voicebench: \['
+  local status="${PIPESTATUS[0]}"
+  if [[ "$status" != 0 ]]; then
+    echo "   failed, see $log"
+  fi
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "::group::$name: full log"
+    cat "$log"
+    echo "::endgroup::"
+  fi
+}
+
 export CGO_ENABLED=1
 for pack in $packs; do
   echo "== $pack: accelerated"
-  go run -tags webrtc ./cmd/voicebench run --pack "$pack" "--$scenario_set" --k "$k" "${ours[@]}" \
-    --network-profile "$profile" --out "$out/$pack-accelerated" > "$out/$pack-accelerated.log" 2>&1 ||
-    echo "   failed, see $out/$pack-accelerated.log"
+  run_logged "$pack: accelerated" "$out/$pack-accelerated.log" \
+    go run -tags webrtc ./cmd/voicebench run --pack "$pack" "--$scenario_set" --k "$k" "${ours[@]}" \
+    --network-profile "$profile" --out "$out/$pack-accelerated"
   for arm in $arms; do
     echo "== $pack: livekit-$arm"
-    VOICEBENCH_LIVEKIT_PIPELINE="$arm" go run -tags webrtc ./cmd/voicebench run --pack "$pack" "--$scenario_set" --k "$k" \
+    VOICEBENCH_LIVEKIT_PIPELINE="$arm" run_logged "$pack: livekit-$arm" "$out/$pack-livekit-$arm.log" \
+      go run -tags webrtc ./cmd/voicebench run --pack "$pack" "--$scenario_set" --k "$k" \
       --target livekit --spawn --livekit-agent "$livekit_agent" --system "livekit-$arm" --network-profile "$profile" \
-      --out "$out/$pack-livekit-$arm" > "$out/$pack-livekit-$arm.log" 2>&1 ||
-      echo "   failed, see $out/$pack-livekit-$arm.log"
+      --out "$out/$pack-livekit-$arm"
   done
 done
 

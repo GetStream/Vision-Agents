@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GetStream/Vision-Agents/benchmark/internal/report"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 )
@@ -186,5 +187,24 @@ func findTestRoot(t *testing.T) string {
 			t.Fatal("scenarios not found")
 		}
 		dir = parent
+	}
+}
+
+func TestProgressSaysWhichCallAndHowItWent(t *testing.T) {
+	var b strings.Builder
+	progress(&b, 3, 8, "restaurant.selectivity", 1, 1, "started")
+	failed := report.CallResult{Outcome: report.OutcomeFail}
+	failed.Metrics.V2VP50 = 2280
+	failed.Metrics.ToolCount = 1
+	failed.Metrics.ExpectedToolFail = []string{"create_reservation not called"}
+	progress(&b, 3, 8, "restaurant.selectivity", 1, 1, callProgress(failed))
+	progress(&b, 4, 8, "restaurant.golden", 2, 3, callProgress(report.CallResult{Outcome: report.OutcomePass}))
+	progress(nil, 1, 1, "ignored", 1, 1, "started")
+
+	want := "voicebench: [3/8] restaurant.selectivity: started\n" +
+		"voicebench: [3/8] restaurant.selectivity: fail · reply P50 2.28 s · 1 tool — create_reservation not called\n" +
+		"voicebench: [4/8] restaurant.golden #2: pass · 0 tools\n"
+	if b.String() != want {
+		t.Fatalf("progress:\n%s\nwant:\n%s", b.String(), want)
 	}
 }

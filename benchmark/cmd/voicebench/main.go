@@ -153,6 +153,7 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 		Frozen:            *frozen,
 		Short:             *short,
 		Logger:            slog.Default(),
+		Progress:          os.Stderr,
 	})
 	if len(sum.Calls) > 0 {
 		report.FprintTable(os.Stdout, sum)
