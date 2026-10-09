@@ -66,14 +66,15 @@ const codeScopeRequired = "connector_scope_required"
 // codeCredentialRejected is the code of a validate whose connection holds a token or key the
 // provider no longer takes (a core.Static scheme: bearer, api_key). New (AI-990): a reconnect
 // cannot help such a connection, only new credentials, so a program needs to tell it apart
-// from an OAuth grant that needs a reconnect.
+// from an OAuth grant that needs a reconnect. It is also the code of one that reads a revision
+// marked broken (AI-1002): saving its credentials again moves it, the same remedy, so one code.
 const codeCredentialRejected = "connector_credential_rejected"
 
 func (ConnectionValidationStatus) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "ConnectionValidationStatus",
 		"connected: the credential works and the tools were listed. pending: no credentials yet. "+
 			"needs_reauthorization: the provider no longer takes the credential, so only a reconnect "+
-			"helps, or, with code connector_credential_rejected, new credentials. needs_scopes: the tools were listed, and the grant lacks scopes they need; "+
+			"helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; "+
 			"missing_scopes names them, and a consent that asks for them helps. failed: the provider "+
 			"could not be reached or listed nothing usable; error says why.",
 		validationConnected, validationPending, validationNeedsReauthorization, validationNeedsScopes, validationFailed)
@@ -100,7 +101,7 @@ type validateConnectionRequest struct {
 type ConnectionValidation struct {
 	ConnectionID  string                     `json:"connection_id"`
 	Status        ConnectionValidationStatus `json:"status"`
-	Code          string                     `json:"code,omitempty" doc:"What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, which only new credentials (PUT .../credentials) fix. More may be added."`
+	Code          string                     `json:"code,omitempty" doc:"What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added."`
 	MissingScopes []string                   `json:"missing_scopes,omitempty" doc:"With needs_scopes: the scopes the checked tools need that the grant lacks, sorted."`
 	Error         string                     `json:"error,omitempty" doc:"Why the status is not connected, for a person to read."`
 	ToolsDigest   string                     `json:"tools_digest,omitempty" doc:"The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them."`
@@ -161,6 +162,10 @@ func (s *Server) registerConnectionTools(api huma.API) {
 			"must be the connection's revision as last read; a connection that moved past it is a " +
 			"409. The values are never shown again. Who may set them is who may read the " +
 			"connection.\n\n" +
+			"A bearer or api_key connection given its token or key again moves to its connector's " +
+			"latest revision, as a consent moves an OAuth one, when that revision takes the " +
+			"connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says " +
+			"why when that one is marked broken.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
 		Responses: map[string]*huma.Response{"200": {Description: "The connection, connected"}},
@@ -218,9 +223,43 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 	if !found {
 		return nil, invalidRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has", connection.AuthScheme))
 	}
-	manifest, err := s.connectionManifest(ctx, connection, connection.DefinitionRevision)
-	if err != nil {
-		return nil, err
+	// A token or key saved again is the static scheme's reconnect: no consent ever runs for one,
+	// so this write is what moves it to the connector's latest revision, off one marked broken
+	// since (AI-1002), as a consent moves an OAuth connection (begin, completeConsent). An
+	// imported OAuth grant stays on the revision it was made on.
+	revision := connection.DefinitionRevision
+	static := core.IsStatic(s.connectors.Schemes, connection.AuthScheme)
+	var manifest core.ResolvedManifest
+	moved := false
+	if static {
+		latest, err := s.store.LatestConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID)
+		if err != nil {
+			return nil, err
+		}
+		// The latest revision may no longer take the connection's scheme or inputs, which no
+		// write changes after create. A connection on a revision that still works keeps it, as
+		// before AI-1002; one on a broken revision has none it can read.
+		latestManifest, unfit := definitionManifest(latest, connection)
+		if unfit == nil {
+			revision, manifest, moved = latest.Revision, latestManifest, true
+		} else {
+			reason, broken, err := s.store.BrokenConnectorRevision(ctx, connection.ConnectorID, connection.DefinitionRevision)
+			if err != nil {
+				return nil, err
+			}
+			if broken {
+				return nil, invalidRequest(fmt.Sprintf("revision %d of %s is marked broken (%s), and its latest "+
+					"revision %d does not take this connection (%s); create a new connection",
+					connection.DefinitionRevision, connection.ConnectorID, reason, latest.Revision, unfit))
+			}
+		}
+	}
+	if !moved {
+		var err error
+		manifest, err = s.connectionManifest(ctx, connection, revision)
+		if err != nil {
+			return nil, err
+		}
 	}
 	values := sent.Values
 	if values == nil {
@@ -259,6 +298,12 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 		// The resolver sets it the first time it retrieves an access credential, as after a
 		// consent (authorizations.go).
 		state.ExpiresAt = time.Time{}
+		// A move to another revision begins a new grant, as a reconnect's does: the tools pinned
+		// for the old one (store.ConnectorToolPin) are pinned again on the next session.
+		if static && state.DefinitionRevision != revision {
+			state.DefinitionRevision = revision
+			state.ConnectedAt = time.Now().UTC()
+		}
 		return true, nil
 	})
 	if errors.Is(err, store.ErrNoConnectorConnection) {
@@ -405,6 +450,22 @@ func (s *Server) validationAfter(ctx context.Context, connection store.Connector
 	}
 	if err != nil {
 		return nil, err
+	}
+	// The resolver gives a connection on a revision marked broken no credential and leaves it
+	// connected. A token or key is moved off it by saving it again (putConnectionCredentials),
+	// never by a consent, so the validate says that, with the code of a rejected one: the
+	// remedy a program branches on is the same (AI-1002). An OAuth connection fails as before.
+	if now.Status == store.ConnectionConnected && core.IsStatic(s.connectors.Schemes, now.AuthScheme) {
+		reason, broken, err := s.store.BrokenConnectorRevision(ctx, now.ConnectorID, now.DefinitionRevision)
+		if err != nil {
+			return nil, err
+		}
+		if broken {
+			return &validationResponse{Body: ConnectionValidation{ConnectionID: now.ID, Status: validationNeedsReauthorization,
+				Code: codeCredentialRejected, Error: fmt.Sprintf("Revision %d of %s is marked broken (%s); save the token or key "+
+					"again with PUT /v1/agents/connections/{id}/credentials, which moves the connection to the latest revision",
+					now.DefinitionRevision, now.ConnectorID, reason)}}, nil
+		}
 	}
 	switch now.Status {
 	case store.ConnectionPending:

@@ -32,11 +32,13 @@ class Connection:
         connector_id (str):
         created_at (datetime.datetime):
         definition_revision (int): The connector's revision the connection reads: the one its grant was made on. Every
-            consent runs on the connector's latest revision, and one that connects the connection moves it there; until then
-            it keeps this one.
+            consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a
+            bearer or api_key connection's token or key again (PUT .../credentials) moves it there too, when that revision
+            still takes the connection's scheme and inputs. Until then it keeps this one.
         definition_status (ConnectionDefinitionStatus): current when the connection reads its connector's latest
             revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection
-            is given no credential until a consent connects it again, on the latest revision.
+            is given no credential until it moves to the latest revision, by a consent that connects it again or, for a
+            bearer or api_key connection, by saving its token or key again.
         granted_scopes (list[str] | None):
         id (str):
         inputs (ConnectionInputs): What the connection was created with, the connector's defaults filled in.

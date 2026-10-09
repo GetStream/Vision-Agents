@@ -65,7 +65,9 @@ const (
 	// connection reads a definition revision a later one marked broken.
 	unavailableReauthorize = "needs_reauthorization"
 	// unavailableCredentialRejected: the provider no longer takes the token or key a
-	// core.Static scheme holds (AI-990). Only new credentials help, never a consent.
+	// core.Static scheme holds (AI-990), or the connection that holds one reads a definition
+	// revision a later one marked broken (AI-1002). Only saving its credentials again helps,
+	// never a consent.
 	unavailableCredentialRejected = "credential_rejected"
 	// unavailableNotConnected: the connection has no credential yet, or was disconnected.
 	unavailableNotConnected = "not_connected"
@@ -89,8 +91,8 @@ var unavailableWhy = map[string]string{
 	unavailableConnection:  "there is no such connection that it may use",
 	unavailableProvider:    "the connection is to another connector",
 	unavailableReauthorize: "the provider no longer takes the connection's credential; reconnect it",
-	unavailableCredentialRejected: "the provider rejected the connection's token or key; replace it with " +
-		"PUT /v1/agents/connections/{id}/credentials",
+	unavailableCredentialRejected: "the provider rejected the connection's token or key, or the connector " +
+		"revision it was saved on is marked broken; save it again with PUT /v1/agents/connections/{id}/credentials",
 	unavailableNotConnected: "the connection is not connected",
 	unavailableOpenFailed:   "its tools could not be listed",
 	unavailableTool:         "the provider no longer offers a granted tool with the schema it was granted against",
@@ -291,12 +293,16 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 	}
 	// The resolver gives a connection on a revision marked broken no credential, so it is
 	// one that needs a reconnect: a binding of the caller's own waits for their login, whose
-	// consent runs on the latest revision.
+	// consent runs on the latest revision. A token or key has no consent: saving it again
+	// moves it (AI-1002), so it is left out as a rejected one is.
 	_, broken, err := m.options.Store.BrokenConnectorRevision(ctx, connection.ConnectorID, connection.DefinitionRevision)
 	if err != nil {
 		return "", err
 	}
 	if broken {
+		if core.IsStatic(registry.Schemes, connection.AuthScheme) {
+			return unavailableCredentialRejected, nil
+		}
 		return unavailableReauthorize, nil
 	}
 	manifest, err := definition.Manifest.Resolve(connection.AuthScheme, connection.Inputs, connection.Metadata)

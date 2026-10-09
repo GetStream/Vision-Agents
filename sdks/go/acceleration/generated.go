@@ -3560,10 +3560,10 @@ type Connection struct {
 	// DefinitionBrokenReason Why the connector marked definition_revision broken. Present only when definition_status is broken.
 	DefinitionBrokenReason *string `json:"definition_broken_reason,omitempty"`
 
-	// DefinitionRevision The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there; until then it keeps this one.
+	// DefinitionRevision The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again (PUT .../credentials) moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one.
 	DefinitionRevision *int64 `json:"definition_revision,omitempty"`
 
-	// DefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until a consent connects it again, on the latest revision.
+	// DefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again.
 	DefinitionStatus ConnectionDefinitionStatus `json:"definition_status"`
 
 	// ExpiresAt When the current credential expires. Absent when there is none or it does not.
@@ -3610,7 +3610,7 @@ type ConnectionCredentials struct {
 	Values *map[string]string `json:"values,omitempty"`
 }
 
-// ConnectionDefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until a consent connects it again, on the latest revision.
+// ConnectionDefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again.
 type ConnectionDefinitionStatus string
 
 // ConnectionInvocation One connector tool call a session ran through the connection: the binding, the tool, the shape of its arguments, how long it took and how it failed. No value the call was asked, and nothing it answered, is kept.
@@ -3747,7 +3747,7 @@ type ConnectionValidation struct {
 	// CheckedAt When the tools were listed. Absent until a validate listed them.
 	CheckedAt *time.Time `json:"checked_at,omitempty"`
 
-	// Code What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, which only new credentials (PUT .../credentials) fix. More may be added.
+	// Code What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added.
 	Code         *string `json:"code,omitempty"`
 	ConnectionId string  `json:"connection_id"`
 
@@ -3757,7 +3757,7 @@ type ConnectionValidation struct {
 	// MissingScopes With needs_scopes: the scopes the checked tools need that the grant lacks, sorted.
 	MissingScopes *[]string `json:"missing_scopes,omitempty"`
 
-	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, new credentials. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
 	Status ConnectionValidationStatus `json:"status"`
 
 	// ToolsDigest The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them.
@@ -3770,7 +3770,7 @@ type ConnectionValidationRequest struct {
 	Tools *[]string `json:"tools,omitempty"`
 }
 
-// ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, new credentials. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+// ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
 type ConnectionValidationStatus string
 
 // Connector A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
@@ -8906,6 +8906,8 @@ type ClientInterface interface {
 	//
 	// Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 	//
+	// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -8916,6 +8918,8 @@ type ClientInterface interface {
 	// PutConnectionCredentials Set a connection's credentials
 	//
 	// Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
+	//
+	// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -11900,6 +11904,8 @@ func (c *Client) CreateAuthorization(ctx context.Context, id string, reqEditors 
 //
 // Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 //
+// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -11920,6 +11926,8 @@ func (c *Client) PutConnectionCredentialsWithBody(ctx context.Context, id string
 // PutConnectionCredentials Set a connection's credentials
 //
 // Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
+//
+// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -26205,6 +26213,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 	//
+	// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -26215,6 +26225,8 @@ type ClientWithResponsesInterface interface {
 	// PutConnectionCredentialsWithResponse Set a connection's credentials
 	//
 	// Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
+	//
+	// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -44364,6 +44376,8 @@ func (c *ClientWithResponses) CreateAuthorizationWithResponse(ctx context.Contex
 //
 // Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 //
+// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -44380,6 +44394,8 @@ func (c *ClientWithResponses) PutConnectionCredentialsWithBodyWithResponse(ctx c
 // PutConnectionCredentialsWithResponse Set a connection's credentials
 //
 // Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
+//
+// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
