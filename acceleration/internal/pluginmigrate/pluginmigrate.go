@@ -57,11 +57,15 @@ type Configs interface {
 	AddConnectorBinding(ctx context.Context, customerID, configID string, binding store.ConnectorBinding) (added bool, err error)
 }
 
-// Options are what a run reads and writes through. Every field but Customer and Catalog is
-// required.
+// Options are what a run reads and writes through. Every field but Customer, Plugins and
+// Catalog is required.
 type Options struct {
 	// Customer limits the run to one app's rows. Empty moves every app's.
 	Customer string
+	// Plugins limits the run to these plugins' rows (catalog ids, e.g. slack): their clients,
+	// logins, config entries and events. Empty moves every plugin's. An id the catalog does not
+	// know is an error, so a typo moves nothing instead of everything.
+	Plugins []string
 	// IncludeRotating moves a grant with a refresh token to a connector whose manifest says
 	// refresh tokens rotate (github, linear, slack, calendly), or does not say whether they do
 	// (refresh.rotating nil: sentry, hubspot, shopify, calcom, gong, salesforce). Off, each is
@@ -156,6 +160,11 @@ func Run(ctx context.Context, opts Options, apply bool) (Report, error) {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	for _, id := range opts.Plugins {
+		if _, ok := opts.Catalog(id); !ok {
+			return Report{}, fmt.Errorf("plugin %q is not in the catalog", id)
+		}
+	}
 	m := &migration{opts: opts, apply: apply, planned: map[clientKey]oauth2code.Client{}, moved: map[string]string{}}
 	scheme, err := oauth2code.New(oauth2code.Config{HTTP: opts.HTTP, PublicEndpoint: opts.PublicEndpoint, Clients: m.clients})
 	if err != nil {
@@ -166,10 +175,12 @@ func Run(ctx context.Context, opts Options, apply bool) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
+	clients = slices.DeleteFunc(clients, func(c store.PluginClient) bool { return !m.wants(c.PluginID) })
 	logins, err := opts.Store.EveryPluginConnection(ctx, opts.Customer)
 	if err != nil {
 		return Report{}, err
 	}
+	logins = slices.DeleteFunc(logins, func(l store.PluginConnection) bool { return !m.wants(l.PluginID) })
 	configs, err := opts.Store.AgentConfigsNamingPlugins(ctx, opts.Customer)
 	if err != nil {
 		return Report{}, err
@@ -190,6 +201,9 @@ func Run(ctx context.Context, opts Options, apply bool) (Report, error) {
 	}
 	for _, config := range configs {
 		for _, event := range config.PluginEvents {
+			if !m.wants(event.Plugin) {
+				continue
+			}
 			m.add(Row{Kind: KindEvent, Action: Skipped,
 				Source: fmt.Sprintf("agent_configs %s plugin_events %s/%s", config.ID, event.Plugin, event.Event),
 				Note:   "not moved: T60 subscribes again on the connection, with a secret of its own"})
@@ -222,6 +236,11 @@ type migration struct {
 }
 
 func (m *migration) add(row Row) { m.rows = append(m.rows, row) }
+
+// wants is whether the run moves plugin id's rows: every plugin's when Options.Plugins is empty.
+func (m *migration) wants(id string) bool {
+	return len(m.opts.Plugins) == 0 || slices.Contains(m.opts.Plugins, id)
+}
 
 // clients is the router's client lookup, with the customer clients this run writes first.
 func (m *migration) clients(ctx context.Context, ref core.ConnectionRef, manifest core.ResolvedManifest, registration core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
@@ -555,6 +574,9 @@ func (m *migration) setInAdvance(ctx context.Context, login store.PluginConnecti
 // id: the app's as fixed to the app's moved login, each end user's as session.
 func (m *migration) moveBindings(ctx context.Context, config store.AgentConfig, logins []store.PluginConnection) error {
 	for _, entry := range config.Plugins {
+		if !m.wants(entry.Name) {
+			continue
+		}
 		selection := "fixed"
 		if entry.User {
 			selection = "session"

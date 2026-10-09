@@ -5,7 +5,7 @@
 ## Flow
 
 ```
-Run(opts, apply)                       opts.Customer limits it to one app; empty is every app
+Run(opts, apply)                       opts.Customer limits it to one app, opts.Plugins to these plugin ids (--plugin); empty is every one
   read     agent_plugin_clients, agent_plugin_connections (live), agent_configs naming plugins
   clients  per (app, plugin): the newest agent_plugin_clients row -> connector_oauth_clients,
            registration customer, secret opened (session.PluginClients) and sealed again
@@ -42,6 +42,7 @@ Run(opts, apply)                       opts.Customer limits it to one app; empty
 - **A moved grant is audited.** One `grant_created` row, reason `plugin_migrate`, with the moved tokens' fingerprints, and one log line; a dry run or a second run adds none. Check: `go test -tags integration -run TestPluginMigrateSuite/TestAMovedGrantIsAudited ./internal/api`.
 - **A session binding grants by name.** A provider may describe a tool per person (Slack), so one person's digests would leave the others' tools unavailable. Check: `go test -tags integration -run TestPluginMigrateSuite/TestASessionBindingGrantsByName ./internal/api`.
 - **A moved user login is used with no selection, in sessions the router opens too.** A session binding that a session names no connection for uses the caller's only `connected` connection to its connector (`session.impliedSelection`, AI-994). That covers an app that sends no `connector_bindings`, a plugin event subscribed with an end user's login, and a message on a channel line, whose caller is `phone:+E164` or the user the number was linked to (AI-1000): the trust `user_plugins` gave them. Two connected, an app-owned one, the app's own subscription or a number not linked yet imply nothing. Check: `go test -tags integration -run TestRouterOpenedConnectorsSuite ./internal/api` and `go test -tags integration -run TestAttachConnectorsSuite ./internal/session`.
+- **`--plugin` moves only the named plugins' rows**: their clients, logins, entries and events; an id the catalog lacks is an error, and a flag set with no id left (`--plugin ""`) is an error, never every plugin. Check: `go test -tags integration -run 'TestPluginMigrateSuite/(TestOnlyTheNamed|TestAPluginTheCatalog)' ./internal/api` and `go test -tags integration -run 'Test(PluginsMigrateSuite/TestPluginNames|PluginsCommandSuite/TestAPluginFlag)' ./cmd/router`.
 - **A second run changes nothing.** The connection id is derived from the plugin row's id, a client record or a binding already there is left as it is, and a connection made but never given its grant is finished, not made again. Check: `go test -tags integration -run 'TestPluginMigrateSuite/(TestASecondRun|TestARunStopped)' ./internal/api`.
 - **A grant moves only where it still renews.** Same server, same token endpoint, same client; anything else is a Skipped row and the person logs in again. Check: `go test -run 'TestOAuth2CodeSuite/(TestAMoved|TestAGrant|TestAClient)' ./internal/connectors/schemes/oauth2code`.
 - **Tokens are sealed.** They reach the row only through `pgsealed`, bound to the customer, the connection and its revision. No row of the report names a token or a secret. Check: `go test -tags integration -run TestPluginMigrateSuite/TestAnAppLoginIsAppOwned ./internal/api`.

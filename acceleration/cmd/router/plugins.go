@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
@@ -19,7 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-const pluginsUsage = `usage: router plugins migrate [--apply] [--customer id] [--include-rotating]
+const pluginsUsage = `usage: router plugins migrate [--apply] [--customer id] [--plugin id,...] [--include-rotating]
 
   migrate   move the plugin rows onto connectors: each app's plugin OAuth client
             (agent_plugin_clients) onto connector_oauth_clients, each plugin login
@@ -32,6 +33,8 @@ const pluginsUsage = `usage: router plugins migrate [--apply] [--customer id] [-
              a binding on a deployment with connectors off would leave the agent
              without the plugin's tools.
     --customer  move only this app's rows (its customer id). Empty moves every app's.
+    --plugin  move only these plugins' rows, comma-separated catalog ids (slack,linear).
+             Empty moves every plugin's. An unknown id is an error.
     --include-rotating  also move a grant whose connector rotates refresh tokens. The
              plugin row keeps its copy, and whichever side renews first retires the
              other's, so they are skipped unless asked for.
@@ -51,11 +54,22 @@ func runPlugins(args []string, settings config.Config, logger *slog.Logger) erro
 	flags := flag.NewFlagSet("plugins migrate", flag.ContinueOnError)
 	apply := flags.Bool("apply", false, "write; without it the plan is printed and nothing is written")
 	customer := flags.String("customer", "", "move only this app's rows; empty moves every app's")
+	only := flags.String("plugin", "", "move only these plugins' rows, comma-separated; empty moves every plugin's")
 	includeRotating := flags.Bool("include-rotating", false, "also move grants of connectors that rotate refresh tokens")
-	if err := flags.Parse(args[1:]); err != nil {
+	err := flags.Parse(args[1:])
+	if err != nil {
 		return err
 	}
-	return migratePlugins(context.Background(), settings, logger, pluginmigrate.Options{Customer: *customer, IncludeRotating: *includeRotating}, *apply, os.Stdout)
+	ids := pluginIDs(*only)
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "plugin" && len(ids) == 0 {
+			err = fmt.Errorf("--plugin %q names no plugin: pass catalog ids, or leave the flag out to move every plugin's rows", *only)
+		}
+	})
+	if err != nil {
+		return err
+	}
+	return migratePlugins(context.Background(), settings, logger, pluginmigrate.Options{Customer: *customer, Plugins: ids, IncludeRotating: *includeRotating}, *apply, os.Stdout)
 }
 
 // migratePlugins builds what the router builds for connectors, over settings' database and
@@ -124,6 +138,7 @@ func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Lo
 	}
 	report, err := pluginmigrate.Run(ctx, pluginmigrate.Options{
 		Customer:        scope.Customer,
+		Plugins:         scope.Plugins,
 		IncludeRotating: scope.IncludeRotating,
 		Store:           pgStore,
 		Configs:         configs,
@@ -144,4 +159,15 @@ func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Lo
 		return err
 	}
 	return report.Write(out)
+}
+
+// pluginIDs splits --plugin's comma-separated ids, dropping empty ones.
+func pluginIDs(list string) []string {
+	var ids []string
+	for _, id := range strings.Split(list, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }

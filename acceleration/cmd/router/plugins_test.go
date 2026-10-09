@@ -55,3 +55,20 @@ func (s *PluginsCommandSuite) TestADryRunNeedsADatabase() {
 
 	s.ErrorContains(err, "set postgres.dsn")
 }
+
+// TestAPluginFlagWithNoIdIsRefused: --plugin set to nothing is not "every plugin": it is an
+// error, before a database is opened.
+func (s *PluginsCommandSuite) TestAPluginFlagWithNoIdIsRefused() {
+	for _, value := range []string{"", ",", " ", " , "} {
+		err := runPlugins([]string{"migrate", "--plugin", value}, config.Config{}, slog.Default())
+
+		s.ErrorContains(err, "names no plugin", "--plugin %q", value)
+	}
+	err := runPlugins([]string{"migrate", "--plugin="}, config.Config{}, slog.Default())
+	s.ErrorContains(err, "names no plugin")
+}
+
+func (s *PluginsCommandSuite) TestPluginIDsSplitsAndTrims() {
+	s.Equal([]string{"slack", "linear"}, pluginIDs(" slack, ,linear,"))
+	s.Empty(pluginIDs(""))
+}
