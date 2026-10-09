@@ -2189,9 +2189,6 @@ components:
           type: boolean
         description:
           type: string
-        endpoint:
-          description: The MCP server of a custom connector, as it was created. Absent on a built-in, whose endpoints stay with the router.
-          type: string
         id:
           description: Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does.
           type: string
