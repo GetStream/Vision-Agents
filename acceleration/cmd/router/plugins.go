@@ -135,6 +135,7 @@ func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Lo
 		Clients:         clients,
 		PluginClients:   session.PluginClients(pgStore, secrets),
 		Getenv:          os.Getenv,
+		Logger:          logger,
 		SealClientSecret: func(customerID, connectorID, secret string) ([]byte, int, error) {
 			return api.SealConnectorOAuthClientSecret(secrets, customerID, connectorID, secret)
 		},

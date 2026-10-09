@@ -134,6 +134,12 @@ func (s *APIKeySuite) complete(supplied map[string]string) core.StoredCredential
 	return stored
 }
 
+// The key is supplied and never renewed, so a rejected one is replaced rather than consented
+// to again (core.Static, AI-990).
+func (s *APIKeySuite) TestItIsStatic() {
+	s.True(core.IsStatic(map[string]core.Scheme{apikey.Name: s.scheme}, apikey.Name))
+}
+
 // provider is a TLS server that answers 200 to a request carrying key in header, and 401 to
 // anything else.
 func provider(t *testing.T, header string) *httptest.Server {

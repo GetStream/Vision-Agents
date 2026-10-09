@@ -47,7 +47,9 @@ func documentHandWritten(api huma.API) {
 			"`connector_unavailable` names an optional connector binding the session opened " +
 			"without: name (its alias), connector_id and reason, one of no_selection, " +
 			"shared_session, caller_unverified, connection_unavailable, provider_mismatch, " +
-			"needs_reauthorization, not_connected, open_failed, tool_unavailable and " +
+			"needs_reauthorization, credential_rejected (the provider rejected the token or key a " +
+			"bearer or api_key connection holds; only new credentials fix it, so no login is " +
+			"offered), not_connected, open_failed, tool_unavailable and " +
 			"selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer " +
 			"declares). " +
 			"Every watcher is sent each one when it attaches.\n" +

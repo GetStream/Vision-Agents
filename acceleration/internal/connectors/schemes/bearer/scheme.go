@@ -53,7 +53,10 @@ var errNoToken = errors.New("bearer: the credential is not a bearer credential")
 // Scheme is the bearer scheme. It holds no state and is safe for concurrent use.
 type Scheme struct{}
 
-var _ core.Scheme = (*Scheme)(nil)
+var (
+	_ core.Scheme = (*Scheme)(nil)
+	_ core.Static = (*Scheme)(nil)
+)
 
 // New returns the scheme. It takes no configuration: the header and its prefix are RFC
 // 6750's.
@@ -71,6 +74,10 @@ func (*Scheme) Name() string {
 type payload struct {
 	Token string `json:"token"`
 }
+
+// StaticCredential marks bearer as core.Static: the token is supplied and never renewed, so a
+// token the provider rejects is replaced, not consented to again.
+func (*Scheme) StaticCredential() {}
 
 // Begin is Done: the token is supplied, nobody consents.
 func (*Scheme) Begin(context.Context, core.BeginInput) (core.BeginOutput, error) {

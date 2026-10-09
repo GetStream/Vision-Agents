@@ -57,6 +57,8 @@ uv sync && uv run simple_voice_ai.py run
 
 It prints a call URL on the dashboard; open it and talk.
 
+The client generators (`plugins/stream/generate.py`, `sdks/swift/generate.py`) are standalone uv scripts with inline metadata: `uv run <script>` does not resolve the workspace.
+
 Python commands all use `uv`. Never `python -m`. If you hit dependency issues, stop and ask.
 
 ```bash
