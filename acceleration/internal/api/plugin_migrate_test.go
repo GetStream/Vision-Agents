@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -383,6 +385,106 @@ func (s *PluginMigrateSuite) TestTwoRunsAtOnceMoveALoginOnce() {
 	s.Equal(store.ConnectionConnected, moved.Status)
 }
 
+// TestAMovedConfigStaysEditableWithItsPluginEntryKept: the run binds each plugin entry under
+// the plugin's id and keeps the entry, and the config it leaves passes the check every create,
+// patch, update and sync of a config makes (AI-994 F42; crm is in this suite's catalog only,
+// so the HTTP patch is ConfigsSuite's TestABindingToThePluginsOwnConnectorIsCalledWhatThePluginIs).
+func (s *PluginMigrateSuite) TestAMovedConfigStaysEditableWithItsPluginEntryKept() {
+	fixed := s.config([]store.PluginEntry{{Name: movedPlugin}}, nil)
+	s.pluginClient(fixed, s.provider.ClientID, s.provider.ClientSecret)
+	s.login(fixed, "", s.provider.ClientID)
+	personal := s.config(nil, []store.PluginEntry{{Name: movedPlugin}})
+	s.login(personal, s.client.userID, s.provider.ClientID)
+	s.Require().Equal(5, s.run(true).Count("", pluginmigrate.Written))
+
+	for _, config := range []string{fixed, personal} {
+		stored := s.storedConfig(config)
+		message, ok := pluginAliasComplaint(stored)
+
+		s.True(ok, message)
+		s.True(store.NamesPlugin(append(stored.AgentPlugins, stored.UserPlugins...), movedPlugin), "the plugin entry is kept")
+		s.Equal(movedPlugin, s.binding(config).Name)
+	}
+}
+
+// TestAMovedGrantIsAuditedAndLoggedByItsTokens: the run records the grant it moved as the API
+// records one it created, a grant_created row saying plugin_migrate with the plugin row's
+// tokens by fingerprint, and logs the same line (AI-994 F43). A dry run and a second run add
+// none.
+func (s *PluginMigrateSuite) TestAMovedGrantIsAuditedAndLoggedByItsTokens() {
+	config := s.config([]store.PluginEntry{{Name: movedPlugin}}, nil)
+	s.pluginClient(config, s.provider.ClientID, s.provider.ClientSecret)
+	login := s.login(config, "", s.provider.ClientID)
+	refresh := s.text("SELECT refresh_token FROM agent_plugin_connections WHERE id = ?", login)
+	moved := pluginmigrate.MovedConnectionID(login)
+	var logged strings.Builder
+	options := s.options(false)
+	options.Logger = slog.New(slog.NewTextHandler(&logged, nil))
+
+	_, err := pluginmigrate.Run(context.Background(), options, false)
+	s.Require().NoError(err)
+	s.Empty(s.audit(moved), "a dry run records nothing")
+	_, err = pluginmigrate.Run(context.Background(), options, true)
+	s.Require().NoError(err)
+	_, err = pluginmigrate.Run(context.Background(), options, true)
+	s.Require().NoError(err)
+
+	rows := s.audit(moved)
+	s.Require().Len(rows, 1, "one row, from the run that moved it")
+	s.Equal(ConnectorAuditAction(store.AuditGrantCreated), rows[0].Action)
+	s.Equal(store.AuditReasonPluginMigrate, rows[0].Reason)
+	s.Equal(movedPlugin, rows[0].ConnectorID)
+	s.Equal(2, rows[0].Revision, "the revision the grant was saved at")
+	s.Require().NotNil(rows[0].Credential)
+	s.Equal(core.Fingerprint(s.token), rows[0].Credential.AccessFingerprint)
+	s.Equal(core.Fingerprint(refresh), rows[0].Credential.RefreshFingerprint)
+	s.Empty(rows[0].Credential.PreviousAccessFingerprint)
+	var lines []string
+	for line := range strings.Lines(logged.String()) {
+		if strings.Contains(line, "event=grant_created") && strings.Contains(line, " connection="+moved+" ") {
+			lines = append(lines, line)
+		}
+	}
+	s.Require().Len(lines, 1, logged.String())
+	s.Contains(lines[0], "level=INFO")
+	s.Contains(lines[0], " reason=plugin_migrate")
+	s.Contains(lines[0], " access_fingerprint="+core.Fingerprint(s.token))
+	s.Contains(lines[0], " refresh_fingerprint="+core.Fingerprint(refresh))
+	s.NotContains(logged.String(), s.token)
+	s.NotContains(logged.String(), refresh)
+}
+
+// TestASessionBindingGrantsByNameAndAFixedOneByDigest: a session binding's tools are granted by
+// name, not at the digests one person's login listed, so each person's connection pins its own
+// on first use (#826) (AI-994 F45). A fixed binding has one connection and keeps the digests
+// listed through it.
+func (s *PluginMigrateSuite) TestASessionBindingGrantsByNameAndAFixedOneByDigest() {
+	fixed := s.config([]store.PluginEntry{{Name: movedPlugin}}, nil)
+	s.pluginClient(fixed, s.provider.ClientID, s.provider.ClientSecret)
+	s.login(fixed, "", s.provider.ClientID)
+	personal := s.config(nil, []store.PluginEntry{{Name: movedPlugin}})
+	mine := s.login(personal, s.client.userID, s.provider.ClientID)
+
+	s.run(true)
+	chosen := []SessionConnectorBinding{{Name: movedPlugin, ConnectionId: pluginmigrate.MovedConnectionID(mine)}}
+	opened := s.client.createSession(CreateSessionRequest{ConfigId: &personal, Text: pointerTo(true), ConnectorBindings: &chosen})
+	ran := s.toolRan(s.serverClient.actingFor(s.client), opened.Id)
+
+	s.Equal(connectorEchoText, ran["result"])
+	session := s.binding(personal)
+	s.Require().NotEmpty(session.Tools)
+	for _, grant := range session.Tools {
+		s.Empty(grant.SchemaDigest, grant.Name)
+	}
+	s.Positive(s.count("SELECT count(*) FROM connector_tool_pins WHERE connection_id = ?", pluginmigrate.MovedConnectionID(mine)),
+		"the person's connection pinned its own digests")
+	app := s.binding(fixed)
+	s.Require().NotEmpty(app.Tools)
+	for _, grant := range app.Tools {
+		s.Len(grant.SchemaDigest, 64, grant.Name)
+	}
+}
+
 // TestNothingConfiguredMovesNothing: an app with no plugin rows is a run with no row and no
 // write, real or dry.
 func (s *PluginMigrateSuite) TestNothingConfiguredMovesNothing() {
@@ -566,6 +668,13 @@ func (s *PluginMigrateSuite) pluginTables() string {
   (SELECT coalesce(string_agg(apcl::text, '|' ORDER BY config_id, plugin_id), '') FROM agent_plugin_clients apcl WHERE customer_id = ?) || '#' ||
   (SELECT coalesce(string_agg(id || ':' || agent_plugins::text || ':' || user_plugins::text || ':' || plugin_events::text, '|' ORDER BY id), '') FROM agent_configs WHERE customer_id = ?)`,
 		s.customerID(), s.customerID(), s.customerID())
+}
+
+// audit is the connection's audit rows as the API lists them, newest first.
+func (s *PluginMigrateSuite) audit(connection string) []ConnectorAuditEvent {
+	var page ConnectorAuditPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connector-audit?connection_id="+connection, nil, &page))
+	return page.Items
 }
 
 func (s *PluginMigrateSuite) text(query string, args ...any) string {
