@@ -1133,6 +1133,36 @@ func (e ImageSourceDetail) Valid() bool {
 	}
 }
 
+// Defines values for InvocationArgumentType.
+const (
+	Array   InvocationArgumentType = "array"
+	Boolean InvocationArgumentType = "boolean"
+	Null    InvocationArgumentType = "null"
+	Number  InvocationArgumentType = "number"
+	Object  InvocationArgumentType = "object"
+	String  InvocationArgumentType = "string"
+)
+
+// Valid indicates whether the value is a known member of the InvocationArgumentType enum.
+func (e InvocationArgumentType) Valid() bool {
+	switch e {
+	case Array:
+		return true
+	case Boolean:
+		return true
+	case Null:
+		return true
+	case Number:
+		return true
+	case Object:
+		return true
+	case String:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InvocationErrorType.
 const (
 	ClientTimeout  InvocationErrorType = "client_timeout"
@@ -3504,9 +3534,12 @@ type Connection struct {
 	AccountId *string `json:"account_id,omitempty"`
 
 	// AuthScheme How the connection authenticates, one of its connector's schemes.
-	AuthScheme  string     `json:"auth_scheme"`
-	ConnectorId string     `json:"connector_id"`
-	CreatedAt   *time.Time `json:"created_at,omitempty"`
+	AuthScheme string `json:"auth_scheme"`
+
+	// Client Which OAuth client a connection's grant was issued to, so a client the router registered on the fly (RFC 7591) can be found at the provider. Its secret is never shown.
+	Client      *ConnectionClient `json:"client,omitempty"`
+	ConnectorId string            `json:"connector_id"`
+	CreatedAt   *time.Time        `json:"created_at,omitempty"`
 
 	// DefinitionBrokenReason Why the connector marked definition_revision broken. Present only when definition_status is broken.
 	DefinitionBrokenReason *string `json:"definition_broken_reason,omitempty"`
@@ -3543,6 +3576,15 @@ type Connection struct {
 	UsedBy *[]ConnectionUse `json:"used_by,omitempty"`
 }
 
+// ConnectionClient Which OAuth client a connection's grant was issued to, so a client the router registered on the fly (RFC 7591) can be found at the provider. Its secret is never shown.
+type ConnectionClient struct {
+	// ClientId The client identifier, which is not a secret (RFC 6749 section 2.2). For dcr, the one the provider issued when the router registered at the consent.
+	ClientId string `json:"client_id"`
+
+	// Registration operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+	Registration ConnectorClientRegistrationMethod `json:"registration"`
+}
+
 // ConnectionCredentials Credentials for a connection, under the revision the caller last read. An unknown field is refused rather than ignored.
 type ConnectionCredentials struct {
 	// ExpectedRevision The connection's revision as last read. A connection that has moved past it is refused with a 409, so two writers never replace each other's credentials unseen.
@@ -3555,8 +3597,11 @@ type ConnectionCredentials struct {
 // ConnectionDefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until a consent connects it again, on the latest revision.
 type ConnectionDefinitionStatus string
 
-// ConnectionInvocation One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept.
+// ConnectionInvocation One connector tool call a session ran through the connection: the binding, the tool, the shape of its arguments, how long it took and how it failed. No value the call was asked, and nothing it answered, is kept.
 type ConnectionInvocation struct {
+	// Arguments The shape of what the call was asked, sorted by name. Absent for a call asked with no arguments, for an incognito session's call, for arguments that were not a JSON object, and for a call recorded before the router kept it.
+	Arguments *[]InvocationArgument `json:"arguments,omitempty"`
+
 	// Binding The alias the config binds the connector under.
 	Binding string `json:"binding"`
 
@@ -3749,12 +3794,12 @@ type Connector struct {
 // ConnectorAuditAction grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection.
 type ConnectorAuditAction string
 
-// ConnectorAuditCredential The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
+// ConnectorAuditCredential The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
 type ConnectorAuditCredential struct {
 	// AccessExpiresAt When the access token expires. Absent when the provider did not say.
 	AccessExpiresAt *time.Time `json:"access_expires_at,omitempty"`
 
-	// AccessFingerprint The access token the grant left, by fingerprint.
+	// AccessFingerprint The access token the grant left, by fingerprint. On grant_revoked, the one that ended.
 	AccessFingerprint *string `json:"access_fingerprint,omitempty"`
 
 	// PreviousAccessFingerprint The access token before it, by fingerprint. Absent for a first grant.
@@ -3766,7 +3811,7 @@ type ConnectorAuditCredential struct {
 	// RefreshExpiresAt When the refresh token expires, by the connector's refresh_ttl. Absent when it does not say.
 	RefreshExpiresAt *time.Time `json:"refresh_expires_at,omitempty"`
 
-	// RefreshFingerprint The refresh token the grant left, by fingerprint. Absent when there is none.
+	// RefreshFingerprint The refresh token the grant left, by fingerprint. On grant_revoked, the one that ended. Absent when there is none.
 	RefreshFingerprint *string `json:"refresh_fingerprint,omitempty"`
 
 	// Rotated The refresh token the connection already had was replaced, as a provider that rotates refresh tokens does on every refresh.
@@ -3786,7 +3831,7 @@ type ConnectorAuditEvent struct {
 	ConnectorId  string    `json:"connector_id"`
 	CreatedAt    time.Time `json:"created_at"`
 
-	// Credential The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
+	// Credential The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
 	Credential *ConnectorAuditCredential `json:"credential,omitempty"`
 	Id         string                    `json:"id"`
 
@@ -4653,6 +4698,19 @@ type InputParts struct {
 type InstructionsRequest struct {
 	Instructions string `json:"instructions"`
 }
+
+// InvocationArgument One argument a connector tool call was asked with: its name, its JSON type and, for a string or an array, its length, so an empty string shows as length 0. Never its value.
+type InvocationArgument struct {
+	// Length A string's characters (Unicode code points) or an array's elements. Absent for any other type.
+	Length *int64 `json:"length,omitempty"`
+	Name   string `json:"name"`
+
+	// Type The argument's JSON type.
+	Type InvocationArgumentType `json:"type"`
+}
+
+// InvocationArgumentType The argument's JSON type.
+type InvocationArgumentType string
 
 // InvocationErrorType customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
 type InvocationErrorType string
@@ -6300,6 +6358,32 @@ type StatsBucket struct {
 
 	// Uptime Successes over total requests in the bucket.
 	Uptime *float64 `json:"uptime,omitempty"`
+}
+
+// StoredConnectorOAuthClient The OAuth client and provider app the router keeps for the app and one connector. It says whether each secret is stored, and never carries one.
+type StoredConnectorOAuthClient struct {
+	// AuthMethod How the app's own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.
+	AuthMethod *ConnectorOAuthClientAuthMethod `json:"auth_method,omitempty"`
+
+	// ClientId Empty for a provider app without an OAuth client, such as a Linq account.
+	ClientId    string    `json:"client_id"`
+	ConnectorId string    `json:"connector_id"`
+	CreatedAt   time.Time `json:"created_at"`
+
+	// HasClientSecret A client secret is stored, sealed. False for a public client.
+	HasClientSecret bool `json:"has_client_secret"`
+
+	// HasSigningSecret A signing secret for the provider app's events is stored, sealed.
+	HasSigningSecret bool `json:"has_signing_secret"`
+
+	// ProviderAppId The provider's id for the app the client belongs to. Absent when there is none.
+	ProviderAppId *string `json:"provider_app_id,omitempty"`
+
+	// Registration operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+	Registration ConnectorClientRegistrationMethod `json:"registration"`
+
+	// UpdatedAt When the client, its secrets or its method last changed.
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // StreamAppState Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
@@ -9045,6 +9129,15 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /v1/agents/connectors/{id}/oauth-client (the `DeleteConnectorOAuthClient` operationId).
 	DeleteConnectorOAuthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetConnectorOAuthClient Read the OAuth client the router keeps for the app and a connector
+	//
+	// Says which OAuth client and provider app the app's connections to the connector use: the app's own, the one the router created for it, or this deployment's own app recorded for it. It says whether a client secret and a signing secret are stored, and never returns either. Not found when there is none: the connector then uses this deployment's client, or registers one per consent.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/connectors/{id}/oauth-client (the `GetConnectorOAuthClient` operationId).
+	GetConnectorOAuthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetConnectorOAuthClientWithBody Set the app's own OAuth client for a connector
 	//
@@ -12291,6 +12384,25 @@ func (c *Client) RotateConnectorEventDestinationSecret(ctx context.Context, id s
 // Corresponds with DELETE /v1/agents/connectors/{id}/oauth-client (the `DeleteConnectorOAuthClient` operationId).
 func (c *Client) DeleteConnectorOAuthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteConnectorOAuthClientRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetConnectorOAuthClient Read the OAuth client the router keeps for the app and a connector
+//
+// Says which OAuth client and provider app the app's connections to the connector use: the app's own, the one the router created for it, or this deployment's own app recorded for it. It says whether a client secret and a signing secret are stored, and never returns either. Not found when there is none: the connector then uses this deployment's client, or registers one per consent.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/connectors/{id}/oauth-client (the `GetConnectorOAuthClient` operationId).
+func (c *Client) GetConnectorOAuthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectorOAuthClientRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -18842,6 +18954,40 @@ func NewDeleteConnectorOAuthClientRequest(server string, id string) (*http.Reque
 	}
 
 	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetConnectorOAuthClientRequest constructs an http.Request for the GetConnectorOAuthClient method
+func NewGetConnectorOAuthClientRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/oauth-client", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -26315,6 +26461,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /v1/agents/connectors/{id}/oauth-client (the `DeleteConnectorOAuthClient` operationId).
 	DeleteConnectorOAuthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteConnectorOAuthClientResponse, error)
 
+	// GetConnectorOAuthClientWithResponse Read the OAuth client the router keeps for the app and a connector
+	//
+	// Says which OAuth client and provider app the app's connections to the connector use: the app's own, the one the router created for it, or this deployment's own app recorded for it. It says whether a client secret and a signing secret are stored, and never returns either. Not found when there is none: the connector then uses this deployment's client, or registers one per consent.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connectors/{id}/oauth-client (the `GetConnectorOAuthClient` operationId).
+	GetConnectorOAuthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorOAuthClientResponse, error)
+
 	// SetConnectorOAuthClientWithBodyWithResponse Set the app's own OAuth client for a connector
 	//
 	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
@@ -32823,6 +32980,82 @@ func (r DeleteConnectorOAuthClientResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r DeleteConnectorOAuthClientResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetConnectorOAuthClientResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *StoredConnectorOAuthClient
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON200() *StoredConnectorOAuthClient {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConnectorOAuthClientResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConnectorOAuthClientResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConnectorOAuthClientResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConnectorOAuthClientResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -44549,6 +44782,23 @@ func (c *ClientWithResponses) DeleteConnectorOAuthClientWithResponse(ctx context
 	return ParseDeleteConnectorOAuthClientResponse(rsp)
 }
 
+// GetConnectorOAuthClientWithResponse Read the OAuth client the router keeps for the app and a connector
+//
+// Says which OAuth client and provider app the app's connections to the connector use: the app's own, the one the router created for it, or this deployment's own app recorded for it. It says whether a client secret and a signing secret are stored, and never returns either. Not found when there is none: the connector then uses this deployment's client, or registers one per consent.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connectors/{id}/oauth-client (the `GetConnectorOAuthClient` operationId).
+func (c *ClientWithResponses) GetConnectorOAuthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorOAuthClientResponse, error) {
+	rsp, err := c.GetConnectorOAuthClient(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConnectorOAuthClientResponse(rsp)
+}
+
 // SetConnectorOAuthClientWithBodyWithResponse Set the app's own OAuth client for a connector
 //
 // Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
@@ -51336,6 +51586,67 @@ func ParseDeleteConnectorOAuthClientResponse(rsp *http.Response) (*DeleteConnect
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetConnectorOAuthClientResponse parses an HTTP response from a GetConnectorOAuthClientWithResponse call
+func ParseGetConnectorOAuthClientResponse(rsp *http.Response) (*GetConnectorOAuthClientResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConnectorOAuthClientResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest StoredConnectorOAuthClient
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest BadRequest

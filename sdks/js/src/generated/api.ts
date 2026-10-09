@@ -1075,7 +1075,13 @@ export type paths = {
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
+        /**
+         * Read the OAuth client the router keeps for the app and a connector
+         * @description Says which OAuth client and provider app the app's connections to the connector use: the app's own, the one the router created for it, or this deployment's own app recorded for it. It says whether a client secret and a signing secret are stored, and never returns either. Not found when there is none: the connector then uses this deployment's client, or registers one per consent.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getConnectorOAuthClient"];
         /**
          * Set the app's own OAuth client for a connector
          * @description Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
@@ -4550,6 +4556,8 @@ export type components = {
             readonly account_id?: string;
             /** @description How the connection authenticates, one of its connector's schemes. */
             readonly auth_scheme: string;
+            /** @description The OAuth client the connection's grant was issued to. Absent for a scheme without one, before the first consent, and for a connection last consented before the router kept it. */
+            readonly client?: components["schemas"]["ConnectionClient"];
             readonly connector_id: string;
             /** Format: date-time */
             readonly created_at: string;
@@ -4589,6 +4597,12 @@ export type components = {
             /** @description The agent config bindings that name this connection as their fixed connection, which deleting it would break. A binding a session fills with the caller's own connection names none, so it is never listed. */
             readonly used_by: readonly components["schemas"]["ConnectionUse"][] | null;
         };
+        /** @description Which OAuth client a connection's grant was issued to, so a client the router registered on the fly (RFC 7591) can be found at the provider. Its secret is never shown. */
+        readonly ConnectionClient: {
+            /** @description The client identifier, which is not a secret (RFC 6749 section 2.2). For dcr, the one the provider issued when the router registered at the consent. */
+            readonly client_id: string;
+            readonly registration: components["schemas"]["ConnectorClientRegistrationMethod"];
+        };
         /** @description Credentials for a connection, under the revision the caller last read. An unknown field is refused rather than ignored. */
         readonly ConnectionCredentials: {
             /**
@@ -4606,8 +4620,10 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectionDefinitionStatus: "current" | "outdated" | "broken";
-        /** @description One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept. */
+        /** @description One connector tool call a session ran through the connection: the binding, the tool, the shape of its arguments, how long it took and how it failed. No value the call was asked, and nothing it answered, is kept. */
         readonly ConnectionInvocation: {
+            /** @description The shape of what the call was asked, sorted by name. Absent for a call asked with no arguments, for an incognito session's call, for arguments that were not a JSON object, and for a call recorded before the router kept it. */
+            readonly arguments?: readonly components["schemas"]["InvocationArgument"][] | null;
             /** @description The alias the config binds the connector under. */
             readonly binding: string;
             /** @description The agent config whose binding the call went through. */
@@ -4777,14 +4793,14 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectorAuditAction: "grant_created" | "grant_refreshed" | "grant_revoked" | "token_export" | "proxy_call";
-        /** @description The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown. */
+        /** @description The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown. */
         readonly ConnectorAuditCredential: {
             /**
              * Format: date-time
              * @description When the access token expires. Absent when the provider did not say.
              */
             readonly access_expires_at?: string;
-            /** @description The access token the grant left, by fingerprint. */
+            /** @description The access token the grant left, by fingerprint. On grant_revoked, the one that ended. */
             readonly access_fingerprint?: string;
             /** @description The access token before it, by fingerprint. Absent for a first grant. */
             readonly previous_access_fingerprint?: string;
@@ -4795,7 +4811,7 @@ export type components = {
              * @description When the refresh token expires, by the connector's refresh_ttl. Absent when it does not say.
              */
             readonly refresh_expires_at?: string;
-            /** @description The refresh token the grant left, by fingerprint. Absent when there is none. */
+            /** @description The refresh token the grant left, by fingerprint. On grant_revoked, the one that ended. Absent when there is none. */
             readonly refresh_fingerprint?: string;
             /** @description The refresh token the connection already had was replaced, as a provider that rotates refresh tokens does on every refresh. */
             readonly rotated: boolean;
@@ -4810,7 +4826,7 @@ export type components = {
             readonly connector_id: string;
             /** Format: date-time */
             readonly created_at: string;
-            /** @description The tokens a grant row left, by fingerprint. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens. */
+            /** @description The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens. */
             readonly credential?: components["schemas"]["ConnectorAuditCredential"];
             readonly id: string;
             /**
@@ -5592,6 +5608,20 @@ export type components = {
         };
         readonly InstructionsRequest: {
             readonly instructions: string;
+        };
+        /** @description One argument a connector tool call was asked with: its name, its JSON type and, for a string or an array, its length, so an empty string shows as length 0. Never its value. */
+        readonly InvocationArgument: {
+            /**
+             * Format: int64
+             * @description A string's characters (Unicode code points) or an array's elements. Absent for any other type.
+             */
+            readonly length?: number;
+            readonly name: string;
+            /**
+             * @description The argument's JSON type.
+             * @enum {string}
+             */
+            readonly type: "object" | "array" | "string" | "number" | "boolean" | "null";
         };
         /**
          * @description customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
@@ -7036,6 +7066,29 @@ export type components = {
              * @description Successes over total requests in the bucket.
              */
             readonly uptime?: number | null;
+        };
+        /** @description The OAuth client and provider app the router keeps for the app and one connector. It says whether each secret is stored, and never carries one. */
+        readonly StoredConnectorOAuthClient: {
+            /** @description Absent when the record leaves it to the connector. */
+            readonly auth_method?: components["schemas"]["ConnectorOAuthClientAuthMethod"];
+            /** @description Empty for a provider app without an OAuth client, such as a Linq account. */
+            readonly client_id: string;
+            readonly connector_id: string;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description A client secret is stored, sealed. False for a public client. */
+            readonly has_client_secret: boolean;
+            /** @description A signing secret for the provider app's events is stored, sealed. */
+            readonly has_signing_secret: boolean;
+            /** @description The provider's id for the app the client belongs to. Absent when there is none. */
+            readonly provider_app_id?: string;
+            /** @description customer: the app's own, put through PUT /v1/agents/connectors/{id}/oauth-client. managed: the one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app). operator: this deployment's own app, recorded for the app by Stream staff. */
+            readonly registration: components["schemas"]["ConnectorClientRegistrationMethod"];
+            /**
+             * Format: date-time
+             * @description When the client, its secrets or its method last changed.
+             */
+            readonly updated_at: string;
         };
         /**
          * @description Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
@@ -10252,6 +10305,34 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ConnectorEventDestinationSecret"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getConnectorOAuthClient: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connector, such as github or custom_crm. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The client */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["StoredConnectorOAuthClient"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
