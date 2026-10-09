@@ -141,9 +141,15 @@ so you never test an old one; the scripts do.
 and follow those lines. A call takes at most four minutes, so no new line for six means it is
 stuck: there is a known deadlock in the WebRTC receive path when the agent's track is
 resubscribed, and a stuck call ignores its deadline and Ctrl-C. Kill the whole tree, not just
-the parent (`pkill -TERM -P <pid>; kill -TERM <pid>`, then `-KILL` for what is left), check
-Leftovers again, and count that call as **infra**, not as an agent failure. `digest.sh` does
-this itself at its timeout.
+the parent: the agents run under `uv`, two levels down.
+
+```bash
+kill_tree() { for c in $(pgrep -P "$1"); do kill_tree "$c"; done; kill -TERM "$1" 2>/dev/null; }
+kill_tree <pid>
+```
+
+Then check Leftovers again (`kill -KILL` what survived) and count that call as **infra**, not as
+an agent failure. `digest.sh` does this itself at its timeout.
 
 ## 3. Read the results
 
