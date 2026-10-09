@@ -60,6 +60,9 @@ type Request struct {
 	// format. A term named here narrows the candidates to the voices that declared it, so
 	// it is either honoured or the request is refused.
 	Options options.TTS
+	// Failed names the voices, as "provider/model", already lost on this call, so they are
+	// tried only once nothing else starts.
+	Failed []string
 }
 
 // Router selects a text-to-speech provider and opens synthesis sessions.
@@ -98,6 +101,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		Realtime:      &streaming,
 		LanguageHints: request.LanguageHints,
 		Voice:         request.Voice,
+		Failed:        request.Failed,
 		Terms:         request.Options.Terms(),
 		DataPolicy:    request.Options.DataPolicy,
 		TTS:           request.Options,
