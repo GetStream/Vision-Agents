@@ -26,6 +26,9 @@ type Plugin struct {
 	Description string `yaml:"description"`
 	URL         string `yaml:"url"`
 	Auth        string `yaml:"auth"`
+	// User means each end user connects the plugin with their own account unless an agent
+	// says otherwise, because what it reaches is a person's own: their calendar, their mail.
+	User bool `yaml:"user"`
 	// Logo is the file under logos/ this plugin is drawn with.
 	Logo string `yaml:"logo"`
 	// InstanceRequired means the URL is a template that needs a shop or org hostname.

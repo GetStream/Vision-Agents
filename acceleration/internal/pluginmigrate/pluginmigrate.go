@@ -400,11 +400,7 @@ func (m *migration) moveConnection(ctx context.Context, login store.PluginConnec
 	if err != nil {
 		return err
 	}
-	lists := [][]store.PluginEntry{config.AgentPlugins, config.UserPlugins}
-	if owner == store.OwnerUser {
-		lists = [][]store.PluginEntry{config.UserPlugins, config.AgentPlugins}
-	}
-	entry := session.EntryFor(login.PluginID, lists...)
+	entry := session.EntryFor(login.PluginID, config.Plugins)
 	configured, err := configure(plugin, entry)
 	if err != nil {
 		return skip(err.Error())
@@ -575,42 +571,29 @@ func (m *migration) setInAdvance(ctx context.Context, login store.PluginConnecti
 }
 
 // moveBindings writes each plugin entry of config as a connector binding under the plugin's
-// id: agent_plugins as fixed to the app's moved login, user_plugins as session.
+// id: the app's as fixed to the app's moved login, each end user's as session.
 func (m *migration) moveBindings(ctx context.Context, config store.AgentConfig, logins []store.PluginConnection) error {
-	for _, entry := range config.AgentPlugins {
+	for _, entry := range config.Plugins {
 		if !m.wants(entry.Name) {
 			continue
 		}
-		if err := m.moveBinding(ctx, config, entry, "fixed", logins); err != nil {
-			return err
+		selection := "fixed"
+		if entry.User {
+			selection = "session"
 		}
-	}
-	for _, entry := range config.UserPlugins {
-		if !m.wants(entry.Name) {
-			continue
-		}
-		if store.NamesPlugin(config.AgentPlugins, entry.Name) {
-			m.add(Row{Kind: KindBinding, Action: Skipped, Source: bindingSource(config, "user_plugins", entry.Name),
-				Note: "agent_plugins names it too, and an alias names one binding: the fixed one is moved"})
-			continue
-		}
-		if err := m.moveBinding(ctx, config, entry, "session", logins); err != nil {
+		if err := m.moveBinding(ctx, config, entry, selection, logins); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func bindingSource(config store.AgentConfig, list, name string) string {
-	return fmt.Sprintf("agent_configs %s/%s %s %s", config.CustomerID, config.ID, list, name)
+func bindingSource(config store.AgentConfig, name string) string {
+	return fmt.Sprintf("agent_configs %s/%s plugins %s", config.CustomerID, config.ID, name)
 }
 
 func (m *migration) moveBinding(ctx context.Context, config store.AgentConfig, entry store.PluginEntry, selection string, logins []store.PluginConnection) error {
-	list := "agent_plugins"
-	if selection == "session" {
-		list = "user_plugins"
-	}
-	source := bindingSource(config, list, entry.Name)
+	source := bindingSource(config, entry.Name)
 	target := fmt.Sprintf("agent_configs %s connectors %s (%s, %s)", config.ID, entry.Name, entry.Name, selection)
 	skip := func(note string) error {
 		m.add(Row{Kind: KindBinding, Action: Skipped, Source: source, Target: target, Note: note})

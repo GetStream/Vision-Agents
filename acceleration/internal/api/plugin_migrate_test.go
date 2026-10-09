@@ -79,8 +79,8 @@ func (s *PluginMigrateSuite) TestADryRunListsEveryRowAndItsTargetAndWritesNothin
 	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindConnection, app).Action)
 	s.Contains(s.row(report, pluginmigrate.KindConnection, app).Target, pluginmigrate.MovedConnectionID(app))
 	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindConnection, mine).Action)
-	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindBinding, fixed+" agent_plugins").Action)
-	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindBinding, personal+" user_plugins").Action)
+	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindBinding, fixed+" plugins").Action)
+	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindBinding, personal+" plugins").Action)
 	s.Len(report.Rows, 5, "every row read is listed")
 	s.False(report.Applied)
 }
@@ -104,7 +104,7 @@ func (s *PluginMigrateSuite) TestARealRunLeavesTheAgentsToolsWorkingWithNoNewLog
 	s.Equal(registered, s.provider.Hits(fakeprovider.PathRegister), "no new client")
 }
 
-// TestAPersonsMovedLoginAnswersTheirSessionBinding: a user_plugins entry becomes a session
+// TestAPersonsMovedLoginAnswersTheirSessionBinding: a plugins entry with user becomes a session
 // binding, and the person's moved login, chosen when they open the session, answers it.
 func (s *PluginMigrateSuite) TestAPersonsMovedLoginAnswersTheirSessionBinding() {
 	config := s.config(nil, []store.PluginEntry{{Name: movedPlugin}})
@@ -220,7 +220,7 @@ func (s *PluginMigrateSuite) TestAnUnmappableRowIsReportedAndSkipped() {
 	s.Contains(s.row(report, pluginmigrate.KindConnection, byURL).Note, "not a catalog plugin")
 	s.Contains(s.row(report, pluginmigrate.KindConnection, pending).Note, "not connected (pending)")
 	s.Contains(s.row(report, pluginmigrate.KindConnection, elsewhere).Note, "renewed at https://elsewhere.example/token")
-	s.Contains(s.row(report, pluginmigrate.KindBinding, config+" agent_plugins").Note, "no login of the app's was moved")
+	s.Contains(s.row(report, pluginmigrate.KindBinding, config+" plugins").Note, "no login of the app's was moved")
 	s.Equal(4, report.Count("", pluginmigrate.Skipped), "%v", report.Rows)
 	s.Zero(s.count("SELECT count(*) FROM connector_connections WHERE customer_id = ?", s.customerID()))
 	s.Empty(s.storedConfig(config).Connectors)
@@ -271,7 +271,7 @@ func (s *PluginMigrateSuite) TestARotatingConnectorsGrantIsSkippedUnlessAskedFor
 	asked := s.runWith(true, true)
 
 	s.Equal(pluginmigrate.Written, s.row(asked, pluginmigrate.KindConnection, login).Action)
-	s.Equal(pluginmigrate.Written, s.row(asked, pluginmigrate.KindBinding, config+" agent_plugins").Action)
+	s.Equal(pluginmigrate.Written, s.row(asked, pluginmigrate.KindBinding, config+" plugins").Action)
 }
 
 // TestAGrantWhoseRotationIsUnknownIsSkippedUnlessAskedFor: a manifest that does not say
@@ -458,7 +458,7 @@ func (s *PluginMigrateSuite) TestAMovedConfigStaysEditableWithItsPluginEntryKept
 		message, ok := pluginAliasComplaint(stored)
 
 		s.True(ok, message)
-		s.True(store.NamesPlugin(append(stored.AgentPlugins, stored.UserPlugins...), movedPlugin), "the plugin entry is kept")
+		s.True(store.NamesPlugin(stored.Plugins, movedPlugin), "the plugin entry is kept")
 		s.Equal(movedPlugin, s.binding(config).Name)
 	}
 }
@@ -670,8 +670,13 @@ func (s *PluginMigrateSuite) options(includeRotating bool) pluginmigrate.Options
 // config is an agent config of the test's app on the connecting model, naming plugins as the
 // plugin endpoints write them.
 func (s *PluginMigrateSuite) config(agent, user []store.PluginEntry) string {
+	named := append([]store.PluginEntry{}, agent...)
+	for _, entry := range user {
+		entry.User = true
+		named = append(named, entry)
+	}
 	config := store.AgentConfig{CustomerID: s.customerID(), Name: "migrate-" + s.utils.uuid(),
-		LLM: "connecting/connector-model", AgentPlugins: agent, UserPlugins: user}
+		LLM: "connecting/connector-model", Plugins: named}
 	s.Require().NoError(s.configs.CreateAgentConfig(context.Background(), &config))
 	return config.ID
 }
@@ -749,7 +754,7 @@ func (s *PluginMigrateSuite) pluginTables() string {
 	return s.text(`SELECT
   (SELECT coalesce(string_agg(apc::text, '|' ORDER BY id), '') FROM agent_plugin_connections apc WHERE customer_id = ?) || '#' ||
   (SELECT coalesce(string_agg(apcl::text, '|' ORDER BY config_id, plugin_id), '') FROM agent_plugin_clients apcl WHERE customer_id = ?) || '#' ||
-  (SELECT coalesce(string_agg(id || ':' || agent_plugins::text || ':' || user_plugins::text || ':' || plugin_events::text, '|' ORDER BY id), '') FROM agent_configs WHERE customer_id = ?)`,
+  (SELECT coalesce(string_agg(id || ':' || plugins::text || ':' || plugin_events::text, '|' ORDER BY id), '') FROM agent_configs WHERE customer_id = ?)`,
 		s.customerID(), s.customerID(), s.customerID())
 }
 

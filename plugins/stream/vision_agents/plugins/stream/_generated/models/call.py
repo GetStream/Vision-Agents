@@ -50,12 +50,12 @@ class Call:
             several models and routing fails over between them, so per-turn providers are in the request rows.
         stt_used (str | Unset): The provider/model that transcribed, once routing picked one. Empty until somebody has
             been heard, and the last one that served if routing failed over.
+        subagent (str | Unset): The target delegated work ran on. Empty means nothing was delegated, which also means
+            the skills below were never offered. A text call names its llm, which runs its skills too.
+        subagent_used (str | Unset): The provider/model delegated work ran on. Empty when nothing was handed over, or
+            when the subagent was never reached.
         summary (str | Unset): What a model made of the call, written once it was over.
         tags (CallTags | Unset):
-        thinking_llm (str | Unset): The target delegated work ran on. Empty means nothing was delegated, which also
-            means the skills below were never offered. A text call names its llm, which runs its skills too.
-        thinking_llm_used (str | Unset): The provider/model delegated work ran on. Empty when nothing was handed over,
-            or when the thinking target was never reached.
         to_number (str | Unset):
         tts (str | Unset): The voice target, on the same terms as stt.
         tts_used (str | Unset): The provider/model that spoke, on the same terms as stt_used.
@@ -91,10 +91,10 @@ class Call:
     sts_used: str | Unset = UNSET
     stt: str | Unset = UNSET
     stt_used: str | Unset = UNSET
+    subagent: str | Unset = UNSET
+    subagent_used: str | Unset = UNSET
     summary: str | Unset = UNSET
     tags: CallTags | Unset = UNSET
-    thinking_llm: str | Unset = UNSET
-    thinking_llm_used: str | Unset = UNSET
     to_number: str | Unset = UNSET
     tts: str | Unset = UNSET
     tts_used: str | Unset = UNSET
@@ -153,15 +153,15 @@ class Call:
 
         stt_used = self.stt_used
 
+        subagent = self.subagent
+
+        subagent_used = self.subagent_used
+
         summary = self.summary
 
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
-
-        thinking_llm = self.thinking_llm
-
-        thinking_llm_used = self.thinking_llm_used
 
         to_number = self.to_number
 
@@ -222,14 +222,14 @@ class Call:
             field_dict["stt"] = stt
         if stt_used is not UNSET:
             field_dict["stt_used"] = stt_used
+        if subagent is not UNSET:
+            field_dict["subagent"] = subagent
+        if subagent_used is not UNSET:
+            field_dict["subagent_used"] = subagent_used
         if summary is not UNSET:
             field_dict["summary"] = summary
         if tags is not UNSET:
             field_dict["tags"] = tags
-        if thinking_llm is not UNSET:
-            field_dict["thinking_llm"] = thinking_llm
-        if thinking_llm_used is not UNSET:
-            field_dict["thinking_llm_used"] = thinking_llm_used
         if to_number is not UNSET:
             field_dict["to_number"] = to_number
         if tts is not UNSET:
@@ -305,6 +305,10 @@ class Call:
 
         stt_used = d.pop("stt_used", UNSET)
 
+        subagent = d.pop("subagent", UNSET)
+
+        subagent_used = d.pop("subagent_used", UNSET)
+
         summary = d.pop("summary", UNSET)
 
         _tags = d.pop("tags", UNSET)
@@ -313,10 +317,6 @@ class Call:
             tags = UNSET
         else:
             tags = CallTags.from_dict(_tags)
-
-        thinking_llm = d.pop("thinking_llm", UNSET)
-
-        thinking_llm_used = d.pop("thinking_llm_used", UNSET)
 
         to_number = d.pop("to_number", UNSET)
 
@@ -359,10 +359,10 @@ class Call:
             sts_used=sts_used,
             stt=stt,
             stt_used=stt_used,
+            subagent=subagent,
+            subagent_used=subagent_used,
             summary=summary,
             tags=tags,
-            thinking_llm=thinking_llm,
-            thinking_llm_used=thinking_llm_used,
             to_number=to_number,
             tts=tts,
             tts_used=tts_used,

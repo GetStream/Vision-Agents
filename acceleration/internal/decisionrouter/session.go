@@ -1,11 +1,11 @@
-package lcmrouter
+package decisionrouter
 
 import (
 	"context"
 	"sync"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -15,7 +15,7 @@ import (
 // There is no event stream to forward, unlike the three model modalities: a judgement is
 // one request and one answer, so the row is written where the answer arrives.
 type Session struct {
-	provider lcm.Provider
+	provider decisionmodel.Provider
 	// config is the routing identity of the provider. Stats and health are keyed by it,
 	// so a provider registered under a different name still aggregates coherently.
 	config   routing.ProviderConfig
@@ -26,7 +26,7 @@ type Session struct {
 }
 
 func newSession(
-	provider lcm.Provider,
+	provider decisionmodel.Provider,
 	config routing.ProviderConfig,
 	owner routing.Owner,
 	recorder *routing.Recorder,
@@ -36,13 +36,13 @@ func newSession(
 
 // Classify puts one request's questions to the selected classifier.
 func (s *Session) Classify(
-	ctx context.Context, request lcm.Request,
-) (lcm.Result, error) {
+	ctx context.Context, request decisionmodel.Request,
+) (decisionmodel.Result, error) {
 	started := time.Now()
 	answered, err := s.provider.Classify(ctx, request)
 	s.record(started, answered.Usage, err)
 	if err != nil {
-		return lcm.Result{}, err
+		return decisionmodel.Result{}, err
 	}
 	return answered, nil
 }
@@ -66,7 +66,7 @@ func (s *Session) Close() error {
 // out here: a classifier is billed by what it read, and only the config knows what this
 // deployment pays for it. A request that failed reports no usage, since a judgement that
 // did not arrive is not one to charge for, and the row is kept so the wait still shows up.
-func (s *Session) record(started time.Time, used lcm.Usage, err error) {
+func (s *Session) record(started time.Time, used decisionmodel.Usage, err error) {
 	if s.recorder == nil {
 		return
 	}

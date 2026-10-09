@@ -45,12 +45,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -401,13 +401,13 @@ func (s *RouterSuite) SetupSuite() {
 	s.dispatch = dispatch.NewPool()
 	s.streams = streams
 	s.modalities = map[routing.Modality]routing.Inspector{
-		routing.LLM:    streams.LLM,
-		routing.STT:    streams.STT,
-		routing.TTS:    streams.TTS,
-		routing.STS:    streams.STS,
-		routing.Search: streams.Search,
-		routing.LCM:    streams.LCM,
-		routing.Image:  streams.Image,
+		routing.LLM:           streams.LLM,
+		routing.STT:           streams.STT,
+		routing.TTS:           streams.TTS,
+		routing.STS:           streams.STS,
+		routing.Search:        streams.Search,
+		routing.DecisionModel: streams.DecisionModel,
+		routing.Image:         streams.Image,
 	}
 
 	if s.channelProvider != nil {
@@ -737,7 +737,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.Require().NoError(err)
 	s.T().Cleanup(finding.Close)
 
-	judging, err := lcmrouter.New(lcmrouter.Options{
+	judging, err := decisionrouter.New(decisionrouter.Options{
 		Config: classifyConfig(), Registry: classifierRegistry(), Logger: logger,
 	})
 	s.Require().NoError(err)
@@ -755,7 +755,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 
 	return &Streams{
 		STT: transcriber, TTS: speaker, LLM: reasoner, STS: conversing,
-		Search: finding, LCM: judging, Image: imaging,
+		Search: finding, DecisionModel: judging, Image: imaging,
 		Transcriptions: transcriptions, Speech: recordings,
 	}
 }

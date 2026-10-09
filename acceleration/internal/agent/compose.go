@@ -33,6 +33,9 @@ const (
 		"being worked on: tell them it is still going, in terms of what they asked for."
 	idlePurpose = "Nobody has said anything for a while: check whether they are still " +
 		"there or want anything else."
+	// greetPurpose takes the greeting the agent was configured with.
+	greetPurpose = "The call has just started and nobody has spoken: greet them with your own " +
+		"variation of this greeting, keeping what it says and about as long: %s"
 )
 
 // compose asks the reply model for one line to say at a moment the agent chose rather

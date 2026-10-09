@@ -143,7 +143,7 @@ func (s *AuditSuite) TestTheLogPagesToTheEndWithoutRepeatingOrSkippingAChange() 
 	for i := range 5 {
 		s.Require().Equal(http.StatusOK, s.dashboard().do(http.MethodPatch,
 			"/v1/agents/configs/"+config.Id,
-			map[string]any{"greeting": "hello " + string(rune('a'+i))}, nil))
+			map[string]any{"greeting": map[string]any{"text": "hello " + string(rune('a'+i))}}, nil))
 	}
 
 	seen := map[string]bool{}
@@ -229,7 +229,7 @@ func (s *AuditSuite) changed(entry AuditEntry, field string) AuditChange {
 			return change
 		}
 	}
-	s.Require().Fail("no change to " + field, "%s", must(json.Marshal(entry.Changes)))
+	s.Require().Fail("no change to "+field, "%s", must(json.Marshal(entry.Changes)))
 	return AuditChange{}
 }
 

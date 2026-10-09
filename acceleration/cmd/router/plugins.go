@@ -25,8 +25,8 @@ const pluginsUsage = `usage: router plugins migrate [--apply] [--customer id] [-
   migrate   move the plugin rows onto connectors: each app's plugin OAuth client
             (agent_plugin_clients) onto connector_oauth_clients, each plugin login
             (agent_plugin_connections) onto an oauth2_code connection with its tokens
-            sealed, each agent_plugins entry onto a fixed binding and each user_plugins
-            entry onto a session binding. The plugin tables are only read. Event
+            sealed, each plugins entry onto a fixed binding, or a session binding for
+            one each end user connects. The plugin tables are only read. Event
             subscriptions are not moved. Prints every row and what it becomes.
     --apply  write. Without it nothing is written and the plan is printed. Needs
              connectors.enabled: a binding wins over its plugin entry in a session, so

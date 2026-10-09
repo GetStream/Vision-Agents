@@ -71,7 +71,7 @@ func (g *stubGuardrail) screened() []string {
 func (s *AgentSuite) screens(mode guardrail.Mode, refuse ...string) {
 	s.guards = &stubGuardrail{
 		policy: guardrail.Policy{
-			Kind:      guardrail.KindClassifier,
+			Kind:      guardrail.KindDecisionModel,
 			Mode:      mode,
 			Threshold: guardrail.DefaultThreshold,
 			Refusal:   theRefusal,

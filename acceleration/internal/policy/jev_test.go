@@ -10,7 +10,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm/typesafe"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel/systemone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel/typesafe"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
@@ -19,7 +20,7 @@ import (
 type JevSuite struct {
 	suite.Suite
 	ctx    context.Context
-	client *typesafe.Client
+	client *systemone.Client
 }
 
 func TestJevSuite(t *testing.T) {
@@ -33,7 +34,7 @@ func (s *JevSuite) SetupSuite() {
 	var cancel context.CancelFunc
 	s.ctx, cancel = context.WithTimeout(context.Background(), time.Minute)
 	s.T().Cleanup(cancel)
-	client, err := typesafe.New(typesafe.Options{})
+	client, err := typesafe.New(systemone.Options{})
 	s.Require().NoError(err)
 	s.client = client
 }

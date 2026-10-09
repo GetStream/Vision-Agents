@@ -385,7 +385,7 @@ var auditBookkeeping = []string{"id", "created_at", "updated_at", "sync_hash"}
 // auditDiff is the fields that moved between two renderings of a resource.
 //
 // It compares the API's own shape of the thing rather than the stored row, so what a change
-// names is what a client reads the resource by: `thinking_llm`, not `subagent`. A field
+// names is what a client reads the resource by: `tools`, not `progressive_tools`. A field
 // absent from one side and present on the other has moved, which is what makes a create
 // every field at once and a delete every field back to nothing.
 func auditDiff(before, after any) []store.AuditChange {
