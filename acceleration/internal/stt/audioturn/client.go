@@ -363,11 +363,14 @@ func (c *Client) score(ctx context.Context, requestID string, pcm []byte, transc
 		}
 		transcript = result.Transcript
 		previous := -wantedSamples * 1000 / SampleRate
-		for _, word := range transcript.Words {
+		for i := range transcript.Words {
+			word := &transcript.Words[i]
 			if strings.TrimSpace(word.Text) == "" || word.StartMS < previous || word.EndMS < word.StartMS ||
-				word.EndMS > 0 || !validProbability(word.Confidence) {
+				word.StartMS > 0 || !validProbability(word.Confidence) {
 				return Score{}, nil, &eotAttemptError{class: FailureInvalidResponse}
 			}
+			// Decoder durations can extend past a partial window's last audio frame.
+			word.EndMS = min(word.EndMS, 0)
 			previous = word.StartMS
 		}
 	}

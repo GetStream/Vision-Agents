@@ -20,6 +20,7 @@ func TestAudioTurnIntegrationSuite(t *testing.T) {
 			return provider
 		},
 		// Select a transcript-capable deployment explicitly for live audio tests.
-		Requires: []string{"ROUTER_EOT_URL"},
+		Requires:     []string{"ROUTER_EOT_URL"},
+		ClockFixture: "saturday_seven_thirty.wav",
 	})
 }

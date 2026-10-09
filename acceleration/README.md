@@ -746,9 +746,8 @@ second EOT request. No other transcription provider or STT API key is needed.
 
 The server must support `POST /v1/eot?transcript=true&transcript_min_p=0`, returning
 the decision and transcript as NDJSON. Startup checks this with generated
-silence and refuses a decision-only deployment. **The public EU endpoint still
-rejected transcript requests when checked on 9 October 2026**; enabling this
-option there requires the transcript-capable rollout from gophonic #107.
+silence and refuses a decision-only deployment. The hosted EU endpoint supports
+this protocol; private deployments must enable transcription on the server.
 
 Audio is sampled every 200 ms while new frames arrive, with one request in
 flight and a 16-second window. Overlapping transcripts replace provisional
