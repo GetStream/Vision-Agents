@@ -57,6 +57,30 @@ func TestAVendorFailureIsLoggedAndAnsweredWithoutItsWords(t *testing.T) {
 	}
 }
 
+func TestAFailedCallIsNotAnsweredWithTryAgain(t *testing.T) {
+	handler, _ := served(t, func() error { return callFailure(slog.New(slog.DiscardHandler), vendorRefusal("20003")) })
+
+	response := postSync(handler, `{"name":"jean"}`)
+
+	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+	answer := answered(t, response.Body.Bytes())
+	require.Equal(t, "phone_vendor_failed", answer.Code)
+	require.Equal(t, "The phone vendor did not confirm the call, so it can still ring. "+
+		"Do not place it again at once. Contact support if this keeps happening.", answer.Message)
+	require.NotContains(t, response.Body.String(), "Try again")
+}
+
+func TestACallFailureOfOurOwnStillSaysWhatToFix(t *testing.T) {
+	handler, _ := served(t, func() error {
+		return callFailure(slog.New(slog.DiscardHandler), errors.New("phone: a call needs someone to call"))
+	})
+
+	response := postSync(handler, `{"name":"jean"}`)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	require.Equal(t, "phone: a call needs someone to call", answered(t, response.Body.Bytes()).Message)
+}
+
 func TestAnErrorOfOurOwnStillSaysWhatToFix(t *testing.T) {
 	handler, _ := served(t, func() error {
 		return phoneFailure(slog.New(slog.DiscardHandler), errors.New("phone: a call needs someone to call"))

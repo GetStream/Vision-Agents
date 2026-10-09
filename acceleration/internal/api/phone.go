@@ -337,7 +337,7 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 		return nil, err
 	}
 	if err != nil {
-		return nil, phoneFailure(s.logger, err)
+		return nil, callFailure(s.logger, err)
 	}
 
 	return &placePhoneCallResponse{Body: PlacedCall{VendorCallId: placed.VendorCallID,
@@ -416,7 +416,7 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 		return nil, err
 	}
 	if err != nil {
-		return nil, phoneFailure(s.logger, err)
+		return nil, callFailure(s.logger, err)
 	}
 
 	return &transferPhoneCallResponse{Body: PlacedCall{VendorCallId: placed.VendorCallID,
@@ -461,6 +461,8 @@ var (
 		Message: "This number needs a verified address, which is not supported. Choose a number in the US or Canada, or contact support."}
 	errPhoneVendorFailed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
 		Message: "The phone vendor could not complete the request. Try again, or contact support if it keeps failing."}
+	errCallNotConfirmed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
+		Message: "The phone vendor did not confirm the call, so it can still ring. Do not place it again at once. Contact support if this keeps happening."}
 )
 
 // phoneFailure is the answer to a phone operation that failed. A vendor's own error is logged
@@ -477,6 +479,16 @@ func phoneFailure(logger *slog.Logger, err error) error {
 		return errPhoneVendorFailed
 	}
 	return invalidRequest(err.Error())
+}
+
+// callFailure is phoneFailure for an operation that starts a call: the vendor may have
+// placed it before its answer was lost, so the client is not told to try again.
+func callFailure(logger *slog.Logger, err error) error {
+	failure := phoneFailure(logger, err)
+	if failure == error(errPhoneVendorFailed) {
+		return errCallNotConfirmed
+	}
+	return failure
 }
 
 // isNumberNotHeld is the store's answer for a number the customer does not hold. A vendor's
