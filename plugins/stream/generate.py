@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["pyyaml"]
+# ///
 """Regenerate the HTTP client from the acceleration OpenAPI spec.
 
 The spec at ``acceleration/api/openapi.yaml`` is the source of truth for both sides: Go
