@@ -247,7 +247,7 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 	queue := slices.Clone(messages)
 	for i := 0; i < len(queue); i++ {
 		message := queue[i]
-		thread, config, fresh, waited, err := b.take(ctx, app, message)
+		thread, config, fresh, waited, err := b.take(ctx, app, &message)
 		if err != nil {
 			return false, err
 		}
@@ -380,11 +380,12 @@ type retryable struct{ err error }
 func (r retryable) Error() string { return r.err.Error() }
 func (r retryable) Unwrap() error { return r.err }
 
-// take finds who a message is for and claims it. fresh is false for a message nobody answers
-// and for one already taken. waited are the replies the message's thread link brought: when
-// the message links its thread and starts it, the replies that arrived before the link
-// (wait).
-func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, message core.InboundMessage) (thread store.ChannelThread, config store.AgentConfig, fresh bool, waited []core.InboundMessage, err error) {
+// take finds who a message is for and claims it, and leaves the mention of the connection's
+// account out of the message's text (MessageRule.WithoutMention). fresh is false for a message
+// nobody answers and for one already taken. waited are the replies the message's thread link
+// brought: when the message links its thread and starts it, the replies that arrived before
+// the link (wait). They come back through take, so their mention is left out too.
+func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, message *core.InboundMessage) (thread store.ChannelThread, config store.AgentConfig, fresh bool, waited []core.InboundMessage, err error) {
 	if app.CustomerID == "" || message.ProviderUnitID == "" {
 		b.logger.Info("dropped an inbound message that names no provider app or no provider unit",
 			"connector", message.ConnectorID)
@@ -410,7 +411,7 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 			"connector", message.ConnectorID, "customer", app.CustomerID, "connection", connection.ID, "configs", len(configs))
 		return store.ChannelThread{}, store.AgentConfig{}, false, nil, nil
 	}
-	read, rule, err := b.read(ctx, connection, message)
+	read, rule, err := b.read(ctx, connection, *message)
 	if err != nil {
 		return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
 	}
@@ -420,7 +421,7 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 	if !rule.Addresses(read, connection.Metadata) {
 		linked, err := b.store.ChannelThreadLinked(ctx, app.CustomerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey)
 		if err == nil && !linked && !startsThread(read) {
-			linked, err = b.wait(ctx, app.CustomerID, message)
+			linked, err = b.wait(ctx, app.CustomerID, *message)
 		}
 		if err != nil {
 			return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
@@ -431,6 +432,7 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 			return store.ChannelThread{}, store.AgentConfig{}, false, nil, nil
 		}
 	}
+	message.Text = rule.WithoutMention(read.Text, connection.Metadata)
 	thread = store.ChannelThread{
 		ChannelID:      threadChannelPrefix + uuid.NewString(),
 		CustomerID:     app.CustomerID,

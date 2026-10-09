@@ -158,6 +158,79 @@ func (s *OpenAILiveSocketSuite) TestSessionStartNamesTheModelTheAudioAndTheBacke
 	}, tools[0], "the Responses shape is flat")
 }
 
+// sendMessage is Slack's MCP slack_send_message input schema, as on the text path (AI-969):
+// two required properties and four optional ones.
+var sendMessage = llm.Tool{
+	Name:        "slack__slack_send_message",
+	Description: "Sends a message to a Slack channel or user.",
+	Parameters: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"channel_id":       map[string]any{"type": "string"},
+			"message":          map[string]any{"type": "string"},
+			"thread_ts":        map[string]any{"type": "string"},
+			"draft_id":         map[string]any{"type": "string"},
+			"reply_broadcast":  map[string]any{"type": "boolean"},
+			"unfurl_app_links": map[string]any{"type": "boolean"},
+		},
+		"required": []any{"channel_id", "message"},
+	},
+}
+
+// backendTools are the tools a session.start or session.update frame gave the backend.
+func backendTools(frame map[string]any) []any {
+	session := frame["session"].(map[string]any)
+	return session["delegation"].(map[string]any)["responses"].(map[string]any)["tools"].([]any)
+}
+
+// TestABackendToolsOptionalArgumentsStayOptional is AI-993: the backend is a Responses model,
+// which turns a tool with strict left out into strict mode, so the model filled thread_ts with
+// "" and reply_broadcast with false.
+func (s *OpenAILiveSocketSuite) TestABackendToolsOptionalArgumentsStayOptional() {
+	fake := newFakeLive("")
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Tools: []llm.Tool{sendMessage}})
+	defer func() { _ = provider.Close() }()
+
+	started := backendTools(<-fake.starts)[0].(map[string]any)
+	s.Equal(false, started["strict"], "an omitted strict is strict mode on the Responses API")
+	s.Equal([]any{"channel_id", "message"}, started["parameters"].(map[string]any)["required"])
+
+	s.Require().NoError(provider.SetTools([]llm.Tool{sendMessage}))
+	updated := backendTools(s.nextFrame(conn))[0].(map[string]any)
+	s.Equal(false, updated["strict"], "tools set mid-session follow the same rule")
+}
+
+// TestABackendToolWithEveryPropertyRequiredIsSentAsBefore leaves strict out, as on base:
+// OpenAI's strict normalization takes nothing from a schema with no optional property.
+func (s *OpenAILiveSocketSuite) TestABackendToolWithEveryPropertyRequiredIsSentAsBefore() {
+	fake := newFakeLive("")
+	defer fake.close()
+	provider, _ := s.connect(fake, Options{Tools: []llm.Tool{{Name: "get_weather", Parameters: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"city": map[string]any{"type": "string"}},
+		"required":   []string{"city"},
+	}}}})
+	defer func() { _ = provider.Close() }()
+
+	s.NotContains(backendTools(<-fake.starts)[0].(map[string]any), "strict")
+}
+
+// TestABackendToolDecodedFromJSONWithEveryPropertyRequiredIsSentAsBefore: required as []any, as
+// a decoded MCP schema has it, counts as much as []string.
+func (s *OpenAILiveSocketSuite) TestABackendToolDecodedFromJSONWithEveryPropertyRequiredIsSentAsBefore() {
+	fake := newFakeLive("")
+	defer fake.close()
+	provider, _ := s.connect(fake, Options{Tools: []llm.Tool{{Name: "get_weather", Parameters: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"city": map[string]any{"type": "string"}},
+		"required":   []any{"city"},
+	}}}})
+	defer func() { _ = provider.Close() }()
+
+	s.NotContains(backendTools(<-fake.starts)[0].(map[string]any), "strict")
+}
+
 func (s *OpenAILiveSocketSuite) TestASessionAskingForNothingExtraSendsNothingExtra() {
 	fake := newFakeLive("")
 	defer fake.close()

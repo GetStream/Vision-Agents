@@ -46,7 +46,7 @@ type SlackChannelSuite struct {
 	workspace string
 	// transcribed is the channel each voice session's transcript was opened for.
 	transcribed *openedTranscripts
-	// logged is what the router logged.
+	// logged is what the router logged, at debug and up.
 	logged *lockedLog
 }
 
@@ -96,7 +96,7 @@ func (s *SlackChannelSuite) TestAMessageIsWrittenIntoANewThreadChannelAsThePerso
 	s.Equal(http.StatusOK, status)
 	channel := s.threadChannel("C0000CHAN:1759740000.000100")
 	stored := s.written(channel, 1)
-	s.Equal(botMention+"Can you check the build?", stored[0]["text"])
+	s.Equal("Can you check the build?", stored[0]["text"], "without the bot's mention (AI-990 F29)")
 	s.Empty(stored[0]["custom"], "without source, so the message hook takes it as written to the agent")
 	author, _ := stored[0]["user_id"].(string)
 	user, found := s.chat.User(author)
@@ -124,7 +124,7 @@ func (s *SlackChannelSuite) TestAnAppPutThroughTheAPIHasItsSignedEventsWrittenIn
 
 	s.Equal(http.StatusOK, status)
 	stored := s.written(s.threadChannel("C0000CHAN:1759740000.000100"), 1)
-	s.Equal(botMention+"Can you check the build?", stored[0]["text"])
+	s.Equal("Can you check the build?", stored[0]["text"])
 	stale, _ := s.slack.Deliver(s.server.URL+providerAppEventsPath+"slack_bot/"+replaced, replacedSecret,
 		s.message("U0000ALICE", "still there?", "1759740000.000200", ""), 0)
 	s.Equal(http.StatusNotFound, stale, "the app the put replaced takes no events")
@@ -257,6 +257,25 @@ func (s *SlackChannelSuite) TestAMessageWithASubtypeIsIgnored() {
 	s.nothingLinked()
 }
 
+// AI-990 F21, F30: a message the manifest skips is answered 200 as before, and logged at
+// debug with the rule that skipped it, without its text.
+func (s *SlackChannelSuite) TestASkippedMessageIsLoggedWithTheRuleThatSkippedIt() {
+	for rule, body := range map[string][]byte{
+		"skip_if_present $.event.subtype": s.event(`{"type":"message","subtype":"channel_join","channel":"C0000CHAN","user":"U0000ALICE",` +
+			`"text":"synthetic join text F21","ts":"1759740000.002100"}`),
+		"match $.authorizations[0].is_bot": s.eventFor(`{"type":"message","channel":"D0000PEOPLE","user":"U0000ALICE",`+
+			`"text":"synthetic direct text F30","ts":"1759740000.002200","channel_type":"im"}`,
+			`{"team_id":"`+s.workspace+`","user_id":"U0000KANAT","is_bot":false}`),
+	} {
+		status, _ := s.deliver(body, 0)
+		s.Equal(http.StatusOK, status)
+		s.Contains(s.logged.String(), `level=DEBUG msg="skipped a connector event's message" connector=slack_bot rule="`+rule+`"`)
+	}
+	s.nothingLinked()
+	s.NotContains(s.logged.String(), "synthetic join text F21")
+	s.NotContains(s.logged.String(), "synthetic direct text F30")
+}
+
 // AI-989: an agent's slack_send_message through a person's user token posts as that person,
 // with no bot_id and no subtype; the event names the posting app in app_id. The shape is a
 // live event of 2026-10-09 (slack_bot.yaml, revision 4), with synthetic ids. It is skipped
@@ -281,7 +300,7 @@ func (s *SlackChannelSuite) TestAMessageAPersonTypesInSlackIsWritten() {
 
 	s.Equal(http.StatusOK, status)
 	stored := s.written(s.threadChannel("C0000CHAN:1759740000.000900"), 1)
-	s.Equal("<@U0000BOT> Hello", stored[0]["text"])
+	s.Equal("Hello", stored[0]["text"])
 }
 
 // AI-989: an app a person also installed with user scopes gets that person's direct messages
@@ -367,7 +386,7 @@ func (s *SlackChannelSuite) TestAMentionInAThreadOfPeopleStartsTheBotThere() {
 	s.deliver(s.message("U0000ALICE", "thanks", "1759740000.001700", "1759740000.001400"), 0)
 
 	stored := s.written(s.threadChannel("C0000CHAN:1759740000.001400"), 2)
-	s.Equal([]any{botMention + "do you know?", "thanks"}, []any{stored[0]["text"], stored[1]["text"]})
+	s.Equal([]any{"do you know?", "thanks"}, []any{stored[0]["text"], stored[1]["text"]})
 }
 
 // AI-989: a direct message to the bot is to it without a mention.
@@ -561,7 +580,7 @@ func (s *SlackChannelSuite) TestAReplyThatArrivesBeforeTheRetriedMentionIsWritte
 
 	s.Require().Equal(http.StatusOK, status)
 	stored := s.written(s.threadChannel("C0000CHAN:1759740000.000100"), 2)
-	s.Equal([]any{botMention + "is the build green?", "and the deploy?"}, []any{stored[0]["text"], stored[1]["text"]},
+	s.Equal([]any{"is the build green?", "and the deploy?"}, []any{stored[0]["text"], stored[1]["text"]},
 		"the mention first, then the reply that waited for it")
 	s.Zero(s.waiting(), "the reply no longer waits")
 }
@@ -589,6 +608,29 @@ func (s *SlackChannelSuite) TestRepliesArrivingWithTheirMentionsAreAllWritten() 
 	for i := range threads {
 		s.written(s.threadChannel(fmt.Sprintf("C0000CHAN:1759740000.%06d", 1000+10*i)), 2)
 	}
+}
+
+// AI-990 F29, F31a: a reply that waited comes back through take when the mention links its
+// thread, so the bot's mention is left out of it too. It waits with the mention only while the
+// connection has no bot_user_id to read it by, so the test takes that away and gives it back.
+func (s *SlackChannelSuite) TestAReplyThatWaitedIsWrittenWithoutTheBotsMention() {
+	credentials, err := pgsealed.New(s.store, s.sealer)
+	s.Require().NoError(err)
+	metadata := func(values map[string]string) {
+		s.Require().NoError(credentials.Update(context.Background(), s.bot, func(state *core.CredentialState, _ func() error) (bool, error) {
+			state.Metadata = values
+			return true, nil
+		}))
+	}
+	metadata(map[string]string{"team_id": s.workspace})
+	s.deliver(s.message("U0000BOB", botMention+"and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	s.Require().Equal(1, s.waiting(), "the reply waits")
+	metadata(map[string]string{"team_id": s.workspace, "bot_user_id": "U0000BOT"})
+
+	s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100", ""), 1)
+
+	stored := s.written(s.threadChannel("C0000CHAN:1759740000.000100"), 2)
+	s.Equal([]any{"is the build green?", "and the deploy?"}, []any{stored[0]["text"], stored[1]["text"]})
 }
 
 // AI-990 F31a: a message that starts its thread and is not to the bot is not kept: no later
