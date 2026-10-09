@@ -287,25 +287,26 @@ func (s *ProviderAppMessageHookSuite) connectedBot(team, token string) core.Conn
 		state.Credentials = core.StoredCredentials{Scheme: oauth2code.Name, Version: 1, Payload: payload}
 		state.Status = store.ConnectionConnected
 		state.AccountID = team
-		state.Metadata = map[string]string{"team_id": team}
+		state.Metadata = map[string]string{"team_id": team, "bot_user_id": "U0000BOT"}
 		state.ConnectedAt = time.Now().UTC()
 		return true, nil
 	}))
 	return ref
 }
 
-// slackMessage is a message.channels event that starts a thread in C0000CHAN
-// (https://docs.slack.dev/reference/events/message.channels), in an event_callback
-// (https://docs.slack.dev/apis/events-api/) to the operator's app.
+// slackMessage is a message.channels event that starts a thread in C0000CHAN, mentioning the
+// bot (https://docs.slack.dev/reference/events/message.channels), in an event_callback
+// (https://docs.slack.dev/apis/events-api/) to the operator's app that its bot install sees.
 func (s *ProviderAppMessageHookSuite) slackMessage(team, user, text string) []byte {
 	inner, err := json.Marshal(map[string]string{
-		"type": "message", "channel": "C0000CHAN", "user": user, "text": text, "ts": "1759740000.000100", "channel_type": "channel",
+		"type": "message", "channel": "C0000CHAN", "user": user, "text": botMention + text, "ts": "1759740000.000100", "channel_type": "channel",
 	})
 	s.Require().NoError(err)
 	body, err := json.Marshal(map[string]any{
 		"token": "synthetic", "team_id": team, "api_app_id": s.environment["SLACK_BOT_MCP_APP_ID"],
 		"event": json.RawMessage(inner), "type": "event_callback",
 		"event_id": "Ev" + strings.ReplaceAll(s.utils.uuid(), "-", ""), "event_time": time.Now().Unix(),
+		"authorizations": []map[string]any{{"team_id": team, "user_id": "U0000BOT", "is_bot": true}},
 	})
 	s.Require().NoError(err)
 	return body
