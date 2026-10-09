@@ -300,9 +300,10 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 // by its Stream Chat id first, so a reply written, and so told, again is sent once. A send
 // that fails for a reason a later one can get past (no answer, a 5xx, a 429) is sent again
 // after each of the bridge's retry backoffs. A reply not sent, after those or after a
-// refusal, is unclaimed again, so the claim stays only on a reply the provider took (AI-990
-// F28), and a later hand-off of it sends it. It runs off the caller, which is the
-// conversation's writer; a reply it cannot send is logged.
+// refusal, is unclaimed again, so a later hand-off of it sends it (AI-990 F28). A send that
+// fails otherwise, such as a 2xx answer the bridge cannot read, keeps the claim: the provider
+// may have posted it. It runs off the caller, which is the conversation's writer; a reply it
+// cannot send is logged.
 func (b *Bridge) Reply(reply conversation.FinishedReply) {
 	b.working.Add(1)
 	go func() {
@@ -348,6 +349,13 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 		}
 		var again retryable
 		if !errors.As(err, &again) {
+			var refused refusal
+			if !errors.As(err, &refused) {
+				// Neither refused nor failed in a way a later send gets past, such as a 2xx
+				// answer the bridge cannot read: the provider may have posted it, so the claim
+				// stays and no later hand-off posts it twice. Reply logs it.
+				return err
+			}
 			break
 		}
 		if attempt == len(b.retries) {
@@ -372,6 +380,14 @@ func (b *Bridge) reply(reply conversation.FinishedReply) error {
 	return err
 }
 
+// refusal is a send the provider answered and did not take: a non-2xx answer other than a 5xx
+// or a 429, or a 2xx whose body says it refused the reply (ReplyRule.Accepted). It posted
+// nothing, so the reply is unclaimed for a later hand-off to send.
+type refusal struct{ err error }
+
+func (r refusal) Error() string { return r.err.Error() }
+func (r refusal) Unwrap() error { return r.err }
+
 // retryable is a send that failed for a reason a later send can get past: no answer, a 5xx or
 // a 429 (RFC 9110 sections 15.6 and 6585 section 4), or an answer the scheme classifies as
 // transient or rate limited.
@@ -383,7 +399,7 @@ func (r retryable) Unwrap() error { return r.err }
 // take finds who a message is for and claims it, and leaves the mention of the connection's
 // account out of the message's text (MessageRule.WithoutMention). fresh is false for a message
 // nobody answers and for one already taken. waited are the replies the message's thread link
-// brought: when the message links its thread and starts it, the replies that arrived before
+// brought: when the message starts its thread, the replies that arrived before
 // the link (wait). They come back through take, so their mention is left out too.
 func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, message *core.InboundMessage) (thread store.ChannelThread, config store.AgentConfig, fresh bool, waited []core.InboundMessage, err error) {
 	if app.CustomerID == "" || message.ProviderUnitID == "" {
@@ -443,7 +459,7 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 		ThreadParts:    read.ThreadParts,
 		StreamAppPK:    app.StreamAppPK,
 	}
-	created, err := b.store.LinkChannelThread(ctx, &thread)
+	_, err = b.store.LinkChannelThread(ctx, &thread)
 	if err != nil {
 		return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
 	}
@@ -457,8 +473,11 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 	// Every reply in a thread comes after the message that started it, so the replies that
 	// waited for that message are all to be answered. A link made by a reply, such as a
 	// mention in a thread of people, leaves them waiting until they are dropped: some came
-	// before the bot was spoken to, which it does not read (AI-989).
-	if created && fresh && startsThread(read) {
+	// before the bot was spoken to, which it does not read (AI-989). The message takes them
+	// whether or not it made the link now and whether or not it was taken before: a first
+	// delivery that linked the thread and failed before it took them leaves them to the
+	// provider's retry, and each waiting reply is handed out once.
+	if startsThread(read) {
 		waited, err = b.store.TakeWaitingChannelThreadMessages(ctx, app.CustomerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey)
 		if err != nil {
 			return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
@@ -678,19 +697,19 @@ func (b *Bridge) send(ctx context.Context, thread store.ChannelThread, text stri
 		return retryable{stack.Wrap(fmt.Errorf("channelbridge: %s answered a reply with %d", connection.ConnectorID, response.StatusCode))}
 	}
 	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return stack.Wrap(fmt.Errorf("channelbridge: %s answered a reply with %d", connection.ConnectorID, response.StatusCode))
+		return refusal{stack.Wrap(fmt.Errorf("channelbridge: %s answered a reply with %d", connection.ConnectorID, response.StatusCode))}
 	}
 	sent, err := resolved.Channel.Reply.Accepts(answer)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("channelbridge: %s answered a reply with a body it does not read: %w", connection.ConnectorID, err))
 	}
 	if !sent {
-		refusal := stack.Wrap(fmt.Errorf("channelbridge: %s refused a reply in a %d answer%s", connection.ConnectorID, response.StatusCode, refusalCode(answer)))
+		refused := stack.Wrap(fmt.Errorf("channelbridge: %s refused a reply in a %d answer%s", connection.ConnectorID, response.StatusCode, refusalCode(answer)))
 		switch b.refused(ctx, ref, scheme, response, answer) {
 		case core.OutcomeTransient, core.OutcomeRateLimited:
-			return retryable{refusal}
+			return retryable{refused}
 		}
-		return refusal
+		return refusal{refused}
 	}
 	return nil
 }

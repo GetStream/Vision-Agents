@@ -568,6 +568,65 @@ func (s *SlackChannelSuite) TestAReplySlackRefusesIsUnclaimedAndItsErrorIsLogged
 	s.Never(func() bool { return len(s.slack.Posts()) > 1 }, dropped, 20*time.Millisecond)
 }
 
+// AI-990 F28: a 2xx answer the bridge cannot read may be of a reply Slack posted, so the reply
+// keeps its claim and a later hand-off does not post it again. The log says why.
+func (s *SlackChannelSuite) TestAReplyAnsweredWithABodyTheBridgeCannotReadKeepsItsClaim() {
+	s.slack.GarblePosts(1)
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.posted(1)
+	s.Require().Eventually(func() bool { return strings.Contains(s.logged.String(), "a body it does not read") }, settleFor, 10*time.Millisecond,
+		"the log says the answer was not read")
+
+	s.Equal(1, s.claimed(channel, "reply"), "the reply Slack may have posted is kept as sent")
+	s.bridge.(*channelbridge.Bridge).Reply(conversation.FinishedReply{
+		Customer: s.customerID(), CID: "agent:" + channel, MessageID: s.agentsReply(channel)["id"].(string), Text: "Noted.",
+	})
+	s.Never(func() bool { return len(s.slack.Posts()) > 1 }, dropped, 20*time.Millisecond)
+}
+
+// AI-990 F31a: a mention's first delivery linked its thread and failed before it took the
+// replies that waited, so Slack retries it. The retry takes them, though the link is not new.
+func (s *SlackChannelSuite) TestAMentionRetriedAfterItLinkedItsThreadTakesTheRepliesThatWaited() {
+	s.deliver(s.message("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	s.Require().Equal(1, s.waiting())
+	channel := s.linkedAsAFailedDeliveryLeftIt("C0000CHAN:1759740000.000100")
+
+	status, _ := s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100", ""), 1)
+
+	s.Require().Equal(http.StatusOK, status)
+	stored := s.written(channel, 2)
+	s.Equal([]any{"is the build green?", "and the deploy?"}, []any{stored[0]["text"], stored[1]["text"]})
+	s.Zero(s.waiting(), "the reply no longer waits")
+}
+
+// AI-990 F31a: a retried mention that was taken before takes the replies that waited for it
+// all the same, and each of them is handed out once when Slack delivers the mention twice at once.
+func (s *SlackChannelSuite) TestAMentionDeliveredTwiceWritesEachReplyThatWaitedOnce() {
+	s.deliver(s.message("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	s.Require().Equal(1, s.waiting())
+	mention := s.message("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	channel := s.linkedAsAFailedDeliveryLeftIt("C0000CHAN:1759740000.000100")
+	fresh, err := s.store.ClaimChannelThreadMessage(context.Background(), channel, store.ClaimInbound, "1759740000.000100")
+	s.Require().NoError(err)
+	s.Require().True(fresh, "the failed delivery had claimed the mention too")
+
+	var delivered sync.WaitGroup
+	for retry := 1; retry <= 2; retry++ {
+		delivered.Add(1)
+		go func() {
+			defer delivered.Done()
+			s.deliver(mention, retry)
+		}()
+	}
+	delivered.Wait()
+
+	stored := s.written(channel, 1)
+	s.Equal("and the deploy?", stored[0]["text"], "the mention was claimed, so only the reply is written")
+	s.Never(func() bool { return len(s.chat.Stored(channel)) > 1 }, dropped, 20*time.Millisecond)
+	s.Zero(s.waiting())
+}
+
 // AI-990 F31a: Slack retries a mention whose first delivery failed
 // (https://docs.slack.dev/apis/events-api/, «Retries»), so a reply in its thread can arrive
 // before the mention links the thread. The reply waits for the link and is written after it.
@@ -752,6 +811,22 @@ func (s *SlackChannelSuite) agentsReply(channel string) map[string]any {
 	}
 	s.FailNow("the thread channel holds no reply of its agent")
 	return nil
+}
+
+// linkedAsAFailedDeliveryLeftIt links the Slack thread key to a thread channel of the test's
+// bot, as a mention's delivery does before it fails, and returns the channel.
+func (s *SlackChannelSuite) linkedAsAFailedDeliveryLeftIt(key string) string {
+	channel, ts, _ := strings.Cut(key, ":")
+	thread := store.ChannelThread{
+		ChannelID: conversation.ThreadChannelPrefix + s.utils.uuid(), CustomerID: s.customerID(),
+		ConnectorID: "slack_bot", ProviderUnitID: s.workspace, ThreadKey: key,
+		ConnectionID: s.bot.ConnectionID, ThreadParts: map[string]string{"channel": channel, "thread_ts": ts},
+		StreamAppPK: s.app.StreamAppPK,
+	}
+	created, err := s.store.LinkChannelThread(context.Background(), &thread)
+	s.Require().NoError(err)
+	s.Require().True(created)
+	return thread.ChannelID
 }
 
 // waiting is how many replies of the test's customer wait for their thread's link.

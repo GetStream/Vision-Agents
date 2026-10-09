@@ -255,6 +255,9 @@ type Server struct {
 	// refusedPosts is how many more posts answer refusal in an HTTP 200 (RefusePosts).
 	refusedPosts int
 	refusal      string
+	// garbledPosts is how many more posts are taken and answered with a body that is not
+	// JSON (GarblePosts).
+	garbledPosts int
 	// account is the user the next consent is by: UserID until SwitchAccount.
 	account string
 

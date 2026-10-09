@@ -74,6 +74,14 @@ func (s *Server) RefusePosts(n int, code string) {
 	s.refusedPosts, s.refusal = n, code
 }
 
+// GarblePosts has the next n calls to chat.postMessage post their message and answer HTTP 200
+// with a body that is not JSON, as an answer cut off or rewritten on its way back would be.
+func (s *Server) GarblePosts(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.garbledPosts = n
+}
+
 // Posts are the messages chat.postMessage took, oldest first.
 func (s *Server) Posts() []Post {
 	s.mu.Lock()
@@ -157,6 +165,11 @@ func (s *Server) chatPostMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.posts = append(s.posts, Post{Channel: sent.Channel, ThreadTS: sent.ThreadTS, Text: sent.Text, Token: presented})
+	if s.garbledPosts > 0 {
+		s.garbledPosts--
+		_, _ = w.Write([]byte("<html>posted</html>"))
+		return
+	}
 	ts := strconv.FormatInt(s.now().Unix(), 10) + "." + syntheticDigits(6)
 	// [post]'s example answer: the message as posted, with the bot's id, which is how its
 	// own message comes back as an event the bridge skips (bot_id).
