@@ -83,6 +83,7 @@ func (s *VerifierSuite) TestTheLinesOwnSentMessageIsNotRead() {
 
 	s.Require().NoError(err)
 	s.Empty(event.Messages)
+	s.Equal([]string{"match $.data.direction"}, event.Skipped, "the rule that skipped it, for the events route to log (AI-990 F21)")
 }
 
 // A message.received that says it is outbound is not a person's: the manifest matches

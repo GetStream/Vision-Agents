@@ -36,6 +36,10 @@ type VerifiedEvent struct {
 	// provider's to call, such as a URL verification. The endpoint answers 200 with it as a
 	// text/plain body. A handshake carries no signals and no messages.
 	Challenge string
+	// Skipped is why each message the request held was not read, as ChannelEvent.Skipped
+	// says it. The endpoint logs it at debug, so a skipped message is told apart from a
+	// delivery that held none (AI-990 F21, F30).
+	Skipped []string
 }
 
 // SignalKind is what an inbound event says happened to a grant. Each one ends it: the stored
