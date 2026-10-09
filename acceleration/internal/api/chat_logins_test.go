@@ -282,36 +282,39 @@ func (s *ChatLoginsSuite) TestAConsentFinishedWithoutAHandBackIsPickedUpOnTheNex
 	s.Equal(2, attempts, "the chat's and the backend's, no third")
 }
 
-// TestEveryNewChatAsksOnTheCallersOneConnection: three chats with no selection, each with a
-// login of its own in it, leave the caller one connection, not three. The second and third
-// consent again on it, as a reconnect.
-func (s *ChatLoginsSuite) TestEveryNewChatAsksOnTheCallersOneConnection() {
+// TestANewChatUsesTheCallersOneConnectedConnection is AI-994 (F41 of the plugin migration
+// run): three chats with no selection. The first asks, and its login connects the caller's
+// connection; the second and third run the tool on it with no login, as a chat did with
+// user_plugins. One connection and one consent.
+func (s *ChatLoginsSuite) TestANewChatUsesTheCallersOneConnectedConnection() {
 	connector, grant := s.connector()
 	config := s.config(connector, grant)
-	var first string
-	for chat := range 3 {
+	first := s.client.createSession(s.session(config, nil))
+	events := s.client.opens("/v1/agents/sessions/" + first.Id + "/events")
+	s.ask(first.Id)
+	asked := s.loginOn(events, "")
+	mine := asked["connection_id"].(string)
+	b := newBrowser(&s.RouterSuite, s.provider)
+	s.Require().Equal(s.landing(mine), b.finish(s.consent(b.handOff(s.started(asked)))).Header.Get("Location"))
+	s.Require().Equal(connectorEchoText, s.carryOn(events).ran["result"])
+
+	for chat := range 2 {
 		opened := s.client.createSession(s.session(config, nil))
-		events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
 		s.ask(opened.Id)
-		asked := s.loginOn(events, "")
-		if chat == 0 {
-			first = asked["connection_id"].(string)
-		}
-		s.Equal(first, asked["connection_id"], "chat %d", chat)
-		b := newBrowser(&s.RouterSuite, s.provider)
-		s.Require().Equal(s.landing(first), b.finish(s.consent(b.handOff(s.started(asked)))).Header.Get("Location"))
-		s.Equal(connectorEchoText, s.carryOn(events).ran["result"], "chat %d", chat)
-		if chat > 0 {
-			s.Equal(store.AttemptReconnect, s.attemptKind(asked["authorization_id"].(string)))
-		}
+		s.Eventually(func() bool { return s.echoedOn(opened.Id) == 1 }, settleFor, 20*time.Millisecond,
+			"chat %d runs the tool with no login", chat)
 	}
 
 	s.Equal(1, s.connectionsOf(s.client, connector))
+	var attempts int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM connector_authorization_attempts WHERE connection_id = ?", mine).Scan(&attempts))
+	s.Equal(1, attempts, "no second consent")
 }
 
 // TestAReconnectThatComesBackWithAnotherAccountIsRefused: a new chat asks on the caller's
-// connected connection, and the person consents as another account. T17 keeps the old grant,
-// and the chat does not use the connection: it asks again.
+// connection, which needs reauthorization, and the person consents as another account. T17
+// keeps the old grant, and the chat does not use the connection: it asks again.
 func (s *ChatLoginsSuite) TestAReconnectThatComesBackWithAnotherAccountIsRefused() {
 	s.provider.Use(fakeprovider.ClientCredentials, fakeprovider.CommaScopes)
 	connector, grant := s.connectorWith(`
@@ -338,6 +341,10 @@ identity: [team_id, user_id]
 	s.Require().Equal(connectorEchoText, s.carryOn(firstEvents).ran["result"])
 	account := s.connectionOf(s.client, mine).AccountID
 
+	// A connected one would be implied (session.impliedSelection), with no login to ask.
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE connector_connections SET status = ? WHERE id = ?", store.ConnectionNeedsReauthorization, mine)
+	s.Require().NoError(err)
 	s.provider.SwitchAccount()
 	second := s.client.createSession(s.session(config, nil))
 	secondEvents := s.client.opens("/v1/agents/sessions/" + second.Id + "/events")

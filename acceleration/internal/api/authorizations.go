@@ -259,8 +259,10 @@ func (c consents) connectionFor(ctx context.Context, request session.ConsentRequ
 	// again does not leave a row and a grant each time. The person still consents in this
 	// chat: one connected before gets a reconnect (begin), which keeps the old grant when it
 	// comes back with another account (completeConsent, account_mismatch), and the session
-	// opens it only once that consent connected it anew (session.openOrAsk). A session still
-	// uses only the connection chosen for it (T22): this one, by the person's own consent.
+	// opens it only once that consent connected it anew (session.openOrAsk). A session uses a
+	// connection nobody chose for it only when it is the caller's one connected connection to
+	// the connector (session.impliedSelection, AI-994); here they have none or several, so it
+	// uses this one by the person's own consent.
 	for _, connection := range held {
 		if mine(connection) {
 			return connection, nil
