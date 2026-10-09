@@ -148,3 +148,27 @@ func STTMarkdown(sum Summary) string {
 	}
 	return b.String()
 }
+
+// STTSlackText is an STT run as a chat message: one line per target.
+func STTSlackText(title string, sum Summary) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "*%s*\n%d clips · normalizer %s\n", title, clipsOf(sum.STT), score.NormalizerVersion)
+	for _, s := range sum.STT {
+		fmt.Fprintf(&b, "• %s: WER %.1f%% (raw %.1f%%)", s.Target, 100*s.PooledWER, 100*s.PooledWERRaw)
+		if s.TimedClips > 0 {
+			fmt.Fprintf(&b, " · TTFS P50 %s, P95 %s · first words P50 %s", seconds(float64(s.ToSettleP50Ms)), seconds(float64(s.ToSettleP95Ms)), seconds(float64(s.ToFirstWordsP50Ms)))
+		}
+		if s.Failed > 0 {
+			fmt.Fprintf(&b, " · %d failed", s.Failed)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func clipsOf(targets []STTSummary) int {
+	if len(targets) == 0 {
+		return 0
+	}
+	return targets[0].Clips
+}
