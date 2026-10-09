@@ -40,8 +40,6 @@ class Connector:
             scopes (list[str] | None): The scopes a consent asks for.
             category (str | Unset):
             description (str | Unset):
-            endpoint (str | Unset): The MCP server of a custom connector, as it was created. Absent on a built-in, whose
-                endpoints stay with the router.
             redirect_uri (str | Unset): The redirect URI an OAuth client registered for this connector has to list: where
                 every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by
                 /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when
@@ -60,7 +58,6 @@ class Connector:
     scopes: list[str] | None
     category: str | Unset = UNSET
     description: str | Unset = UNSET
-    endpoint: str | Unset = UNSET
     redirect_uri: str | Unset = UNSET
     setup: ConnectorSetup | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -106,8 +103,6 @@ class Connector:
 
         description = self.description
 
-        endpoint = self.endpoint
-
         redirect_uri = self.redirect_uri
 
         setup: dict[str, Any] | Unset = UNSET
@@ -133,8 +128,6 @@ class Connector:
             field_dict["category"] = category
         if description is not UNSET:
             field_dict["description"] = description
-        if endpoint is not UNSET:
-            field_dict["endpoint"] = endpoint
         if redirect_uri is not UNSET:
             field_dict["redirect_uri"] = redirect_uri
         if setup is not UNSET:
@@ -217,8 +210,6 @@ class Connector:
 
         description = d.pop("description", UNSET)
 
-        endpoint = d.pop("endpoint", UNSET)
-
         redirect_uri = d.pop("redirect_uri", UNSET)
 
         _setup = d.pop("setup", UNSET)
@@ -240,7 +231,6 @@ class Connector:
             scopes=scopes,
             category=category,
             description=description,
-            endpoint=endpoint,
             redirect_uri=redirect_uri,
             setup=setup,
         )

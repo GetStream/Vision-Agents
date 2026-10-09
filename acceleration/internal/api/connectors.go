@@ -40,8 +40,8 @@ const mcpSource = "mcp"
 // non-secret part of the manifest: what a caller chooses between (schemes, inputs, scopes,
 // who owns the OAuth client). Everything the router reads to connect is left out: a built-in's
 // endpoints, vars, authorize and token parameters, capture and identity rules, refresh and
-// rate limits, sources, hooks and the operator's client variables. A custom connector's one
-// endpoint is shown, since the app sent it and edits it (AI-1046).
+// rate limits, sources, hooks and the operator's client variables. A custom connector's
+// endpoint is left out too: an MCP URL can carry a secret in its path (AI-837).
 type Connector struct {
 	ID          string           `json:"id" doc:"Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does."`
 	Revision    int              `json:"revision" readOnly:"true" doc:"The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected."`
@@ -54,7 +54,6 @@ type Connector struct {
 	Scopes      []string         `json:"scopes" doc:"The scopes a consent asks for."`
 	Client      ConnectorClient  `json:"client"`
 	Setup       *ConnectorSetup  `json:"setup,omitempty" doc:"What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing."`
-	Endpoint    string           `json:"endpoint,omitempty" doc:"The MCP server of a custom connector, as it was created. Absent on a built-in, whose endpoints stay with the router."`
 	RedirectURI string           `json:"redirect_uri,omitempty" readOnly:"true" format:"uri" doc:"The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then."`
 	CreatedAt   time.Time        `json:"created_at" readOnly:"true" doc:"When this revision was stored."`
 }
@@ -479,17 +478,12 @@ func connectorOf(definition store.ConnectorDefinition, publicURL string) Connect
 		}
 	}
 	custom := definition.CustomerID != store.BuiltinCustomer
-	var endpoint string
-	if custom {
-		endpoint = manifest.Endpoints[mcpSource]
-	}
 	var redirectURI string
 	if slices.Contains(manifest.Schemes, oauth2code.Name) {
 		redirectURI = connectorCallbackURL(publicURL)
 	}
 	return Connector{
 		Setup:       setup,
-		Endpoint:    endpoint,
 		RedirectURI: redirectURI,
 		ID:          definition.ID,
 		Revision:    definition.Revision,

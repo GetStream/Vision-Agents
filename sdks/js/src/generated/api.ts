@@ -4767,8 +4767,6 @@ export type components = {
             /** @description The app's own definition rather than a built-in. */
             readonly custom: boolean;
             readonly description?: string;
-            /** @description The MCP server of a custom connector, as it was created. Absent on a built-in, whose endpoints stay with the router. */
-            readonly endpoint?: string;
             /** @description Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does. */
             readonly id: string;
             /** @description What a connection is created with, such as a region or a shop. */

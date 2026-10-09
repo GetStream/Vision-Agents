@@ -3787,9 +3787,6 @@ type Connector struct {
 	Custom      *bool   `json:"custom,omitempty"`
 	Description *string `json:"description,omitempty"`
 
-	// Endpoint The MCP server of a custom connector, as it was created. Absent on a built-in, whose endpoints stay with the router.
-	Endpoint *string `json:"endpoint,omitempty"`
-
 	// Id Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does.
 	Id string `json:"id"`
 

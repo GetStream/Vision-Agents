@@ -90,30 +90,21 @@ func (s *ConnectorsSuite) TestWhatTheRouterReadsToConnectIsNeverShown() {
 	}
 }
 
-// TestACustomConnectorShowsItsEndpointAndABuiltInNone (AI-1046): the app sent the endpoint and
-// edits it, so it is read back; a built-in's endpoints stay with the router.
-func (s *ConnectorsSuite) TestACustomConnectorShowsItsEndpointAndABuiltInNone() {
+func (s *ConnectorsSuite) TestACustomConnectorsEndpointIsNeverShown() {
 	created := s.create(s.customConnector(s.customID()))
 
-	s.Equal("https://8.8.8.8/mcp", created.Endpoint)
-	s.Equal("https://8.8.8.8/mcp", s.get(created.ID).Endpoint)
-	listed := s.list(created.ID).Items
-	s.Require().Len(listed, 1)
-	s.Equal("https://8.8.8.8/mcp", listed[0].Endpoint)
-	status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/connectors/slack", nil)
-	s.Require().Equal(http.StatusOK, status)
-	s.NotContains(string(raw), `"endpoint"`)
-	for _, builtin := range s.list("").Items {
-		if !builtin.Custom {
-			s.Empty(builtin.Endpoint, builtin.ID)
-		}
+	for _, path := range []string{"/v1/agents/connectors/" + created.ID, "/v1/agents/connectors"} {
+		status, raw := s.serverClient.call(http.MethodGet, path, nil)
+		s.Require().Equal(http.StatusOK, status)
+		s.NotContains(string(raw), "8.8.8.8", "an MCP URL can carry a secret in its path")
+		s.NotContains(string(raw), `"endpoint"`)
 	}
 }
 
 // TestABuiltInReadsAsBeforeOnARouterWithoutAPublicURL is the control for AI-1046 and AI-1047:
 // the keys a built-in is answered with are the ones accelerate at 26051062 answered with,
-// probed there with this suite (pr-w7/author-1.md). A built-in has no endpoint to show, and
-// without ROUTER_PUBLIC_URL no redirect URI.
+// probed there with this suite (pr-w7/author-1.md). Without ROUTER_PUBLIC_URL there is no
+// redirect URI.
 func (s *ConnectorsSuite) TestABuiltInReadsAsBeforeOnARouterWithoutAPublicURL() {
 	for _, id := range []string{"slack", "linear", "telnyx"} {
 		status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/connectors/"+id, nil)
