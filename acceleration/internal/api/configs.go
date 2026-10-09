@@ -403,8 +403,9 @@ var (
 
 // storeFailure answers err from storing an agent config, a skill, a router config or a
 // voice. A name that another live one of its kind has is taken, a 409 the caller fixes by
-// choosing another name. A record or a connection that is not there is the invalid request
-// it has always been answered with. Anything else is the database failing rather than the
+// choosing another name. A record, a connection or a custom connector that is not there, such
+// as one deleted after the request was checked, is the invalid request it has always been
+// answered with. Anything else is the database failing rather than the
 // caller, so err goes back as it is, to be answered as a 500 and recorded with its stack.
 func storeFailure(err error, taken APIError) error {
 	switch {
@@ -412,7 +413,7 @@ func storeFailure(err error, taken APIError) error {
 		return taken
 	case errors.Is(err, store.ErrNoAgentConfig), errors.Is(err, store.ErrNoSkill),
 		errors.Is(err, store.ErrNoRouterConfig), errors.Is(err, store.ErrNoVoice),
-		errors.Is(err, store.ErrNoConnectorConnection):
+		errors.Is(err, store.ErrNoConnectorConnection), errors.Is(err, store.ErrNoConnectorDefinition):
 		return invalidRequest(err.Error())
 	}
 	return err

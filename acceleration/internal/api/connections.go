@@ -331,6 +331,10 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 		Label:              strings.TrimSpace(sent.Label),
 	}
 	err = s.store.CreateConnectorConnection(ctx, s.connectors, &connection)
+	// Deleted since it was read above (DeleteConnectorDefinition), so answered as one never made.
+	if errors.Is(err, store.ErrNoConnectorDefinition) {
+		return nil, invalidRequest(fmt.Sprintf("no such connector: %q", sent.ConnectorID))
+	}
 	if errors.Is(err, store.ErrUnregisteredScheme) {
 		known := slices.Sorted(maps.Keys(s.connectors.Schemes))
 		return nil, invalidRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has (%s)",
@@ -476,27 +480,36 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 	if err != nil {
 		return nil, err
 	}
+	s.connectionDeleted(ctx, connection.CustomerID, store.DeletedConnection{
+		ID: connection.ID, ConnectorID: connection.ConnectorID, OwnerType: connection.OwnerType,
+		HadGrant: len(connection.CredentialsSealed) > 0,
+	})
+	return nil, nil
+}
+
+// connectionDeleted lets go of what a connection the store just soft deleted still has
+// outside its row, as deleteConnection and deleteConnector both leave it.
+func (s *Server) connectionDeleted(ctx context.Context, customerID string, connection store.DeletedConnection) {
 	// Its outbound client goes too. A session holding a copy is refused by the resolver, and
 	// by its dispatcher's check before every call.
 	if s.connectorTransports != nil {
-		s.connectorTransports.Close(core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID})
+		s.connectorTransports.Close(core.ConnectionRef{CustomerID: customerID, ConnectionID: connection.ID})
 	}
 	// So do its MCP event subscriptions: a delivery to one is answered 410 from here on. The
 	// connection is deleted whatever happens here, so a failure is logged, not answered with a
 	// 500 a retry would turn into a 404: a row left behind goes at its next delivery or its
 	// next look, which comes a day later at most (mcpevents.refreshAt, retryWait, waitUntil).
 	if s.mcpEvents != nil {
-		if err := s.mcpEvents.Stop(ctx, connection.CustomerID, connection.ID); err != nil {
+		if err := s.mcpEvents.Stop(ctx, customerID, connection.ID); err != nil {
 			s.logger.Error("could not drop a deleted connection's MCP event subscriptions", "connection", connection.ID, "error", err)
 		}
 	}
 	// The delete dropped its credentials. One that held none, pending since it was made, had
 	// no grant to revoke.
-	if len(connection.CredentialsSealed) > 0 {
-		s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
+	if connection.HadGrant {
+		s.auditGrant(ctx, customerID, connection.ID, connection.ConnectorID, connection.OwnerType,
 			store.AuditGrantRevoked, store.AuditReasonDeleted, 0, "", core.CredentialChange{})
 	}
-	return nil, nil
 }
 
 // auditGrant records one grant the API created or revoked (T47), with the request's id
