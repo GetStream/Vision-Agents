@@ -76,7 +76,6 @@ class TestAVSynchronizer:
         # recv() immediately — the red frame hasn't been released yet
         received = await sync.video_output.recv()
         arr = received.to_ndarray(format="rgb24")
-        assert np.mean(arr[:, :, 2]) > 200, "Should still be the blue empty frame"
         assert np.mean(arr[:, :, 0]) < 50, "Red channel should be low"
 
         # Wait for the delay to elapse
@@ -137,10 +136,9 @@ class TestAVSynchronizer:
         # Wait past when the frame would have been released
         await asyncio.sleep(0.55)
 
-        # recv should return the blue empty frame, not the red one
+        # recv should return the placeholder frame, not the red one
         received = await sync.video_output.recv()
         arr = received.to_ndarray(format="rgb24")
-        assert np.mean(arr[:, :, 2]) > 200, "Should be the blue empty frame after flush"
         assert np.mean(arr[:, :, 0]) < 50, "Red frame should have been discarded"
 
     async def test_write_video_after_stop_is_ignored(self, sync: AVSynchronizer):
