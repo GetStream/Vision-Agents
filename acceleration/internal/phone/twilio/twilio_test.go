@@ -3,6 +3,7 @@ package twilio
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -388,6 +389,64 @@ func (s *TwilioSuite) TestAFailureFromTwilioSaysWhatTwilioSaid() {
 
 	s.ErrorContains(err, "401")
 	s.ErrorContains(err, "Authenticate")
+}
+
+func (s *TwilioSuite) TestANumberThatNeedsAnAddressIsToldApartFromOtherRefusals() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":21631,"message":"Phone Number Requires an Address but the 'AddressSid' parameter was empty.","more_info":"https://www.twilio.com/docs/errors/21631","status":400}`))
+	}
+
+	_, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+442071234567"})
+
+	s.ErrorIs(err, phone.ErrAddressRequired)
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok, "the vendor's own error is still there for the log")
+	s.Equal("twilio", vendorErr.Vendor)
+	s.Equal(http.StatusBadRequest, vendorErr.Status)
+	s.Equal("21631", vendorErr.Code)
+	s.Equal("/2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json", vendorErr.Path)
+}
+
+func (s *TwilioSuite) TestAnotherRefusalIsAVendorErrorWithItsCode() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":21452,"message":"No phone numbers found"}`))
+	}
+
+	_, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
+
+	s.NotErrorIs(err, phone.ErrAddressRequired)
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("21452", vendorErr.Code)
+	s.Equal("No phone numbers found", vendorErr.Message)
+}
+
+func (s *TwilioSuite) TestARefusalThatIsNotJSONKeepsItsText() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("upstream down"))
+	}
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal(http.StatusBadGateway, vendorErr.Status)
+	s.Empty(vendorErr.Code)
+	s.Equal("upstream down", vendorErr.Message)
+}
+
+func (s *TwilioSuite) TestTwilioNotAnsweringIsAVendorErrorToo() {
+	s.server.Close()
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok, "a transport error holds the full url, account id included")
+	s.Zero(vendorErr.Status)
+	s.Error(vendorErr.Cause)
 }
 
 func (s *TwilioSuite) answer(body string) {
