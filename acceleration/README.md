@@ -760,7 +760,9 @@ tool instead.
   answers from it without another one. It then calls the tool in the same turn once every
   argument it requires is known, without collecting optional ones first or asking leave for
   what the caller just asked for; takes a name or value as the caller gave it, since a surname
-  is a name; calls the next tool the request needs after a result; and passes bare values. It
+  is a name; after a result, calls the tools the request still needs straight away and without
+  another hold phrase, together when they do not need each other, rather than a sentence and a
+  model turn per tool; and passes bare values. It
   names no tool and defers to the operator's own instructions and a tool's approval setting
   wherever confirmation is required first. A reply carrying a colleague's question is offered
   no tools and is not told about them. The agent's own filler and a tool's `pre_speech` stay
