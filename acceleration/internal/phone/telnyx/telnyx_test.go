@@ -323,3 +323,14 @@ func (s *TelnyxSuite) answer(body string) {
 		_, _ = w.Write([]byte(body))
 	}
 }
+
+func (s *TelnyxSuite) TestAnAnswerThatIsNotJSONIsAVendorErrorWithoutTheBody() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("<html>not json</html>")) }
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("could not read the answer", vendorErr.Message)
+	s.Equal(http.StatusOK, vendorErr.Status)
+}

@@ -451,7 +451,8 @@ func (p *Provider) do(ctx context.Context, method, base, path string, query, for
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("twilio: decode %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
 	}
 	return nil
 }
