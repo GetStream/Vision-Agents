@@ -5613,9 +5613,10 @@ export type components = {
         readonly InvocationArgument: {
             /**
              * Format: int64
-             * @description A string's characters (Unicode code points) or an array's elements. Absent for any other type.
+             * @description A string's characters (Unicode code points) or an array's elements, or for (undeclared) the number of undeclared arguments. Absent for any other type.
              */
             readonly length?: number;
+            /** @description The argument's name, when the tool's input schema declares it under properties. The arguments it does not declare, whose names a model may choose, are one entry named (undeclared): type object, length their count. */
             readonly name: string;
             /**
              * @description The argument's JSON type.

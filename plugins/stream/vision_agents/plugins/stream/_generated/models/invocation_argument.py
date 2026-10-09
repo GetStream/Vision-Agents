@@ -19,10 +19,12 @@ class InvocationArgument:
     length, so an empty string shows as length 0. Never its value.
 
         Attributes:
-            name (str):
+            name (str): The argument's name, when the tool's input schema declares it under properties. The arguments it
+                does not declare, whose names a model may choose, are one entry named (undeclared): type object, length their
+                count.
             type_ (InvocationArgumentType): The argument's JSON type.
-            length (int | Unset): A string's characters (Unicode code points) or an array's elements. Absent for any other
-                type.
+            length (int | Unset): A string's characters (Unicode code points) or an array's elements, or for (undeclared)
+                the number of undeclared arguments. Absent for any other type.
     """
 
     name: str

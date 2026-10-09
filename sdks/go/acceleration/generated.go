@@ -4701,9 +4701,11 @@ type InstructionsRequest struct {
 
 // InvocationArgument One argument a connector tool call was asked with: its name, its JSON type and, for a string or an array, its length, so an empty string shows as length 0. Never its value.
 type InvocationArgument struct {
-	// Length A string's characters (Unicode code points) or an array's elements. Absent for any other type.
+	// Length A string's characters (Unicode code points) or an array's elements, or for (undeclared) the number of undeclared arguments. Absent for any other type.
 	Length *int64 `json:"length,omitempty"`
-	Name   string `json:"name"`
+
+	// Name The argument's name, when the tool's input schema declares it under properties. The arguments it does not declare, whose names a model may choose, are one entry named (undeclared): type object, length their count.
+	Name string `json:"name"`
 
 	// Type The argument's JSON type.
 	Type InvocationArgumentType `json:"type"`
