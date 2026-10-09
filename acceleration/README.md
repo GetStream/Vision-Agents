@@ -739,7 +739,7 @@ For an API session or saved agent, set `"stt": "audioturn/audioturn-stack16k-ble
 Existing STT targets keep their behavior; AudioTurn is excluded from automatic
 model groups unless a custom group explicitly includes it.
 
-This uses the same `ROUTER_EOT_URL`, credentials and threshold as turn detection.
+This uses the same `ROUTER_EOT_URL` and credentials as turn detection.
 Each request asks for both words and a turn score. Transcript revisions use the
 normal STT pipeline, and eligible turn decisions reuse that score without a
 second EOT request. No other transcription provider or STT API key is needed.
@@ -751,8 +751,11 @@ this protocol; private deployments must enable transcription on the server.
 
 Audio is sampled every 200 ms while new frames arrive, with one request in
 flight and a 16-second window. Overlapping transcripts replace provisional
-words; words leaving the window are retained by their timestamps so long turns
-keep their beginning. An input backlog that exceeds the window is reported as
+words. A transcript settles after its words hold for 400 ms and its last word
+ends at least 600 ms before the current audio. The turn score remains a separate
+decision about when to answer. Settling keeps the audio context; timestamps
+exclude already committed words and preserve the beginning of long turns.
+An input backlog that exceeds the window is reported as
 an error. The server's word confidence and acoustic turn probability are separate
 values. Provider billing reports zero for this service; TPU hosting costs are
 not included in per-request statistics.

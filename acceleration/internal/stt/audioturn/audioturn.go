@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,18 +19,16 @@ const ProviderName = "audioturn"
 // Options selects the service already used for turn detection. Client allows an
 // embedding application to share its configured client across transcription sessions.
 type Options struct {
-	Client    *Client
-	Model     string
-	Threshold *float64
+	Client *Client
+	Model  string
 }
 
 // STT adapts rolling AudioTurn windows to ordinary replacement/final transcripts.
 // One session belongs to one participant, as with the other streaming providers.
 type STT struct {
-	client    *Client
-	threshold float64
-	emitter   *stt.Emitter
-	running   sync.WaitGroup
+	client  *Client
+	emitter *stt.Emitter
+	running sync.WaitGroup
 
 	mu          sync.Mutex
 	ctx         context.Context
@@ -46,20 +43,6 @@ type STT struct {
 func New(options Options) (*STT, error) {
 	if options.Model != "" && options.Model != DefaultModel {
 		return nil, errors.New("audioturn: unsupported model")
-	}
-	threshold := 0.5
-	if raw, ok := os.LookupEnv("ROUTER_EOT_THRESHOLD"); ok {
-		value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-		if err != nil || !validProbability(value) {
-			return nil, errors.New("audioturn: invalid ROUTER_EOT_THRESHOLD")
-		}
-		threshold = value
-	}
-	if options.Threshold != nil {
-		threshold = *options.Threshold
-	}
-	if !validProbability(threshold) {
-		return nil, errors.New("audioturn: threshold must be between 0 and 1")
 	}
 	client := options.Client
 	if client == nil {
@@ -78,7 +61,7 @@ func New(options Options) (*STT, error) {
 			return nil, err
 		}
 	}
-	return &STT{client: client, threshold: threshold, emitter: stt.NewEmitter(64)}, nil
+	return &STT{client: client, emitter: stt.NewEmitter(64)}, nil
 }
 
 func (s *STT) Provider() string         { return ProviderName }
@@ -160,7 +143,8 @@ func (s *STT) run() {
 	s.emitter.Send(stt.Connected{Provider: ProviderName, Model: DefaultModel, At: time.Now()})
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
-	var read int64
+	var read, revised int64
+	var previous string
 	var words windowTranscript
 	utterance := int64(1)
 	for {
@@ -197,11 +181,16 @@ func (s *STT) run() {
 		s.mu.Lock()
 		s.scored = end
 		s.mu.Unlock()
-		final := score.Probability >= s.threshold
 		text := words.update(*transcript, end*1000/SampleRate)
+		if text != previous {
+			previous, revised = text, end
+		}
 		if text == "" {
 			continue
 		}
+		// A turn score decides when to answer, not whether these words can still
+		// change. Settle only after a stable hypothesis and a pause after its tail.
+		final := end-revised >= SampleRate*400/1000 && end*1000/SampleRate-int64(words.words[len(words.words)-1].EndMS) >= 600
 		mode := stt.ModeReplacement
 		if final {
 			mode = stt.ModeFinal
@@ -215,11 +204,7 @@ func (s *STT) run() {
 		if final {
 			utterance++
 			words = windowTranscript{turnStart: end}
-			s.mu.Lock()
-			// Audio that arrived during inference belongs to the next window.
-			keep := min(int(s.total-end), len(s.audio))
-			s.audio = s.audio[:copy(s.audio, s.audio[len(s.audio)-keep:])]
-			s.mu.Unlock()
+			previous = ""
 		}
 	}
 }

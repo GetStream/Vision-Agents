@@ -65,8 +65,7 @@ func (s *AudioTurnSuite) SetupTest() {
 	var err error
 	s.client, err = NewClient(server.URL, "")
 	s.Require().NoError(err)
-	threshold := 0.5
-	s.provider, err = New(Options{Client: s.client, Threshold: &threshold})
+	s.provider, err = New(Options{Client: s.client})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = s.provider.Close() })
 }
@@ -99,7 +98,7 @@ func (s *AudioTurnSuite) transcript() stt.Transcript {
 	}
 }
 
-func (s *AudioTurnSuite) TestRevisionsReplaceWordsAndTheScoreSettlesEachUtterance() {
+func (s *AudioTurnSuite) TestStableWordsSettleIndependentlyOfTheTurnScore() {
 	s.start()
 	s.replies <- transcriptionReply{probability: 0.1, words: []Word{{Text: "seven", StartMS: -500, EndMS: -100, Confidence: 0.95}}}
 	s.feed(1)
@@ -113,19 +112,37 @@ func (s *AudioTurnSuite) TestRevisionsReplaceWordsAndTheScoreSettlesEachUtteranc
 		{Text: "thirty", StartMS: -800, EndMS: -500, Confidence: 0.97},
 	}}
 	s.feed(1)
+	revision := s.transcript()
+	s.Equal("seven thirty", revision.Text)
+	s.False(revision.Final(), "a high turn score must not commit changing words")
+	s.Equal(0.9, *revision.TurnProbability)
+
+	s.replies <- transcriptionReply{probability: 0.1, words: []Word{
+		{Text: "seven", StartMS: -2500, EndMS: -2100, Confidence: 0.95},
+		{Text: "thirty", StartMS: -1800, EndMS: -1500, Confidence: 0.97},
+	}}
+	s.feed(1)
 	final := s.transcript()
 	s.Equal("seven thirty", final.Text)
-	s.True(final.Final())
+	s.True(final.Final(), "a low turn score must not strand settled words")
 	s.Equal(partial.Utterance, final.Utterance)
-	s.Equal(0.9, *final.TurnProbability)
-	s.Equal(float64(2000), final.AudioDurationMs)
+	s.Equal(0.1, *final.TurnProbability)
+	s.Equal(float64(3000), final.AudioDurationMs)
 
-	s.replies <- transcriptionReply{probability: 0.95, words: []Word{{Text: "seven", StartMS: -500, EndMS: -100, Confidence: 0.99}}}
+	s.replies <- transcriptionReply{probability: 0.95, words: []Word{
+		{Text: "seven", StartMS: -3500, EndMS: -3100, Confidence: 0.95},
+		{Text: "thirty", StartMS: -2800, EndMS: -2500, Confidence: 0.97},
+		{Text: "seven", StartMS: -500, EndMS: -100, Confidence: 0.99},
+	}}
 	s.feed(1)
 	next := s.transcript()
 	s.Equal("seven", next.Text, "repeated words in a new turn are not a duplicate")
 	s.Equal(final.Utterance+1, next.Utterance)
 	s.Equal(float64(1000), next.AudioDurationMs)
+	<-s.requests
+	<-s.requests
+	<-s.requests
+	s.Len(<-s.requests, 4*SampleRate*2, "keep the audio context after settling")
 }
 
 func (s *AudioTurnSuite) TestLongSpeechKeepsItsPrefixAndRevisesTheOverlappingTail() {
@@ -143,15 +160,15 @@ func (s *AudioTurnSuite) TestLongSpeechKeepsItsPrefixAndRevisesTheOverlappingTai
 		{Text: "ending", StartMS: -1000, EndMS: -500, Confidence: 0.9},
 	}}
 	s.feed(8)
-	final := s.transcript()
-	s.Equal("first word corrected ending", final.Text)
-	s.True(final.Final())
-	s.Equal(float64(20000), final.AudioDurationMs)
+	revision := s.transcript()
+	s.Equal("first word corrected ending", revision.Text)
+	s.False(revision.Final())
+	s.Equal(float64(20000), revision.AudioDurationMs)
 	<-s.requests
 	s.Len(<-s.requests, MaxSamples*2)
 }
 
-func (s *AudioTurnSuite) TestAudioArrivingDuringInferenceStartsTheNextTurn() {
+func (s *AudioTurnSuite) TestAudioArrivingDuringInferenceKeepsTheWordsInFlight() {
 	s.start()
 	s.feed(1)
 	select {
@@ -162,9 +179,14 @@ func (s *AudioTurnSuite) TestAudioArrivingDuringInferenceStartsTheNextTurn() {
 	s.feed(1)
 	s.replies <- transcriptionReply{probability: 0.9, words: []Word{{Text: "hello", StartMS: -500, EndMS: -100}}}
 	s.Equal("hello", s.transcript().Text)
-	s.replies <- transcriptionReply{probability: 0.9, words: []Word{{Text: "again", StartMS: -500, EndMS: -100}}}
-	s.Equal("again", s.transcript().Text)
-	s.Len(<-s.requests, SampleRate*2, "keep audio that arrived after the first snapshot")
+	s.replies <- transcriptionReply{probability: 0.9, words: []Word{
+		{Text: "hello", StartMS: -1500, EndMS: -1100},
+		{Text: "again", StartMS: -500, EndMS: -100},
+	}}
+	revision := s.transcript()
+	s.Equal("hello again", revision.Text)
+	s.False(revision.Final())
+	s.Len(<-s.requests, 2*SampleRate*2, "include both the snapshot and audio received during inference")
 }
 
 func (s *AudioTurnSuite) TestCloseCancelsAnOutstandingRequest() {
@@ -202,7 +224,10 @@ func (s *AudioTurnSuite) TestTheLastWordCanExtendPastTheAudioFrame() {
 	s.start()
 	s.replies <- transcriptionReply{probability: 0.9, words: []Word{{Text: "gold.", StartMS: -600, EndMS: 40, Confidence: 0.868}}}
 	s.feed(1)
-	final := s.transcript()
-	s.True(final.Final())
-	s.Equal("gold.", final.Text)
+	partial := s.transcript()
+	s.False(partial.Final())
+	s.Equal("gold.", partial.Text)
+	s.replies <- transcriptionReply{probability: 0.9, words: []Word{{Text: "gold.", StartMS: -600, EndMS: 40, Confidence: 0.868}}}
+	s.feed(1)
+	s.False(s.transcript().Final(), "unchanged words at the audio edge are still provisional")
 }
