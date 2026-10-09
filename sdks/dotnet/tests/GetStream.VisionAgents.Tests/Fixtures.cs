@@ -40,6 +40,12 @@ internal static class Fixtures
         own_capabilities = Array.Empty<object>(),
     };
 
+    /// <summary>The body of every failure the router answers.</summary>
+    public static object Failure(string type, string code, string message) => new
+    {
+        error = new { message, type, code, doc_url = $"https://getstream.io/agents/docs/api/errors/#{code}" },
+    };
+
     public static VisionAgentsClient Client(TestRouter router) =>
         new(new VisionAgentsOptions { Url = router.Url, CustomerId = "examples" });
 

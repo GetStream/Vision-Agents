@@ -68,7 +68,11 @@ func LoadOrSynth(root, voice, text string) ([]int16, error) {
 func Pack(root, voice string, scenarios []scenario.Scenario) error {
 	for _, sc := range scenarios {
 		for _, text := range sc.SpeechTexts() {
-			if _, err := LoadOrSynth(root, voice, text); err != nil {
+			lineVoice := sc.VoiceOf(text)
+			if lineVoice == "" {
+				lineVoice = voice
+			}
+			if _, err := LoadOrSynth(root, lineVoice, text); err != nil {
 				return fmt.Errorf("synth %s: %w", sc.ID, err)
 			}
 		}

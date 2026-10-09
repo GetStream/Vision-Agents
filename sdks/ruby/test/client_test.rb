@@ -54,14 +54,58 @@ class TestClient < LocalRouterTest
   end
 
   def test_a_refusal_carries_the_status_the_operation_and_the_message
-    @router.on(:post, "/v1/agents/sessions", status: 429, body: { "error" => "slow down" })
+    slow_down = LocalRouter.failure("rate_limited", "rate_limited", "slow down")
+    @router.on(:post, "/v1/agents/sessions", status: 429, body: slow_down, headers: { "Retry-After" => "3" })
 
     error = assert_raises(VA::RouterError) { client.post("/v1/agents/sessions", body: { text: true }) }
 
     assert_equal 429, error.status
     assert_equal "createSession", error.operation
     assert_equal "createSession: slow down", error.message
-    assert_equal({ "error" => "slow down" }, error.body)
+    assert_equal slow_down, error.body
+    assert_equal 3, error.retry_after
+  end
+
+  def test_a_refusal_carries_the_router_s_error_and_the_request_id
+    missing = LocalRouter.failure("not_found", "agent_config_not_found", "there is no agent config called docs")
+    @router.on(:post, "/v1/agents/sessions", status: 404, body: missing, headers: { "X-Request-Id" => "req_1" })
+
+    error = assert_raises(VA::RouterError) { client.post("/v1/agents/sessions", body: { agent: "docs" }) }
+
+    assert_equal 404, error.status
+    assert_equal "createSession: there is no agent config called docs", error.message
+    assert_equal "not_found", error.type
+    assert_equal "agent_config_not_found", error.code
+    assert_equal "https://getstream.io/agents/docs/api/errors/#agent_config_not_found", error.doc_url
+    assert_equal "req_1", error.request_id
+  end
+
+  def test_a_proxy_s_page_is_the_message
+    @router.on(:get, "/v1/agents/configs", status: 502, body: "<html>bad gateway</html>\n",
+                                           headers: { "X-Request-Id" => "req_2" })
+
+    error = assert_raises(VA::RouterError) { client.get("/v1/agents/configs") }
+
+    assert_equal 502, error.status
+    assert_equal "listAgentConfigs: <html>bad gateway</html>", error.message
+    assert_nil error.type
+    assert_nil error.code
+    assert_nil error.doc_url
+    assert_nil error.body
+    assert_equal "req_2", error.request_id
+  end
+
+  def test_the_old_error_string_and_an_empty_body_still_say_something
+    @router.on(:get, "/v1/agents/configs", status: 400, body: { "error" => "name is too long" })
+    @router.on(:delete, "/v1/agents/sessions/s1", status: 503)
+
+    old = assert_raises(VA::RouterError) { client.get("/v1/agents/configs") }
+    empty = assert_raises(VA::RouterError) { client.delete("/v1/agents/sessions/{id}", path: { id: "s1" }) }
+
+    assert_equal "listAgentConfigs: name is too long", old.message
+    assert_nil old.code
+    assert_equal "deleteSession: the router answered 503", empty.message
+    assert_nil empty.request_id
   end
 
   def test_a_router_that_is_not_there_is_status_zero
@@ -76,6 +120,48 @@ class TestClient < LocalRouterTest
     error = assert_raises(VA::RouterError) { client.socket("/v1/dispatch") }
 
     assert_equal 404, error.status
+    assert_equal "not_found", error.code
+  end
+
+  def test_a_refused_upgrade_carries_the_router_s_error_and_the_request_id
+    expired = LocalRouter.failure("authentication", "unauthenticated", "the token has expired")
+    @router.on(:get, "/v1/dispatch", status: 401, body: expired, headers: { "X-Request-Id" => "req_3" })
+
+    error = assert_raises(VA::RouterError) { client.socket("/v1/dispatch") }
+
+    assert_equal 401, error.status
+    assert_equal "GET /v1/dispatch: the token has expired", error.message
+    assert_equal "authentication", error.type
+    assert_equal "unauthenticated", error.code
+    assert_equal "https://getstream.io/agents/docs/api/errors/#unauthenticated", error.doc_url
+    assert_equal "req_3", error.request_id
+  end
+
+  # A router that keeps the connection after refusing, with the body behind the head, as a
+  # proxy or a TLS record boundary can leave it: Content-Length says when the body is whole.
+  def test_a_refused_upgrade_whose_body_arrives_after_its_head_is_read_whole
+    server = TCPServer.new("127.0.0.1", 0)
+    body = JSON.generate(LocalRouter.failure("unavailable", "unavailable", "the router is draining"))
+    refusing = Thread.new do
+      io = server.accept
+      io.readpartial(16_384)
+      io.write("HTTP/1.1 503 X\r\nContent-Type: application/json\r\nContent-Length: #{body.bytesize}\r\n\r\n")
+      sleep 0.2
+      io.write(body)
+      io.read
+    ensure
+      io&.close
+    end
+    draining = VA::Client.new(url: "http://127.0.0.1:#{server.addr[1]}", customer_id: CUSTOMER)
+
+    error = assert_raises(VA::RouterError) { draining.socket("/v1/dispatch") }
+
+    assert_equal 503, error.status
+    assert_equal "GET /v1/dispatch: the router is draining", error.message
+    assert_equal "unavailable", error.code
+  ensure
+    refusing&.join(1)
+    server&.close
   end
 
   def test_a_guest_is_minted_and_acted_for

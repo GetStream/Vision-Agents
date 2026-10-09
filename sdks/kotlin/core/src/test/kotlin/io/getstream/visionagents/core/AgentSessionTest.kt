@@ -211,6 +211,35 @@ class AgentSessionTest {
     }
 
     @Test
+    fun `a socket the router refuses to open says what the router said`() = runBlocking {
+        router.refuseHandshake = Reply(
+            403,
+            envelope("permission", "forbidden", "not your session"),
+            mapOf("X-Request-Id" to "req-3"),
+        )
+
+        val refused = assertFailsWith<AgentsException.Http> { agents.chat() }
+
+        assertEquals(403, refused.status)
+        assertEquals("permission", refused.type)
+        assertEquals("forbidden", refused.code)
+        assertEquals("not your session", refused.reason)
+        assertEquals("https://getstream.io/agents/docs/api/errors/#forbidden", refused.docUrl)
+        assertEquals("req-3", refused.requestId)
+    }
+
+    @Test
+    fun `a socket refused for its credential is a status too, not a transport failure`() = runBlocking {
+        router.refuseHandshake = Reply(401, envelope("authentication", "unauthenticated", "token expired"))
+
+        val refused = assertFailsWith<AgentsException.Http> { agents.chat() }
+
+        assertEquals(401, refused.status)
+        assertEquals("unauthenticated", refused.code)
+        assertEquals("token expired", refused.reason)
+    }
+
+    @Test
     fun `closing tells the router to end the session and is safe twice`() = runBlocking {
         val chat = agents.chat()
 

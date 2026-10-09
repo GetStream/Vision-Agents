@@ -8,12 +8,13 @@ import (
 
 const defaultAccelURL = "http://127.0.0.1:8080"
 
-// As-shipped acceleration pipeline, matching examples/voice_agents/customer_support.
+// The acceleration pipeline the bench runs by default. The subagent is named as
+// thinking_llm in each pack's agents/accelerated/{pack}/agent.yaml; this records it.
 const (
-	DefaultAcceleratedSTT      = "gemini/gemini-3.5-transcribe-live"
-	DefaultAcceleratedTTS      = "inworld/inworld-tts-2-flash"
-	DefaultAcceleratedModel    = "gemini/gemini-3.8-flash"
-	DefaultAcceleratedSubagent = "openai/gpt-5.6-sol"
+	DefaultAcceleratedSTT      = "deepgram/flux-general-en"
+	DefaultAcceleratedTTS      = "elevenlabs/eleven_v4_turbo"
+	DefaultAcceleratedModel    = "gemma/gemma-4-26B-A4B-it"
+	DefaultAcceleratedSubagent = "openai/gpt-6.1-sol"
 )
 
 // Accelerated is the Python SDK plus stream.Accelerated. Function calling stays

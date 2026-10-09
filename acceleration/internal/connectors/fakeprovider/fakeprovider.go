@@ -136,6 +136,17 @@ const (
 	// response, refresh included, is oauth.v2.access's shape with team and authed_user, access
 	// tokens live SlackAccessTTL, and token errors come as HTTP 200 with ok false.
 	CommaScopes Personality = "comma_scopes"
+	// SlackUserToken, beside CommaScopes, plays oauth.v2.user.access, the token endpoint of
+	// Slack's user-token consent (providers/slack.yaml): the token response is the user token
+	// itself, with user_id, team and enterprise at the top and no authed_user. Its keys are
+	// what a live exchange answered on 2026-10-08 with token rotation on: access_token,
+	// app_id, enterprise (null), expires_in, is_enterprise_install, ok, refresh_token, scope,
+	// team {id, name}, token_type and user_id. The example on
+	// docs.slack.dev/reference/methods/oauth.v2.user.access shows authed_user instead. The
+	// values are synthetic; token_type "user" and a refresh answering the same keys are
+	// unverified. Only Slack has this shape, so it is named for Slack. Its MCP endpoint names
+	// the user who consented in every tool's description, as Slack's does (describedFor).
+	SlackUserToken Personality = "slack_user_token"
 	// CallbackRealmID adds realmId to the callback, as QuickBooks does: Intuit's SDK reads it
 	// from the redirect (oauth-jsclient src/OAuthClient.js createToken, params.realmId).
 	CallbackRealmID Personality = "callback_realm_id"
@@ -276,8 +287,8 @@ type grant struct {
 	// user marks the grant of the Slack user token CommaScopes issues beside the bot token's
 	// when user_scope was asked.
 	user bool
-	// account is the user who consented, which CommaScopes reports as authed_user.id on the
-	// exchange and on every refresh of this grant.
+	// account is the user who consented, which CommaScopes reports as authed_user.id, and
+	// SlackUserToken as user_id, on the exchange and on every refresh of this grant.
 	account string
 }
 

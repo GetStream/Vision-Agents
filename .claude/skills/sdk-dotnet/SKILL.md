@@ -93,6 +93,16 @@ Never hand-edit `Generated/Models.cs`. Never re-declare a schema by hand; use th
 options)` borrows one, which is how `IHttpClientFactory` plugs in, and never disposes it.
 `Agent` disposes a client only if it made it. Do not add a DI extension package.
 
+## Errors
+
+Every answer that is not a success becomes a `RouterException` in one place,
+`RouterException.Answered`, which reads the generated `ErrorResponse`: `Said` is its message,
+`Type` (a string, so a kind the router adds later still reads) and `Code` are what to branch on,
+`DocUrl` explains the code, and `RequestId` is the `X-Request-Id` to quote when a 500 says only
+"something went wrong". A body that is not the envelope (a proxy's page, nothing, an older
+router's `{"error": "..."}`) keeps its trimmed text as `Said` with the rest null, and a refused
+socket upgrade has no body at all, because `ClientWebSocket` keeps only the status and headers.
+
 ## Sockets
 
 Hand-written in `Socket.cs`, because OpenAPI stops at the upgrade. One `Socket` over

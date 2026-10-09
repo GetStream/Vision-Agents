@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
+from ._errors import raise_refusal
 from ._generated import AuthenticatedClient
 
 URL_ENV = "STREAM_ACCELERATION_URL"
@@ -194,8 +195,9 @@ class Backend:
 
         The generated client puts one credential in one header, so the rest go in as plain
         headers. Built per call rather than kept, which is also what keeps a minted token
-        fresh.
+        fresh. An answer outside 2xx raises RouterError before anything parses it.
         """
+        refusals = {"event_hooks": {"response": [raise_refusal]}}
         if not self.api_key:
             return AuthenticatedClient(
                 base_url=str(self.url),
@@ -203,6 +205,7 @@ class Backend:
                 auth_header_name=CUSTOMER_HEADER,
                 prefix="",
                 headers={USER_HEADER: self.acting_for} if self.acting_for else {},
+                httpx_args=refusals,
             )
 
         credentials = dict(self.headers)
@@ -213,6 +216,7 @@ class Backend:
             auth_header_name="Authorization",
             prefix="Bearer",
             headers=credentials,
+            httpx_args=refusals,
         )
 
     def socket(self, path: str) -> str:

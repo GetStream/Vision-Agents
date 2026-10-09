@@ -260,7 +260,7 @@ func namedRouterConfig(
 		return nil, fmt.Errorf("stream: listing router configs: %w", err)
 	}
 	if listed.JSON200 == nil {
-		return nil, refusal(listed.Status(), listed.JSON400, listed.JSON401)
+		return nil, refusal(listed.HTTPResponse, listed.Body)
 	}
 
 	for _, config := range *listed.JSON200 {
@@ -285,7 +285,7 @@ func storeRouterConfig(
 			return nil, fmt.Errorf("stream: updating router config %s: %w", stored.Id, err)
 		}
 		if updated.JSON200 == nil {
-			return nil, refusal(updated.Status(), updated.JSON400, updated.JSON401, updated.JSON404)
+			return nil, refusal(updated.HTTPResponse, updated.Body)
 		}
 		return updated.JSON200, nil
 	}
@@ -295,7 +295,7 @@ func storeRouterConfig(
 		return nil, fmt.Errorf("stream: creating router config %s: %w", wanted.Name, err)
 	}
 	if created.JSON201 == nil {
-		return nil, refusal(created.Status(), created.JSON400, created.JSON401)
+		return nil, refusal(created.HTTPResponse, created.Body)
 	}
 	return created.JSON201, nil
 }

@@ -101,7 +101,10 @@ class VisionAgentsTest {
         val asked = AtomicInteger()
         val keyed = VisionAgents(url = router.url, apiKey = "key-1")
         keyed.setUser(User("jlahey")) { "token-${asked.incrementAndGet()}" }
-        router.answer = { if (it.header("Authorization") == "Bearer token-1") Reply(401, """{"error":"expired"}""") else Reply(200, EMPTY_PAGE) }
+        router.answer = {
+            if (it.header("Authorization") == "Bearer token-1") Reply(401, envelope("authentication", "unauthenticated", "expired"))
+            else Reply(200, EMPTY_PAGE)
+        }
 
         keyed.sessions.query()
 
@@ -261,7 +264,9 @@ class VisionAgentsTest {
 
     @Test
     fun `a persistent conversation refused a rewind reports what the router said`() = runTest {
-        router.answer = { Reply(400, """{"error":"a persistent conversation cannot be rewound; fork it at the response instead"}""") }
+        router.answer = {
+            Reply(400, envelope("invalid_request", "invalid_request", "a persistent conversation cannot be rewound; fork it at the response instead"))
+        }
 
         val refused = assertFailsWith<AgentsException.Http> { agents.sessions.responses("s1").rewind("r1") }
 
@@ -271,7 +276,7 @@ class VisionAgentsTest {
 
     @Test
     fun `a device that has used up its day is told when it can ask again`() = runTest {
-        router.answer = { Reply(429, """{"error":"daily limit"}""", mapOf("Retry-After" to "3600")) }
+        router.answer = { Reply(429, envelope("rate_limited", "rate_limited", "daily limit"), mapOf("Retry-After" to "3600")) }
 
         val refused = assertFailsWith<AgentsException.Http> { agents.sessions.responses("s1").create("hi") }
 
@@ -280,11 +285,69 @@ class VisionAgentsTest {
 
     @Test
     fun `a server-side path refused is recognisable as one`() = runTest {
-        router.answer = { Reply(403, """{"error":"server-side only"}""") }
+        router.answer = { Reply(403, envelope("permission", "server_side_only", "server-side only")) }
 
         val refused = assertFailsWith<AgentsException.Http> { agents.sessions.get("s1") }
 
         assertTrue(refused.isServerSideOnly)
+        assertEquals("server_side_only", refused.code)
+    }
+
+    @Test
+    fun `a refusal carries what the router said and the request id to quote`() = runTest {
+        router.answer = {
+            Reply(404, envelope("not_found", "session_not_found", "no session s1"), mapOf("X-Request-Id" to "req-1"))
+        }
+
+        val refused = assertFailsWith<AgentsException.Http> { agents.sessions.get("s1") }
+
+        assertEquals(404, refused.status)
+        assertEquals("not_found", refused.type)
+        assertEquals("session_not_found", refused.code)
+        assertEquals("no session s1", refused.reason)
+        assertEquals("https://getstream.io/agents/docs/api/errors/#session_not_found", refused.docUrl)
+        assertEquals("req-1", refused.requestId)
+        assertTrue(refused.message.orEmpty().contains("req-1"))
+    }
+
+    @Test
+    fun `a type or code the SDK never heard of is kept as it came`() = runTest {
+        router.answer = { Reply(402, envelope("payment_required", "credits_exhausted", "top up")) }
+
+        val refused = assertFailsWith<AgentsException.Http> { agents.sessions.query() }
+
+        assertEquals("payment_required", refused.type)
+        assertEquals("credits_exhausted", refused.code)
+        assertEquals("top up", refused.reason)
+    }
+
+    @Test
+    fun `a proxy's page in place of the router's error is the reason, with no type or code`() = runTest {
+        router.answer = { Reply(502, "<html>bad gateway</html>\n", mapOf("X-Request-Id" to "req-2")) }
+
+        val refused = assertFailsWith<AgentsException.Http> { agents.sessions.query() }
+
+        assertEquals(502, refused.status)
+        assertEquals("<html>bad gateway</html>", refused.reason)
+        assertNull(refused.type)
+        assertNull(refused.code)
+        assertNull(refused.docUrl)
+        assertEquals("req-2", refused.requestId)
+    }
+
+    @Test
+    fun `an older router's error string and an empty body are reported as they came`() = runTest {
+        router.answer = { if (it.path.endsWith("/s1")) Reply(400, """{"error":"bad id"}""") else Reply(503) }
+
+        val old = assertFailsWith<AgentsException.Http> { agents.sessions.get("s1") }
+        val empty = assertFailsWith<AgentsException.Http> { agents.sessions.query() }
+
+        assertEquals("""{"error":"bad id"}""", old.reason)
+        assertNull(old.type)
+        assertNull(old.code)
+        assertEquals("Service Unavailable", empty.reason)
+        assertNull(empty.type)
+        assertNull(empty.requestId)
     }
 
     @Test

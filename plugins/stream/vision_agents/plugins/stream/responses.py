@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 import uuid
 from http import HTTPStatus
-from typing import Any, AsyncIterator, List, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, List, Optional, TypeVar, Union
 
 from ._backend import Backend
+from ._errors import RouterError
 from ._generated.types import Response
 from ._generated.api.default import (
     create_response,
@@ -19,21 +20,18 @@ from ._generated.models import (
     AgentResponseItemPage,
     AgentResponsePage,
     CreateResponseRequest,
-    ErrorResponse,
     ImageSource,
     RewindSessionRequest,
 )
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
 # How many items are read per request while unwinding, and as many as the router will hand
 # over at once.
 ITEM_PAGE = 200
 ITEM_CEILING = 1000
-
-
-class RouterError(RuntimeError):
-    """What the router said it would not do, raised where it was asked."""
 
 
 class Items:
@@ -73,12 +71,14 @@ class Items:
     ) -> AgentResponseItemPage:
         """One page of items, for a caller doing its own paging. An empty cursor is the first
         page, and the page's ``next_cursor`` the next."""
-        listed = await list_response_items.asyncio(
-            self._session_id,
-            client=self._backend.client(),
-            **_set(response_id=self._response_id, limit=limit, cursor=cursor),
+        return await _unwrapped(
+            list_response_items.asyncio(
+                self._session_id,
+                client=self._backend.client(),
+                **_set(response_id=self._response_id, limit=limit, cursor=cursor),
+            ),
+            f"reading the items of {self._session_id}",
         )
-        return _unwrapped(listed, f"reading the items of {self._session_id}")
 
     async def all(self) -> List[AgentResponseItem]:
         """Everything in one list, for a conversation short enough to hold."""
@@ -150,24 +150,27 @@ class Responses:
         if command_id:
             request.command_id = command_id
 
-        created = await create_response.asyncio(
-            self._session_id, client=self._backend.client(), body=request
+        created = await _unwrapped(
+            create_response.asyncio(
+                self._session_id, client=self._backend.client(), body=request
+            ),
+            f"asking {self._session_id}",
         )
-        return AgentResponse(
-            self._backend, _unwrapped(created, f"asking {self._session_id}")
-        )
+        return AgentResponse(self._backend, created)
 
     async def list(
         self, limit: Optional[int] = None, cursor: Optional[str] = None
     ) -> AgentResponsePage:
         """A page of the turns so far, oldest first. Pass the page's ``next_cursor`` for the
         next one."""
-        listed = await list_responses.asyncio(
-            self._session_id,
-            client=self._backend.client(),
-            **_set(limit=limit, cursor=cursor),
+        return await _unwrapped(
+            list_responses.asyncio(
+                self._session_id,
+                client=self._backend.client(),
+                **_set(limit=limit, cursor=cursor),
+            ),
+            f"reading the turns of {self._session_id}",
         )
-        return _unwrapped(listed, f"reading the turns of {self._session_id}")
 
     async def rewind(
         self, to: Union[AgentResponse, ResponseRow, AgentResponseItem, str]
@@ -192,35 +195,48 @@ class Responses:
                 "hands back; there is nothing to rewind to"
             )
 
-        answered = await rewind_session.asyncio(
-            self._session_id,
-            client=self._backend.client(),
-            body=RewindSessionRequest(response_id=response_id),
+        await _asked(
+            rewind_session.asyncio(
+                self._session_id,
+                client=self._backend.client(),
+                body=RewindSessionRequest(response_id=response_id),
+            ),
+            f"rewinding {self._session_id}",
         )
-        if isinstance(answered, ErrorResponse):
-            raise RouterError(f"rewinding {self._session_id}: {answered.error.message}")
 
 
-def _unwrapped(answer: Any, what: str) -> Any:
+async def _asked(call: Awaitable[T], what: str) -> T:
+    """Await one request, naming what it was for in the RouterError it raises."""
+    try:
+        return await call
+    except RouterError as refused:
+        raise RouterError(
+            f"{what}: {refused}",
+            status=refused.status,
+            type=refused.type,
+            code=refused.code,
+            doc_url=refused.doc_url,
+            request_id=refused.request_id,
+        ) from None
+
+
+async def _unwrapped(call: Awaitable[Any], what: str) -> Any:
     """What the router answered with, or what it said instead.
 
-    Every refusal in the spec is the same shape, so raising is the same three lines
-    everywhere and worth having once.
+    Every refusal is raised the same way, so it is the same few lines everywhere and
+    worth having once.
     """
-    if isinstance(answer, ErrorResponse):
-        raise RouterError(f"{what}: {answer.error.message}")
+    answer = await _asked(call, what)
     if answer is None:
         raise RouterError(f"{what}: the router answered with nothing")
     return answer
 
 
-def _deleted(answer: Response[Any], what: str) -> None:
+async def _deleted(call: Awaitable[Response[Any]], what: str) -> None:
     """Raise what the router said instead of the 204 a delete answers with."""
-    if answer.status_code == HTTPStatus.NO_CONTENT:
-        return
-    if isinstance(answer.parsed, ErrorResponse):
-        raise RouterError(f"{what}: {answer.parsed.error.message}")
-    raise RouterError(f"{what}: the router answered {answer.status_code}")
+    answer = await _asked(call, what)
+    if answer.status_code != HTTPStatus.NO_CONTENT:
+        raise RouterError(f"{what}: the router answered {answer.status_code}")
 
 
 def _set(**values: Any) -> dict[str, Any]:

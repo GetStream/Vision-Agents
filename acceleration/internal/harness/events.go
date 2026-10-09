@@ -41,6 +41,14 @@ type ToolRequested struct {
 
 func (ToolRequested) isHarnessEvent() {}
 
+// ToolDropped means the fast model no longer wants what the calls to a tool still running
+// would return, because the caller withdrew what it was asked for.
+type ToolDropped struct {
+	Name string
+}
+
+func (ToolDropped) isHarnessEvent() {}
+
 // Settled means a task finished, one way or another. A settled task with an answer is
 // worth telling the caller about, which is why it is reported rather than merely folded
 // into the next prompt.

@@ -121,7 +121,8 @@ pub struct Settings {
     pub speed: f64,
     pub llm: String,
     pub harness: Option<types::Harness>,
-    pub subagent: String,
+    /// The slower model a voice agent hands its skills to. A text agent names none.
+    pub thinking_llm: String,
     pub search: String,
     pub greeting: String,
     pub sandbox: Option<types::Sandbox>,
@@ -444,7 +445,7 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             }
             "llm" => settings.llm = text()?,
             "harness" => settings.harness = named(&text()?, "harness")?,
-            "subagent" => settings.subagent = text()?,
+            "thinking_llm" => settings.thinking_llm = text()?,
             "search" => settings.search = text()?,
             "greeting" => settings.greeting = text()?,
             "mode" => settings.mode = named(&text()?, "mode")?,

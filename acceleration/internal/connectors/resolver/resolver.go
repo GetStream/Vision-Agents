@@ -70,7 +70,9 @@ var revokedErrors = map[core.SignalKind]string{
 }
 
 // ErrNotConnected says the connection's status is not connected: it is pending a consent, it
-// needs a reconnect, or it was disconnected. Only the person who owns it can fix that.
+// needs a reconnect, or it was disconnected. Or it is connected on a definition revision a
+// later one marked broken (store.BrokenConnectorRevision). Only the person who owns it can fix
+// that.
 var ErrNotConnected = errors.New("resolver: the connection is not connected")
 
 // ErrTemporarilyUnavailable says the provider failed to renew an expired credential in a way
@@ -265,14 +267,6 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 	if !found {
 		return core.AccessCredential{}, stack.Wrap(fmt.Errorf("%w: %q", store.ErrUnregisteredScheme, connection.AuthScheme))
 	}
-	// A connection's definition revision, inputs and scheme are never rewritten
-	// (store.credentialColumns), so they are read outside the lock. Its metadata can change
-	// with a reconnect, so the manifest is resolved inside it.
-	definition, err := r.store.ConnectorDefinition(ctx, ref.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
-	if err != nil {
-		return core.AccessCredential{}, err
-	}
-
 	var (
 		credential core.AccessCredential
 		failure    error
@@ -282,10 +276,29 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 		// ended is the outcome a renewal failed with, which names why a grant ended.
 		ended core.OutcomeKind
 	)
-	err = r.credentials.Update(ctx, ref, func(state *core.CredentialState, checkpoint func() error) (bool, error) {
+	err := r.credentials.Update(ctx, ref, func(state *core.CredentialState, checkpoint func() error) (bool, error) {
 		committed = state
 		if state.Status != store.ConnectionConnected {
 			failure = stack.Wrap(fmt.Errorf("%w: it is %s", ErrNotConnected, state.Status))
+			return false, nil
+		}
+		// A connection's inputs and scheme are never rewritten, so they are read outside the
+		// lock. Its metadata and definition revision change with a reconnect's grant, so the
+		// manifest is read and resolved inside it.
+		definition, err := r.store.ConnectorDefinition(ctx, ref.CustomerID, connection.ConnectorID, state.DefinitionRevision)
+		if err != nil {
+			return false, err
+		}
+		// A revision a later one marked broken gets no credential, as a connection that needs
+		// a reconnect does: the person logs in again, and that consent runs on the latest
+		// revision. Nothing is written, so the status stays what the provider last said.
+		reason, broken, err := r.store.BrokenConnectorRevision(ctx, connection.ConnectorID, state.DefinitionRevision)
+		if err != nil {
+			return false, err
+		}
+		if broken {
+			failure = stack.Wrap(fmt.Errorf("%w: revision %d of %s is broken (%s); reconnect it",
+				ErrNotConnected, state.DefinitionRevision, connection.ConnectorID, reason))
 			return false, nil
 		}
 		manifest, err := definition.Manifest.Resolve(connection.AuthScheme, connection.Inputs, state.Metadata)

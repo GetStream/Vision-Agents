@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -70,6 +71,10 @@ type Options struct {
 	// chat template's arguments or a reasoning effort the endpoint spells its own way.
 	// It is given the effort already resolved against the model's capabilities.
 	RequestFields func(params llm.ResponseParams, effort string) map[string]any
+	// UnsignedCall is the signature sent with a replayed turn of calls the provider never
+	// signed, such as calls another model made before a fallback, for a provider that
+	// refuses them unsigned.
+	UnsignedCall string
 	// Timeout bounds one response.
 	Timeout time.Duration
 	// HTTPClient replaces the default transport.
@@ -351,7 +356,7 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 		case llm.System:
 			messages = append(messages, openai.SystemMessage(messageText(message)))
 		case llm.Assistant:
-			messages = append(messages, assistantMessage(message))
+			messages = append(messages, assistantMessage(message, l.options.UnsignedCall))
 		case llm.ToolResult:
 			messages = append(messages, openai.ToolMessage(messageText(message), message.ToolCallID))
 			if message.HasImage() {
@@ -417,13 +422,16 @@ func tools(offered []llm.Tool) []openai.ChatCompletionToolUnionParam {
 //
 // A turn that called a tool has to carry the calls it made, because the provider matches
 // each tool result against one and rejects a conversation where a result answers nothing.
-func assistantMessage(message llm.Message) openai.ChatCompletionMessageParamUnion {
+// A signing provider signs only the first of the calls in a turn, so a turn with no
+// signature at all carries unsigned on its first call.
+func assistantMessage(message llm.Message, unsigned string) openai.ChatCompletionMessageParamUnion {
 	if len(message.ToolCalls) == 0 {
 		return openai.AssistantMessage(message.Content)
 	}
 
+	signed := slices.ContainsFunc(message.ToolCalls, func(call llm.ToolCall) bool { return call.Signature != "" })
 	calls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(message.ToolCalls))
-	for _, call := range message.ToolCalls {
+	for i, call := range message.ToolCalls {
 		function := &openai.ChatCompletionMessageFunctionToolCallParam{
 			ID: call.ID,
 			Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
@@ -431,11 +439,15 @@ func assistantMessage(message llm.Message) openai.ChatCompletionMessageParamUnio
 				Arguments: call.Arguments,
 			},
 		}
-		if call.Signature != "" {
+		signature := call.Signature
+		if i == 0 && !signed {
+			signature = unsigned
+		}
+		if signature != "" {
 			function.SetExtraFields(map[string]any{
 				signatureField: map[string]any{
 					signatureVendor: map[string]any{
-						signatureName: call.Signature,
+						signatureName: signature,
 					},
 				},
 			})

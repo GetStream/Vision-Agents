@@ -53,7 +53,7 @@ final class HttpWire implements Wire {
     }
 
     if (response.statusCode < 200 || response.statusCode > 299) {
-      throw RouterException(response.statusCode, _message(response), operation: operation);
+      throw _refusalOf(response, operation);
     }
     if (response.bodyBytes.isEmpty) {
       return null;
@@ -66,20 +66,81 @@ final class HttpWire implements Wire {
   }
 }
 
-/// What the router said about a refusal: the `error` of its error body, or the body itself
-/// when something in front of it answered instead.
-String _message(http.Response response) {
+/// The most of a body that is not the router's kept as a message: a proxy's error page can
+/// run to pages, and a message is for a log line.
+const _bodyLimit = 1000;
+
+/// The error a response that was not a success reports.
+///
+/// Every failure the router answers is `{"error": {"message", "type", "code", "doc_url"}}`.
+/// A proxy's page, an empty body or an older router's `{"error": "..."}` is not, so it keeps
+/// its own text as the message, or the status phrase when it has none, and leaves the type,
+/// code and doc url null rather than failing to read. The request id is read either way,
+/// since a proxy may still pass it on.
+RouterException _refusalOf(http.Response response, String operation) {
+  final requestId = _text(response.headers['x-request-id']);
   final text = utf8.decode(response.bodyBytes, allowMalformed: true);
+  if (_envelopeOf(text) case final error? when _text(error['message']) != null) {
+    return RouterException(
+      response.statusCode,
+      error['message'] as String,
+      operation: operation,
+      type: switch (_text(error['type'])) {
+        null => null,
+        final String type => _errorTypeOf(type),
+      },
+      code: _text(error['code']),
+      docUrl: switch (_text(error['doc_url'])) {
+        null => null,
+        final String url => Uri.tryParse(url),
+      },
+      requestId: requestId,
+    );
+  }
+  final trimmed = text.trim();
+  final message = trimmed.runes.length > _bodyLimit
+      ? '${String.fromCharCodes(trimmed.runes.take(_bodyLimit))}…'
+      : trimmed;
+  return RouterException(
+    response.statusCode,
+    message.isEmpty ? response.reasonPhrase ?? '' : message,
+    operation: operation,
+    requestId: requestId,
+  );
+}
+
+/// The envelope's `error` object, or null when the body is anything else.
+Map<String, Object?>? _envelopeOf(String text) {
   try {
     final decoded = jsonDecode(text);
-    if (decoded is Map && decoded['error'] is String) {
-      return decoded['error'] as String;
+    if (decoded is Map && decoded['error'] is Map) {
+      return (decoded['error'] as Map).cast<String, Object?>();
     }
   } on FormatException {
-    // Not JSON: a proxy or a load balancer answered, so what it said is the message.
+    // Not JSON: a proxy or a load balancer answered.
   }
-  return text.trim();
+  return null;
 }
+
+RouterErrorType _errorTypeOf(String wire) => switch (wire) {
+  'invalid_request' => RouterErrorType.invalidRequest,
+  'authentication' => RouterErrorType.authentication,
+  'permission' => RouterErrorType.permission,
+  'not_found' => RouterErrorType.notFound,
+  'method_not_allowed' => RouterErrorType.methodNotAllowed,
+  'not_acceptable' => RouterErrorType.notAcceptable,
+  'conflict' => RouterErrorType.conflict,
+  'gone' => RouterErrorType.gone,
+  'payload_too_large' => RouterErrorType.payloadTooLarge,
+  'unsupported_media_type' => RouterErrorType.unsupportedMediaType,
+  'rate_limited' => RouterErrorType.rateLimited,
+  'internal' => RouterErrorType.internal,
+  'unavailable' => RouterErrorType.unavailable,
+  _ => RouterErrorType.unknown,
+};
+
+/// A string with something in it, or null.
+String? _text(Object? value) => value is String && value.isNotEmpty ? value : null;
 
 /// Reads a timestamp the way the router writes one.
 ///

@@ -25,6 +25,7 @@ final readonly class ForkSessionRequest
         public ?string $description = null,
         // Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
         public ?bool $incognito = null,
+        // Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession.
         public ?string $instructions = null,
         // Carry the parent's history into the fork, so the new conversation continues from what was already said. Fal...
         public ?bool $messages = null,

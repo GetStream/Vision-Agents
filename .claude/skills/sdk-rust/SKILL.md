@@ -63,11 +63,19 @@ catch-all variants by hand. Never hand-edit the generated files.
 
 ## Errors
 
-One `thiserror` enum, `vision_agents::Error`: `Router{status, operation, message}`,
+One `thiserror` enum, `vision_agents::Error`: `Router(Box<RouterFailure>)`,
 `Transport`, `Decode`, `Socket`, `Failed{operation, message}` (a job or socket that reported
 failure), `Closed`, `Configuration` (refused before any request), `Folder`, `Io`.
 `Error::status()` answers the HTTP status when there is one. A 503 from `/health` is an error
 even though it carries a `HealthStatus`: a degraded router is not an answer to act on.
+
+`RouterFailure` (`#[non_exhaustive]`) is `status`, `operation`, and the envelope's `message`,
+`kind` (its `type`, a string), `code` and `doc_url`, plus `request_id` from `X-Request-Id`.
+Every answer outside 2xx and every refused upgrade goes through `Error::refused`. It reads the
+generated `ErrorResponse`, or reads the envelope field by field when its `type` is one the spec
+does not list yet. Any other body (a proxy's HTML, the old `{"error": "..."}`) is trimmed into
+the message, or the status line when empty, and the other three fields stay empty. It is boxed
+because seven fields inline push every `Result` past clippy's `result_large_err`.
 
 ## Sockets
 
@@ -76,7 +84,8 @@ JSON object (`kind`, `text`, `flag`, `number`, `nested`), so a frame this SDK ha
 of reaches the caller rather than being dropped. Non-JSON text frames are skipped.
 
 - Credentials go on the upgrade as headers, from the same code as HTTP. A refused upgrade
-  becomes `Error::Router` with the router's message.
+  becomes `Error::Router` from its envelope and request id, as a refused request does. Frames
+  on an open socket still carry `"error": "<string>"`.
 - **No reconnection.** `respond` and `tool_result` are not idempotent and there is no resume.
 - Modality sockets send `target` at the top level of `start` as well as in the options block:
   the router refuses a start frame whose top level names neither a target nor a config.

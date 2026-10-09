@@ -627,12 +627,8 @@ func sessionOf(response *acceleration.CreateSessionResponse) (*acceleration.Sess
 	if response.JSON201 != nil {
 		return response.JSON201, nil
 	}
-	for _, failure := range []*acceleration.ErrorResponse{response.JSON400, response.JSON401, response.JSON404} {
-		if failure != nil {
-			return nil, fmt.Errorf("stream: %s", failure.Error.Message)
-		}
-	}
-	return nil, fmt.Errorf("stream: the router answered %s rather than with a session", response.Status())
+	return nil, NewRouterError(response.HTTPResponse, response.Body, "stream", "",
+		"the router answered "+response.Status()+" rather than with a session")
 }
 
 func setString(field **string, value string) {

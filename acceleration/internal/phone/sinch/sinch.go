@@ -362,7 +362,7 @@ func (p *Provider) bearer(ctx context.Context) (string, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, p.authURL,
 		strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", stack.Wrap(fmt.Errorf("sinch: asking for a token: %w", err))
+		return "", stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: "token", Message: "could not build the request", Cause: err})
 	}
 	request.SetBasicAuth(p.keyID, p.keySecret)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -370,19 +370,20 @@ func (p *Provider) bearer(ctx context.Context) (string, error) {
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return "", stack.Wrap(fmt.Errorf("sinch: asking for a token: %w", err))
+		return "", stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: "token", Message: "no answer", Cause: err})
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return "", stack.Wrap(fmt.Errorf("sinch: asking for a token: %s: %s",
-			response.Status, strings.TrimSpace(string(detail))))
+		return "", stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: "token", Status: response.StatusCode,
+			Message: strings.TrimSpace(string(detail))})
 	}
 
 	var granted token
 	if err := json.NewDecoder(response.Body).Decode(&granted); err != nil {
-		return "", stack.Wrap(fmt.Errorf("sinch: decoding a token: %w", err))
+		return "", stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: "token", Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
 	}
 	if granted.AccessToken == "" {
 		return "", stack.Wrap(errors.New("sinch: the token request came back without a token"))
@@ -404,7 +405,7 @@ func (p *Provider) doCalling(ctx context.Context, method, path string, payload, 
 	request, err := http.NewRequestWithContext(ctx, method, p.callingBaseURL+path,
 		bytes.NewReader(encoded))
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("sinch: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "could not build the request", Cause: err})
 	}
 	request.SetBasicAuth(p.applicationKey, p.applicationSecret)
 	request.Header.Set("Content-Type", "application/json")
@@ -412,20 +413,22 @@ func (p *Provider) doCalling(ctx context.Context, method, path string, payload, 
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("sinch: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "no answer", Cause: err})
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return stack.Wrap(fmt.Errorf("sinch: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: strings.TrimSpace(string(detail))})
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("sinch: decode %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
 	}
 	return nil
 }
@@ -452,7 +455,7 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, payload)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("sinch: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "could not build the request", Cause: err})
 	}
 	request.Header.Set("Authorization", "Bearer "+bearer)
 	request.Header.Set("Accept", "application/json")
@@ -462,20 +465,22 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("sinch: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "no answer", Cause: err})
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return stack.Wrap(fmt.Errorf("sinch: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: strings.TrimSpace(string(detail))})
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("sinch: decode %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
 	}
 	return nil
 }

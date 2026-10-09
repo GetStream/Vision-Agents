@@ -34,7 +34,7 @@ import kotlinx.serialization.encoding.Encoder
 
 
 /**
- * How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing. 
+ * How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
  *
  * Values: cascade,native,text,unknown_default_open_api
  */

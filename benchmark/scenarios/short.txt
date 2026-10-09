@@ -1,6 +1,7 @@
 # Short Voicebench scenario set, for iterating on a change. A subset of frozen.txt. Per pack,
 # the coherence call gives most of the reply-time samples, and interrupt, selectivity and
-# tool_filler check turn-taking. One id per line.
+# tool_filler check turn-taking, and monologue is a minute of one caller turn with thinking
+# pauses the agent must not cut into. One id per line.
 restaurant.coherence
 restaurant.interrupt
 restaurant.selectivity
@@ -13,3 +14,6 @@ telecom.coherence
 telecom.interrupt
 telecom.selectivity
 telecom.tool_filler
+restaurant.monologue
+healthcare.monologue
+telecom.monologue

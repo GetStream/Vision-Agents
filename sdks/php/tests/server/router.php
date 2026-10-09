@@ -14,7 +14,7 @@ declare(strict_types=1);
 $state = getenv('LOCAL_ROUTER_STATE');
 if (!is_string($state) || $state === '') {
     http_response_code(500);
-    echo '{"error":"LOCAL_ROUTER_STATE is not set"}';
+    echo '{"error":{"message":"LOCAL_ROUTER_STATE is not set","type":"internal","code":"internal","doc_url":"https://getstream.io/agents/docs/api/errors/#internal"}}';
     return true;
 }
 
@@ -55,17 +55,21 @@ fclose($lock);
 if ($answers === []) {
     http_response_code(404);
     header('Content-Type: application/json');
-    echo json_encode(['error' => "nothing scripted for {$key}"]);
+    echo json_encode(['error' => ['message' => "nothing scripted for {$key}", 'type' => 'not_found', 'code' => 'not_found', 'doc_url' => 'https://getstream.io/agents/docs/api/errors/#not_found']], JSON_UNESCAPED_SLASHES);
     return true;
 }
 
 $answer = $answers[min($count, count($answers) - 1)];
 http_response_code((int) ($answer['status'] ?? 200));
+$hasBody = array_key_exists('body', $answer) && $answer['body'] !== null;
+if ($hasBody) {
+    header('Content-Type: application/json');
+}
+// After the default, so a scripted Content-Type replaces it.
 foreach (($answer['headers'] ?? []) as $name => $value) {
     header("{$name}: {$value}");
 }
-if (array_key_exists('body', $answer) && $answer['body'] !== null) {
-    header('Content-Type: application/json');
+if ($hasBody) {
     echo is_string($answer['body']) && ($answer['raw'] ?? false) ? $answer['body'] : json_encode($answer['body'], JSON_UNESCAPED_SLASHES);
 }
 return true;

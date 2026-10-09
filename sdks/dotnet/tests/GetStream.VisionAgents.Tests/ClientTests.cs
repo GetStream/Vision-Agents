@@ -106,7 +106,7 @@ public sealed class ClientTests
     public async Task ARefusalSaysWhatTheRouterSaid()
     {
         await using var router = await TestRouter.StartAsync();
-        router.On("POST", "/v1/agents/sessions", 400, new { error = "naming both agent and config_id is refused" });
+        router.On("POST", "/v1/agents/sessions", 400, Fixtures.Failure("invalid_request", "invalid_request", "naming both agent and config_id is refused"));
         using var client = Fixtures.Client(router);
 
         var refused = await Assert.ThrowsAsync<RouterException>(() =>
@@ -115,6 +115,44 @@ public sealed class ClientTests
         Assert.Equal(400, refused.Status);
         Assert.Equal("POST /v1/agents/sessions", refused.Operation);
         Assert.Equal("naming both agent and config_id is refused", refused.Said);
+    }
+
+    [Fact]
+    public async Task ARefusalCarriesTheKindTheCodeAndTheRequestToQuote()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions", _ => new Reply(429,
+            Fixtures.Failure("rate_limited", "rate_limited", "today's sessions are spent"),
+            new Dictionary<string, string> { ["X-Request-Id"] = "req-429", ["Retry-After"] = "3600" }));
+        using var client = Fixtures.Client(router);
+
+        var refused = await Assert.ThrowsAsync<RouterException>(() =>
+            client.PostAsync<Models.Session>("/v1/agents/sessions", new CreateSessionRequest(), TestContext.Current.CancellationToken));
+
+        Assert.Equal((429, "rate_limited", "rate_limited"), (refused.Status, refused.Type, refused.Code));
+        Assert.Equal("today's sessions are spent", refused.Said);
+        Assert.Equal(new Uri("https://getstream.io/agents/docs/api/errors/#rate_limited"), refused.DocUrl);
+        Assert.Equal("req-429", refused.RequestId);
+        Assert.Equal(TimeSpan.FromHours(1), refused.RetryAfter);
+    }
+
+    [Theory]
+    [InlineData("<html>bad gateway</html>", "<html>bad gateway</html>")]
+    [InlineData("  \n", "the router answered 502")]
+    [InlineData("""{"error":"from a router before the envelope"}""", """{"error":"from a router before the envelope"}""")]
+    public async Task AFailureThatIsNotTheEnvelopeKeepsItsText(string body, string said)
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("GET", "/v1/agents/configs", _ => new Reply(502, body,
+            new Dictionary<string, string> { ["Content-Type"] = "text/html", ["X-Request-Id"] = "req-502" }));
+        using var client = Fixtures.Client(router);
+
+        var refused = await Assert.ThrowsAsync<RouterException>(() =>
+            client.GetAsync<List<AgentConfig>>("/v1/agents/configs", cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Equal((502, said), (refused.Status, refused.Said));
+        Assert.Equal((null, null, null), (refused.Type, refused.Code, refused.DocUrl));
+        Assert.Equal("req-502", refused.RequestId);
     }
 
     [Fact]
@@ -298,7 +336,8 @@ public sealed class ClientTests
         await using var router = await TestRouter.StartAsync();
         router.On("GET", "/v1/agents/sessions/s1/responses", 200, new { items = new[] { new { id = "r1", session_id = "s1", status = "completed" } }, has_more = false });
         router.On("POST", "/v1/agents/sessions/s1/rewind", 204);
-        router.On("POST", "/v1/agents/sessions/kept/rewind", 400, new { error = "a conversation kept in Stream Chat cannot be rewound; fork it at the response instead" });
+        router.On("POST", "/v1/agents/sessions/kept/rewind", 400,
+            Fixtures.Failure("invalid_request", "invalid_request", "a conversation kept in Stream Chat cannot be rewound; fork it at the response instead"));
         using var client = Fixtures.Client(router);
         var cancel = TestContext.Current.CancellationToken;
 

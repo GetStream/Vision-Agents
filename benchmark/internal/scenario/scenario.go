@@ -23,12 +23,15 @@ const (
 
 // Scenario is one scripted phone call.
 type Scenario struct {
-	ID            string            `yaml:"id"`
-	Pack          string            `yaml:"pack"`
-	Category      Category          `yaml:"category"`
-	Name          string            `yaml:"name"`
-	Persona       string            `yaml:"persona"`
-	Instructions  string            `yaml:"instructions"`
+	ID           string   `yaml:"id"`
+	Pack         string   `yaml:"pack"`
+	Category     Category `yaml:"category"`
+	Name         string   `yaml:"name"`
+	Persona      string   `yaml:"persona"`
+	Instructions string   `yaml:"instructions"`
+	// Voice is the ElevenLabs voice the caller speaks in, such as an accented one. Empty is
+	// the bench's default caller voice.
+	Voice         string            `yaml:"voice"`
 	MaxDurationS  int               `yaml:"max_duration_s"`
 	Noise         string            `yaml:"noise"`
 	SNRDB         float64           `yaml:"snr_db"`
@@ -40,7 +43,10 @@ type Scenario struct {
 	ToolOrder     []OrderConstraint `yaml:"tool_order"`
 	Entities      []Entity          `yaml:"entities"`
 	Policy        []string          `yaml:"policy"`
-	Judge         JudgeSpec         `yaml:"judge"`
+	// HoldFloor fails a call in which the agent starts speaking while the caller is still in
+	// a scripted turn, pauses included: the point of a long turn is that it is not cut short.
+	HoldFloor bool      `yaml:"hold_floor"`
+	Judge     JudgeSpec `yaml:"judge"`
 	// AgentReplies is the gold reference reply, scored against the text gates in tests
 	// so a scenario cannot ask for something its own reference answer does not do.
 	AgentReplies []string `yaml:"agent_replies"`
@@ -48,10 +54,28 @@ type Scenario struct {
 
 // Turn is one caller utterance or overlap sound.
 type Turn struct {
-	ID           string  `yaml:"id"`
-	Text         string  `yaml:"text"`
-	OverlapSound string  `yaml:"overlap_sound"`
-	Trigger      Trigger `yaml:"trigger"`
+	ID   string `yaml:"id"`
+	Text string `yaml:"text"`
+	// Segments make one long utterance from sentences with pauses between them, the way a
+	// caller thinking aloud talks. Text is then the sentences joined, and the audio is their
+	// clips with the pauses in silence between them.
+	Segments     []Segment `yaml:"segments"`
+	OverlapSound string    `yaml:"overlap_sound"`
+	Trigger      Trigger   `yaml:"trigger"`
+	// Voice overrides the scenario's voice for this line, for someone else in the room.
+	Voice string `yaml:"voice"`
+	// Aside marks a line not meant for the agent, such as a child talking to the caller. It
+	// is scored like an overlap sound: the agent should neither answer it nor stop for it.
+	Aside bool `yaml:"aside"`
+	// CheckIn marks a turn the caller holds back for its trigger's delay after the agent
+	// stops: an agent that hears nothing for that long should check the caller is there.
+	CheckIn bool `yaml:"check_in"`
+}
+
+// Segment is one sentence of a long turn and the pause the caller leaves after it.
+type Segment struct {
+	Text         string `yaml:"text"`
+	PauseAfterMS int    `yaml:"pause_after_ms"`
 }
 
 // Trigger decides when the turn is played.
@@ -122,6 +146,22 @@ func LoadFile(path string) (Scenario, error) {
 	if s.MaxDurationS <= 0 {
 		s.MaxDurationS = 180
 	}
+	for i, turn := range s.Turns {
+		if len(turn.Segments) == 0 {
+			continue
+		}
+		if turn.Text != "" {
+			return Scenario{}, fmt.Errorf("scenario: %s: turn %q has both text and segments", path, turn.ID)
+		}
+		texts := make([]string, len(turn.Segments))
+		for j, segment := range turn.Segments {
+			if strings.TrimSpace(segment.Text) == "" || segment.PauseAfterMS < 0 {
+				return Scenario{}, fmt.Errorf("scenario: %s: turn %q segment %d needs text and a pause of 0 or more", path, turn.ID, j)
+			}
+			texts[j] = segment.Text
+		}
+		s.Turns[i].Text = strings.Join(texts, " ")
+	}
 	if err := s.Validate(); err != nil {
 		return Scenario{}, fmt.Errorf("scenario: %s: %w", path, err)
 	}
@@ -177,6 +217,12 @@ func (s Scenario) Validate() error {
 		if turn.Text == "" && turn.OverlapSound == "" {
 			return fmt.Errorf("turn %d needs text or overlap_sound", i)
 		}
+		if turn.Aside && turn.Text == "" {
+			return fmt.Errorf("turn %d: an aside needs text", i)
+		}
+		if turn.CheckIn && (turn.Trigger.Kind != "" && turn.Trigger.Kind != TriggerAfterAgent || turn.Trigger.DelayMS < 3000) {
+			return fmt.Errorf("turn %d: a check-in turn waits after the agent, for at least 3000 ms", i)
+		}
 		kind := turn.Trigger.Kind
 		if kind == "" {
 			kind = TriggerAfterAgent
@@ -198,20 +244,50 @@ func (s Scenario) Validate() error {
 	return nil
 }
 
-// SpeechTexts returns caller lines that need TTS.
+// SpeechTexts returns the clips the caller's lines are made of, which need TTS: each
+// sentence of a long turn, or a turn's text.
 func (s Scenario) SpeechTexts() []string {
 	var out []string
 	for _, turn := range s.Turns {
-		if turn.Text != "" {
+		for _, segment := range turn.Segments {
+			out = append(out, segment.Text)
+		}
+		if turn.Text != "" && len(turn.Segments) == 0 {
 			out = append(out, turn.Text)
 		}
 	}
 	return out
 }
 
-// CallerTranscript returns the scripted caller text used as canonical judge input.
+// CallerTranscript returns the scripted caller text used as canonical judge input. An aside
+// is marked as one, so the judge does not expect the agent to have answered it.
 func (s Scenario) CallerTranscript() string {
-	return strings.Join(s.SpeechTexts(), "\n")
+	var lines []string
+	for _, turn := range s.Turns {
+		switch {
+		case turn.Text == "":
+		case turn.Aside:
+			lines = append(lines, "(someone else in the room, not to the agent) "+turn.Text)
+		default:
+			lines = append(lines, turn.Text)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// VoiceOf is the voice a caller line is spoken in: its turn's, else the scenario's, else ""
+// for the bench's default.
+func (s Scenario) VoiceOf(text string) string {
+	for _, turn := range s.Turns {
+		match := turn.Text == text
+		for _, segment := range turn.Segments {
+			match = match || segment.Text == text
+		}
+		if match && turn.Voice != "" {
+			return turn.Voice
+		}
+	}
+	return s.Voice
 }
 
 // HasBargeIn reports whether the scenario expects a measurable interruption.
@@ -232,6 +308,12 @@ func FrozenPath(root string) string {
 // ShortPath is the subset of the frozen list for quick runs while iterating on a change.
 func ShortPath(root string) string {
 	return filepath.Join(root, "scenarios", "short.txt")
+}
+
+// ExtendedPath is the set of scenarios outside the frozen one, run by hand until a
+// methodology bump takes them in.
+func ExtendedPath(root string) string {
+	return filepath.Join(root, "scenarios", "extended.txt")
 }
 
 // LoadIDList reads one scenario id per line, ignoring comments and blanks.

@@ -32,6 +32,16 @@ Map<String, Object?> responseJson(String id, {String status = 'completed'}) => {
   'finished_at': '2026-09-24T15:54:57.5Z',
 };
 
+/// A failure, in the envelope the router answers every one with.
+Map<String, Object?> errorJson(String type, String code, String message) => {
+  'error': {
+    'message': message,
+    'type': type,
+    'code': code,
+    'doc_url': 'https://getstream.io/agents/docs/api/errors/#$code',
+  },
+};
+
 /// A page of a list, as the router pages one.
 Map<String, Object?> pageJson(List<Object?> items, {String? nextCursor}) => {
   'items': items,

@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.agent_connector_selection import AgentConnectorSelection
     from ..models.connector_binding_event import ConnectorBindingEvent
+    from ..models.connector_binding_policy import ConnectorBindingPolicy
     from ..models.connector_tool_grant import ConnectorToolGrant
 
 
@@ -36,6 +37,8 @@ class AgentConnectorBinding:
                 opening a text conversation from the config when it arrives. Subscribed when the connection is next validated.
                 Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an
                 event arrives with no session open.
+            policy (ConnectorBindingPolicy | Unset): How a binding's tool calls behave around speech and interruptions.
+                Every field is optional, and a field left out keeps today's behaviour.
             required (bool | Unset): Whether a session needs this connector. A required one that cannot be opened fails the
                 session; an optional one is left out of it. Default: False.
             timeout_ms (int | Unset): How long one tool call may take, in milliseconds. Omitted, the session's default
@@ -47,6 +50,7 @@ class AgentConnectorBinding:
     name: str
     tools: list[ConnectorToolGrant]
     events: list[ConnectorBindingEvent] | Unset = UNSET
+    policy: ConnectorBindingPolicy | Unset = UNSET
     required: bool | Unset = False
     timeout_ms: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -70,6 +74,10 @@ class AgentConnectorBinding:
                 events_item = events_item_data.to_dict()
                 events.append(events_item)
 
+        policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.policy, Unset):
+            policy = self.policy.to_dict()
+
         required = self.required
 
         timeout_ms = self.timeout_ms
@@ -86,6 +94,8 @@ class AgentConnectorBinding:
         )
         if events is not UNSET:
             field_dict["events"] = events
+        if policy is not UNSET:
+            field_dict["policy"] = policy
         if required is not UNSET:
             field_dict["required"] = required
         if timeout_ms is not UNSET:
@@ -100,6 +110,9 @@ class AgentConnectorBinding:
         )
         from ..models.connector_binding_event import (
             ConnectorBindingEvent,
+        )
+        from ..models.connector_binding_policy import (
+            ConnectorBindingPolicy,
         )
         from ..models.connector_tool_grant import ConnectorToolGrant
 
@@ -126,6 +139,13 @@ class AgentConnectorBinding:
 
                 events.append(events_item)
 
+        _policy = d.pop("policy", UNSET)
+        policy: ConnectorBindingPolicy | Unset
+        if isinstance(_policy, Unset):
+            policy = UNSET
+        else:
+            policy = ConnectorBindingPolicy.from_dict(_policy)
+
         required = d.pop("required", UNSET)
 
         timeout_ms = d.pop("timeout_ms", UNSET)
@@ -136,6 +156,7 @@ class AgentConnectorBinding:
             name=name,
             tools=tools,
             events=events,
+            policy=policy,
             required=required,
             timeout_ms=timeout_ms,
         )

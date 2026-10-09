@@ -23,7 +23,7 @@ func (e targetFailure) Error() string { return e.err.Error() }
 
 func (e targetFailure) Unwrap() error { return e.err }
 
-func runWebRTC(ctx context.Context, cfg Config, sc scenario.Scenario, audioMap map[string][]int16, trial int, callID string) (caller.Result, error) {
+func runWebRTC(ctx context.Context, cfg Config, sc scenario.Scenario, audioMap map[string][]int16, trial int, callID string, toolActivity func() (int, time.Time)) (caller.Result, error) {
 	if callID == "" {
 		callID = webrtcCallID(cfg, sc, trial)
 	}
@@ -51,7 +51,7 @@ func runWebRTC(ctx context.Context, cfg Config, sc scenario.Scenario, audioMap m
 		return caller.Result{}, targetFailure{err: err}
 	}
 
-	eng := caller.Engine{Audio: audioMap, Logger: cfg.Logger}
+	eng := caller.Engine{Audio: audioMap, Logger: cfg.Logger, ToolActivity: toolActivity}
 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(max(sc.MaxDurationS, 60))*time.Second)
 	defer cancel()
 	recording, err := eng.Play(callCtx, sc, media)

@@ -66,6 +66,8 @@ Run one unchanged target over the full pack, several times, on a pinned runner a
 
 Until that number exists, "P50 dropped 40 ms" is a claim the instrument cannot support. The MDE decides `k`, the CI wiring, and what `voicebench compare` is allowed to flag. Everything else in this section follows from it.
 
+**The instrument has landed; the study has not.** `voicebench noise` reads repeated runs of one target, refuses any that differ in commit, `k`, network profile, scenarios or contracts, and writes each metric's MDE (the largest gap between any two runs) to `baselines/<target>/noise-<pack>.json`. `voicebench compare --mde` gates a baseline diff on that file, every metric against its own MDE, in place of the hand-typed V2V threshold it had before. What remains is running it on the pinned runner and choosing `k` from what it reports.
+
 ### Choose `k` from the measured variance
 
 Default `k = 3` is defensible for binary `pass^k` gates. It is thin for a latency percentile. The report already prints the sample count next to every P50, which would expose this: a pack P50 sitting on a handful of measured turns cannot move a trend line.
@@ -91,7 +93,7 @@ Do not mix dirty trees into the series. `RunManifest.GitDirty` already records t
 
 ### Freeze the bench definition
 
-A metric is only comparable over time if the scenarios, contracts, and thresholds behind it did not move. `MethodologyVersion` (`voicebench-live-v3`), `scenario_hash`, and `contract_hash` already detect drift. Add a policy on top, borrowing Inworld's rule that published presets are immutable and new behaviour means a new file.
+A metric is only comparable over time if the scenarios, contracts, and thresholds behind it did not move. `MethodologyVersion` (`voicebench-live-v5`), `scenario_hash`, and `contract_hash` already detect drift. Add a policy on top, borrowing Inworld's rule that published presets are immutable and new behaviour means a new file.
 
 Keep a frozen scenario set for trend tracking. New scenarios land outside it until a version bump, so improving the bench never silently rewrites history. Bumping `MethodologyVersion` starts a new series; it does not patch the old one.
 
@@ -170,7 +172,7 @@ Acceleration is a bundled product, not a pipeline variant. Co-locating STT, LLM,
 
 Insisting on a matched provider triple would force acceleration to compete with its bundling switched off and hide the advantage it is built to win on. The headline row is acceleration as shipped against what a LiveKit or Pipecat developer actually builds today, which is OpenAI Realtime.
 
-The as-shipped pipeline is pinned to [`customer_support.py`](../examples/voice_agents/customer_support/customer_support.py): `gemini/gemini-3.5-transcribe-live`, `gemini/gemini-3.8-flash`, `inworld/inworld-tts-2-flash`, subagent `openai/gpt-5.6-sol`. Voicebench does not reuse *that* stored config, whose instructions and skills belong to a different product; it syncs a per-pack config of its own carrying the pack's skills, so the subagent runs real skills rather than an inline prompt. Changing the triple is a methodology bump.
+The pipeline the bench runs is `deepgram/flux-general-en`, `gemma/gemma-4-26B-A4B-it`, `elevenlabs/eleven_v4_turbo`, subagent `openai/gpt-6.1-sol`, from `voicebench-live-v4`; v5 adds the one-minute monologue scenarios to the frozen set. Until v3 it was pinned to [`customer_support.py`](../examples/voice_agents/customer_support/customer_support.py)'s Gemini transcribe, Gemini 3.8 Flash, Inworld TTS-2 Flash and GPT-5.6 Sol. Voicebench does not reuse *that* stored config, whose instructions and skills belong to a different product; it syncs a per-pack config of its own carrying the pack's skills, so the subagent runs real skills rather than an inline prompt. Changing the triple is a methodology bump.
 
 ### Two comparison tiers
 
@@ -193,6 +195,8 @@ The same command serves baseline-regression mode from the previous section. One 
 ## STT benchmark
 
 The provider suites already know how to stream a clip at call pace and score the settled transcript. What they lack is a dataset, a declared normalizer, aggregate reporting, and a direct-versus-through-the-router split.
+
+**The harness has landed; the datasets and the direct split have not.** `voicebench stt --target` streams a clip manifest through the router's STT socket at call pace and writes a `kind: stt` summary with every metric in the table below, timed the way `testaudio.Measure` times them. It cannot import the router's providers, so it measures through the router only; the direct leg of [Router overhead](#router-overhead) needs a second path. No dataset is wired in yet: a manifest is whatever clips are given to it.
 
 ### Metrics
 
@@ -254,6 +258,8 @@ Borrow Inworld's taxonomy. Most of it is cheap in Go. One piece is not.
 | Health grid | Per-clip warn/fail → pass-rate grade | Maps onto the existing gate/verdict model. Inworld grades good ≥99%, warn ≥95%, fail below. Recalibrate those bands on a known-good baseline rather than copying them. |
 
 Same direct-versus-through-the-router TTFB delta as STT.
+
+**The harness has landed, except the router delta and MOS.** `voicebench tts --target` speaks a corpus through the router's TTS socket and writes a `kind: tts` summary with round-trip WER, the audio-health grid and its grade, TTFB percentiles and real-time factor. The default corpus is the scenarios' agent reply lines, not Inworld's stress set, whose licensing is still open. As with STT, the bench cannot import the router's providers, so the direct leg of the delta needs a second path. The provider and model behind a shortcut target are not recorded yet: the Go SDK's voice socket drops the `started` frame that names them.
 
 ### MOS
 
@@ -323,6 +329,8 @@ If turn detection becomes a differentiator of its own, run an adapter against th
 
 Wire the two run tiers: per-PR smoke, nightly full, cached caller audio, pinned runner and region. Fail a PR on evaluator invalid, on inbound drops, and on a change that exceeds the MDE against the stored `accelerated` baseline. Do not fail a PR on a competitor column.
 
+**The nightly has landed, without the MDE gate; the per-PR smoke has not.** `.github/workflows/voicebench.yml` runs the frozen set every night with caller audio cached and network profile `github-ubuntu-latest`, and compares it against the previous night without a gate: no noise floor has been measured on that runner yet. Once one has, committing it and passing it to `compare --mde` makes the nightly a gate.
+
 ## Cross-cutting design
 
 ### Artifacts
@@ -346,7 +354,7 @@ A missing field makes the run incomparable, the same way a missing judge already
 ### CLI
 
 ```
-voicebench synth | run | report | calibrate | compare | stt | tts
+voicebench synth | run | report | calibrate | compare | noise | stt | tts
 ```
 
 `compare` is the shared cross-run command. `stt` and `tts` produce the same `summary.json` family with `kind` set, so `compare` works on all three pillars.

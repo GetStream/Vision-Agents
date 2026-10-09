@@ -46,6 +46,8 @@ class Router:
         self.closed: list[str] = []
         self.commands: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.url = ""
+        # refusing makes creating a session answer 429, as a customer over its limit is.
+        self.refusing = False
         self._socket: Optional[web.WebSocketResponse] = None
         self._watching = asyncio.Event()
 
@@ -76,6 +78,19 @@ class Router:
         return await asyncio.wait_for(self.commands.get(), SETTLE)
 
     async def _create(self, request: web.Request) -> web.Response:
+        if self.refusing:
+            return web.json_response(
+                status=429,
+                headers={"X-Request-Id": "request-7"},
+                data={
+                    "error": {
+                        "message": "no more sessions today",
+                        "type": "rate_limited",
+                        "code": "rate_limited",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#rate_limited",
+                    }
+                },
+            )
         self.created = await request.json()
         self.created_for = request.headers.get("X-Stream-User-Id", "")
         return web.json_response(
@@ -595,6 +610,24 @@ class TestAccelerated:
 
         with pytest.raises(RemotePipelineError, match="nobody"):
             await pipeline.join_remote(call)
+
+    async def test_a_session_the_router_refuses_is_raised_with_what_it_said(
+        self, router: Router, llm: stream.Accelerated, call: RemoteCall
+    ):
+        router.refusing = True
+
+        with pytest.raises(
+            RemotePipelineError, match="no more sessions today"
+        ) as raised:
+            await llm.join_remote(call)
+
+        refused = raised.value.__cause__
+        assert isinstance(refused, stream.RouterError)
+        assert (refused.status, refused.code, refused.request_id) == (
+            429,
+            "rate_limited",
+            "request-7",
+        )
 
     @pytest.fixture
     async def writing(

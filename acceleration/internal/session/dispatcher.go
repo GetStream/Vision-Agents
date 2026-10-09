@@ -330,5 +330,6 @@ func (d *dispatcher) toolPolicy(name string) agent.ToolPolicy {
 		return agent.ToolPolicy{}
 	}
 	policy := d.spec.ConnectorBindings[index].Policy
-	return agent.ToolPolicy{PreSpeech: policy.PreSpeech, Waits: policy.OnInterrupt == store.InterruptWait}
+	return agent.ToolPolicy{PreSpeech: policy.PreSpeech, Waits: policy.OnInterrupt == store.InterruptWait,
+		Cancels: policy.OnInterrupt == store.InterruptCancel}
 }

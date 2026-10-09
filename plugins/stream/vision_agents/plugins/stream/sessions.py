@@ -209,10 +209,12 @@ class Sessions:
         what a conversation somebody comes back to usually is.
         """
         options = options or SessionOptions()
-        created = await create_session.asyncio(
-            client=self._backend.client(), body=self._request(options)
+        row = await _unwrapped(
+            create_session.asyncio(
+                client=self._backend.client(), body=self._request(options)
+            ),
+            f"opening a session with {self._agent}",
         )
-        row = _unwrapped(created, f"opening a session with {self._agent}")
         return await Session.watching(self._backend, row, self._functions, options)
 
     async def query(self, query: Optional[Query] = None) -> SessionPage:
@@ -222,10 +224,12 @@ class Sessions:
         What comes back are the rows rather than live handles: reading a conversation back is
         not the same as holding one, and most of these are over.
         """
-        listed = await query_sessions.asyncio(
-            client=self._backend.client(), body=self._query("", query or Query())
+        return await _unwrapped(
+            query_sessions.asyncio(
+                client=self._backend.client(), body=self._query("", query or Query())
+            ),
+            f"listing the sessions of {self._agent}",
         )
-        return _unwrapped(listed, f"listing the sessions of {self._agent}")
 
     async def search(self, text: str, query: Optional[Query] = None) -> SessionPage:
         """Find a conversation by what it was called, best match first.
@@ -234,15 +238,19 @@ class Sessions:
         remembers a conversation by. An incognito conversation is never found: nothing about
         it was written down to search. It pages the same way ``query`` does.
         """
-        found = await query_sessions.asyncio(
-            client=self._backend.client(), body=self._query(text, query or Query())
+        return await _unwrapped(
+            query_sessions.asyncio(
+                client=self._backend.client(), body=self._query(text, query or Query())
+            ),
+            f"searching the sessions of {self._agent}",
         )
-        return _unwrapped(found, f"searching the sessions of {self._agent}")
 
     async def get(self, id: str) -> SessionRow:
         """One conversation, whether or not it is still being held."""
-        got = await get_session.asyncio(id, client=self._backend.client())
-        return _unwrapped(got, f"reading the session {id}")
+        return await _unwrapped(
+            get_session.asyncio(id, client=self._backend.client()),
+            f"reading the session {id}",
+        )
 
     async def update(
         self,
@@ -296,26 +304,26 @@ class Sessions:
         if verbosity is not None:
             request.verbosity = UpdateSessionRequestVerbosity(verbosity)
 
-        updated = await update_session.asyncio(
-            id, client=self._backend.client(), body=request
+        return await _unwrapped(
+            update_session.asyncio(id, client=self._backend.client(), body=request),
+            f"updating the session {id}",
         )
-        return _unwrapped(updated, f"updating the session {id}")
 
     async def delete(self, id: str) -> None:
         """Delete a conversation, running or ended: it is stopped, and its turns and what it
         remembered are deleted with it. The user's other memories are kept."""
-        deleted = await delete_session.asyncio_detailed(
-            id, client=self._backend.client()
+        await _deleted(
+            delete_session.asyncio_detailed(id, client=self._backend.client()),
+            f"deleting the session {id}",
         )
-        _deleted(deleted, f"deleting the session {id}")
 
     async def delete_memories(self, id: str) -> None:
         """Delete what one conversation remembered, running or ended, and leave the rest of
         the user's memories alone. Server side only."""
-        deleted = await delete_session_memories.asyncio_detailed(
-            id, client=self._backend.client()
+        await _deleted(
+            delete_session_memories.asyncio_detailed(id, client=self._backend.client()),
+            f"deleting the memories of {id}",
         )
-        _deleted(deleted, f"deleting the memories of {id}")
 
     def responses(self, id: str) -> Responses:
         """A session's turns, read back without holding the conversation.
@@ -534,10 +542,10 @@ class Session:
         # rather than left out: an absent field and a true one mean the same thing.
         request.messages = options.messages
 
-        forked = await fork_session.asyncio(
-            self.id, client=self._backend.client(), body=request
+        row = await _unwrapped(
+            fork_session.asyncio(self.id, client=self._backend.client(), body=request),
+            f"forking the session {self.id}",
         )
-        row = _unwrapped(forked, f"forking the session {self.id}")
         return await Session.watching(self._backend, row, self._functions, options)
 
     async def update(

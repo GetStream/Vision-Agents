@@ -1,0 +1,43 @@
+id: restaurant.correction
+pack: restaurant
+category: checklist
+name: The caller corrects themselves mid-sentence
+persona: A caller who changes the details while still saying them.
+max_duration_s: 180
+instructions: Book eight people on Saturday at 8:15 with a sesame allergy, name Patel. The first numbers the caller says are wrong.
+turns:
+  - id: intro
+    text: "Hi, a table for six this Saturday at 7, actually no, sorry, make that eight people, and 8:15 rather than 7."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: name
+    text: "Name is Patel, P-A-T-E-L. No allergies, oh wait, actually my son is allergic to sesame, please put that down."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  # The agent may confirm before it acts, as it should with a real caller; this is the yes.
+  - id: go_ahead
+    text: "Yes, that's right. Please go ahead."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  slots:
+    - {time: "7:00", patio: false, available: true, capacity: 8}
+    - {time: "8:15", patio: false, available: true, capacity: 8}
+end_state:
+  - path: reservation.party_size
+    eq: 8
+  - path: reservation.time
+    eq: "8:15"
+  - path: reservation.allergen
+    eq: sesame
+expected_tools:
+  - name: create_reservation
+    args: {time: "8:15", party_size: 8, allergen: sesame, name: Patel}
+entities:
+  - {name: time, value: "8:15", in_speech: true, in_tools: true, tool: create_reservation, arg: time}
+  - {name: allergen, value: sesame, in_speech: true, in_tools: true, tool: create_reservation, arg: allergen}
+policy:
+  - Use the values the caller corrected to, not the ones they said first.
+  - Allergen must be recorded on the reservation.
+judge:
+  task: Book what the caller settled on, eight at 8:15 with a sesame allergy, not six at 7 with none.
+agent_replies:
+  - "Thanks for calling The Copper Spoon, how can I help?"
+  - "Booked Patel, Saturday at 8:15 for eight, sesame allergy noted."

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -65,8 +66,10 @@ type fixture struct {
 	sealer *auth.Sealer
 	srv    *fakeprovider.Server
 	clock  *clock
-	// revision is the definition revision connections are made from.
-	revision int
+	// connector and revision are the definition connections are made from: custom_acme, or
+	// the built-in acme once builtin seeded it.
+	connector string
+	revision  int
 	// clientRemoved makes the operator's client lookup find nothing, as after its record
 	// or variables are gone.
 	clientRemoved atomic.Bool
@@ -96,7 +99,7 @@ func database(tb testing.TB) (string, *store.Store) {
 // newFixture empties the connector tables of db and points a definition at a new fake provider.
 func newFixture(tb testing.TB, dsn string, db *store.Store) *fixture {
 	ctx := context.Background()
-	_, err := db.DB().ExecContext(ctx, "TRUNCATE connector_connections, connector_authorization_attempts, connector_definitions CASCADE")
+	_, err := db.DB().ExecContext(ctx, "TRUNCATE connector_connections, connector_authorization_attempts, connector_definitions, connector_broken_revisions CASCADE")
 	require.NoError(tb, err)
 	sealer, err := auth.NewSealerWithKeyring(1, map[int]string{1: "resolver test key"})
 	require.NoError(tb, err)
@@ -106,7 +109,7 @@ func newFixture(tb testing.TB, dsn string, db *store.Store) *fixture {
 	definition, err := db.CreateConnectorDefinition(ctx, customer, parsed)
 	require.NoError(tb, err)
 	return &fixture{tb: tb, ctx: ctx, dsn: dsn, db: db, sealer: sealer, srv: srv,
-		clock: &clock{now: time.Now()}, revision: definition.Revision}
+		clock: &clock{now: time.Now()}, connector: definition.ID, revision: definition.Revision}
 }
 
 // router is another router: a pool of its own, connected before it is used, and a resolver
@@ -151,12 +154,22 @@ func (f *fixture) clientCredentials(client *http.Client) *oauth2cc.Scheme {
 // pending is a new connection no consent has finished for.
 func (f *fixture) pending() core.ConnectionRef {
 	connection := &store.ConnectorConnection{
-		CustomerID: customer, ConnectorID: "custom_acme", DefinitionRevision: f.revision,
+		CustomerID: customer, ConnectorID: f.connector, DefinitionRevision: f.revision,
 		OwnerType: store.OwnerApp, AuthScheme: oauth2code.Name,
 	}
 	registry := core.Registry{Schemes: map[string]core.Scheme{oauth2code.Name: f.scheme(f.srv.Client())}}
 	require.NoError(f.tb, f.db.CreateConnectorConnection(f.ctx, registry, connection))
 	return core.ConnectionRef{CustomerID: customer, ConnectionID: connection.ID}
+}
+
+// builtin seeds the fixture's connector as the built-in acme at revision, with more manifest
+// YAML in extra, as a router start with that file does, and moves the fixture's connections
+// onto it.
+func (f *fixture) builtin(revision int, extra string) {
+	raw := strings.Replace(strings.Replace(fmt.Sprintf(manifest, f.srv.URL), "id: custom_acme", "id: acme", 1),
+		"revision: 1", fmt.Sprintf("revision: %d", revision), 1) + extra
+	require.NoError(f.tb, f.db.SeedConnectorDefinitions(f.ctx, fstest.MapFS{"acme.yaml": {Data: []byte(raw)}}))
+	f.connector = "acme"
 }
 
 // connected is a new connection with one consent at the fake behind it.

@@ -35,7 +35,8 @@ import Testing
     }
 }
 
-/// A real HTTP peer that answers one request with a session carrying what it was sent.
+/// A real HTTP peer that answers one request with a session carrying what it was sent, or with
+/// the answer it was given.
 struct SessionServer {
     struct Request: Sendable {
         let method: String
@@ -43,11 +44,18 @@ struct SessionServer {
         let body: [String: JSONValue]
     }
 
+    /// What to answer instead of a session.
+    struct Answer: Sendable {
+        let status: Int
+        let headers: [String: String]
+        let body: String
+    }
+
     let listener: NWListener
     private let addresses: AsyncThrowingStream<URL, any Error>
     private let requests: AsyncThrowingStream<Request, any Error>
 
-    init() throws {
+    init(answer: Answer? = nil) throws {
         let queue = DispatchQueue(label: "session-server")
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
@@ -72,7 +80,7 @@ struct SessionServer {
         }
         listener.newConnectionHandler = { connection in
             connection.start(queue: queue)
-            Self.read(connection, Data(), request)
+            Self.read(connection, Data(), answer, request)
         }
         queue.asyncAfter(deadline: .now() + 5) {
             let error = AgentsError.unreadable("test server timed out")
@@ -91,7 +99,7 @@ struct SessionServer {
     }
 
     private static func read(
-        _ connection: NWConnection, _ buffer: Data,
+        _ connection: NWConnection, _ buffer: Data, _ answer: Answer?,
         _ request: AsyncThrowingStream<Request, any Error>.Continuation
     ) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, done, error in
@@ -108,7 +116,7 @@ struct SessionServer {
                     let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: body)) ?? [:]
                     let line = head[0].split(separator: " ").map(String.init)
                     let path = String(line[1].split(separator: "?")[0])
-                    respond(connection, path: path, fields: fields)
+                    respond(connection, answer ?? session(path: path, fields: fields))
                     request.yield(Request(method: line[0], path: path, body: fields))
                     request.finish()
                     return
@@ -117,12 +125,12 @@ struct SessionServer {
             if let error {
                 request.finish(throwing: error)
             } else if !done {
-                read(connection, buffer, request)
+                read(connection, buffer, answer, request)
             }
         }
     }
 
-    private static func respond(_ connection: NWConnection, path: String, fields: [String: JSONValue]) {
+    private static func session(path: String, fields: [String: JSONValue]) -> Answer {
         var session: [String: JSONValue] = [
             "id": .string(String(path.split(separator: "/").last ?? "")),
             "agent_id": .string("a1"), "call_id": .string(""), "call_type": .string("default"),
@@ -133,8 +141,18 @@ struct SessionServer {
             if let value = fields[key] { session[key] = value }
         }
         let body = (try? JSONEncoder().encode(session)) ?? Data()
-        let head =
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+        return Answer(
+            status: 200, headers: ["Content-Type": "application/json"],
+            body: String(decoding: body, as: UTF8.self))
+    }
+
+    private static func respond(_ connection: NWConnection, _ answer: Answer) {
+        let body = Data(answer.body.utf8)
+        var head = "HTTP/1.1 \(answer.status) \(HTTPURLResponse.localizedString(forStatusCode: answer.status))\r\n"
+        for (name, value) in answer.headers.sorted(by: { $0.key < $1.key }) {
+            head += "\(name): \(value)\r\n"
+        }
+        head += "Content-Length: \(body.count)\r\nConnection: close\r\n\r\n"
         connection.send(
             content: Data(head.utf8) + body,
             completion: .contentProcessed { _ in connection.cancel() })

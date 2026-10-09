@@ -75,7 +75,7 @@ public sealed class AgentTests : IDisposable
         await agent.ChatAsync(cancellationToken: cancel);
 
         var synced = router.Only("POST", "/v1/agents/sync").Body;
-        Assert.Equal(("default", "llm-thinking", "daytona"), (synced.Text("harness"), synced.Text("subagent"), synced.Text("sandbox")));
+        Assert.Equal(("default", "llm-thinking", "daytona"), (synced.Text("harness"), synced.Text("thinking_llm"), synced.Text("sandbox")));
         Assert.Equal(30_000, synced!["skills"]![0]!["deadline_ms"]!.GetValue<long>());
         var opened = router.Only("POST", "/v1/agents/sessions").Body!.AsObject();
         Assert.Equal("cfg-1", opened.Text("config_id"));
@@ -312,6 +312,25 @@ public sealed class AgentTests : IDisposable
         Assert.Equal(404, refused.Status);
         router.Only("POST", "/v1/agents/sessions/s1/stop");
         Assert.Empty(router.To("DELETE", "/v1/agents/sessions/s1"));
+    }
+
+    [Fact]
+    public async Task ARefusedSocketCarriesTheStatusAndTheRequestToQuote()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
+        router.On("POST", "/v1/agents/sessions/s1/stop", 204);
+        router.On("GET", Events, _ => new Reply(403,
+            Fixtures.Failure("permission", "forbidden", "this session is somebody else's"),
+            new Dictionary<string, string> { ["X-Request-Id"] = "req-socket" }));
+        using var client = Fixtures.Client(router);
+        await using var agent = new Agent(new AgentOptions { Name = "jean", Client = client });
+
+        var refused = await Assert.ThrowsAsync<RouterException>(() => agent.ChatAsync(cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Equal((403, $"GET {Events}", "req-socket"), (refused.Status, refused.Operation, refused.RequestId));
+        // ClientWebSocket keeps a refused upgrade's status and headers, never its body.
+        Assert.Equal(("the router answered 403", null, null), (refused.Said, refused.Type, refused.Code));
     }
 
     [Fact]

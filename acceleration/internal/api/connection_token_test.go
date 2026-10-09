@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -470,4 +471,42 @@ func (s *ConnectionTokenOffSuite) TestAConnectionMadeBeforeIsNotExportedAndReads
 	rows, err := s.store.ConnectorAuditEvents(context.Background(), s.customerID(), store.AuditFilter{ConnectionID: connection.ID})
 	s.Require().NoError(err)
 	s.Empty(rows)
+}
+
+// TestAConnectionOnABrokenRevisionAnswersAsOnBaseWithConnectorsOff is the control for broken
+// revisions (AI-816): a connection left on revision 1 of a built-in whose revision 2 marks it
+// broken. With connectors off every operation answers as base 89966e26 answered for the same
+// connection with no mark (probe: pr-e2e-broken/probe-base.log); the read only gains the two
+// new fields.
+func (s *ConnectionTokenOffSuite) TestAConnectionOnABrokenRevisionAnswersAsOnBaseWithConnectorsOff() {
+	connector := "probe" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	manifest := func(revision, extra string) fstest.MapFS {
+		return fstest.MapFS{connector + ".yaml": {Data: []byte("id: " + connector + "\nrevision: " + revision +
+			"\nname: Probe\nendpoints:\n  mcp: https://mcp.acme.example/mcp\nschemes: [oauth2_code]\n" +
+			"sources:\n  - kind: mcp\n    endpoint: mcp\n" + extra)}}
+	}
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), manifest("1", "")))
+	connection := store.ConnectorConnection{CustomerID: s.customerID(), ConnectorID: connector,
+		DefinitionRevision: 1, OwnerType: store.OwnerApp, AuthScheme: oauth2code.Name}
+	s.Require().NoError(s.store.CreateConnectorConnection(context.Background(),
+		core.Registry{Schemes: map[string]core.Scheme{oauth2code.Name: namedScheme(oauth2code.Name)}}, &connection))
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(),
+		manifest("2", "broken_revisions:\n  - revisions: [1]\n    reason: reads the wrong path\n")))
+
+	var read Connection
+	readStatus := s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+connection.ID, nil, &read)
+	tokenStatus, token := s.serverClient.call(http.MethodPost, tokenPath(connection.ID), nil)
+	validateStatus, validate := s.serverClient.call(http.MethodPost, "/v1/agents/connections/"+connection.ID+"/validate", nil)
+	consentStatus, consent := s.serverClient.call(http.MethodPost, "/v1/agents/connections/"+connection.ID+"/authorizations", nil)
+
+	s.Equal(http.StatusOK, readStatus)
+	s.Equal(ConnectionStatus(store.ConnectionPending), read.Status)
+	s.Equal(1, read.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionBroken), read.DefinitionStatus)
+	s.Equal(http.StatusBadRequest, tokenStatus)
+	s.Contains(string(token), `"message":"connection tokens cannot be exported: connectors are not enabled on this deployment","type":"invalid_request","code":"not_configured"`)
+	s.Equal(http.StatusBadRequest, validateStatus)
+	s.Contains(string(validate), `"message":"connections cannot be validated: connectors are not enabled on this deployment","type":"invalid_request","code":"not_configured"`)
+	s.Equal(http.StatusBadRequest, consentStatus)
+	s.Contains(string(consent), `"message":"consents cannot be started: connectors are not enabled on this deployment","type":"invalid_request","code":"not_configured"`)
 }

@@ -699,6 +699,41 @@ func (s *OpenAICompatSuite) TestAnUnsignedToolCallIsReplayedWithoutAnEmptySignat
 	s.NotContains(call, "extra_content")
 }
 
+func (s *OpenAICompatSuite) TestCallsAnotherModelMadeAreSignedForAProviderThatRefusesThemUnsigned() {
+	provider := s.provider(Options{UnsignedCall: "skip"})
+	s.frames = []string{textFrame("done"), usageFrame(30, 0, 4, 0, "stop")}
+
+	s.ask(provider, llm.ResponseParams{Input: []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{
+			{ID: "call-1", Name: "lookup", Arguments: "{}"},
+			{ID: "call-2", Name: "lookup", Arguments: "{}"},
+		}},
+		{Role: llm.ToolResult, ToolCallID: "call-1", Content: "one"},
+		{Role: llm.ToolResult, ToolCallID: "call-2", Content: "two"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{
+			{ID: "call-3", Name: "lookup", Arguments: "{}", Signature: "sig-abc"},
+			{ID: "call-4", Name: "lookup", Arguments: "{}"},
+		}},
+		{Role: llm.ToolResult, ToolCallID: "call-3", Content: "three"},
+		{Role: llm.ToolResult, ToolCallID: "call-4", Content: "four"},
+	}})
+
+	signatures := func(message map[string]any) []any {
+		calls, ok := message["tool_calls"].([]any)
+		s.Require().True(ok)
+		var signed []any
+		for _, call := range calls {
+			content, _ := call.(map[string]any)["extra_content"].(map[string]any)
+			google, _ := content["google"].(map[string]any)
+			signed = append(signed, google["thought_signature"])
+		}
+		return signed
+	}
+	sent := s.sentMessages(0)
+	s.Equal([]any{"skip", nil}, signatures(sent[0]), "the first call of an unsigned turn carries the placeholder")
+	s.Equal([]any{"sig-abc", nil}, signatures(sent[3]), "a turn the provider signed goes back as it was")
+}
+
 func (s *OpenAICompatSuite) TestStreamedFragmentsAssembleIntoOneToolCall() {
 	// Arguments arrive a few characters at a time, so no single fragment is parseable and
 	// the caller has to be handed the finished call rather than the pieces.

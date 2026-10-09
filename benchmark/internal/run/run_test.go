@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GetStream/Vision-Agents/benchmark/internal/report"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 )
@@ -77,16 +78,16 @@ func TestBuildManifestAcceleratedDefaults(t *testing.T) {
 		TargetName:  "accelerated",
 		SpawnTarget: true,
 	}, []scenario.Scenario{{ID: "restaurant.golden", Pack: "restaurant", Category: scenario.Golden}})
-	if manifest.TargetSTT != "gemini/gemini-3.5-transcribe-live" {
+	if manifest.TargetSTT != "deepgram/flux-general-en" {
 		t.Fatalf("stt %q", manifest.TargetSTT)
 	}
-	if manifest.TargetTTS != "inworld/inworld-tts-2-flash" {
+	if manifest.TargetTTS != "elevenlabs/eleven_v4_turbo" {
 		t.Fatalf("tts %q", manifest.TargetTTS)
 	}
-	if manifest.TargetModel != "gemini/gemini-3.8-flash" || manifest.TargetLLM != "gemini/gemini-3.8-flash" {
+	if manifest.TargetModel != "gemma/gemma-4-26B-A4B-it" || manifest.TargetLLM != "gemma/gemma-4-26B-A4B-it" {
 		t.Fatalf("model %q llm %q", manifest.TargetModel, manifest.TargetLLM)
 	}
-	if manifest.TargetSubagent != "openai/gpt-5.6-sol" {
+	if manifest.TargetSubagent != "openai/gpt-6.1-sol" {
 		t.Fatalf("subagent %q", manifest.TargetSubagent)
 	}
 }
@@ -164,7 +165,7 @@ func TestWebRTCJoinFailsWithoutCredentials(t *testing.T) {
 	t.Setenv("STREAM_API_KEY", "")
 	t.Setenv("STREAM_API_SECRET", "")
 	t.Setenv("STREAM_USER_TOKEN", "")
-	_, err := runWebRTC(context.Background(), Config{}, scenario.Scenario{ID: "restaurant.golden"}, nil, 1, "")
+	_, err := runWebRTC(context.Background(), Config{}, scenario.Scenario{ID: "restaurant.golden"}, nil, 1, "", nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -186,5 +187,41 @@ func findTestRoot(t *testing.T) string {
 			t.Fatal("scenarios not found")
 		}
 		dir = parent
+	}
+}
+
+func TestProgressSaysWhichCallAndHowItWent(t *testing.T) {
+	var b strings.Builder
+	progress(&b, 3, 8, "restaurant.selectivity", 1, 1, "started")
+	failed := report.CallResult{Outcome: report.OutcomeFail}
+	failed.Metrics.V2VP50 = 2280
+	failed.Metrics.ToolCount = 1
+	failed.Metrics.ExpectedToolFail = []string{"create_reservation not called"}
+	progress(&b, 3, 8, "restaurant.selectivity", 1, 1, callProgress(failed))
+	progress(&b, 4, 8, "restaurant.golden", 2, 3, callProgress(report.CallResult{Outcome: report.OutcomePass}))
+	progress(nil, 1, 1, "ignored", 1, 1, "started")
+
+	want := "voicebench: [3/8] restaurant.selectivity: started\n" +
+		"voicebench: [3/8] restaurant.selectivity: fail · reply P50 2.28 s · 1 tool — create_reservation not called\n" +
+		"voicebench: [4/8] restaurant.golden #2: pass · 0 tools\n"
+	if b.String() != want {
+		t.Fatalf("progress:\n%s\nwant:\n%s", b.String(), want)
+	}
+}
+
+func TestALongTurnPlaysItsSentencesWithThePausesBetween(t *testing.T) {
+	turn := scenario.Turn{ID: "request", Segments: []scenario.Segment{
+		{Text: "first", PauseAfterMS: 500},
+		{Text: "second", PauseAfterMS: 250},
+		{Text: "last", PauseAfterMS: 1000},
+	}}
+	clips := map[string][]int16{"first": {1, 1}, "second": {2}, "last": {3, 3, 3}}
+	pcm := longTurnAudio(turn, clips)
+	// 2 + 500 ms + 1 + 250 ms + 3, and nothing after the last sentence.
+	if want := 2 + 8000 + 1 + 4000 + 3; len(pcm) != want {
+		t.Fatalf("samples = %d, want %d", len(pcm), want)
+	}
+	if pcm[0] != 1 || pcm[2] != 0 || pcm[8002] != 2 || pcm[len(pcm)-1] != 3 {
+		t.Fatal("the sentences should play in order with silence between them")
 	}
 }

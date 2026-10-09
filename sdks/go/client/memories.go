@@ -32,8 +32,7 @@ func (m *Memories) Truncate(ctx context.Context, userID string) error {
 		return fmt.Errorf("client: truncating the memories of %s: %w", userID, err)
 	}
 	if truncated.StatusCode() != http.StatusNoContent {
-		return failure("truncating the memories of "+userID, truncated.Status(),
-			truncated.JSON400, truncated.JSON401, truncated.JSON403)
+		return failure("truncating the memories of "+userID, truncated.HTTPResponse, truncated.Body)
 	}
 	return nil
 }

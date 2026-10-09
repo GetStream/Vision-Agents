@@ -262,10 +262,10 @@ class TestAgent < LocalRouterTest
     support.sync
 
     request = session_request
-    %w[harness subagent sandbox skills skill_names tasks].each { |key| refute request.key?(key), key }
+    %w[harness subagent thinking_llm sandbox skills skill_names tasks].each { |key| refute request.key?(key), key }
     synced = @router.last(:post, "/v1/agents/sync").json
     assert_equal "default", synced["harness"]
-    assert_equal "llm-thinking", synced["subagent"]
+    assert_equal "llm-thinking", synced["thinking_llm"]
     assert_equal "daytona", synced["sandbox"]
     assert_equal [{ "name" => "research", "description" => "Looks things up", "instructions" => "Search first",
                     "capture_video" => false, "deadline_ms" => 30_000, "config_id" => "" }], synced["skills"]
@@ -369,7 +369,7 @@ class TestAgent < LocalRouterTest
 
   def test_sync_sends_the_speed_harness_pages_and_simulations_the_folder_declares
     root = folder
-    File.write(File.join(root, "agent.yaml"), "name: jean\nspeed: 1.1\nharness: default\n")
+    File.write(File.join(root, "agent.yaml"), "name: jean\nspeed: 1.1\nharness: default\nplugins: [linear]\n")
     File.write(File.join(root, "knowledge/urls.yaml"), "- url: https://example.com/plans\n  refresh_hours: 24\n")
     FileUtils.mkdir_p(File.join(root, "simulations"))
     File.write(File.join(root, "simulations/lunch.yaml"),
@@ -381,6 +381,7 @@ class TestAgent < LocalRouterTest
     request = @router.last(:post, "/v1/agents/sync").json
     assert_equal 1.1, request["speed"]
     assert_equal "default", request["harness"]
+    assert_equal ["linear"], request["agent_plugins"]
     assert_equal [{ "url" => "https://example.com/plans", "refresh_hours" => 24 }], request["knowledge_urls"]
     assert_equal [{ "name" => "lunch", "scenario" => "Order a club", "assertion" => "One club", "variations" => 3 }],
                  request["simulations"]
@@ -557,11 +558,12 @@ class TestResponses < LocalRouterTest
   end
 
   def test_a_persisted_conversation_cannot_be_rewound
-    @router.on(:post, "/v1/agents/sessions/sess_1/rewind", status: 400,
-                                                           body: { "error" => "fork a persisted conversation instead" })
+    refused = LocalRouter.failure("invalid_request", "invalid_request", "fork a persisted conversation instead")
+    @router.on(:post, "/v1/agents/sessions/sess_1/rewind", status: 400, body: refused)
 
     error = assert_raises(VA::RouterError) { responses.rewind("resp_1") }
     assert_equal 400, error.status
+    assert_equal "rewindSession: fork a persisted conversation instead", error.message
   end
 
   def test_rewind_needs_an_id

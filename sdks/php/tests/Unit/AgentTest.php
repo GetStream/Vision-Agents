@@ -86,7 +86,7 @@ final class AgentTest extends TestCase
 
         $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
         self::assertSame('default', $sent['harness']);
-        self::assertSame('openai/gpt-5.6', $sent['subagent']);
+        self::assertSame('openai/gpt-5.6', $sent['thinking_llm']);
         self::assertSame('daytona', $sent['sandbox']);
         self::assertSame(
             [['config_id' => '', 'description' => 'Work it out', 'instructions' => 'Reason it through.', 'name' => 'think', 'deadline_ms' => 30000]],

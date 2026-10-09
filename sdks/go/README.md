@@ -350,6 +350,15 @@ directory, the same one the Python SDK takes for a directory without simulations
 directory only reads the config back. What is written in code wins over what the directory
 says, so a directory is a starting point rather than an override.
 
+## When the router says no
+
+A request or a socket the router refuses comes back as a `*stream.RouterError`, whichever of
+`client`, `agents` or `stream` made it: `errors.As(err, &refused)` finds it, with the `Status`,
+the `Type` and `Code` to branch on, the `Message` and the `DocURL` explaining it, and the
+`RequestID` to quote to support, since a 500 says only "something went wrong". New codes are
+added, so expect one this SDK does not know, and a failure that was not the router's own, such
+as a proxy's error page, has its body as the `Message` and no type or code.
+
 ## Layout
 
 | Path            | What is in it                                                     |

@@ -34,10 +34,10 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it. 
+ * Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it.
  *
  * @param appId Separates two deployments sharing one memory account.
- * @param filter The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it. 
+ * @param filter The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it.
  * @param userId Who the memories belong to. Empty means the customer.
  */
 @Serializable
@@ -48,7 +48,7 @@ internal data class SessionMemory (
     @SerialName(value = "app_id")
     val appId: kotlin.String? = null,
 
-    /* The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it.  */
+    /* The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it. */
     @SerialName(value = "filter")
     val filter: kotlin.collections.Map<kotlin.String, kotlin.String>? = null,
 

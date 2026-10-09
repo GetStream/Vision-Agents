@@ -75,7 +75,9 @@ await api.memories.truncate("user-123");
 ```
 
 A failure raises `RouterError`, carrying the status, the operation and what the router said
-went wrong.
+went wrong. Branch on `code` (`not_configured`, `validation_failed`, ...) or `type`, not on the
+message, and expect codes you do not know; quote `requestId` to support, since a 500 says only
+"something went wrong".
 
 ## A conversation somebody comes back to
 

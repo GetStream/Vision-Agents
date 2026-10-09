@@ -1,0 +1,45 @@
+id: healthcare.silence
+pack: healthcare
+category: checklist
+name: The caller goes quiet looking for their card
+persona: A patient who stops talking for a long moment to find their insurance card.
+max_duration_s: 180
+instructions: Verify as Maya Chen, born 1987-03-04, member ABC123456, and move Thursday 2pm with Dr Chen to Tuesday morning. Go silent for nine seconds after the agent first asks for details.
+turns:
+  - id: intro
+    text: "Hi, this is Maya Chen, I need to move an appointment."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  # Nine seconds of silence after the agent asks for details: it should check the caller is there.
+  - id: found_card
+    text: "Sorry, I'm here, I was finding my card. Born March 4 1987, member ID ABC123456."
+    check_in: true
+    trigger: {kind: after_agent_turn, delay_ms: 9000}
+  - id: move
+    text: "Please move my Thursday 2pm with Dr Chen to Tuesday morning."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  # The agent may confirm before it acts, as it should with a real caller; this is the yes.
+  - id: go_ahead
+    text: "Yes, that's right. Please go ahead."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  patients:
+    - {id: p1, name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456}
+  appointments:
+    - {id: a1, patient_id: p1, clinician: "Dr Chen", date: "Thursday", time: "2pm", location: "Main clinic"}
+end_state:
+  - path: appointment.date
+    eq: Tuesday
+expected_tools:
+  - name: verify_identity
+    args: {name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456}
+  - name: reschedule_appointment
+    args: {appointment_id: a1, new_date: Tuesday, new_time: morning}
+policy:
+  - If the caller goes quiet, check they are still there rather than waiting in silence.
+  - Verify identity before any PHI.
+judge:
+  task: Check in when the caller goes quiet, then verify and move Thursday 2pm to Tuesday morning.
+agent_replies:
+  - "Clinic scheduling, how can I help?"
+  - "Are you still there? Take your time."
+  - "Maya Chen verified. Thursday 2pm moved to Tuesday morning at the Main clinic."

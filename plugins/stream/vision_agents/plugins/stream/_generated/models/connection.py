@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..models.connection_definition_status import ConnectionDefinitionStatus
 from ..models.connection_status import ConnectionStatus
 from ..types import UNSET, Unset
 
@@ -29,8 +30,12 @@ class Connection:
         auth_scheme (str): How the connection authenticates, one of its connector's schemes.
         connector_id (str):
         created_at (datetime.datetime):
-        definition_revision (int): The connector's revision when the connection was made, which it keeps reading until
-            it is reconnected.
+        definition_revision (int): The connector's revision the connection reads: the one its grant was made on. Every
+            consent runs on the connector's latest revision, and one that connects the connection moves it there; until then
+            it keeps this one.
+        definition_status (ConnectionDefinitionStatus): current when the connection reads its connector's latest
+            revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection
+            is given no credential until a consent connects it again, on the latest revision.
         granted_scopes (list[str] | None):
         id (str):
         inputs (ConnectionInputs): What the connection was created with, the connector's defaults filled in.
@@ -46,6 +51,8 @@ class Connection:
             connection, which deleting it would break. A binding a session fills with the caller's own connection names
             none, so it is never listed.
         account_id (str | Unset): The provider account, known once it is connected.
+        definition_broken_reason (str | Unset): Why the connector marked definition_revision broken. Present only when
+            definition_status is broken.
         expires_at (datetime.datetime | Unset): When the current credential expires. Absent when there is none or it
             does not.
         label (str | Unset):
@@ -55,6 +62,7 @@ class Connection:
     connector_id: str
     created_at: datetime.datetime
     definition_revision: int
+    definition_status: ConnectionDefinitionStatus
     granted_scopes: list[str] | None
     id: str
     inputs: ConnectionInputs
@@ -65,6 +73,7 @@ class Connection:
     updated_at: datetime.datetime
     used_by: list[ConnectionUse] | None
     account_id: str | Unset = UNSET
+    definition_broken_reason: str | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
     label: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -77,6 +86,8 @@ class Connection:
         created_at = self.created_at.isoformat()
 
         definition_revision = self.definition_revision
+
+        definition_status = self.definition_status.value
 
         granted_scopes: list[str] | None
         if isinstance(self.granted_scopes, list):
@@ -111,6 +122,8 @@ class Connection:
 
         account_id = self.account_id
 
+        definition_broken_reason = self.definition_broken_reason
+
         expires_at: str | Unset = UNSET
         if not isinstance(self.expires_at, Unset):
             expires_at = self.expires_at.isoformat()
@@ -125,6 +138,7 @@ class Connection:
                 "connector_id": connector_id,
                 "created_at": created_at,
                 "definition_revision": definition_revision,
+                "definition_status": definition_status,
                 "granted_scopes": granted_scopes,
                 "id": id,
                 "inputs": inputs,
@@ -138,6 +152,8 @@ class Connection:
         )
         if account_id is not UNSET:
             field_dict["account_id"] = account_id
+        if definition_broken_reason is not UNSET:
+            field_dict["definition_broken_reason"] = definition_broken_reason
         if expires_at is not UNSET:
             field_dict["expires_at"] = expires_at
         if label is not UNSET:
@@ -160,6 +176,8 @@ class Connection:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         definition_revision = d.pop("definition_revision")
+
+        definition_status = ConnectionDefinitionStatus(d.pop("definition_status"))
 
         def _parse_granted_scopes(data: object) -> list[str] | None:
             if data is None:
@@ -214,6 +232,8 @@ class Connection:
 
         account_id = d.pop("account_id", UNSET)
 
+        definition_broken_reason = d.pop("definition_broken_reason", UNSET)
+
         _expires_at = d.pop("expires_at", UNSET)
         expires_at: datetime.datetime | Unset
         if isinstance(_expires_at, Unset):
@@ -228,6 +248,7 @@ class Connection:
             connector_id=connector_id,
             created_at=created_at,
             definition_revision=definition_revision,
+            definition_status=definition_status,
             granted_scopes=granted_scopes,
             id=id,
             inputs=inputs,
@@ -238,6 +259,7 @@ class Connection:
             updated_at=updated_at,
             used_by=used_by,
             account_id=account_id,
+            definition_broken_reason=definition_broken_reason,
             expires_at=expires_at,
             label=label,
         )

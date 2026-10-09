@@ -131,6 +131,108 @@ describe("Client", () => {
     );
   });
 
+  it("carries the kind of failure and the request id, which is what support asks for", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 404,
+      headers: { "X-Request-Id": "req_8f2c" },
+      body: {
+        error: {
+          message: "no agent config called john",
+          type: "not_found",
+          code: "agent_config_not_found",
+          doc_url: "https://getstream.io/agents/docs/api/errors/#agent_config_not_found",
+        },
+      },
+    });
+
+    await assert.rejects(
+      () => api.post("/v1/agents/sessions", { body: {} }),
+      (raised: unknown) => {
+        assert.ok(raised instanceof RouterError);
+        assert.equal(raised.status, 404);
+        assert.equal(raised.type, "not_found");
+        assert.equal(raised.code, "agent_config_not_found");
+        assert.equal(raised.message, "no agent config called john");
+        assert.equal(
+          raised.docUrl,
+          "https://getstream.io/agents/docs/api/errors/#agent_config_not_found",
+        );
+        assert.equal(raised.requestId, "req_8f2c");
+        return true;
+      },
+    );
+  });
+
+  it("reports a proxy's page as it is, rather than failing to parse it as the router's", async () => {
+    router.serve("GET", "/v1/agents/calls", {
+      status: 502,
+      headers: { "Content-Type": "text/html", "X-Request-Id": "req_edge" },
+      text: "<html>bad gateway</html>\n",
+    });
+
+    await assert.rejects(
+      () => api.get("/v1/agents/calls"),
+      (raised: unknown) => {
+        assert.ok(raised instanceof RouterError);
+        assert.equal(raised.status, 502);
+        assert.equal(raised.message, "<html>bad gateway</html>");
+        assert.equal(raised.type, undefined);
+        assert.equal(raised.code, undefined);
+        assert.equal(raised.docUrl, undefined);
+        assert.equal(raised.requestId, "req_edge");
+        return true;
+      },
+    );
+  });
+
+  it("keeps an older router's error string as the message, with no kind to branch on", async () => {
+    router.serve("GET", "/v1/agents/calls", { status: 400, body: { error: "limit is too big" } });
+
+    await assert.rejects(
+      () => api.get("/v1/agents/calls"),
+      (raised: unknown) => {
+        assert.ok(raised instanceof RouterError);
+        assert.equal(raised.message, '{"error":"limit is too big"}');
+        assert.equal(raised.type, undefined);
+        assert.equal(raised.code, undefined);
+        assert.equal(raised.requestId, undefined);
+        return true;
+      },
+    );
+  });
+
+  it("says the status when the failure has no body at all", async () => {
+    router.serve("GET", "/v1/agents/calls", { status: 503 });
+
+    await assert.rejects(
+      () => api.get("/v1/agents/calls"),
+      (raised: unknown) => {
+        assert.ok(raised instanceof RouterError);
+        assert.equal(raised.message, "the router answered 503");
+        assert.equal(raised.type, undefined);
+        return true;
+      },
+    );
+  });
+
+  it("passes on a kind of failure it does not know, since a newer router may add one", async () => {
+    router.serve("GET", "/v1/agents/calls", {
+      status: 418,
+      body: { error: { message: "short and stout", type: "teapot", code: "brewing", doc_url: "" } },
+    });
+
+    await assert.rejects(
+      () => api.get("/v1/agents/calls"),
+      (raised: unknown) => {
+        assert.ok(raised instanceof RouterError);
+        assert.equal(raised.type, "teapot");
+        assert.equal(raised.code, "brewing");
+        assert.equal(raised.docUrl, undefined);
+        return true;
+      },
+    );
+  });
+
   it("reports a router it could not reach as no status at all", async () => {
     const unreachable = new Client({ url: "http://127.0.0.1:1", customerId: "local" });
 

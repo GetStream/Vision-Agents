@@ -7,19 +7,23 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/cookiejar"
 	"net/netip"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -135,6 +139,26 @@ func (s *AuthorizationsSuite) TestAConsentConnectsTheAccountItWasStartedFor() {
 	s.Equal(s.provider.UserID, connection.Metadata["user_id"])
 	s.NotEmpty(connection.AccountID)
 	s.Equal([]string{"channels:history", "chat:write"}, connection.GrantedScopes)
+}
+
+// TestTheSlackManifestConnectsTheUserOfTheLiveUserTokenResponse runs the built-in Slack
+// manifest's consent through the callback, with the fake answering oauth.v2.user.access as it
+// answered live on 2026-10-08 (SlackUserToken): user_id at the top, enterprise null, no
+// authed_user. Revision 4 read $.authed_user.id, so this consent failed.
+func (s *AuthorizationsSuite) TestTheSlackManifestConnectsTheUserOfTheLiveUserTokenResponse() {
+	s.provider.Use(fakeprovider.CommaScopes, fakeprovider.SlackUserToken)
+	// The suite shares one fake, and another test may have switched its user.
+	user := s.provider.SwitchAccount()
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(s.slackAtFake()), &created))
+
+	s.connect(created.ID)
+
+	connection := s.get(created.ID)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), connection.Status)
+	s.Equal(map[string]string{"team_id": s.provider.TeamID, "user_id": user}, connection.Metadata,
+		"no enterprise_id: a null enterprise is absent")
+	s.Equal(s.provider.TeamID+":"+user, connection.AccountID)
 }
 
 func (s *AuthorizationsSuite) TestTheHandoffBindsTheConsentWithAnHttpOnlySecureLaxCookieOnTheCallbackAlone() {
@@ -290,6 +314,7 @@ func (s *AuthorizationsSuite) TestAReconnectForTheSameAccountReplacesTheGrant() 
 	s.Equal(AuthorizationKind(store.AttemptReconnect), reconnect.Kind)
 	s.Equal(s.landing(id, consentConnected), finished.Header.Get("Location"))
 	s.Equal(3, s.get(id).Revision, "new credentials")
+	s.Equal(1, s.get(id).DefinitionRevision, "a connector with one revision is read as on base 89966e26")
 }
 
 // TestAReconnectRestoresTheEventSubscriptionsItsBindingsDeclare: a connection whose
@@ -365,6 +390,118 @@ func (s *AuthorizationsSuite) TestAReconnectForAnotherAccountKeepsTheOldGrantAnd
 	stored, err := s.store.ConnectorConnection(context.Background(), s.customerID(), id)
 	s.Require().NoError(err)
 	s.Equal(accountSwitchError, stored.LastError)
+}
+
+// TestAPendingConnectionMadeBeforeAFixConnectsOnTheFixedRevision is Slack's revisions 4 and 5
+// (AI-816): a connection made on a revision whose capture rule reads a path the provider does
+// not send stays pending; its next consent runs on the revision that reads the right one, and
+// connecting moves it there. On base the consent read revision 1 and ended failed.
+func (s *AuthorizationsSuite) TestAPendingConnectionMadeBeforeAFixConnectsOnTheFixedRevision() {
+	s.provider.Use(fakeprovider.CommaScopes, fakeprovider.SlackUserToken)
+	user := s.provider.SwitchAccount()
+	id := s.connection("")
+	s.revise(s.get(id).ConnectorID, func(manifest *core.Manifest) { manifest.Capture[1].Path = "$.user_id" })
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), s.get(id).DefinitionStatus)
+
+	alice := s.browser()
+	finished := alice.finish(s.consent(alice.handOff(s.start(id))))
+
+	s.Equal(s.landing(id, consentConnected), finished.Header.Get("Location"))
+	connection := s.get(id)
+	s.Equal(2, connection.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), connection.DefinitionStatus)
+	s.Equal(user, connection.Metadata["user_id"])
+}
+
+// TestAReconnectMovesTheConnectionToTheLatestRevision: the reconnect asks for what the latest
+// revision asks for, and connecting moves the connection there.
+func (s *AuthorizationsSuite) TestAReconnectMovesTheConnectionToTheLatestRevision() {
+	id := s.connection("")
+	s.connect(id)
+	s.revise(s.get(id).ConnectorID, func(manifest *core.Manifest) {
+		manifest.Scopes.List = append(manifest.Scopes.List, "users:read")
+	})
+	s.Require().Equal(1, s.get(id).DefinitionRevision, "a new revision alone moves no connection")
+
+	s.connect(id)
+
+	connection := s.get(id)
+	s.Equal(2, connection.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), connection.DefinitionStatus)
+	s.Equal(3, connection.Revision, "new credentials")
+	s.Equal([]string{"channels:history", "chat:write", "users:read"}, connection.GrantedScopes, "the latest revision's scopes")
+}
+
+// TestAReconnectOnARevisionThatDroppedACaptureConnects: the latest revision no longer captures
+// a value the connection holds. Its consent resolves the manifest without that value, which no
+// template of the revision can name, rather than refuse to start.
+func (s *AuthorizationsSuite) TestAReconnectOnARevisionThatDroppedACaptureConnects() {
+	id := s.connection("")
+	connector := s.get(id).ConnectorID
+	s.revise(connector, func(manifest *core.Manifest) {
+		manifest.Capture = append(manifest.Capture, core.CaptureRule{Name: "app_id", From: "token_response", Path: "$.app_id"})
+	})
+	s.connect(id)
+	s.Require().Equal("A0000APP", s.get(id).Metadata["app_id"])
+	s.revise(connector, func(manifest *core.Manifest) { manifest.Capture = manifest.Capture[:2] })
+
+	s.connect(id)
+
+	connection := s.get(id)
+	s.Equal(3, connection.DefinitionRevision)
+	s.NotContains(connection.Metadata, "app_id")
+}
+
+// TestAReconnectThatDoesNotConnectKeepsTheRevision: the old grant, kept after a consent for
+// another account or a denied one, is still read with the revision it was made on.
+func (s *AuthorizationsSuite) TestAReconnectThatDoesNotConnectKeepsTheRevision() {
+	id := s.connection("")
+	s.connect(id)
+	s.revise(s.get(id).ConnectorID, func(manifest *core.Manifest) { manifest.Description = "revised" })
+	s.provider.SwitchAccount()
+
+	alice := s.browser()
+	finished := alice.finish(s.consent(alice.handOff(s.start(id))))
+
+	s.Require().Equal(s.landing(id, consentAccountMismatch), finished.Header.Get("Location"))
+	kept := s.get(id)
+	s.Equal(1, kept.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), kept.DefinitionStatus)
+}
+
+// TestAConnectionOnABrokenRevisionGetsNoCredentialUntilALoginMovesIt: a later revision of a
+// built-in marks the one a connected connection reads broken. The connection is shown broken
+// with the reason and keeps its status; the resolver gives it no credential; a reconnect for
+// the same account moves it to the latest revision, and it resolves again.
+func (s *AuthorizationsSuite) TestAConnectionOnABrokenRevisionGetsNoCredentialUntilALoginMovesIt() {
+	connector := "fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	s.builtinAtFake(connector, 1, "")
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	s.connect(created.ID)
+	s.builtinAtFake(connector, 2, "broken_revisions:\n  - revisions: [1]\n    reason: reads the wrong path\n")
+	ref := core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: created.ID}
+
+	broken := s.get(created.ID)
+	_, refused := s.resolver.Resolve(context.Background(), ref, core.CredentialRequest{})
+	var listed ConnectionPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections?owner_type=app&connector_id="+connector, nil, &listed))
+
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionBroken), broken.DefinitionStatus)
+	s.Equal("reads the wrong path", broken.DefinitionBrokenReason)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), broken.Status, "nothing the provider said moved it")
+	s.ErrorIs(refused, resolver.ErrNotConnected)
+	s.Require().Len(listed.Items, 1)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionBroken), listed.Items[0].DefinitionStatus)
+
+	s.connect(created.ID)
+
+	fixed := s.get(created.ID)
+	s.Equal(2, fixed.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), fixed.DefinitionStatus)
+	s.Empty(fixed.DefinitionBrokenReason)
+	_, err := s.resolver.Resolve(context.Background(), ref, core.CredentialRequest{})
+	s.NoError(err)
 }
 
 func (s *AuthorizationsSuite) TestABeforeCompleteHookThatRefusesKeepsTheCodeFromTheProvider() {
@@ -530,9 +667,18 @@ func (s *AuthorizationsSuite) connector(extra string) string {
 // connectorRegistering is connector with client.registration [registration].
 func (s *AuthorizationsSuite) connectorRegistering(registration, extra string) string {
 	id := "custom_fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
-	manifest, err := core.ParseManifest([]byte(`
+	manifest, err := core.ParseManifest([]byte(s.fakeManifest(id, 1, registration, extra)))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	return id
+}
+
+// fakeManifest is the YAML of connector's manifest at revision.
+func (s *AuthorizationsSuite) fakeManifest(id string, revision int, registration, extra string) string {
+	return `
 id: ` + id + `
-revision: 1
+revision: ` + strconv.Itoa(revision) + `
 name: Fake
 endpoints:
   authorize: ` + s.provider.URL + fakeprovider.PathAuthorize + `
@@ -557,9 +703,54 @@ identity: [team_id, user_id]
 sources:
   - kind: mcp
     endpoint: mcp
-` + extra))
+` + extra
+}
+
+// builtinAtFake seeds connector's manifest at revision as a built-in, as a router start with
+// that file does. A built-in's id is the file name and never starts with custom_.
+func (s *AuthorizationsSuite) builtinAtFake(id string, revision int, extra string) {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(),
+		fstest.MapFS{id + ".yaml": {Data: []byte(s.fakeManifest(id, revision, "operator", extra))}}))
+}
+
+// revise stores the next revision of the app's own connector, changed by change.
+func (s *AuthorizationsSuite) revise(connector string, change func(*core.Manifest)) {
+	latest, err := s.store.LatestConnectorDefinition(context.Background(), s.customerID(), connector)
 	s.Require().NoError(err)
-	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	manifest := latest.Manifest
+	change(&manifest)
+	revised, err := s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	s.Require().Equal(latest.Revision+1, revised.Revision)
+}
+
+// slackAtFake stores the built-in Slack manifest (providers/slack.yaml) as a connector of the
+// test's app, with its endpoints at the fake and the fake's operator client: its scopes,
+// capture and identity are the built-in's own. The channel block is left out, since the
+// consent does not read it, and so are the broken revisions, which name the built-in's
+// earlier revisions and not the custom one's.
+func (s *AuthorizationsSuite) slackAtFake() string {
+	raw, err := fs.ReadFile(providers.FS, "slack.yaml")
+	s.Require().NoError(err)
+	manifest, _, found := strings.Cut(string(raw), "\nchannel:\n")
+	s.Require().True(found)
+	manifest = regexp.MustCompile(`(?m)^broken_revisions:\n(  .*\n)+`).ReplaceAllString(manifest, "")
+	id := "custom_slack" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	for from, to := range map[string]string{
+		"\nid: slack\n": "\nid: " + id + "\n",
+		"authorize: https://slack.com/oauth/v2_user/authorize": "authorize: " + s.provider.URL + fakeprovider.PathAuthorize,
+		"token: https://slack.com/api/oauth.v2.user.access":    "token: " + s.provider.URL + fakeprovider.PathToken,
+		"revoke: https://slack.com/api/auth.revoke":            "revoke: " + s.provider.URL + fakeprovider.PathRevoke,
+		"mcp: https://mcp.slack.com/mcp":                       "mcp: " + s.provider.URL + fakeprovider.PathMCP,
+		"resource: https://mcp.slack.com\n":                    "resource: " + s.provider.URL + fakeprovider.PathMCP + "\n",
+		"env: SLACK\n":                                         "env: FAKE\n",
+	} {
+		s.Require().Equal(1, strings.Count(manifest, from), from)
+		manifest = strings.Replace(manifest, from, to, 1)
+	}
+	parsed, err := core.ParseManifest([]byte(manifest))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), parsed)
 	s.Require().NoError(err)
 	return id
 }

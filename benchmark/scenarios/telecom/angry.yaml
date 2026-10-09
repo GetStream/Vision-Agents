@@ -1,0 +1,45 @@
+id: telecom.angry
+pack: telecom
+category: checklist
+name: An angry caller demanding a fix and a credit
+persona: A furious subscriber on their third outage this week.
+max_duration_s: 180
+turns:
+  - id: intro
+    text: "This is the third time this week my internet has died! I pay for fiber and I get nothing! PIN 4471, last four 9821, 14 Cedar Lane. Fix it now or I'm switching providers."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: reboot
+    text: "Fine, I restarted the stupid box. Still nothing. And I want a credit for this whole week, I'm not paying for this."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  # The agent may confirm before it acts, as it should with a real caller; this is the yes.
+  - id: go_ahead
+    text: "Yes, that's right. Please go ahead."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  outage: false
+  reboot_succeeds: false
+  credit_eligible: false
+  gateway_error: "840"
+  accounts:
+    - {id: acc1, pin: "4471", last4: "9821", address: "14 Cedar Lane", plan: "fiber-500"}
+end_state:
+  - path: reboot_attempted
+    eq: true
+  - path: ticket.id
+    exists: true
+expected_tools:
+  - name: verify_account
+    args: {pin: "4471", last4: "9821", address: "14 Cedar Lane"}
+  - name: walk_reboot
+    args: {}
+  - name: create_ticket
+    args: {}
+policy:
+  - Stay calm and polite with an angry caller.
+  - Refuse an ineligible credit; do not promise one to calm the caller down.
+judge:
+  task: Stay calm, verify, walk the reboot, open a ticket, and refuse the credit without promising it.
+agent_replies:
+  - "Internet support."
+  - "I'm sorry, that's frustrating. Verified 14 Cedar Lane. Please restart the gateway."
+  - "I've opened ticket T-1842. I can't offer a credit for this week, but a technician will come out."

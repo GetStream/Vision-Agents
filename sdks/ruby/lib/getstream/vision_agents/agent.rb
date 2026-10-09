@@ -52,7 +52,8 @@ module GetStream
       # @param guardrail [String] a guardrail.md, enforced in the backend.
       # @param pipeline [Hash] models over the config's: llm, stt, tts, sts, search, voice,
       #   greeting, language, backchannel, max_tokens, tool_timeout_ms, keyterms, video, and
-      #   subagent, which is harness and so only reaches the config through #sync.
+      #   subagent, which is harness and so only reaches the config through #sync, as
+      #   thinking_llm.
       # @param harness [String] which harness the config runs; nil is "default". Like skills
       #   and sandbox it is agent config, written by #sync, never sent with a session.
       # @param skills [Array<Skill>] skills of your own, stored by #sync in place of the
@@ -373,11 +374,11 @@ module GetStream
           speed: (settings["speed"] unless settings["speed"].to_f.zero?), llm: presence(settings["llm"]),
           harness: presence(@harness) || presence(settings["harness"]),
           search: presence(settings["search"]), greeting: presence(settings["greeting"]),
-          plugins: settings["plugins"]&.then { |p| p unless p.empty? },
+          agent_plugins: settings["plugins"]&.then { |p| p unless p.empty? },
           keyterms: settings["keyterms"]&.then { |k| k unless k.empty? },
           video: video && { source: video["source"], max_frames: video["max_frames"] }.compact,
           dispatch: settings["dispatch"],
-          subagent: presence(@pipeline[:subagent].to_s) || presence(settings["subagent"]),
+          thinking_llm: presence(@pipeline[:subagent].to_s) || presence(settings["subagent"]),
           sandbox: @sandbox&.provider || presence(settings["sandbox"]),
           tags: (tags unless tags.empty?)
         }

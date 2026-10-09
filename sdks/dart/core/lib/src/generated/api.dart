@@ -372,11 +372,13 @@ final class CreateSessionRequest {
     this.callId,
     this.callType,
     this.configId,
+    this.connectorBindings,
     this.contextTruncated,
     this.conversationId,
     this.custom,
     this.description,
     this.greeting,
+    this.history,
     this.id,
     this.incognito,
     this.instructions,
@@ -432,6 +434,13 @@ final class CreateSessionRequest {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.config_id'),
       },
+      connectorBindings: switch (json['connector_bindings']) {
+        null => null,
+        final Object value => [
+          for (final item in _list(value, 'CreateSessionRequest.connector_bindings'))
+            SessionConnectorBinding.fromJson(item),
+        ],
+      },
       contextTruncated: switch (json['context_truncated']) {
         null => null,
         final Object value => _bool(value, 'CreateSessionRequest.context_truncated'),
@@ -451,6 +460,13 @@ final class CreateSessionRequest {
       greeting: switch (json['greeting']) {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.greeting'),
+      },
+      history: switch (json['history']) {
+        null => null,
+        final Object value => [
+          for (final item in _list(value, 'CreateSessionRequest.history'))
+            HistoryMessage.fromJson(item),
+        ],
       },
       id: switch (json['id']) {
         null => null,
@@ -573,11 +589,13 @@ final class CreateSessionRequest {
   final String? callId;
   final String? callType;
   final String? configId;
+  final List<SessionConnectorBinding>? connectorBindings;
   final bool? contextTruncated;
   final String? conversationId;
   final Map<String, Object?>? custom;
   final String? description;
   final String? greeting;
+  final List<HistoryMessage>? history;
   final String? id;
   final bool? incognito;
   final String? instructions;
@@ -612,11 +630,14 @@ final class CreateSessionRequest {
     'call_id': ?callId,
     'call_type': ?callType,
     'config_id': ?configId,
+    if (connectorBindings case final value?)
+      'connector_bindings': [for (final item in value) item.toJson()],
     'context_truncated': ?contextTruncated,
     'conversation_id': ?conversationId,
     'custom': ?custom,
     'description': ?description,
     'greeting': ?greeting,
+    if (history case final value?) 'history': [for (final item in value) item.toJson()],
     'id': ?id,
     'incognito': ?incognito,
     'instructions': ?instructions,
@@ -810,6 +831,38 @@ final class GuestUserRequest {
   final String? name;
 
   Map<String, Object?> toJson() => {'custom': ?custom, 'id': ?id, 'name': ?name};
+}
+
+final class HistoryMessage {
+  const HistoryMessage({this.createdAt, this.name, required this.role, required this.text});
+
+  factory HistoryMessage.fromJson(Object? value) {
+    final json = _object(value, 'HistoryMessage');
+    return HistoryMessage(
+      createdAt: switch (json['created_at']) {
+        null => null,
+        final Object value => _date(value, 'HistoryMessage.created_at'),
+      },
+      name: switch (json['name']) {
+        null => null,
+        final Object value => _string(value, 'HistoryMessage.name'),
+      },
+      role: _string(json['role'], 'HistoryMessage.role'),
+      text: _string(json['text'], 'HistoryMessage.text'),
+    );
+  }
+
+  final DateTime? createdAt;
+  final String? name;
+  final String role;
+  final String text;
+
+  Map<String, Object?> toJson() => {
+    if (createdAt case final value?) 'created_at': value.toUtc().toIso8601String(),
+    'name': ?name,
+    'role': role,
+    'text': text,
+  };
 }
 
 final class ImageSource {
@@ -1159,8 +1212,8 @@ final class Session {
     required this.state,
     this.sts,
     this.stt,
-    this.subagent,
     this.text,
+    this.thinkingLlm,
     this.title,
     this.tts,
     required this.userId,
@@ -1246,13 +1299,13 @@ final class Session {
         null => null,
         final Object value => _string(value, 'Session.stt'),
       },
-      subagent: switch (json['subagent']) {
-        null => null,
-        final Object value => _string(value, 'Session.subagent'),
-      },
       text: switch (json['text']) {
         null => null,
         final Object value => _bool(value, 'Session.text'),
+      },
+      thinkingLlm: switch (json['thinking_llm']) {
+        null => null,
+        final Object value => _string(value, 'Session.thinking_llm'),
       },
       title: switch (json['title']) {
         null => null,
@@ -1298,8 +1351,8 @@ final class Session {
   final String state;
   final String? sts;
   final String? stt;
-  final String? subagent;
   final bool? text;
+  final String? thinkingLlm;
   final String? title;
   final String? tts;
   final String userId;
@@ -1331,8 +1384,8 @@ final class Session {
     'state': state,
     'sts': ?sts,
     'stt': ?stt,
-    'subagent': ?subagent,
     'text': ?text,
+    'thinking_llm': ?thinkingLlm,
     'title': ?title,
     'tts': ?tts,
     'user_id': userId,
@@ -1341,11 +1394,32 @@ final class Session {
   };
 }
 
+/// The connection a session uses for one of its agent config's connector bindings chosen per session.
+final class SessionConnectorBinding {
+  const SessionConnectorBinding({required this.connectionId, required this.name});
+
+  factory SessionConnectorBinding.fromJson(Object? value) {
+    final json = _object(value, 'SessionConnectorBinding');
+    return SessionConnectorBinding(
+      connectionId: _string(json['connection_id'], 'SessionConnectorBinding.connection_id'),
+      name: _string(json['name'], 'SessionConnectorBinding.name'),
+    );
+  }
+
+  final String connectionId;
+  final String name;
+
+  Map<String, Object?> toJson() => {'connection_id': connectionId, 'name': name};
+}
+
 /// Which sessions to list.
 final class SessionFilter {
   const SessionFilter({
     this.agent,
     this.agentId,
+    this.configId,
+    this.createdAt,
+    this.custom,
     this.modality,
     this.projectId,
     this.state,
@@ -1363,6 +1437,18 @@ final class SessionFilter {
       agentId: switch (json['agent_id']) {
         null => null,
         final Object value => value,
+      },
+      configId: switch (json['config_id']) {
+        null => null,
+        final Object value => value,
+      },
+      createdAt: switch (json['created_at']) {
+        null => null,
+        final Object value => TimeRange.fromJson(value),
+      },
+      custom: switch (json['custom']) {
+        null => null,
+        final Object value => _strings(value, 'SessionFilter.custom'),
       },
       modality: switch (json['modality']) {
         null => null,
@@ -1389,6 +1475,9 @@ final class SessionFilter {
 
   final Object? agent;
   final Object? agentId;
+  final Object? configId;
+  final TimeRange? createdAt;
+  final Map<String, String>? custom;
   final Object? modality;
   final Object? projectId;
   final Object? state;
@@ -1398,6 +1487,9 @@ final class SessionFilter {
   Map<String, Object?> toJson() => {
     'agent': ?agent,
     'agent_id': ?agentId,
+    'config_id': ?configId,
+    if (createdAt case final value?) 'created_at': value.toJson(),
+    'custom': ?custom,
     'modality': ?modality,
     'project_id': ?projectId,
     'state': ?state,
@@ -1554,6 +1646,7 @@ final class SessionSort {
 /// One of the caller's own functions.
 final class SessionTool {
   const SessionTool({
+    this.approval,
     required this.description,
     this.displayTitle,
     this.executor,
@@ -1564,6 +1657,10 @@ final class SessionTool {
   factory SessionTool.fromJson(Object? value) {
     final json = _object(value, 'SessionTool');
     return SessionTool(
+      approval: switch (json['approval']) {
+        null => null,
+        final Object value => SessionToolApproval.fromJson(value),
+      },
       description: _string(json['description'], 'SessionTool.description'),
       displayTitle: switch (json['display_title']) {
         null => null,
@@ -1581,6 +1678,7 @@ final class SessionTool {
     );
   }
 
+  final SessionToolApproval? approval;
   final String description;
   final String? displayTitle;
   final String? executor;
@@ -1588,11 +1686,60 @@ final class SessionTool {
   final Map<String, Object?>? parameters;
 
   Map<String, Object?> toJson() => {
+    if (approval case final value?) 'approval': value.toJson(),
     'description': description,
     'display_title': ?displayTitle,
     'executor': ?executor,
     'name': name,
     'parameters': ?parameters,
+  };
+}
+
+/// Says a person must allow each call before it runs.
+final class SessionToolApproval {
+  const SessionToolApproval({
+    this.allowTitle,
+    this.declineTitle,
+    this.message,
+    this.reasonArgument,
+    required this.title,
+  });
+
+  factory SessionToolApproval.fromJson(Object? value) {
+    final json = _object(value, 'SessionToolApproval');
+    return SessionToolApproval(
+      allowTitle: switch (json['allow_title']) {
+        null => null,
+        final Object value => _string(value, 'SessionToolApproval.allow_title'),
+      },
+      declineTitle: switch (json['decline_title']) {
+        null => null,
+        final Object value => _string(value, 'SessionToolApproval.decline_title'),
+      },
+      message: switch (json['message']) {
+        null => null,
+        final Object value => _string(value, 'SessionToolApproval.message'),
+      },
+      reasonArgument: switch (json['reason_argument']) {
+        null => null,
+        final Object value => _string(value, 'SessionToolApproval.reason_argument'),
+      },
+      title: _string(json['title'], 'SessionToolApproval.title'),
+    );
+  }
+
+  final String? allowTitle;
+  final String? declineTitle;
+  final String? message;
+  final String? reasonArgument;
+  final String title;
+
+  Map<String, Object?> toJson() => {
+    'allow_title': ?allowTitle,
+    'decline_title': ?declineTitle,
+    'message': ?message,
+    'reason_argument': ?reasonArgument,
+    'title': title,
   };
 }
 
@@ -1630,6 +1777,32 @@ final class TextMatch {
   final String q;
 
   Map<String, Object?> toJson() => {'\$q': q};
+}
+
+final class TimeRange {
+  const TimeRange({this.gte, this.lt});
+
+  factory TimeRange.fromJson(Object? value) {
+    final json = _object(value, 'TimeRange');
+    return TimeRange(
+      gte: switch (json['\$gte']) {
+        null => null,
+        final Object value => _date(value, 'TimeRange.\$gte'),
+      },
+      lt: switch (json['\$lt']) {
+        null => null,
+        final Object value => _date(value, 'TimeRange.\$lt'),
+      },
+    );
+  }
+
+  final DateTime? gte;
+  final DateTime? lt;
+
+  Map<String, Object?> toJson() => {
+    if (gte case final value?) '\$gte': value.toUtc().toIso8601String(),
+    if (lt case final value?) '\$lt': value.toUtc().toIso8601String(),
+  };
 }
 
 /// What to change about one session.

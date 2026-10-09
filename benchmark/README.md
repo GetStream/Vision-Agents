@@ -47,7 +47,7 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
   --pack restaurant --target python --spawn --k 3
 ```
 
-Evaluate the shipped acceleration bundle (`stream.Accelerated` in Python, function calling still in Python). On spawn it `sync_agent`s [`agents/accelerated/{pack}/`](agents/accelerated/) — the skills that pack's subagent may run — and names that stored config, so Sol actually runs them. Those skills are the only thing acceleration is handed on top: the prompt is the same contract file every other target gets, and world tools stay registered in Python. The as-shipped pipeline is the `customer_support` triple: Gemini transcribe-live, Gemini flash-lite, Inworld TTS-2 Flash, Sol as subagent. Override with `VOICEBENCH_STT` / `_TTS` / `_MODEL`; the subagent is the harness's, so it is named as `thinking_llm` in each pack's `agent.yaml`. The router must already be running at `STREAM_ACCELERATION_URL` (default `http://localhost:8080`), or pass `--bin` to spawn it. To run against a hosted router behind Stream's authenticating proxy, set `STREAM_ACCELERATION_URL` to it and `STREAM_ACCELERATION_AUTHENTICATE=1`; the agent then connects with `STREAM_API_KEY` and `STREAM_API_SECRET` instead of a customer id, and `heard.json` is not captured:
+Evaluate the shipped acceleration bundle (`stream.Accelerated` in Python, function calling still in Python). On spawn it `sync_agent`s [`agents/accelerated/{pack}/`](agents/accelerated/) — the skills that pack's subagent may run — and names that stored config, so Sol actually runs them. Those skills are the only thing acceleration is handed on top: the prompt is the same contract file every other target gets, and world tools stay registered in Python. The default pipeline is Deepgram Flux (`deepgram/flux-general-en`), Gemma 4 26B on our own Baseten deployment (`gemma/gemma-4-26B-A4B-it`, which needs `GEMMA_BASE_URL` and `BASETEN_API_KEY`), ElevenLabs v4 Turbo (`elevenlabs/eleven_v4_turbo`), and GPT-6.1 Sol (`openai/gpt-6.1-sol`) as subagent. Override with `VOICEBENCH_STT` / `_TTS` / `_MODEL`; the subagent is the harness's, so it is named as `thinking_llm` in each pack's `agent.yaml`. The router must already be running at `STREAM_ACCELERATION_URL` (default `http://localhost:8080`), or pass `--bin` to spawn it. To run against a hosted router behind Stream's authenticating proxy, set `STREAM_ACCELERATION_URL` to it and `STREAM_ACCELERATION_AUTHENTICATE=1`; the agent then connects with `STREAM_API_KEY` and `STREAM_API_SECRET` instead of a customer id, and `heard.json` is not captured:
 
 ```bash
 CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
@@ -87,15 +87,30 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
 Results go to `out/<run_id>/`: `report.md`, schema-v3 `summary.json` with a `kind` of `agent`, `stt`, or `tts`, a reproducibility manifest, recordings, timestamped transcripts, judge verdicts, tool logs, world state, and per-call metrics. Compare two runs with:
 
 ```bash
-go run ./cmd/voicebench compare --baseline out/old out/new --mde-v2v-ms 50
+go run ./cmd/voicebench compare --baseline out/old out/new --mde baselines/accelerated/noise-restaurant.json
 # or --baseline accelerated to resolve a local baselines/accelerated/<newest-commit>
 # --store-baseline copies summary.json and manifest.json there after a run (gitignored)
 ```
 
-Score transcripts (raw and normalized WER) or clip health without a live call:
+Benchmark speech-to-text through the router. Each line of the manifest is `{"id", "reference", "audio"}`, with `audio` a 16-bit PCM WAV relative to the manifest. Every clip is streamed to each `--target` over the router's `/v1/stt/stream` socket at the pace a call delivers it, followed by two seconds of room tone:
 
 ```bash
-go run ./cmd/voicebench stt --manifest clips.jsonl
+go run ./cmd/voicebench stt --manifest clips.jsonl --target deepgram/flux-general-en --target deepgram/nova-3
+```
+
+It reports, per target, pooled and mean WER (normalized, with the raw pooled figure beside it), substitutions, insertions and deletions, the share of clips transcribed perfectly and the share that returned anything, and three timings measured on the clock the audio went out on, from the voice in the clip rather than the file's edges: TTFS (last word spoken to the last settled transcript, P50/P95/P99), time to first words (first word spoken to the first transcript of any kind) and the transcripts that arrived while the caller was still speaking. Results go to `out/stt-<time>/`: `clips.jsonl` with every clip's transcript, timings and error, `summary.json` with `kind: stt`, and `report.md`. A clip that ends in an error, from the router or the provider, is kept and counted, and makes the command exit non-zero. The router comes from `STREAM_ACCELERATION_URL`, as for `--target accelerated`. Without `--target`, lines carry a `hypothesis` instead of `audio` and are scored as given.
+
+Benchmark text-to-speech through the router. Each line of the corpus is spoken by each `--target` over the router's `/v1/tts/stream` socket, one utterance at a time:
+
+```bash
+go run ./cmd/voicebench tts --target inworld/inworld-tts-2-flash
+```
+
+With no `--corpus`, the corpus is every scenario's `agent_replies`, the names, times, ticket numbers and refusals an agent actually has to say; `--corpus lines.jsonl` takes `{"id", "text"}` lines instead, and `--voice` picks a voice for every target. It reports, per target, TTFB (text sent to first audio, P50/P95/P99), synthesis time and real-time factor (synthesis time over audio duration), round-trip WER (the audio transcribed by the scoring ASR, Deepgram Nova-3, and compared with the text: ASR errors inflate it, so it checks intelligibility, not naturalness), and a health grid. Each clip is graded good, warn or fail on silence before and after the speech, clipping and level, and the target is graded on the share of good clips: good at 99%, warn at 95%. Those thresholds are provisional until they are recalibrated on a known-good run. Results go to `out/tts-<time>/` as `clips.jsonl`, `summary.json` with `kind: tts`, and `report.md`. A line that ends in an error is kept, counted, and makes the command exit non-zero.
+
+Score one clip's health without synthesizing anything:
+
+```bash
 go run ./cmd/voicebench tts --wav out/run/agent.wav
 ```
 
@@ -133,10 +148,10 @@ A maintainer must review the labels in [`calibration/judge.json`](calibration/ju
 ## Methodology
 
 1. **Seed:** A YAML scenario creates known inventory, patient records, or subscriber state.
-2. **Call:** A synthesized caller follows a timed script. Noise tests add kitchen, street, or competing speech at 10 dB SNR.
+2. **Call:** A synthesized caller follows a timed script. Noise tests add kitchen, street, or competing speech at 10 dB SNR. A scenario that needs the agent to act (book, order, reschedule, dispatch) ends with the caller saying "Yes, that's right. Please go ahead.", so an agent that confirms before acting, as it should with a real caller, is answered rather than failed.
 3. **Act:** Every implementation receives the same prompt, tools, data, and caller audio. Each trial uses a new call and empty history.
 4. **Observe:** Voicebench records both legs, tool calls, and final world state. Timing comes from speech energy in the recordings.
-5. **Grade:** Deterministic checks cover state, expected tools and arguments, tool order, and entities. An LLM judge checks policy, coherence, and claims against successful tools. The scripted caller text is the canonical caller transcript for judging; caller STT remains a diagnostic artifact.
+5. **Grade:** Deterministic checks cover state, expected tools and arguments, tool order, and entities. World state and tool arguments are matched the same way, allowing harmless differences in case, punctuation, spoken times (7:30 = 19:30 = seven thirty), dates, and plain plurals (peanuts = peanut) but never in identifiers or numbers; how many expected arguments were right, repeated calls, and calls to tools that do not exist are reported without gating. An LLM judge checks policy, coherence, and claims against successful tools. The scripted caller text is the canonical caller transcript for judging; caller STT remains a diagnostic artifact.
 6. **Repeat:** Each scenario runs `k` times, three by default. Reliability is calculated per scenario: `pass@k` means any requested trial passed and `pass^k` means every requested trial passed. Evaluator failures are invalid, make the scenario incomplete, and never count as agent failures.
 
 A trial passes only when every hard gate passes. Latency is reported separately, so speed cannot hide an incorrect result.
@@ -176,7 +191,7 @@ There is no single industry-standard score across these verticals. Voicebench ta
 | Voice-to-voice | Caller end to agent onset, every measurable turn | P50 300–700 ms; P95 and sample count reported | No |
 | Time to first response | Caller end to agent onset, first caller turn of each call only | P50 and P95 with sample count reported; no target yet | No |
 | Stability | Non-tool gap over 2× that call's P50 | Zero spikes | No |
-| False cutoffs | Agent starts while caller is speaking | Zero | No |
+| False cutoffs | Agent starts while caller is speaking | Zero | Only in the monologue scenarios |
 | Reliability | Repeated runs | `pass^k`; default target 3/3 | Aggregate |
 
 ### Restaurant
@@ -213,7 +228,9 @@ See the [healthcare contract](agents/contracts/healthcare.prompt). Its data-mini
 
 See the [telecom contract](agents/contracts/telecom.prompt).
 
-Each vertical includes task completion, two-minute coherence, 10 dB noise, competing-talker selectivity, delayed-tool filler, interruption, entity-dense, and adversarial scenarios. The three verticals remain separate score columns; they are never combined into one score.
+Each vertical includes task completion, two-minute coherence, 10 dB noise, competing-talker selectivity, delayed-tool filler, interruption, entity-dense, adversarial, and monologue scenarios. A monologue is a minute of one caller turn, built from sentences with 0.8–2 s thinking pauses between them, with the details spread through it; the agent must not start talking anywhere inside it (`hold_floor`), then must act on all of it.
+
+An **extended** set (`scenarios/extended.txt`, `voicebench run --extended`, or `set=extended` on Run workflow) holds scenarios outside the frozen set, run by hand until a methodology bump takes them in: a caller correcting themselves mid-sentence, one- and two-word answers, a child talking to the caller during the call, a caller going silent for nine seconds (the agent should check in), a television and music in the background, an Australian-accented caller, numbers dictated digit by digit, and an angry caller demanding a credit. A scenario can set the caller's ElevenLabs `voice`, a turn its own `voice`; an `aside` line is someone else in the room and is scored like an overlap sound; a `check_in` turn holds the caller back for its delay, and fails the call if the agent lets the silence pass. The three verticals remain separate score columns; they are never combined into one score.
 
 ## Scenario world
 
@@ -236,17 +253,17 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
 
 A LiveKit column is only comparable when the worker actually received the contract: check the report for zero tool calls and Warnings before reading its score. Trials that produce no verdict are invalid, make scenario reliability incomplete, and fail the run. A comparable run should use matching manifest values: methodology version, scenario and contract hashes, `k`, target and transport, target model and voice, caller configuration, region/network conditions, and evaluator configuration. `summary.json` records these fields without credentials. Voicebench scores are directly comparable to other Voicebench runs under the same setup; they are not directly comparable to EVA, τ²-bench, eot-bench, or other benchmark scores.
 
-Time to first response has one sample per call, so it needs more calls than V2V to settle. Before claiming a gap, measure its noise floor: run the frozen set against the same target at least five times back to back with the same `--network-profile`, then read the spread of `First response P50` across those runs:
+Time to first response has one sample per call, so it needs more calls than V2V to settle. Before claiming a gap, measure the noise floor: run the frozen set against the same target at least five times back to back with the same `--network-profile`, then hand those runs to `voicebench noise`:
 
 ```bash
 for i in 1 2 3 4 5; do
   CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
     --pack restaurant --target accelerated --spawn --frozen --k 3 --network-profile "$PROFILE"
 done
-go run ./cmd/voicebench compare out/<run1> out/<run2> out/<run3> out/<run4> out/<run5>
+go run ./cmd/voicebench noise out/<run1> out/<run2> out/<run3> out/<run4> out/<run5>
 ```
 
-Repeat for `healthcare` and `telecom`, since `run` takes one pack at a time. The largest P50 difference between any two of those runs is the smallest change the bench can detect for that target and pack. A difference between our stack and either LiveKit arm counts as real only if it is bigger than that spread. Store the `accelerated` run you compare against with `--store-baseline`.
+Repeat for `healthcare` and `telecom`, since `run` takes one pack at a time. It refuses runs that differ in commit, `k`, network profile, scenarios or contracts, and writes `baselines/<target>/noise-<pack>.json`: for pass rate, V2V P50, non-tool P50 and P95, tool-turn P50 and first response P50, the value in each run and the MDE, the largest difference between any two of them. That is the smallest change the bench can detect for that target and pack. A difference between our stack and either LiveKit arm counts as real only if it is bigger than that spread. Store the `accelerated` run you compare against with `--store-baseline`, then pass the file to `compare --mde`: against a baseline it flags each metric that moved by more than its MDE, and says so when the baseline is from another series than the one the noise floor measured.
 
 ### Posting to Slack
 
@@ -264,6 +281,10 @@ go run ./cmd/voicebench digest --title "Voicebench" --out out/digest --slack out
 `scripts/packs.sh` runs every pack at once against one router built from this checkout, each pack with its own agent and world server port. The short set at `k=1` takes about 8 minutes that way, against about 21 minutes one pack after another (`VOICEBENCH_PARALLEL=0`). Running the packs side by side did not move the numbers: on the same router and database, reply time, the turn decision and model-to-first-text all stayed within noise (non-tool reply P50 4,720 ms one at a time, 4,540 ms at once, 95% interval of the difference −600 to +320 ms). `VOICEBENCH_K`, `VOICEBENCH_SET` (`short` or `frozen`) and `VOICEBENCH_PACKS` choose what runs.
 
 `scripts/digest.sh` runs the frozen set for every pack against our stack and LiveKit Inference, then posts the digest: the nightly run. `VOICEBENCH_K=3 VOICEBENCH_LIVEKIT_ARMS="inference realtime"` makes it the weekly one. It builds the router from this checkout unless `STREAM_ACCELERATION_URL` names a hosted one, and `VOICEBENCH_DIGEST_POST=0` writes the digest without posting it.
+
+### CI
+
+[`.github/workflows/voicebench.yml`](../.github/workflows/voicebench.yml) runs the frozen set every night on our stack alone through `scripts/digest.sh`, on a router built from the checkout, with network profile `github-ubuntu-latest`. Its compare against the previous night goes to the job summary, and the digest is posted to Slack once `VOICEBENCH_SLACK_BOT_TOKEN` and `VOICEBENCH_SLACK_CHANNEL` are repository secrets. Run it by hand from the Actions tab. There is no per-PR smoke yet.
 
 ## Public benchmark basis
 

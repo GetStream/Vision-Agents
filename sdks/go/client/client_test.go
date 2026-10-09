@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -162,7 +163,11 @@ func newRouter(t *testing.T) *router {
 	mux.HandleFunc("DELETE /v1/agents/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		if r.PathValue("id") == "someone-elses" {
-			answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "unknown session"}})
+			w.Header().Set(stream.RequestIDHeader, "request-1")
+			answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+				Message: "unknown session", Type: acceleration.ErrorTypeNotFound, Code: "session_not_found",
+				DocUrl: "https://getstream.io/agents/docs/api/errors/#session_not_found",
+			}})
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -731,6 +736,34 @@ func TestAnotherCustomersSessionIsNotDeleted(t *testing.T) {
 	err := backend.client(t).Agent("docs").Sessions.Delete(t.Context(), "someone-elses")
 	if err == nil || !strings.Contains(err.Error(), "unknown session") {
 		t.Fatalf("the refusal came back as %v", err)
+	}
+}
+
+func TestARefusalCarriesEverythingTheRouterSaid(t *testing.T) {
+	backend := newRouter(t)
+
+	err := backend.client(t).Agent("docs").Sessions.Delete(t.Context(), "someone-elses")
+
+	var refused *stream.RouterError
+	if !errors.As(err, &refused) {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+	got := stream.RouterError{
+		Status: refused.Status, Type: refused.Type, Code: refused.Code, Message: refused.Message,
+		DocURL: refused.DocURL, RequestID: refused.RequestID, Operation: refused.Operation,
+	}
+	want := stream.RouterError{
+		Status: http.StatusNotFound, Type: "not_found", Code: "session_not_found",
+		Message:   "unknown session",
+		DocURL:    "https://getstream.io/agents/docs/api/errors/#session_not_found",
+		RequestID: "request-1",
+		Operation: "deleting session someone-elses",
+	}
+	if got != want {
+		t.Errorf("the refusal was read as %+v, want %+v", got, want)
+	}
+	if err.Error() != "client: deleting session someone-elses: unknown session" {
+		t.Errorf("the refusal says %q", err)
 	}
 }
 

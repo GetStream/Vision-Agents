@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"sync"
 
@@ -177,8 +178,7 @@ func (a *Agent) Config(ctx context.Context) (*acceleration.AgentConfig, error) {
 		return nil, fmt.Errorf("client: looking up the agent %s: %w", a.name, err)
 	}
 	if listed.JSON200 == nil {
-		return nil, failure("looking up the agent "+a.name, listed.Status(),
-			listed.JSON400, listed.JSON401)
+		return nil, failure("looking up the agent "+a.name, listed.HTTPResponse, listed.Body)
 	}
 	for _, config := range *listed.JSON200 {
 		if config.Name == a.name {
@@ -211,21 +211,15 @@ func (a *Agent) UpdateConfig(ctx context.Context, patch acceleration.AgentConfig
 		return nil, fmt.Errorf("client: updating the agent %s: %w", a.name, err)
 	}
 	if patched.JSON200 == nil {
-		return nil, failure("updating the agent "+a.name, patched.Status(),
-			patched.JSON400, patched.JSON401, patched.JSON403, patched.JSON404)
+		return nil, failure("updating the agent "+a.name, patched.HTTPResponse, patched.Body)
 	}
 	return patched.JSON200, nil
 }
 
-// failure turns whichever error body arrived into one error, or reports the status when none
-// did. Every refusal in the spec is the same shape, so this is the whole of it.
-func failure(what, status string, bodies ...*acceleration.ErrorResponse) error {
-	for _, body := range bodies {
-		if body != nil {
-			return fmt.Errorf("client: %s: %s", what, body.Error.Message)
-		}
-	}
-	return fmt.Errorf("client: %s: %s", what, status)
+// failure is what the router said went wrong with what was being done, read off the answer
+// it gave instead, or the status when it said nothing.
+func failure(what string, response *http.Response, body []byte) error {
+	return stream.NewRouterError(response, body, "client", what, response.Status)
 }
 
 // pointer is a value the generated types want as an optional, for the ones a caller set. A

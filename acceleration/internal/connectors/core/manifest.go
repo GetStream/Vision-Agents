@@ -73,6 +73,29 @@ type Manifest struct {
 	// Channel is how the connector is an inbound channel (channel.go). A connector has
 	// sources, a channel, or both.
 	Channel *ChannelRule `yaml:"channel,omitempty" json:"channel,omitempty"`
+	// BrokenRevisions are this connector's earlier revisions that do not work, each with why.
+	// A connection still pinned to one is refused a credential until a consent connects it
+	// again on the latest revision. Last, and left out of the JSON when empty, so the JSON of
+	// every manifest that declares none stays as it was stored.
+	BrokenRevisions []BrokenRevisions `yaml:"broken_revisions,omitempty" json:"broken_revisions,omitempty"`
+}
+
+// BrokenRevisions are earlier revisions of a connector that share one reason for not
+// working, such as a capture rule that reads where the provider sends nothing.
+type BrokenRevisions struct {
+	Revisions []int  `yaml:"revisions" json:"revisions"`
+	Reason    string `yaml:"reason" json:"reason"`
+}
+
+// Broken is the reason each revision BrokenRevisions names is broken, by revision.
+func (m Manifest) Broken() map[int]string {
+	broken := map[int]string{}
+	for _, entry := range m.BrokenRevisions {
+		for _, revision := range entry.Revisions {
+			broken[revision] = entry.Reason
+		}
+	}
+	return broken
 }
 
 // Setup is a provider's setup page and the steps a person takes there.
@@ -583,6 +606,26 @@ func (m Manifest) Validate() error {
 		}
 		if !hookName.MatchString(string(m.Hooks[point])) {
 			fail(field, "%q is not a dotted lowercase hook name", m.Hooks[point])
+		}
+	}
+
+	marked := map[int]bool{}
+	for i, entry := range m.BrokenRevisions {
+		field := fmt.Sprintf("broken_revisions[%d]", i)
+		if strings.TrimSpace(entry.Reason) == "" {
+			fail(field+".reason", "is required: it is what a person reconnecting is told")
+		}
+		if len(entry.Revisions) == 0 {
+			fail(field+".revisions", "is empty")
+		}
+		for _, revision := range entry.Revisions {
+			switch {
+			case revision < 1 || revision >= m.Revision:
+				fail(field+".revisions", "%d is not an earlier revision: it must be from 1 to %d", revision, m.Revision-1)
+			case marked[revision]:
+				fail(field+".revisions", "%d is listed twice", revision)
+			}
+			marked[revision] = true
 		}
 	}
 

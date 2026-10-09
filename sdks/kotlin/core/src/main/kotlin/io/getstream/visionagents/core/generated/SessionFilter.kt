@@ -25,6 +25,7 @@ package io.getstream.visionagents.core.generated
 
 import io.getstream.visionagents.core.generated.Equals
 import io.getstream.visionagents.core.generated.TextMatch
+import io.getstream.visionagents.core.generated.TimeRange
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
@@ -40,6 +41,9 @@ import kotlinx.serialization.encoding.Encoder
  *
  * @param agent 
  * @param agentId 
+ * @param configId 
+ * @param createdAt 
+ * @param custom The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled.
  * @param modality 
  * @param projectId 
  * @param state 
@@ -55,6 +59,16 @@ internal data class SessionFilter (
 
     @SerialName(value = "agent_id")
     val agentId: Equals? = null,
+
+    @SerialName(value = "config_id")
+    val configId: Equals? = null,
+
+    @SerialName(value = "created_at")
+    val createdAt: TimeRange? = null,
+
+    /* The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled. */
+    @SerialName(value = "custom")
+    val custom: kotlin.collections.Map<kotlin.String, kotlin.String>? = null,
 
     @SerialName(value = "modality")
     val modality: Equals? = null,

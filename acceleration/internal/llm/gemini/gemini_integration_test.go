@@ -48,3 +48,30 @@ func (s *GeminiIntegrationSuite) TestAToolCallComesBackSigned() {
 	s.Require().Len(called.ToolCalls, 1)
 	s.NotEmpty(called.ToolCalls[0].Signature, "Google signs its calls and wants them back signed")
 }
+
+func (s *GeminiIntegrationSuite) TestACallAnotherModelMadeIsAnswered() {
+	// A fallback leaves calls in the conversation that Google never signed, and the turn
+	// after the fallback comes back here with their results.
+	answered, _ := s.Ask(llm.ResponseParams{
+		Input: []llm.Message{
+			{Role: llm.User, Content: "What is the weather in Paris?"},
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{
+				{ID: "call-1", Name: "get_weather", Arguments: `{"city":"Paris"}`},
+				{ID: "call-2", Name: "get_weather", Arguments: `{"city":"Lyon"}`},
+			}},
+			{Role: llm.ToolResult, ToolCallID: "call-1", Content: "20C and sunny"},
+			{Role: llm.ToolResult, ToolCallID: "call-2", Content: "18C and cloudy"},
+		},
+		Tools: []llm.Tool{{
+			Name:        "get_weather",
+			Description: "Look up the weather somewhere",
+			Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"city": map[string]any{"type": "string"}},
+				"required":   []string{"city"},
+			},
+		}},
+	})
+
+	s.NotEmpty(answered.OutputText)
+}

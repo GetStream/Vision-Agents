@@ -1,0 +1,179 @@
+name: Voicebench
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      set:
+        description: 'Scenario set: frozen (the nightly, compared with the previous night), short (a quicker check), or extended (scenarios outside the frozen set)'
+        type: choice
+        options: [ frozen, short, extended ]
+        default: frozen
+      packs:
+        description: 'Packs to run: all (the nightly) or one of them (a quicker check, compared with nothing)'
+        type: choice
+        options: [ all, restaurant, healthcare, telecom ]
+        default: all
+
+permissions:
+  contents: read
+
+# Live calls against the providers below, on a router built from this checkout.
+# The network profile names the runner, so a CI number never lands in a laptop's series.
+env:
+  CGO_ENABLED: '1'
+  VOICEBENCH_NETWORK_PROFILE: github-ubuntu-latest
+  STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
+  STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
+  STREAM_ACCELERATION_CUSTOMER_ID: voicebench
+  ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+  DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+  INWORLD_API_KEY: ${{ secrets.INWORLD_API_KEY }}
+  # Gemma 4 runs on our own Baseten deployment rather than a public API.
+  GEMMA_BASE_URL: ${{ secrets.GEMMA_BASE_URL }}
+  BASETEN_API_KEY: ${{ secrets.BASETEN_API_KEY }}
+  ROUTER_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/model_router?sslmode=disable
+  # Set outright: the router's local profile otherwise looks for the compose Redis on 56379.
+  ROUTER_REDIS_ADDR: localhost:6379
+
+jobs:
+  # Nightly: the frozen set at k=1 on our stack alone, compared against the previous night's
+  # run. The digest is posted to Slack only once VOICEBENCH_SLACK_BOT_TOKEN and
+  # VOICEBENCH_SLACK_CHANNEL are set. GitHub fires a schedule, and offers Run workflow, only
+  # for a file on the default branch, so a run on that branch checks out accelerate, where
+  # the benchmark lives; Run workflow on any other branch benchmarks that branch.
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # The agent syncs its config to the router, which keeps configs in Postgres, and the
+    # router keeps live sessions in Redis.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: model_router
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d model_router"
+          --health-interval 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: benchmark
+    env:
+      VOICEBENCH_SET: ${{ inputs.set || 'frozen' }}
+      VOICEBENCH_PACK_CHOICE: ${{ inputs.packs || 'all' }}
+      # Only the frozen set on every pack is a night: anything less is a quick check.
+      VOICEBENCH_NIGHT: ${{ (inputs.set || 'frozen') == 'frozen' && (inputs.packs || 'all') == 'all' }}
+      VOICEBENCH_LIVEKIT_ARMS: ''
+      VOICEBENCH_SLACK_BOT_TOKEN: ${{ secrets.VOICEBENCH_SLACK_BOT_TOKEN }}
+      VOICEBENCH_SLACK_CHANNEL: ${{ secrets.VOICEBENCH_SLACK_CHANNEL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name == github.event.repository.default_branch && 'accelerate' || '' }}
+
+      - uses: ./.github/actions/voicebench-setup
+
+      # The Gemma deployment scales down when idle and takes minutes to come back, and calls
+      # placed while it wakes go unanswered and score as failures. Wait for it to answer first,
+      # and fail here, plainly, if it never does.
+      - name: Wake the Gemma deployment
+        if: startsWith(env.VOICEBENCH_MODEL || 'gemma/', 'gemma/')
+        timeout-minutes: 12
+        run: |
+          if [[ -z "$GEMMA_BASE_URL" || -z "$BASETEN_API_KEY" ]]; then
+            echo "::error::GEMMA_BASE_URL and BASETEN_API_KEY must be set: the agent runs on our Gemma deployment"
+            exit 1
+          fi
+          answer="$RUNNER_TEMP/gemma.json"
+          deadline=$((SECONDS + 600))
+          until [[ "$(curl -sS -m 60 -o "$answer" -w '%{http_code}' "$GEMMA_BASE_URL/chat/completions" \
+              -H "Authorization: Bearer $BASETEN_API_KEY" -H 'Content-Type: application/json' \
+              -d '{"model":"google/gemma-4-26B-A4B-it","max_tokens":1,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"Hi"}]}' \
+              2>/dev/null)" == 200 ]]; do
+            if (( SECONDS >= deadline )); then
+              echo "::error::The Gemma deployment did not answer within 10 minutes: $(head -c 300 "$answer" 2>/dev/null)"
+              exit 1
+            fi
+            echo "Gemma is not answering yet: $(head -c 200 "$answer" 2>/dev/null)"
+            sleep 15
+          done
+          echo "Gemma is answering, after ${SECONDS}s of waiting"
+
+      # A short or single-pack run is a quick check: it is not compared with the previous
+      # night, and it does not replace it as tomorrow's baseline.
+      - name: Restore the previous night
+        if: env.VOICEBENCH_NIGHT == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: benchmark/out/previous
+          key: voicebench-nightly-${{ github.run_id }}
+          restore-keys: voicebench-nightly-
+
+      - name: Run the ${{ env.VOICEBENCH_SET }} set on ${{ env.VOICEBENCH_PACK_CHOICE }} packs
+        run: |
+          if [[ -z "$VOICEBENCH_SLACK_BOT_TOKEN" || -z "$VOICEBENCH_SLACK_CHANNEL" ]]; then
+            echo "Slack is not configured, writing the digest without posting it"
+            export VOICEBENCH_DIGEST_POST=0
+          fi
+          if [[ "$VOICEBENCH_PACK_CHOICE" != all ]]; then
+            export VOICEBENCH_PACKS="$VOICEBENCH_PACK_CHOICE"
+          fi
+          if [[ "$VOICEBENCH_NIGHT" != true ]]; then
+            export VOICEBENCH_DIGEST_TITLE="Voicebench $VOICEBENCH_SET · $VOICEBENCH_PACK_CHOICE"
+          fi
+          VOICEBENCH_K=1 scripts/digest.sh out/nightly
+
+      - name: Compare with the previous night
+        if: always() && env.VOICEBENCH_NIGHT == 'true'
+        run: |
+          for run in out/nightly/*-accelerated; do
+            previous="out/previous/$(basename "$run")"
+            [[ -f "$run/summary.json" && -f "$previous/summary.json" ]] || continue
+            go run ./cmd/voicebench compare --baseline "$previous" "$run" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      # A night with no finished run keeps the last one it had, rather than an empty baseline.
+      - name: Keep tonight for tomorrow
+        id: keep
+        if: always() && env.VOICEBENCH_NIGHT == 'true'
+        run: |
+          tonight=(out/nightly/*-accelerated/summary.json)
+          [[ -f "${tonight[0]}" ]] || exit 0
+          rm -rf out/previous
+          for summary in "${tonight[@]}"; do
+            run="$(dirname "$summary")"
+            mkdir -p "out/previous/$(basename "$run")"
+            cp "$run/summary.json" "$run/manifest.json" "out/previous/$(basename "$run")/"
+          done
+          echo "saved=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/save@v4
+        if: always() && steps.keep.outputs.saved == 'true'
+        with:
+          path: benchmark/out/previous
+          key: voicebench-nightly-${{ github.run_id }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: voicebench-nightly
+          path: benchmark/out/nightly
+          retention-days: 30
+
+concurrency:
+  group: voicebench-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
