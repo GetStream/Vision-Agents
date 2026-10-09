@@ -1774,6 +1774,16 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A phone vendor's own error no longer reaches the client. The `/v1/phone/*` endpoints
+  answered a Twilio, Telnyx, Bandwidth or Sinch failure with `400 invalid_request` and the
+  vendor's full text, which held the vendor account id. The router now logs that text and
+  answers `503 phone_vendor_failed` ("The phone vendor could not complete the request.").
+  Placing or transferring a call answers the same code without the advice to try again,
+  because the call can still ring.
+  Buying a number that the vendor sells only with a verified address, such as a Twilio
+  number outside the US or Canada, answers `400 phone_number_needs_address`. A number
+  search with no vendor named lists a failed vendor in `skipped` with the same general
+  reason.
 - A voice agent says the answer at the end of a chain of tool calls. A tool asked for in a
   reply to a tool result ran, but its result was never followed, so a Salesforce lookup that
   read a schema and then queried it went silent after the schema. Every link is followed now,

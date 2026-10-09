@@ -3,6 +3,7 @@ package sinch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,8 @@ type SinchSuite struct {
 	respond func(w http.ResponseWriter, r *http.Request)
 	// grant answers the next token request.
 	grant string
+	// grantStatus is the status of the next token answer; 0 means 200.
+	grantStatus int
 }
 
 type request struct {
@@ -48,12 +51,16 @@ func (s *SinchSuite) SetupTest() {
 	s.seen = request{}
 	s.tokens = 0
 	s.grant = `{"access_token":"tok-1","expires_in":3600}`
+	s.grantStatus = 0
 	s.answer(`{"availableNumbers":[]}`)
 
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/oauth2/token" {
 			s.tokens++
+			if s.grantStatus != 0 {
+				w.WriteHeader(s.grantStatus)
+			}
 			_, _ = w.Write([]byte(s.grant))
 			return
 		}
@@ -317,6 +324,128 @@ func (s *SinchSuite) TestAFailureFromSinchSaysWhatSinchSaid() {
 
 	s.ErrorContains(err, "422")
 	s.ErrorContains(err, "region not supported")
+}
+
+func (s *SinchSuite) TestANumbersRefusalIsAVendorError() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(" region not supported \n"))
+	}
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "ZZ"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("sinch", vendorErr.Vendor)
+	s.Equal(http.StatusUnprocessableEntity, vendorErr.Status)
+	s.Equal("region not supported", vendorErr.Message)
+}
+
+func (s *SinchSuite) TestACallingRefusalIsAVendorError() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("not allowed"))
+	}
+
+	_, err := s.provider.Dial(s.ctx, s.outbound())
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("sinch", vendorErr.Vendor)
+	s.Equal(http.StatusForbidden, vendorErr.Status)
+	s.Equal("not allowed", vendorErr.Message)
+}
+
+func (s *SinchSuite) TestSinchNotAnsweringTheCallingAPIIsAVendorError() {
+	s.server.Close()
+
+	_, err := s.provider.Dial(s.ctx, s.outbound())
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Zero(vendorErr.Status)
+	s.Error(vendorErr.Cause)
+}
+
+func (s *SinchSuite) TestSinchNotAnsweringTheNumbersAPIIsAVendorError() {
+	// The token is already held, so the request that fails is the numbers one.
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+	s.server.Close()
+
+	_, err = s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.NotEqual("token", vendorErr.Path)
+	s.Zero(vendorErr.Status)
+	s.Error(vendorErr.Cause)
+}
+
+func (s *SinchSuite) TestANumbersAnswerThatIsNotJSONIsAVendorError() {
+	s.answer("not json")
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal(http.StatusOK, vendorErr.Status)
+	s.Equal("could not read the answer", vendorErr.Message)
+}
+
+func (s *SinchSuite) TestACallingAnswerThatIsNotJSONIsAVendorError() {
+	s.answer("not json")
+
+	_, err := s.provider.Dial(s.ctx, s.outbound())
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal(http.StatusOK, vendorErr.Status)
+	s.Equal("could not read the answer", vendorErr.Message)
+}
+
+func (s *SinchSuite) TestAFailedTokenRequestIsAVendorError() {
+	s.grantStatus = http.StatusUnauthorized
+	s.grant = "bad key"
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("token", vendorErr.Path)
+	s.Equal(http.StatusUnauthorized, vendorErr.Status)
+	s.Equal("bad key", vendorErr.Message)
+}
+
+func (s *SinchSuite) TestSinchNotAnsweringTheTokenRequestIsAVendorError() {
+	s.server.Close()
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("token", vendorErr.Path)
+	s.Zero(vendorErr.Status)
+	s.Error(vendorErr.Cause)
+}
+
+func (s *SinchSuite) TestATokenAnswerThatIsNotJSONIsAVendorError() {
+	s.grant = "not json"
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("token", vendorErr.Path)
+	s.Equal("could not read the answer", vendorErr.Message)
+}
+
+func (s *SinchSuite) outbound() phone.Outbound {
+	return phone.Outbound{
+		From:   "+17195551234",
+		To:     "+13035559876",
+		Bridge: phone.Bridge{URI: "sip:trunk@sip.stream-io-api.com"},
+	}
 }
 
 func (s *SinchSuite) answer(body string) {
