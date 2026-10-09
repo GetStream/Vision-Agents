@@ -18,6 +18,7 @@
 #   [uninstalled] https://docs.slack.dev/reference/events/app_uninstalled
 # Opened October 9, 2026:
 #   [format]    https://docs.slack.dev/messaging/formatting-message-text
+#   [usernames] https://docs.slack.dev/changelog/2017-09-the-one-about-usernames
 id: slack_bot
 # A new revision for any change to what this file says; see AGENTS.md. 2 adds
 # channel.subscriptions, the events an app the router creates subscribes to (T54). 3 adds
@@ -164,6 +165,14 @@ channel:
       # event's channel_type field set to "im"».
       match:
         $.event.channel_type: im
+      # The labelled form <@U012AB3CD|name> is not matched. [usernames] calls it deprecated
+      # («Use the user ID-only form <@W123> instead»). The page names one place Slack still
+      # sends it, slash commands («when we can»), which this file does not read. A message a
+      # person types reached revision 4 in the ID-only form: a live mention on 2026-10-09
+      # matched this rule (AI-990 F31b). That Slack never puts the labelled form in a message
+      # event's text is not on either page. # unverified
+      # The bridge takes this mention out of the text the agent gets
+      # (core.MessageRule.WithoutMention, AI-990 F29).
       mention: "<@{bot_user_id}>"
   signals:
     # [revoked]: event.tokens.bot lists the bot user ids whose bot tokens were revoked. The

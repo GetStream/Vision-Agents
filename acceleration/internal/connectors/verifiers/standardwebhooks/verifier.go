@@ -98,7 +98,7 @@ func (v *Verifier) Verify(r *http.Request, body []byte, m core.Manifest, secret 
 		// is a verified request with nothing to act on (core.Verifier).
 		return core.VerifiedEvent{}, nil
 	}
-	event := core.VerifiedEvent{Challenge: read.Challenge, Signals: read.Signals}
+	event := core.VerifiedEvent{Challenge: read.Challenge, Signals: read.Signals, Skipped: read.Skipped}
 	for _, message := range read.Messages {
 		event.Messages = append(event.Messages, message.InboundMessage)
 	}
