@@ -35,6 +35,9 @@ const (
 	AuditReasonDeleted = "deleted"
 	// AuditReasonUserDeleted: every connection of its user was deleted, for offboarding.
 	AuditReasonUserDeleted = "user_deleted"
+	// AuditReasonPluginMigrate: router plugins migrate moved a plugin login's grant onto the
+	// connection (internal/pluginmigrate).
+	AuditReasonPluginMigrate = "plugin_migrate"
 )
 
 // How many audit rows are handed back at once: the connection list's sizes. Neither is

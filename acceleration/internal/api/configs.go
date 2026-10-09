@@ -586,9 +586,15 @@ func (s *Server) unboundConnectors(ctx context.Context, customerID string, bindi
 // internal/connectors/providers/slack.yaml), so the two would offer the same names. It reads
 // the config as it is about to be stored, so a patch or a sync adding either side is checked
 // against what the other already is.
+//
+// A binding to the plugin's own connector may be called what the plugin is: the session drops
+// a plugin entry whose connector a binding names (session.Spec.withoutBoundPlugins), so only
+// the binding offers the name. That is the binding router plugins migrate writes beside the
+// entry it keeps (internal/pluginmigrate), and the config stays editable (AI-994 F42).
 func pluginAliasComplaint(config store.AgentConfig) (string, bool) {
 	for _, binding := range config.Connectors {
-		if namesPluginEntry(config.AgentPlugins, binding.Name) || namesPluginEntry(config.UserPlugins, binding.Name) {
+		if binding.ConnectorID != binding.Name &&
+			(namesPluginEntry(config.AgentPlugins, binding.Name) || namesPluginEntry(config.UserPlugins, binding.Name)) {
 			return fmt.Sprintf("connector binding %q is called what the config's plugin %q is, and both "+
 				"would offer their tools as %s%stool", binding.Name, binding.Name, binding.Name, aliasSeparator), false
 		}
