@@ -22,13 +22,14 @@ class ConnectionValidation:
         connection_id (str):
         status (ConnectionValidationStatus): connected: the credential works and the tools were listed. pending: no
             credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps,
-            or, with code connector_credential_rejected, new credentials. needs_scopes: the tools were listed, and the grant
-            lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider
-            could not be reached or listed nothing usable; error says why.
+            or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and
+            the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the
+            provider could not be reached or listed nothing usable; error says why.
         checked_at (datetime.datetime | Unset): When the tools were listed. Absent until a validate listed them.
         code (str | Unset): What a program branches on when the status is not connected: connector_scope_required with
             needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose
-            token or key the provider rejected, which only new credentials (PUT .../credentials) fix. More may be added.
+            token or key the provider rejected, or that reads a connector revision marked broken, which only saving
+            credentials (PUT .../credentials) fixes. More may be added.
         error (str | Unset): Why the status is not connected, for a person to read.
         missing_scopes (list[str] | None | Unset): With needs_scopes: the scopes the checked tools need that the grant
             lacks, sorted.

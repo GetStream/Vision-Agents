@@ -93,8 +93,9 @@ type logins struct {
 // opened on the connection they logged into.
 type login struct {
 	binding store.ConnectorBinding
-	// rejected is a chosen connection whose token or key the provider rejected
-	// (unavailableCredentialRejected): no consent fixes it, so none is begun.
+	// rejected is a chosen connection whose token or key the provider rejected, or that reads
+	// a revision marked broken (unavailableCredentialRejected): no consent fixes it, so none is
+	// begun.
 	rejected bool
 
 	mu sync.Mutex
@@ -373,15 +374,17 @@ func loginRequired(name string) string {
 const authorizationRequired = "authorization_required"
 
 // credentialRejected is what the model reads for a connection whose token or key the provider
-// rejected: nobody can log in to fix it here, whoever set it up must replace it.
+// rejected, or that was saved on a connector revision marked broken (AI-1002): nobody can log
+// in to fix it here, whoever set it up must save it again.
 func credentialRejected(alias string) string {
 	raw, _ := json.Marshal(struct {
 		Status  string `json:"status"`
 		Message string `json:"message"`
 	}{
 		Status: unavailableCredentialRejected,
-		Message: fmt.Sprintf("%s rejected the token or key stored for the user's connection, so it cannot be used "+
-			"until whoever set it up replaces it. Tell the user that; do not offer to connect it here.", alias),
+		Message: fmt.Sprintf("%s cannot use the token or key stored for the user's connection: the provider rejected "+
+			"it, or the connector changed since it was saved. It cannot be used until whoever set it up saves it again. "+
+			"Tell the user that; do not offer to connect it here.", alias),
 	})
 	return string(raw)
 }

@@ -48,7 +48,8 @@ func documentHandWritten(api huma.API) {
 			"without: name (its alias), connector_id and reason, one of no_selection, " +
 			"shared_session, caller_unverified, connection_unavailable, provider_mismatch, " +
 			"needs_reauthorization, credential_rejected (the provider rejected the token or key a " +
-			"bearer or api_key connection holds; only new credentials fix it, so no login is " +
+			"bearer or api_key connection holds, or the connection reads a connector revision marked " +
+			"broken; only saving its credentials again fixes it, so no login is " +
 			"offered), not_connected, open_failed, tool_unavailable and " +
 			"selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer " +
 			"declares). " +

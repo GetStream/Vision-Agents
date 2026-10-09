@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -39,6 +41,8 @@ type ConnectionToolsSuite struct {
 	// token is an access token the fake issued, which its MCP endpoint takes: the value a
 	// bearer connection is given. Synthetic, fresh per suite.
 	token string
+	// builtinID is the built-in connector the test's builtin made last.
+	builtinID string
 }
 
 func TestConnectionToolsSuite(t *testing.T) {
@@ -330,6 +334,98 @@ func (s *ConnectionToolsSuite) TestATokenTheProviderRefusesMovesTheConnectionToN
 	s.Equal(validationConnected, string(s.validate(id).Status), "a new token is what fixes it")
 }
 
+// TestAStaticTokenOnABrokenRevisionSaysToSaveItAgain: a later revision of a built-in marks the
+// one a bearer connection reads broken (AI-1002). No consent can move a token's connection, so
+// the validate says what does: saving the token again, with the code a rejected token has.
+func (s *ConnectionToolsSuite) TestAStaticTokenOnABrokenRevisionSaysToSaveItAgain() {
+	connector := s.builtin(bearer.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	s.builtin(bearer.Name, 2, brokenFirst)
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal("Revision 1 of "+connector+" is marked broken (reads the wrong path); save the token or key again "+
+		"with PUT /v1/agents/connections/{id}/credentials, which moves the connection to the latest revision", validation.Error)
+}
+
+// TestSavingAStaticTokenAgainMovesItOffABrokenRevision: the same connection, given its token
+// again, reads the connector's latest revision and lists its tools (AI-1002). The write is a
+// new trust event, as a reconnect is, so the tools pinned for the old grant no longer hold.
+func (s *ConnectionToolsSuite) TestSavingAStaticTokenAgainMovesItOffABrokenRevision() {
+	connector := s.builtin(bearer.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	before := s.connectedAt(id)
+	_, err := s.store.PinConnectorTools(context.Background(), id, before, map[string]string{"echo": "pinned-on-revision-1"})
+	s.Require().NoError(err)
+	s.builtin(bearer.Name, 2, brokenFirst)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		s.bearerToken(s.get(id).Revision, s.token), &saved))
+	validation := s.validate(id)
+	var tools ConnectionTools
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, &tools))
+
+	s.Equal(2, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), saved.DefinitionStatus)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), saved.Status)
+	s.Equal(validationConnected, string(validation.Status))
+	s.Len(tools.Tools, 2, "both of the fake's tools")
+	after := s.connectedAt(id)
+	s.Require().NotNil(before)
+	s.Require().NotNil(after)
+	s.True(after.After(*before), "a new grant began")
+	pins, err := s.store.ConnectorToolPins(context.Background(), id, after)
+	s.Require().NoError(err)
+	s.Empty(pins, "the pin taken on revision 1 is not one for the new grant")
+}
+
+// TestRotatingAStaticTokenOnTheLatestRevisionKeepsItsGrant is the control for AI-1002: a
+// token saved again while the connection already reads the latest revision keeps the
+// connection's connected_at, and with it the tools pinned for it, as on base c000cedc.
+func (s *ConnectionToolsSuite) TestRotatingAStaticTokenOnTheLatestRevisionKeepsItsGrant() {
+	id := s.connected(bearer.Name)
+	before := s.connectedAt(id)
+	_, err := s.store.PinConnectorTools(context.Background(), id, before, map[string]string{"echo": "pinned"})
+	s.Require().NoError(err)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		s.bearerToken(s.get(id).Revision, s.token), nil))
+
+	s.Equal(before, s.connectedAt(id))
+	pins, err := s.store.ConnectorToolPins(context.Background(), id, s.connectedAt(id))
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"echo": "pinned"}, pins)
+	s.Equal(1, s.get(id).DefinitionRevision)
+}
+
+// TestAnImportedGrantOnABrokenRevisionKeepsItsRevision is the OAuth control for AI-1002: an
+// oauth2_code connection whose grant the backend imports again stays on the revision it read,
+// as on base c000cedc. Only a consent moves an OAuth connection.
+func (s *ConnectionToolsSuite) TestAnImportedGrantOnABrokenRevisionKeepsItsRevision() {
+	connector := s.builtin(oauth2code.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.importedGrant(s.token, "chat:write"), nil))
+	before := s.connectedAt(id)
+	s.builtin(oauth2code.Name, 2, brokenFirst)
+
+	grant := s.importedGrant(s.token, "chat:write")
+	grant["expected_revision"] = s.get(id).Revision
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", grant, &saved))
+	validation := s.validate(id)
+
+	s.Equal(1, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionBroken), saved.DefinitionStatus)
+	s.Equal(before, s.connectedAt(id))
+	s.Equal(validationFailed, string(validation.Status))
+	s.Empty(validation.Code)
+}
+
 // TestABare401WhoseRefreshIsRefusedValidatesAsNeedsReauthorization: the MCP server refuses an
 // oauth2_code token with a bare 401 (resource_metadata, no error), as MCP servers do. The
 // transport refreshes, the refresh is refused with invalid_grant, and the validate reports
@@ -434,9 +530,19 @@ func (s *ConnectionToolsSuite) connected(scheme string) string {
 // scheme; tools is more YAML under its mcp source.
 func (s *ConnectionToolsSuite) connector(scheme, tools string) string {
 	id := "custom_tools" + strings.ReplaceAll(s.utils.uuid(), "-", "")
-	manifest, err := core.ParseManifest([]byte(`
+	manifest, err := core.ParseManifest([]byte(s.manifest(id, 1, scheme, tools)))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	return id
+}
+
+// manifest is a connector at the fake taking scheme, at revision; tools is more YAML under its
+// mcp source.
+func (s *ConnectionToolsSuite) manifest(id string, revision int, scheme, tools string) string {
+	return `
 id: ` + id + `
-revision: 1
+revision: ` + strconv.Itoa(revision) + `
 name: Fake
 endpoints:
   authorize: ` + s.provider.URL + fakeprovider.PathAuthorize + `
@@ -452,11 +558,36 @@ scopes:
 sources:
   - kind: mcp
     endpoint: mcp
-` + tools))
+` + tools
+}
+
+// brokenFirst is the manifest YAML a revision marks revision 1 broken with.
+const brokenFirst = "broken_revisions:\n  - revisions: [1]\n    reason: reads the wrong path\n"
+
+// builtin seeds a built-in connector at the fake taking scheme, at revision, with more manifest
+// YAML in extra, as a router start with that file does: only a built-in's later revision marks
+// an earlier one broken. Revision 1 names a new connector, a later one the last one made.
+func (s *ConnectionToolsSuite) builtin(scheme string, revision int, extra string) string {
+	if revision == 1 {
+		s.builtinID = "fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	}
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), fstest.MapFS{s.builtinID + ".yaml": {
+		Data: []byte(s.manifest(s.builtinID, revision, scheme, "") + extra)}}))
+	return s.builtinID
+}
+
+// connectionTo is a pending app-owned connection to connector.
+func (s *ConnectionToolsSuite) connectionTo(connector string) string {
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	return created.ID
+}
+
+// connectedAt is when the connection's grant began, as stored.
+func (s *ConnectionToolsSuite) connectedAt(id string) *time.Time {
+	connection, err := s.store.ConnectorConnection(context.Background(), s.customerID(), id)
 	s.Require().NoError(err)
-	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
-	s.Require().NoError(err)
-	return id
+	return connection.ConnectedAt
 }
 
 func (s *ConnectionToolsSuite) bearerToken(revision int, token string) map[string]any {
