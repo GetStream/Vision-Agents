@@ -102,7 +102,7 @@ describe("Agent", () => {
     assert.equal(body.tts, "sonic_36");
     assert.equal(body.voice, "amy");
     assert.deepEqual(body.languages, ["en"]);
-    assert.equal(body.greeting, "Hello");
+    assert.deepEqual(body.greeting, { text: "Hello" });
     assert.equal(body.backchannel, true);
     assert.equal(body.max_tokens, 200);
     assert.equal(body.tool_timeout_ms, 5_000);
@@ -339,7 +339,7 @@ describe("Agent", () => {
         settings: {
           llm: "llm-smart",
           stt: "flux",
-          speed: 0.9,
+          greeting: "Welcome",
           harness: "default",
           tags: { team: "support" },
           dispatch: { incoming_call: "disabled", text: "enabled" },
@@ -369,7 +369,7 @@ describe("Agent", () => {
       assert.equal(body.stt, "flux", "what only agent.yaml says still goes");
       assert.deepEqual(body.tags, { team: "support" });
       assert.deepEqual(body.dispatch, { incoming_call: "disabled", text: "enabled" });
-      assert.equal(body.speed, 0.9);
+      assert.deepEqual(body.greeting, { text: "Welcome" });
       assert.equal(body.harness, "default");
       assert.equal(body.skills?.length, 1);
       assert.equal(body.knowledge?.length, 1);

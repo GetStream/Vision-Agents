@@ -93,8 +93,6 @@ export interface Declaration {
   /** An empty string turns speech-to-speech off, which is different from saying nothing. */
   sts?: string;
   voice?: string;
-  /** The voice's rate of delivery, 1 being its own. */
-  speed?: number;
   llm?: string;
   harness?: Schemas["Harness"];
   /** The model a voice agent hands its skills to. A text agent runs on its llm alone. */
@@ -450,7 +448,7 @@ export class Agent {
       ...(pipeline.tts ? { tts: pipeline.tts } : {}),
       ...(pipeline.sts ? { sts: pipeline.sts } : {}),
       ...(pipeline.voice ? { voice: pipeline.voice } : {}),
-      ...(pipeline.greeting ? { greeting: pipeline.greeting } : {}),
+      ...(pipeline.greeting ? { greeting: { text: pipeline.greeting } } : {}),
       ...(pipeline.video ? { video: pipeline.video } : {}),
       ...(harness ? { harness } : {}),
       ...(thinking ? { subagent: thinking } : {}),
@@ -504,7 +502,7 @@ export class Agent {
       ...(pipeline.tts ? { tts: pipeline.tts } : {}),
       ...(pipeline.sts ? { sts: pipeline.sts } : {}),
       ...(pipeline.voice ? { voice: pipeline.voice } : {}),
-      ...(pipeline.greeting ? { greeting: pipeline.greeting } : {}),
+      ...(pipeline.greeting ? { greeting: { text: pipeline.greeting } } : {}),
       ...(pipeline.language ? { languages: [pipeline.language] } : {}),
       ...(pipeline.backchannel === undefined ? {} : { backchannel: pipeline.backchannel }),
       ...(pipeline.maxTokens ? { max_tokens: pipeline.maxTokens } : {}),
@@ -577,11 +575,10 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.tts ? { tts: declared.tts } : {}),
     ...(declared.sts === undefined ? {} : { sts: declared.sts }),
     ...(declared.voice ? { voice: declared.voice } : {}),
-    ...(declared.speed ? { speed: declared.speed } : {}),
     ...(declared.llm ? { llm: declared.llm } : {}),
     ...(declared.harness ? { harness: declared.harness } : {}),
     ...(declared.search ? { search: declared.search } : {}),
-    ...(declared.greeting ? { greeting: declared.greeting } : {}),
+    ...(declared.greeting ? { greeting: { text: declared.greeting } } : {}),
     ...(declared.plugins?.length ? { plugins: declared.plugins } : {}),
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),

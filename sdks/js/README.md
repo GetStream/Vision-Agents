@@ -209,7 +209,7 @@ rather than talked over.
 
 ```
 agents/jean/
-  agent.yaml            required: the name and what it runs on (llm, stt, tts, speed, harness, tags, ...)
+  agent.yaml            required: the name and what it runs on (llm, stt, tts, harness, tags, ...)
   instructions.md
   guardrail.md
   skills/think.md

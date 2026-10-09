@@ -72,7 +72,6 @@ describe("loadFolder", () => {
           "name: receptionist",
           'llm: "openai/gpt-5.6"',
           'sts: ""',
-          "speed: 0.9",
           "harness: default",
           "mode: voice",
           "keyterms: [Vision Agents, Stream]",
@@ -94,7 +93,6 @@ describe("loadFolder", () => {
       name: "receptionist",
       llm: "openai/gpt-5.6",
       sts: "",
-      speed: 0.9,
       harness: "default",
       mode: "voice",
       keyterms: ["Vision Agents", "Stream"],
@@ -111,15 +109,10 @@ describe("loadFolder", () => {
     assert.equal(folder.name, "jean");
   });
 
-  it("sends no speed for a zero one, since zero leaves the voice where it is", async () => {
-    const folder = await loadFolder(await agentDir({ "agent.yaml": "speed: 0\n" }));
-
-    assert.equal(folder.settings?.speed, undefined);
-  });
-
   it("refuses a declaration it would otherwise have to guess at", async () => {
     for (const declaration of [
       "lmm: openai/gpt-5.6\n",
+      "speed: 0.9\n",
       "speed: fast\n",
       "speed: -1\n",
       "keyterms: Vision Agents\n",
