@@ -139,7 +139,7 @@ func (s *Server) searchPhoneNumbers(ctx context.Context, request *searchPhoneNum
 	for _, skipped := range offers.Skipped {
 		result.Skipped = append(result.Skipped, SkippedVendor{
 			Vendor: skipped.Vendor,
-			Reason: skipped.Reason,
+			Reason: skipReason(s.logger, skipped),
 		})
 	}
 	return &searchPhoneNumbersResponse{Body: result}, nil
@@ -477,6 +477,16 @@ func phoneFailure(logger *slog.Logger, err error) error {
 		return errPhoneVendorFailed
 	}
 	return invalidRequest(err.Error())
+}
+
+// skipReason is why a vendor is missing from a search, in words a client may see.
+func skipReason(logger *slog.Logger, skip phone.Skip) string {
+	if refused, ok := errors.AsType[*phone.VendorError](skip.Err); ok {
+		logger.Error("a phone vendor failed", "vendor", refused.Vendor, "path", refused.Path,
+			"status", refused.Status, "code", refused.Code, "message", refused.Message, "error", skip.Err)
+		return "The phone vendor could not complete the request."
+	}
+	return skip.Reason
 }
 
 // sipTrunkFailure turns what the phone service said into the status a caller can act on.

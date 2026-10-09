@@ -67,3 +67,24 @@ func TestAnErrorOfOurOwnStillSaysWhatToFix(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, response.Code)
 	require.Equal(t, "phone: a call needs someone to call", answered(t, response.Body.Bytes()).Message)
 }
+
+func TestASkippedVendorIsAnsweredWithoutItsWords(t *testing.T) {
+	logged := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logged, nil))
+	err := vendorRefusal("20003")
+	skip := phone.Skip{Vendor: "twilio", Reason: err.Error(), Err: err}
+
+	reason := skipReason(logger, skip)
+
+	require.Equal(t, "The phone vendor could not complete the request.", reason)
+	for _, secret := range []string{"AC123", "/2010-04-01", "the vendor's own words"} {
+		require.NotContains(t, reason, secret)
+		require.Contains(t, logged.String(), secret, "the log keeps what debugging needs")
+	}
+}
+
+func TestASkipForOurOwnReasonKeepsItsWords(t *testing.T) {
+	skip := phone.Skip{Vendor: "telnyx", Reason: "cannot search by region"}
+
+	require.Equal(t, "cannot search by region", skipReason(slog.New(slog.DiscardHandler), skip))
+}

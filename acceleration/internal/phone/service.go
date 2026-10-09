@@ -185,6 +185,9 @@ type Skip struct {
 	// Reason is in the same words an error would use, because to the caller it is one:
 	// this vendor's inventory is missing from the answer.
 	Reason string
+	// Err is the error behind a vendor that failed, for a caller that must not repeat its
+	// words. It is nil for a vendor that was not asked.
+	Err error
 }
 
 // Offers is what the vendors between them have for sale, and which of them did not answer.
@@ -235,7 +238,7 @@ func (s *Service) SearchAll(ctx context.Context, search Search) (Offers, error) 
 			defer group.Done()
 			offered, err := provider.SearchNumbers(ctx, search)
 			if err != nil {
-				answers[index] = answer{skip: &Skip{Vendor: name, Reason: err.Error()}}
+				answers[index] = answer{skip: &Skip{Vendor: name, Reason: err.Error(), Err: err}}
 				return
 			}
 			answers[index] = answer{offered: offered}
