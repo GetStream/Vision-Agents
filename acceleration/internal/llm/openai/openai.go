@@ -601,10 +601,16 @@ func messageText(message llm.Message) string {
 }
 
 // tools renders the tools a request offers.
+//
+// Strict is always false. Without it, the Responses API turns a schema into strict mode by
+// marking every property required, so the model has to fill optional ones (an empty thread_ts
+// that Slack refuses). "If you omit strict, ... Responses requests will attempt to normalize
+// your schema into strict mode when possible", and strict mode needs "All fields in properties
+// must be marked as required": https://developers.openai.com/api/docs/guides/function-calling
 func tools(offered []llm.Tool) []responses.ToolUnionParam {
 	rendered := make([]responses.ToolUnionParam, 0, len(offered))
 	for _, tool := range offered {
-		function := &responses.FunctionToolParam{Name: tool.Name}
+		function := &responses.FunctionToolParam{Name: tool.Name, Strict: param.NewOpt(false)}
 		if tool.Description != "" {
 			function.Description = param.NewOpt(tool.Description)
 		}

@@ -2,6 +2,9 @@ package openai
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -154,4 +157,61 @@ func (s *OpenAISuite) TestAToolResultImageGoesInFunctionCallOutput() {
 	s.Contains(string(raw), `"type":"function_call_output"`)
 	s.Contains(string(raw), `"type":"input_image"`)
 	s.Contains(string(raw), "2 roses")
+}
+
+// sendMessage is Slack's MCP slack_send_message input schema as its server listed it on
+// 2026-10-08: two required properties and four optional ones (AI-969).
+var sendMessage = llm.Tool{
+	Name:        "slack__slack_send_message",
+	Description: "Sends a message to a Slack channel or user.",
+	Parameters: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"channel_id":       map[string]any{"type": "string"},
+			"message":          map[string]any{"type": "string"},
+			"thread_ts":        map[string]any{"type": "string"},
+			"draft_id":         map[string]any{"type": "string"},
+			"reply_broadcast":  map[string]any{"type": "boolean"},
+			"unfurl_app_links": map[string]any{"type": "boolean"},
+		},
+		"required": []any{"channel_id", "message"},
+	},
+}
+
+// TestAToolsOptionalArgumentsStayOptional is a tool offered as the caller described it. Left
+// to itself, the Responses API turns a tool into strict mode by making every property
+// required, so the model has to fill thread_ts with "" and Slack refuses the post.
+func (s *OpenAISuite) TestAToolsOptionalArgumentsStayOptional() {
+	sent := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		sent <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"status\":\"completed\"}}\n\n")
+	}))
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL})
+	s.Require().NoError(err)
+	defer provider.Close()
+
+	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{
+		Input: []llm.Message{{Role: llm.User, Content: "post hello"}},
+		Tools: []llm.Tool{sendMessage},
+	})
+	s.Require().NoError(err)
+	_, err = llm.Collect(stream)
+	s.Require().NoError(err)
+
+	var request struct {
+		Tools []struct {
+			Strict     *bool          `json:"strict"`
+			Parameters map[string]any `json:"parameters"`
+		} `json:"tools"`
+	}
+	s.Require().NoError(json.Unmarshal(<-sent, &request))
+	s.Require().Len(request.Tools, 1)
+	s.Require().NotNil(request.Tools[0].Strict, "an omitted strict is strict mode on the Responses API")
+	s.False(*request.Tools[0].Strict)
+	s.Equal([]any{"channel_id", "message"}, request.Tools[0].Parameters["required"])
+	s.NotContains(request.Tools[0].Parameters, "additionalProperties")
 }

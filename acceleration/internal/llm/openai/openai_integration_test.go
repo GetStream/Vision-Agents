@@ -3,6 +3,7 @@
 package openai
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -43,4 +44,25 @@ func (s *OpenAIIntegrationSuite) TestEveryGPT6ModelAnswersAtItsDefaultEffort() {
 			s.Equal(llm.StatusCompleted, complete.Status)
 		})
 	}
+}
+
+// TestACallLeavesOutTheOptionalArgumentsItDoesNotNeed is AI-969 against the model that sent
+// thread_ts:"" to Slack: a plain post names the channel and the message, and nothing else.
+func (s *OpenAIIntegrationSuite) TestACallLeavesOutTheOptionalArgumentsItDoesNotNeed() {
+	provider, err := New(Options{Model: "gpt-5.6-sol"})
+	s.Require().NoError(err)
+
+	called, _ := s.AskOn(provider, llm.ResponseParams{
+		Input:      []llm.Message{{Role: llm.User, Content: "Post 'hello from the e2e' to Slack channel C0C8MKNUNBA."}},
+		Tools:      []llm.Tool{sendMessage},
+		ToolChoice: "required",
+	})
+
+	s.Require().Len(called.ToolCalls, 1)
+	var arguments map[string]any
+	s.Require().NoError(json.Unmarshal([]byte(called.ToolCalls[0].Arguments), &arguments))
+	s.Contains(arguments, "channel_id")
+	s.Contains(arguments, "message")
+	s.NotContains(arguments, "thread_ts")
+	s.NotContains(arguments, "draft_id")
 }
