@@ -245,6 +245,28 @@ func (s *OpenAISuite) TestAnOptionalPropertyInsideAListCounts() {
 	s.False(*sent.Strict)
 }
 
+// TestAnOptionalPropertyInsideAnyOfCounts is the same normalization inside a union branch:
+// OpenAI also marks every property of an object under anyOf required.
+func (s *OpenAISuite) TestAnOptionalPropertyInsideAnyOfCounts() {
+	sent := s.send(llm.Tool{Name: "post", Parameters: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"r": map[string]any{"anyOf": []any{
+				map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"a": map[string]any{}, "b": map[string]any{}},
+					"required":   []any{"a"},
+				},
+				map[string]any{"type": "string"},
+			}},
+		},
+		"required": []any{"r"},
+	}})
+
+	s.Require().NotNil(sent.Strict)
+	s.False(*sent.Strict)
+}
+
 // TestAToolWithEveryPropertyRequiredIsSentAsBefore leaves strict out, as before AI-969:
 // OpenAI's strict normalization takes nothing from a schema with no optional property.
 func (s *OpenAISuite) TestAToolWithEveryPropertyRequiredIsSentAsBefore() {
