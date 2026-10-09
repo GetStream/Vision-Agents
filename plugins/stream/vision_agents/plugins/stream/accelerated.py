@@ -121,7 +121,7 @@ class Accelerated(OmniLLM):
             log_latency: Print per-model timing and a turn DAG to agent stdout.
                 Disabled by default; metrics are still recorded by the router.
             user_id: The end user the conversation is for. The plugins an agent names
-                as `user_plugins` sign in as them, so a session without one is offered
+                with `user: true` sign in as them, so a session without one is offered
                 none of those.
         """
         super().__init__()

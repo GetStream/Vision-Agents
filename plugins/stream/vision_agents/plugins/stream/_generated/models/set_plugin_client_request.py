@@ -20,9 +20,9 @@ class SetPluginClientRequest:
         Attributes:
             client_id (str): The client id the provider issued.
             client_secret (str | Unset): The client secret the provider issued. Left out for a public client.
-            user (bool | Unset): Also name the plugin under the config's user_plugins, so that each end user connects their
-                own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the
-                plugin once with authorize, which names it under agent_plugins.
+            user (bool | Unset): Also name the plugin under the config's plugins with user, so that each end user connects
+                their own account in the conversation, the first time the agent needs it. Left out names nothing: the app
+                connects the plugin once with authorize, which names it as the app's.
     """
 
     client_id: str

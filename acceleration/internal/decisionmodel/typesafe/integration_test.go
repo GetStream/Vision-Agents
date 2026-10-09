@@ -10,7 +10,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel/systemone"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
@@ -22,7 +23,7 @@ const jevDecided = 0.3
 type TypeSafeIntegrationSuite struct {
 	suite.Suite
 	ctx    context.Context
-	client *Client
+	client *systemone.Client
 }
 
 func TestTypeSafeIntegrationSuite(t *testing.T) {
@@ -38,7 +39,7 @@ func (s *TypeSafeIntegrationSuite) SetupSuite() {
 	s.ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
 	s.T().Cleanup(cancel)
 
-	client, err := New(Options{})
+	client, err := New(systemone.Options{})
 	s.Require().NoError(err)
 	s.client = client
 }
@@ -49,15 +50,15 @@ func (s *TypeSafeIntegrationSuite) TestANoulAnswersBothWaysOnTheSameQuestion() {
 	policy := "Only questions about Stream's chat, video and feeds SDKs, their APIs, " +
 		"and software development using them."
 
-	question := map[string]lcm.Question{
-		"violates": lcm.Noul(
+	question := map[string]decisionmodel.Question{
+		"violates": decisionmodel.Noul(
 			"Is `message` a request that falls outside what `policy` permits?",
 			"It is about something the policy does not cover.",
 			"It is a request the policy permits.",
 		),
 	}
 
-	onTopic, err := s.client.Classify(s.ctx, lcm.Request{
+	onTopic, err := s.client.Classify(s.ctx, decisionmodel.Request{
 		State: map[string]string{
 			"policy":  policy,
 			"message": "How do I render a message list with stream-chat-react?",
@@ -66,7 +67,7 @@ func (s *TypeSafeIntegrationSuite) TestANoulAnswersBothWaysOnTheSameQuestion() {
 	})
 	s.Require().NoError(err)
 
-	offTopic, err := s.client.Classify(s.ctx, lcm.Request{
+	offTopic, err := s.client.Classify(s.ctx, decisionmodel.Request{
 		State: map[string]string{
 			"policy":  policy,
 			"message": "How do I make a pizza from scratch?",
@@ -84,10 +85,10 @@ func (s *TypeSafeIntegrationSuite) TestANoulAnswersBothWaysOnTheSameQuestion() {
 func (s *TypeSafeIntegrationSuite) TestTheAnswerSaysWhichVersionMadeItAndWhatItRead() {
 	// An alias moves when a release ships, so a threshold tuned against one version needs
 	// the version that answered rather than the name that was asked.
-	answered, err := s.client.Classify(s.ctx, lcm.Request{
+	answered, err := s.client.Classify(s.ctx, decisionmodel.Request{
 		State: "the payouts have been failing for three days",
-		Questions: map[string]lcm.Question{
-			"urgent": lcm.Noul("Does this convey urgency?", "", ""),
+		Questions: map[string]decisionmodel.Question{
+			"urgent": decisionmodel.Noul("Does this convey urgency?", "", ""),
 		},
 	})
 	s.Require().NoError(err)

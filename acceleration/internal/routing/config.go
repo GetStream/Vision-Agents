@@ -35,8 +35,8 @@ const (
 	// question, they differ in what they cost and how long they take, and which one is
 	// worth asking changes with their health.
 	Search Modality = "search"
-	// LCM is a large classifier model: it answers a question about a piece of text with a
-	// typed value and the probability behind it, rather than with prose. It is routed
+	// DecisionModel answers named questions about a piece of text with a typed value and
+	// the probability behind it, rather than with prose. It is routed
 	// rather than called directly for the same reasons the others are: it is on the live
 	// path, so which provider is worth asking changes with their health, and what each
 	// judgement cost is worth reporting beside what the conversation cost.
@@ -44,7 +44,7 @@ const (
 	// It is its own modality rather than a mode of LLM because nothing about it is a
 	// language model's shape: there is no stream, no generated text and no token budget,
 	// and a caller asks for named questions instead of a prompt.
-	LCM Modality = "lcm"
+	DecisionModel Modality = "decision_model"
 	// STS is speech-to-speech: one native audio model that hears the caller and speaks
 	// back, in place of the three above. It is its own modality rather than a flag on a
 	// language model because it is served over a different protocol, billed in different
@@ -121,6 +121,9 @@ type Price struct {
 	// PerMegapixel prices the pixels a model drew, a million to the megapixel, for a
 	// vendor whose bill grows with the size of the picture rather than the count.
 	PerMegapixel float64 `yaml:"per_megapixel"`
+	// Free says the vendor charges nothing for this model. It is written out rather than
+	// left as no rates at all, so a price somebody forgot still reads as a mistake.
+	Free bool `yaml:"free"`
 }
 
 // RequestMicros is what one call to a provider billed by the call costs, in millionths of

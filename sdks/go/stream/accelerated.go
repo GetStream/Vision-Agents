@@ -53,6 +53,9 @@ type Config struct {
 	// Greeting is said on joining without going through the model. Empty means the agent
 	// waits to be spoken to.
 	Greeting string
+	// GreetingMode is exact, the default, or variation, which has the model say its own
+	// variation of Greeting on every call.
+	GreetingMode acceleration.GreetingMode
 	// Backchannel murmurs while a caller is still talking, the way a person does.
 	Backchannel bool
 	// MaxTokens is a ceiling on a reply. Zero leaves the backend's default.
@@ -437,7 +440,12 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	setString(&request.Stt, p.config.STT)
 	setString(&request.Tts, p.config.TTS)
 	setString(&request.Voice, p.config.Voice)
-	setString(&request.Greeting, p.config.Greeting)
+	if p.config.Greeting != "" {
+		request.Greeting = &acceleration.Greeting{Text: p.config.Greeting}
+		if p.config.GreetingMode != "" {
+			request.Greeting.Mode = &p.config.GreetingMode
+		}
+	}
 
 	if p.config.Language != "" {
 		request.Languages = &[]string{p.config.Language}

@@ -74,7 +74,7 @@ func (s *StoreSuite) SetupTest() {
 			" policies, app_organizations, call_resources, organizations, agent_configs,"+
 			" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, stream_apps, connector_definitions, connector_broken_revisions,"+
 			" connector_connections, connector_authorization_attempts, connector_oauth_clients,"+
-			" connector_config_tokens, channel_threads, channel_thread_messages,"+
+			" connector_config_tokens, channel_threads, channel_thread_messages, channel_thread_waiting,"+
 			" connector_event_destinations, connector_event_deliveries, contact_map, episodes,"+
 			" connection_event_subscriptions, connection_event_deliveries,"+
 			" connector_invocations, connector_audit CASCADE",

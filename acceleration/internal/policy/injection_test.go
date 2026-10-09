@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
@@ -24,7 +24,7 @@ func (s *InjectionSuite) TestEveryHarmIsAskedAsOneNoulInOneRequest() {
 	s.Require().NoError(request.Validate())
 	s.Len(request.Questions, len(harms))
 	for id, question := range request.Questions {
-		s.Equal(lcm.TypeNoul, question.Type, id)
+		s.Equal(decisionmodel.TypeNoul, question.Type, id)
 		s.Contains(question.Instructions, "base64", "%s should count an encoded attack", id)
 	}
 	s.Equal(map[string]string{"message": "hello", "decoded": ""}, request.State)

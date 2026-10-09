@@ -13,10 +13,10 @@ nothing about who does the work gets the router's defaults.
 
 Each of those is a capability rather than a model, so the router picks inside the tier by
 live health and a degraded provider drops down the list. Set `stt`, `tts`, `llm` or
-`thinking_llm` on the config to pin any of them to one provider.
+`subagent` on the config to pin any of them to one provider.
 
 The agent has no `skills/` directory, so it gets the built-in `think`, `recall` and
-`explain`. Work handed to any of them runs on the thinking model while the conversation
+`explain`. Work handed to any of them runs on the subagent while the conversation
 carries on.
 
 ## Prerequisites

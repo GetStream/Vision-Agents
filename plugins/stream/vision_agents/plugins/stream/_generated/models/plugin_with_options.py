@@ -28,6 +28,10 @@ class PluginWithOptions:
             toolsets (list[str] | Unset): Limit the server to these groups of tools, from the plugin's toolsets in the
                 catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new
                 login.
+            user (bool | Unset): Each end user connects the plugin with their own account, in the conversation, the first
+                time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching
+                a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's,
+                such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
     """
 
     name: str
@@ -35,6 +39,7 @@ class PluginWithOptions:
     scopes: list[str] | Unset = UNSET
     tools: list[str] | Unset = UNSET
     toolsets: list[str] | Unset = UNSET
+    user: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +59,8 @@ class PluginWithOptions:
         if not isinstance(self.toolsets, Unset):
             toolsets = self.toolsets
 
+        user = self.user
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -69,6 +76,8 @@ class PluginWithOptions:
             field_dict["tools"] = tools
         if toolsets is not UNSET:
             field_dict["toolsets"] = toolsets
+        if user is not UNSET:
+            field_dict["user"] = user
 
         return field_dict
 
@@ -85,12 +94,15 @@ class PluginWithOptions:
 
         toolsets = cast(list[str], d.pop("toolsets", UNSET))
 
+        user = d.pop("user", UNSET)
+
         plugin_with_options = cls(
             name=name,
             readonly=readonly,
             scopes=scopes,
             tools=tools,
             toolsets=toolsets,
+            user=user,
         )
 
         plugin_with_options.additional_properties = d

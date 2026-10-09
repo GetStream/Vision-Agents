@@ -13,8 +13,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -72,7 +72,7 @@ var harms = map[string]string{
 // Screener returns the llmrouter.Screen that judges the newest input of a response for
 // prompt injection on the classifier, while the model answers it. It screens nothing for a
 // customer whose policies do not ask for it, and nothing at all without a classifier.
-func (e *Enforcer) Screener(classifier *lcmrouter.Router) func(context.Context, routing.Owner, []llm.Message) <-chan error {
+func (e *Enforcer) Screener(classifier *decisionrouter.Router) func(context.Context, routing.Owner, []llm.Message) <-chan error {
 	return func(ctx context.Context, owner routing.Owner, input []llm.Message) <-chan error {
 		if e == nil || classifier == nil || owner.CustomerID == "" {
 			return nil
@@ -93,11 +93,11 @@ func (e *Enforcer) Screener(classifier *lcmrouter.Router) func(context.Context, 
 
 // judge asks the classifier about every harm at once. A classifier that cannot be reached
 // or leaves a harm unanswered lets the response stand, and says so in the log.
-func (e *Enforcer) judge(ctx context.Context, classifier *lcmrouter.Router, owner routing.Owner, text string) error {
+func (e *Enforcer) judge(ctx context.Context, classifier *decisionrouter.Router, owner routing.Owner, text string) error {
 	ctx, cancel := context.WithTimeout(ctx, screenTimeout)
 	defer cancel()
 
-	session, err := classifier.Start(ctx, lcmrouter.Request{
+	session, err := classifier.Start(ctx, decisionrouter.Request{
 		CustomerID: owner.CustomerID,
 		AgentID:    owner.AgentID,
 		CallID:     owner.CallID,
@@ -137,12 +137,12 @@ func (e *Enforcer) judge(ctx context.Context, classifier *lcmrouter.Router, owne
 }
 
 // injectionRequest asks every harm about one piece of input.
-func injectionRequest(text string) lcm.Request {
-	questions := make(map[string]lcm.Question, len(harms))
+func injectionRequest(text string) decisionmodel.Request {
+	questions := make(map[string]decisionmodel.Question, len(harms))
 	for id, instructions := range harms {
-		questions[id] = lcm.Noul(instructions+evasion, "", notInjection)
+		questions[id] = decisionmodel.Noul(instructions+evasion, "", notInjection)
 	}
-	return lcm.Request{
+	return decisionmodel.Request{
 		State:     map[string]string{"message": text, "decoded": decoded(text)},
 		Questions: questions,
 	}

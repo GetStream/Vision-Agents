@@ -364,7 +364,7 @@ optional. The organization's are a floor its apps can tighten but not loosen.
 | ------- | ------------ |
 | `budget` | A spend cap across every modality, reset hourly, daily, weekly or monthly on a UTC boundary. Once spent, new sessions and new LLM responses are refused. Both the app's and the organization's caps apply |
 | `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models |
-| `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the lcm router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
+| `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the decision model router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
 
 The screen asks one question per harm in OpenRouter's prompt injection list (instruction
 override, privileged modes, system override, prompt extraction, role manipulation, DAN-style
@@ -824,9 +824,9 @@ skills are offered by name and description only, and their instructions are read
 when one is used, so an edit reaches the next use rather than the next session.
 
 The harness is agent config, never session config: `harness` (only `default` today),
-`thinking_llm`, `sandbox` and `skills` are set on the config or in `agent.yaml`, and
-`createSession` does not take them. Only a voice agent names a `thinking_llm`: a text agent
-runs everything, skills included, on its `llm`, and a config that gives one a thinking model
+`subagent`, `sandbox` and `skills` are set on the config or in `agent.yaml`, and
+`createSession` does not take them. Only a voice agent names a `subagent`: a text agent
+runs everything, skills included, on its `llm`, and a config that gives one a subagent
 is refused. A client that wants a sandbox of its own declares it as a
 tool instead.
 

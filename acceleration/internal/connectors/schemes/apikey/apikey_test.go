@@ -110,6 +110,19 @@ func (s *APIKeySuite) TestExportIsTheKeyInTheHeaderTheDeveloperNamedAndNoClient(
 	s.Equal(core.ExportedCredential{Header: "X-Shop-Access-Token", Value: key}, exported)
 }
 
+// AI-990 F36: a stored key is named by its fingerprint, so a replaced one shows in the audit;
+// the header is not part of it. Credentials of another scheme are refused.
+func (s *APIKeySuite) TestFingerprintsNameTheKeyAndNothingElse() {
+	stored := s.complete(map[string]string{apikey.SuppliedKey: key, apikey.SuppliedHeader: "X-Api-Key"})
+
+	got, err := s.scheme.Fingerprints(stored)
+
+	s.Require().NoError(err)
+	s.Equal(core.CredentialFingerprints{Access: core.Fingerprint(key)}, got)
+	_, err = s.scheme.Fingerprints(core.StoredCredentials{Scheme: "bearer", Version: 1, Payload: stored.Payload})
+	s.Error(err)
+}
+
 func (s *APIKeySuite) TestExportRefusesACredentialItDidNotIssue() {
 	stored := s.complete(map[string]string{apikey.SuppliedKey: key, apikey.SuppliedHeader: "X-Api-Key"})
 

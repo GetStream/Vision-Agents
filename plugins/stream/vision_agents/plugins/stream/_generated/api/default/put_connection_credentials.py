@@ -103,6 +103,10 @@ def sync_detailed(
     read; a connection that moved past it is a 409. The values are never shown again. Who may set them
     is who may read the connection.
 
+    A bearer or api_key connection given its token or key again moves to its connector's latest
+    revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and
+    inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -144,6 +148,10 @@ def sync(
     read; a connection that moved past it is a 409. The values are never shown again. Who may set them
     is who may read the connection.
 
+    A bearer or api_key connection given its token or key again moves to its connector's latest
+    revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and
+    inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -179,6 +187,10 @@ async def asyncio_detailed(
     nothing for a connector that needs none. expected_revision must be the connection's revision as last
     read; a connection that moved past it is a 409. The values are never shown again. Who may set them
     is who may read the connection.
+
+    A bearer or api_key connection given its token or key again moves to its connector's latest
+    revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and
+    inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -218,6 +230,10 @@ async def asyncio(
     nothing for a connector that needs none. expected_revision must be the connection's revision as last
     read; a connection that moved past it is a 409. The values are never shown again. Who may set them
     is who may read the connection.
+
+    A bearer or api_key connection given its token or key again moves to its connector's latest
+    revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and
+    inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

@@ -110,38 +110,38 @@ func (e AgentMode) Valid() bool {
 
 // Call is the Call schema.
 type Call struct {
-	AgentId         string             `json:"agent_id" doc:"Which agent ran it, and where its transcript is kept."`
-	CallId          string             `json:"call_id"`
-	CampaignId      *string            `json:"campaign_id,omitempty"`
-	ConfigId        *string            `json:"config_id,omitempty"`
-	ContactId       *string            `json:"contact_id,omitempty"`
-	Direction       CallDirection      `json:"direction" enum:"inbound,outbound"`
-	EndedAt         *time.Time         `json:"ended_at,omitempty" doc:"Absent while the call is still running."`
-	FromNumber      *string            `json:"from_number,omitempty"`
-	Id              string             `json:"id" doc:"The session that ran the call, which is what it is held by."`
-	Instructions    *string            `json:"instructions,omitempty" doc:"What the agent was told to be on this call."`
-	Llm             *string            `json:"llm,omitempty" doc:"The target that held the conversation."`
-	LlmUsed         *string            `json:"llm_used,omitempty" doc:"The provider/model that held the conversation."`
-	Mode            *SessionMode       `json:"mode,omitempty"`
-	ReviewNotes     *string            `json:"review_notes,omitempty"`
-	ReviewScore     *int               `json:"review_score,omitempty" doc:"How well the agent handled it, from 1 to 5."`
-	Skills          *[]string          `json:"skills,omitempty" doc:"What the fast model could hand to the subagent. The instructions behind each name are in the skill registry."`
-	StartedAt       time.Time          `json:"started_at"`
-	Sts             *string            `json:"sts,omitempty" doc:"The speech-to-speech target, for a native call, on the same terms as stt."`
-	StsUsed         *string            `json:"sts_used,omitempty" doc:"The provider/model that held a native call, on the same terms as stt_used."`
-	Stt             *string            `json:"stt,omitempty" doc:"The transcription target the call ran with, after a session's overrides were folded into whatever config it named. This is what was asked for rather than what each turn resolved to: a shortcut is several models and routing fails over between them, so per-turn providers are in the request rows."`
-	SttUsed         *string            `json:"stt_used,omitempty" doc:"The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over."`
-	ThinkingLlm     *string            `json:"thinking_llm,omitempty" doc:"The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too."`
-	ThinkingLlmUsed *string            `json:"thinking_llm_used,omitempty" doc:"The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached."`
-	Summary         *string            `json:"summary,omitempty" doc:"What a model made of the call, written once it was over."`
-	Tags            *map[string]string `json:"tags,omitempty"`
-	ToNumber        *string            `json:"to_number,omitempty"`
-	Tts             *string            `json:"tts,omitempty" doc:"The voice target, on the same terms as stt."`
-	TtsUsed         *string            `json:"tts_used,omitempty" doc:"The provider/model that spoke, on the same terms as stt_used."`
-	Usage           *CallUsage         `json:"usage,omitempty"`
-	UserId          *string            `json:"user_id,omitempty" doc:"Who the agent spoke to, as the client's own token named them. Empty for a call the customer's backend opened, and for telephony, where the number is the name."`
-	Voice           *string            `json:"voice,omitempty" doc:"The voice the call asked for, in the provider's own terms. Empty means the provider's default."`
-	VoiceUsed       *string            `json:"voice_used,omitempty" doc:"The voice that spoke, which is the provider's default when none was asked for. Known only while the call is running."`
+	AgentId      string             `json:"agent_id" doc:"Which agent ran it, and where its transcript is kept."`
+	CallId       string             `json:"call_id"`
+	CampaignId   *string            `json:"campaign_id,omitempty"`
+	ConfigId     *string            `json:"config_id,omitempty"`
+	ContactId    *string            `json:"contact_id,omitempty"`
+	Direction    CallDirection      `json:"direction" enum:"inbound,outbound"`
+	EndedAt      *time.Time         `json:"ended_at,omitempty" doc:"Absent while the call is still running."`
+	FromNumber   *string            `json:"from_number,omitempty"`
+	Id           string             `json:"id" doc:"The session that ran the call, which is what it is held by."`
+	Instructions *string            `json:"instructions,omitempty" doc:"What the agent was told to be on this call."`
+	Llm          *string            `json:"llm,omitempty" doc:"The target that held the conversation."`
+	LlmUsed      *string            `json:"llm_used,omitempty" doc:"The provider/model that held the conversation."`
+	Mode         *SessionMode       `json:"mode,omitempty"`
+	ReviewNotes  *string            `json:"review_notes,omitempty"`
+	ReviewScore  *int               `json:"review_score,omitempty" doc:"How well the agent handled it, from 1 to 5."`
+	Skills       *[]string          `json:"skills,omitempty" doc:"What the fast model could hand to the subagent. The instructions behind each name are in the skill registry."`
+	StartedAt    time.Time          `json:"started_at"`
+	Sts          *string            `json:"sts,omitempty" doc:"The speech-to-speech target, for a native call, on the same terms as stt."`
+	StsUsed      *string            `json:"sts_used,omitempty" doc:"The provider/model that held a native call, on the same terms as stt_used."`
+	Stt          *string            `json:"stt,omitempty" doc:"The transcription target the call ran with, after a session's overrides were folded into whatever config it named. This is what was asked for rather than what each turn resolved to: a shortcut is several models and routing fails over between them, so per-turn providers are in the request rows."`
+	SttUsed      *string            `json:"stt_used,omitempty" doc:"The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over."`
+	Subagent     *string            `json:"subagent,omitempty" doc:"The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too."`
+	SubagentUsed *string            `json:"subagent_used,omitempty" doc:"The provider/model delegated work ran on. Empty when nothing was handed over, or when the subagent was never reached."`
+	Summary      *string            `json:"summary,omitempty" doc:"What a model made of the call, written once it was over."`
+	Tags         *map[string]string `json:"tags,omitempty"`
+	ToNumber     *string            `json:"to_number,omitempty"`
+	Tts          *string            `json:"tts,omitempty" doc:"The voice target, on the same terms as stt."`
+	TtsUsed      *string            `json:"tts_used,omitempty" doc:"The provider/model that spoke, on the same terms as stt_used."`
+	Usage        *CallUsage         `json:"usage,omitempty"`
+	UserId       *string            `json:"user_id,omitempty" doc:"Who the agent spoke to, as the client's own token named them. Empty for a call the customer's backend opened, and for telephony, where the number is the name."`
+	Voice        *string            `json:"voice,omitempty" doc:"The voice the call asked for, in the provider's own terms. Empty means the provider's default."`
+	VoiceUsed    *string            `json:"voice_used,omitempty" doc:"The voice that spoke, which is the provider's default when none was asked for. Known only while the call is running."`
 }
 
 func (*Call) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -257,13 +257,13 @@ type CreateSessionRequest struct {
 	Backchannel       *bool                      `json:"backchannel,omitempty" doc:"Murmur while a participant is still talking, the way a person does." default:"false"`
 	CallId            *string                    `json:"call_id,omitempty" doc:"The call to join. Required unless the session is text."`
 	CallType          *string                    `json:"call_type,omitempty" default:"default"`
-	ConnectorBindings *[]SessionConnectorBinding `json:"connector_bindings,omitempty" maxItems:"64" doc:"The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork."`
+	ConnectorBindings *[]SessionConnectorBinding `json:"connector_bindings,omitempty" maxItems:"64" doc:"The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A session binding given none here uses the caller's own connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller asking for the fork."`
 	ConfigId          *string                    `json:"config_id,omitempty" doc:"An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call."`
 	ContextTruncated  *bool                      `json:"context_truncated,omitempty" doc:"Older history was omitted from the model context."`
 	ConversationId    *string                    `json:"conversation_id,omitempty" doc:"Stream Chat CID to resume; returned for persistent text sessions."`
 	Custom            *map[string]interface{}    `json:"custom,omitempty" doc:"Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing."`
 	Description       *string                    `json:"description,omitempty" doc:"A longer note about the conversation, searched alongside the title."`
-	Greeting          *string                    `json:"greeting,omitempty" doc:"Said on joining without going through the model. Empty means the agent waits to be spoken to."`
+	Greeting          *Greeting                  `json:"greeting,omitempty" doc:"What the agent opens the call with, over what the config says."`
 	History           *[]HistoryMessage          `json:"history,omitempty" doc:"The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth." maxItems:"100"`
 	Id                *string                    `json:"id,omitempty" doc:"The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7."`
 	Incognito         *bool                      `json:"incognito,omitempty" doc:"Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from." default:"false"`
@@ -625,31 +625,31 @@ type MessageContent0 = string
 // MessageContent1 is the MessageContent1 schema.
 type MessageContent1 = []ContentPart
 
-// Modality What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// Modality What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 type Modality string
 
 // Defines values for Modality.
 const (
-	Image     Modality = "image"
-	Knowledge Modality = "knowledge"
-	Lcm       Modality = "lcm"
-	Llm       Modality = "llm"
-	Memory    Modality = "memory"
-	Phone     Modality = "phone"
-	Search    Modality = "search"
-	Sts       Modality = "sts"
-	Stt       Modality = "stt"
-	Tts       Modality = "tts"
+	DecisionModel Modality = "decision_model"
+	Image         Modality = "image"
+	Knowledge     Modality = "knowledge"
+	Llm           Modality = "llm"
+	Memory        Modality = "memory"
+	Phone         Modality = "phone"
+	Search        Modality = "search"
+	Sts           Modality = "sts"
+	Stt           Modality = "stt"
+	Tts           Modality = "tts"
 )
 
 // Valid indicates whether the value is a known member of the Modality enum.
 func (e Modality) Valid() bool {
 	switch e {
+	case DecisionModel:
+		return true
 	case Image:
 		return true
 	case Knowledge:
-		return true
-	case Lcm:
 		return true
 	case Llm:
 		return true
@@ -671,7 +671,7 @@ func (e Modality) Valid() bool {
 }
 
 func (Modality) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "Modality", "What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.", "stt", "tts", "llm", "sts", "search", "lcm", "image", "memory", "knowledge", "phone")
+	return namedEnum(registry, "Modality", "What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.", "stt", "tts", "llm", "sts", "search", "decision_model", "image", "memory", "knowledge", "phone")
 }
 
 // Provider is the Provider schema.
@@ -781,7 +781,7 @@ type Session struct {
 	State            SessionState            `json:"state"`
 	Sts              *string                 `json:"sts,omitempty" doc:"The provider and model holding a native conversation, once routing has picked one."`
 	Stt              *string                 `json:"stt,omitempty" doc:"The provider and model transcribing, once somebody has been heard."`
-	ThinkingLlm      *string                 `json:"thinking_llm,omitempty" doc:"The provider and model delegated work runs on."`
+	Subagent         *string                 `json:"subagent,omitempty" doc:"The provider and model delegated work runs on."`
 	Text             *bool                   `json:"text,omitempty" doc:"The conversation is held in writing rather than on a call."`
 	Title            *string                 `json:"title,omitempty"`
 	Tts              *string                 `json:"tts,omitempty" doc:"The provider and model speaking."`
@@ -1023,6 +1023,34 @@ type SessionToolApproval struct {
 
 func (*SessionToolApproval) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question."
+	return schema
+}
+
+// GreetingMode is how a greeting is said.
+type GreetingMode string
+
+const (
+	GreetingModeExact     GreetingMode = "exact"
+	GreetingModeVariation GreetingMode = "variation"
+)
+
+func (GreetingMode) Schema(registry huma.Registry) *huma.Schema {
+	ref := namedEnum(registry, "GreetingMode", "exact says the text word for word. variation has the model say "+
+		"its own variation of it on every call, so callers do not hear the same opening each time. A "+
+		"speech-to-speech model cannot say exact words, so it always says its own rendering of the text.",
+		string(GreetingModeExact), string(GreetingModeVariation))
+	registry.Map()["GreetingMode"].Default = string(GreetingModeExact)
+	return ref
+}
+
+// Greeting is the Greeting schema.
+type Greeting struct {
+	Mode *GreetingMode `json:"mode,omitempty"`
+	Text string        `json:"text" doc:"What the agent says on joining. Empty means the agent waits to be spoken to."`
+}
+
+func (*Greeting) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What the agent says as it joins, before anyone speaks."
 	return schema
 }
 

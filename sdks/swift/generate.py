@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["pyyaml"]
+# ///
 """Regenerate the Swift client from the acceleration OpenAPI spec.
 
 The spec at ``acceleration/api/openapi.yaml`` is the source of truth. The output is committed

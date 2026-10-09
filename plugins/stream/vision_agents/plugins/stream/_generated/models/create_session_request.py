@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.create_session_request_custom import CreateSessionRequestCustom
     from ..models.create_session_request_tags import CreateSessionRequestTags
+    from ..models.greeting import Greeting
     from ..models.history_message import HistoryMessage
     from ..models.model_overwrites import ModelOverwrites
     from ..models.session_connector_binding import SessionConnectorBinding
@@ -42,17 +43,18 @@ class CreateSessionRequest:
             connector bindings chosen per session (connection.type session), by its alias. Each must be the verified
             caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-
             User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here,
-            and an alias the config does not declare is refused. A required binding left without one fails the session; an
-            optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections
-            again, against the config as it is then and the caller asking for the fork.
+            and an alias the config does not declare is refused. A session binding given none here uses the caller's own
+            connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than
+            one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable
+            event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller
+            asking for the fork.
         context_truncated (bool | Unset): Older history was omitted from the model context.
         conversation_id (str | Unset): Stream Chat CID to resume; returned for persistent text sessions.
         custom (CreateSessionRequestCustom | Unset): Anything the caller wants to remember about the session, handed
             back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth
             writing.
         description (str | Unset): A longer note about the conversation, searched alongside the title.
-        greeting (str | Unset): Said on joining without going through the model. Empty means the agent waits to be
-            spoken to.
+        greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         history (list[HistoryMessage] | Unset): The conversation so far, for a backend that keeps its own: a thread in
             its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on:
             open a new session with the thread's messages here, oldest first, then send the message to answer to the
@@ -124,7 +126,7 @@ class CreateSessionRequest:
     conversation_id: str | Unset = UNSET
     custom: CreateSessionRequestCustom | Unset = UNSET
     description: str | Unset = UNSET
-    greeting: str | Unset = UNSET
+    greeting: Greeting | Unset = UNSET
     history: list[HistoryMessage] | Unset = UNSET
     id: str | Unset = UNSET
     incognito: bool | Unset = False
@@ -184,7 +186,9 @@ class CreateSessionRequest:
 
         description = self.description
 
-        greeting = self.greeting
+        greeting: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.greeting, Unset):
+            greeting = self.greeting.to_dict()
 
         history: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.history, Unset):
@@ -356,6 +360,7 @@ class CreateSessionRequest:
         from ..models.create_session_request_tags import (
             CreateSessionRequestTags,
         )
+        from ..models.greeting import Greeting
         from ..models.history_message import HistoryMessage
         from ..models.model_overwrites import ModelOverwrites
         from ..models.session_connector_binding import (
@@ -403,7 +408,12 @@ class CreateSessionRequest:
 
         description = d.pop("description", UNSET)
 
-        greeting = d.pop("greeting", UNSET)
+        _greeting = d.pop("greeting", UNSET)
+        greeting: Greeting | Unset
+        if isinstance(_greeting, Unset):
+            greeting = UNSET
+        else:
+            greeting = Greeting.from_dict(_greeting)
 
         _history = d.pop("history", UNSET)
         history: list[HistoryMessage] | Unset = UNSET

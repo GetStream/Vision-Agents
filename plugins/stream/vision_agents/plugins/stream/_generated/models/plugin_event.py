@@ -23,7 +23,7 @@ class PluginEvent:
 
         Attributes:
             event (str): The event's name, as the server's events/list gives it, such as comment.created.
-            plugin (str): A catalog plugin the config names under agent_plugins or user_plugins.
+            plugin (str): A catalog plugin the config names under plugins.
             arguments (PluginEventArguments | Unset): The event's filters, as its inputSchema describes them.
             instructions (str | Unset): What the agent does with the event when it arrives, added to its instructions for
                 that conversation.

@@ -124,7 +124,7 @@ func (s *Scheme) pickClient(ctx context.Context, ref core.ConnectionRef, m core.
 			if d.Registration == "" {
 				continue
 			}
-			return s.register(ctx, m, d, redirectURI)
+			return s.register(ctx, ref, m, d, redirectURI)
 		}
 	}
 	return client{}, fmt.Errorf("%w (client.registration %v)", ErrNoClient, m.Client.Registration)
@@ -199,7 +199,7 @@ func preregisteredMethod(m core.ResolvedManifest, d server, c Client) (core.Clie
 }
 
 // register is RFC 7591 dynamic client registration for this attempt's redirect URI.
-func (s *Scheme) register(ctx context.Context, m core.ResolvedManifest, d server, redirectURI string) (client, error) {
+func (s *Scheme) register(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, d server, redirectURI string) (client, error) {
 	method := m.Client.AuthMethod
 	if method == "" {
 		// A public client (none) keeps no secret to store, so it is asked for when the
@@ -276,7 +276,22 @@ func (s *Scheme) register(ctx context.Context, m core.ResolvedManifest, d server
 	if method != core.AuthNone && registered.ClientSecret == "" {
 		return client{}, fmt.Errorf("oauth2code: register: %s without a client_secret", method)
 	}
+	// The one record of the registration outside the sealed attempt and credentials (AI-990
+	// F16): who registered which client at which server. A client_id is not a secret (RFC 6749
+	// section 2.2); the client_secret is never logged.
+	s.cfg.Logger.InfoContext(ctx, "registered an OAuth client", "connector", m.ConnectorID, "connection", ref.ConnectionID,
+		"client_id", registered.ClientID, "registration_host", hostOf(d.Registration), "auth_method", method)
 	return client{RegistrationMethod: core.ClientDCR, ID: registered.ClientID, Secret: registered.ClientSecret, AuthMethod: method}, nil
+}
+
+// hostOf is the host of a registration endpoint, the part of it that names the server, or ""
+// when it does not parse.
+func hostOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Host
 }
 
 // checkMethod is whether this scheme implements method and the server, when it lists its

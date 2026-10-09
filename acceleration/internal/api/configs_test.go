@@ -55,7 +55,7 @@ func (s *ConfigsSuite) SetupTest() {
 func (s *ConfigsSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() {
 	created := s.createConfig(map[string]any{
 		"name": "support", "llm": "llm-flow", "tts": "en-low-latency", "voice": "aurora",
-		"thinking_llm": "llm-flow", "instructions": "be brief", "skills": []string{"think", "refund"},
+		"subagent": "llm-flow", "instructions": "be brief", "skills": []string{"think", "refund"},
 		"keyterms":            []string{"Vision Agents", "Stream"},
 		"knowledge_namespace": "handbook", "sandbox": "daytona",
 		"tags": map[string]string{"project": "support"},
@@ -67,7 +67,7 @@ func (s *ConfigsSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() {
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
 	s.Equal("llm-flow", value(read.Llm))
-	s.Equal("llm-flow", value(read.ThinkingLlm))
+	s.Equal("llm-flow", value(read.Subagent))
 	s.Equal("aurora", value(read.Voice))
 	s.Equal([]string{"think", "refund"}, value(read.Skills))
 	s.Equal([]string{"Vision Agents", "Stream"}, value(read.Keyterms))
@@ -76,50 +76,59 @@ func (s *ConfigsSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() {
 	s.Equal("support", value(read.Tags)["project"])
 }
 
-func (s *ConfigsSuite) TestAConfigRemembersHowFastItsVoiceSpeaks() {
-	created := s.createConfig(map[string]any{"name": "support", "voice": "aurora", "speed": 0.9})
+func (s *ConfigsSuite) TestAConfigRemembersHowItGreets() {
+	created := s.createConfig(map[string]any{"name": "support",
+		"greeting": map[string]any{"text": "Hello.", "mode": "variation"}})
 
 	var read AgentConfig
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
-	s.Equal(0.9, value(read.Speed))
+	s.Require().NotNil(read.Greeting)
+	s.Equal("Hello.", read.Greeting.Text)
+	s.Equal(GreetingModeVariation, value(read.Greeting.Mode))
 }
 
-func (s *ConfigsSuite) TestAConfigWithANegativeSpeedIsRefused() {
+func (s *ConfigsSuite) TestAGreetingWithNoModeIsSaidExactly() {
+	created := s.createConfig(map[string]any{"name": "support", "greeting": map[string]any{"text": "Hello."}})
+
+	s.Require().NotNil(created.Greeting)
+	s.Equal(GreetingModeExact, value(created.Greeting.Mode))
+}
+
+func (s *ConfigsSuite) TestAGreetingWithAnUnknownModeIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
-		map[string]any{"name": "support", "speed": -1})
+		map[string]any{"name": "support", "greeting": map[string]any{"text": "Hello.", "mode": "loud"}})
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "speed")
+	s.Contains(failure, "mode")
 }
 
-func (s *ConfigsSuite) TestATextAgentNamingAThinkingLlmIsRefused() {
+func (s *ConfigsSuite) TestATextAgentNamingASubagentIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
-		map[string]any{"name": "analyst", "mode": "text", "thinking_llm": "llm-thinking"})
+		map[string]any{"name": "analyst", "mode": "text", "subagent": "llm-thinking"})
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "thinking_llm")
+	s.Contains(failure, "subagent")
 }
 
-func (s *ConfigsSuite) TestSwitchingAnAgentToTextDropsItsThinkingLlm() {
-	created := s.createConfig(map[string]any{"name": "support", "thinking_llm": "llm-thinking"})
+func (s *ConfigsSuite) TestSwitchingAnAgentToTextDropsItsSubagent() {
+	created := s.createConfig(map[string]any{"name": "support", "subagent": "llm-thinking"})
 
 	var patched AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
 		map[string]any{"mode": "text"}, &patched))
 	s.Equal(AgentModeText, patched.Mode)
-	s.Nil(patched.ThinkingLlm)
+	s.Nil(patched.Subagent)
 }
 
-func (s *ConfigsSuite) TestPatchingASpeedKeepsTheVoice() {
-	created := s.createConfig(map[string]any{"name": "support", "voice": "aurora"})
+func (s *ConfigsSuite) TestPatchingAnEmptyGreetingRemovesIt() {
+	created := s.createConfig(map[string]any{"name": "support", "greeting": map[string]any{"text": "Hello."}})
 
 	var patched AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-		map[string]any{"speed": 0.9}, &patched))
+		map[string]any{"greeting": map[string]any{"text": ""}}, &patched))
 
-	s.Equal(0.9, value(patched.Speed))
-	s.Equal("aurora", value(patched.Voice))
+	s.Nil(patched.Greeting)
 }
 
 func (s *ConfigsSuite) TestAConfigRemembersWhichSearchItRoutesTo() {
@@ -178,17 +187,17 @@ func (s *ConfigsSuite) TestAConfigWritesNoEpisodeCardsUnlessItSaysSo() {
 // leaves the setting out keeps it.
 func (s *ConfigsSuite) TestAConfigOffersToolsWholeUnlessItSaysProgressively() {
 	unnamed := s.createConfig(map[string]any{"name": "support"})
-	s.False(value(unnamed.ProgressiveTools))
+	s.False(value(unnamed.Tools.Progressive))
 
 	var patched AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
-		"/v1/agents/configs/"+unnamed.Id, map[string]any{"progressive_tools": true}, &patched))
-	s.True(value(patched.ProgressiveTools))
+		"/v1/agents/configs/"+unnamed.Id, map[string]any{"tools": map[string]any{"progressive": true}}, &patched))
+	s.True(value(patched.Tools.Progressive))
 
 	var saved AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
-		"/v1/agents/configs/"+unnamed.Id, map[string]any{"name": "support"}, &saved))
-	s.True(value(saved.ProgressiveTools), "a setting left out on an update stays")
+		"/v1/agents/configs/"+unnamed.Id, map[string]any{"name": "support", "tools": map[string]any{}}, &saved))
+	s.True(value(saved.Tools.Progressive), "a setting left out on an update stays")
 }
 
 func (s *ConfigsSuite) TestADispatchSettingThatIsNeitherOnNorOffIsRefused() {
@@ -289,38 +298,52 @@ func (s *ConfigsSuite) TestAConfigRemembersTheMCPServersItNamesByURL() {
 
 func (s *ConfigsSuite) TestAConfigRemembersHowItReachesAPlugin() {
 	created := s.createConfig(map[string]any{
-		"name":          "triage",
-		"agent_plugins": []any{"sentry"},
-		"user_plugins": []any{
-			map[string]any{"name": "linear", "readonly": true, "scopes": []string{"read", " "}},
-			"google_calendar",
+		"name": "triage",
+		"plugins": []any{
+			"sentry",
+			map[string]any{"name": "linear", "user": true, "readonly": true, "scopes": []string{"read", " "}},
+			map[string]any{"name": "google_calendar", "user": true},
 		},
 	})
 
 	var read AgentConfig
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
-	s.Equal([]PluginEntry{{Name: "sentry"}}, value(read.AgentPlugins))
 	s.Equal([]PluginEntry{
+		{Name: "sentry"},
 		{Name: "linear", Readonly: pointerTo(true), Scopes: &[]string{"read"}},
 		{Name: "google_calendar"},
-	}, value(read.UserPlugins))
+	}, value(read.Plugins), "user is answered only where it differs from the catalog")
 
 	var raw map[string]any
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &raw))
-	s.Equal([]any{"sentry"}, raw["agent_plugins"], "an entry with no options answers as its id")
+	s.Equal("sentry", raw["plugins"].([]any)[0], "an entry with no options answers as its id")
 
 	var patched AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-		map[string]any{"user_plugins": []any{"linear"}}, &patched))
-	s.Equal([]PluginEntry{{Name: "linear"}}, value(patched.UserPlugins))
+		map[string]any{"plugins": []any{"linear"}}, &patched))
+	s.Equal([]PluginEntry{{Name: "linear"}}, value(patched.Plugins))
+}
+
+func (s *ConfigsSuite) TestAPluginLeftToTheCatalogIsConnectedTheWayTheCatalogSays() {
+	created := s.createConfig(map[string]any{
+		"name":    "triage",
+		"plugins": []any{"sentry", "google_calendar", map[string]any{"name": "linear", "user": false}},
+	})
+
+	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), created.Id)
+	s.Require().NoError(err)
+	s.Equal([]store.PluginEntry{{Name: "sentry"}, {Name: "google_calendar", User: true}, {Name: "linear"}},
+		stored.Plugins, "a company's account is the app's, a person's own each user's, unless the entry says")
+	s.Equal([]PluginEntry{{Name: "sentry"}, {Name: "google_calendar"}, {Name: "linear", User: pointerTo(false)}},
+		value(created.Plugins))
 }
 
 func (s *ConfigsSuite) TestAReadonlyPluginWithNoReadOnlyEndpointIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":          "triage",
-		"agent_plugins": []any{map[string]any{"name": "sentry", "readonly": true}},
+		"name":    "triage",
+		"plugins": []any{map[string]any{"name": "sentry", "readonly": true}},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
@@ -329,18 +352,18 @@ func (s *ConfigsSuite) TestAReadonlyPluginWithNoReadOnlyEndpointIsRefused() {
 
 func (s *ConfigsSuite) TestAConfigRemembersWhichToolsetsAPluginIsLimitedTo() {
 	created := s.createConfig(map[string]any{
-		"name":         "scheduler",
-		"user_plugins": []any{map[string]any{"name": "calcom", "toolsets": []string{"bookings", "availability"}}},
+		"name":    "scheduler",
+		"plugins": []any{map[string]any{"name": "calcom", "user": true, "toolsets": []string{"bookings", "availability"}}},
 	})
 
 	s.Equal([]PluginEntry{{Name: "calcom", Toolsets: &[]string{"bookings", "availability"}}},
-		value(created.UserPlugins))
+		value(created.Plugins))
 }
 
 func (s *ConfigsSuite) TestAToolsetThePluginDoesNotHaveIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":         "scheduler",
-		"user_plugins": []any{map[string]any{"name": "calcom", "toolsets": []string{"invoices"}}},
+		"name":    "scheduler",
+		"plugins": []any{map[string]any{"name": "calcom", "user": true, "toolsets": []string{"invoices"}}},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
@@ -349,22 +372,22 @@ func (s *ConfigsSuite) TestAToolsetThePluginDoesNotHaveIsRefused() {
 
 func (s *ConfigsSuite) TestAConfigRemembersWhichToolsEachServerOffers() {
 	created := s.createConfig(map[string]any{
-		"name":         "researcher",
-		"user_plugins": []any{map[string]any{"name": "google_drive", "tools": []string{"search_files", "read_*"}}},
+		"name":    "researcher",
+		"plugins": []any{map[string]any{"name": "google_drive", "user": true, "tools": []string{"search_files", "read_*"}}},
 		"mcp_servers": []map[string]any{
 			{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"search_restaurants"}},
 		},
 	})
 
 	s.Equal([]PluginEntry{{Name: "google_drive", Tools: &[]string{"search_files", "read_*"}}},
-		value(created.UserPlugins))
+		value(created.Plugins))
 	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp", Tools: &[]string{"search_restaurants"}}},
 		value(created.McpServers))
 }
 
 func (s *ConfigsSuite) TestAToolPatternThatCannotBeReadIsRefused() {
 	for _, body := range []map[string]any{
-		{"name": "researcher", "user_plugins": []any{map[string]any{"name": "google_drive", "tools": []string{"read_[*"}}}},
+		{"name": "researcher", "plugins": []any{map[string]any{"name": "google_drive", "user": true, "tools": []string{"read_[*"}}}},
 		{"name": "researcher", "mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"read_[*"}}}},
 	} {
 		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", body)
@@ -376,8 +399,8 @@ func (s *ConfigsSuite) TestAToolPatternThatCannotBeReadIsRefused() {
 
 func (s *ConfigsSuite) TestAScopeThePluginsServerDoesNotAcceptIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":          "researcher",
-		"agent_plugins": []any{map[string]any{"name": "google_drive", "scopes": []string{"https://www.googleapis.com/auth/gmail.readonly"}}},
+		"name":    "researcher",
+		"plugins": []any{map[string]any{"name": "google_drive", "scopes": []string{"https://www.googleapis.com/auth/gmail.readonly"}}},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
@@ -387,8 +410,8 @@ func (s *ConfigsSuite) TestAScopeThePluginsServerDoesNotAcceptIsRefused() {
 func (s *ConfigsSuite) TestAPluginNotInTheCatalogIsRefused() {
 	for _, entry := range []any{"jira", map[string]any{"name": "jira", "readonly": true}} {
 		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-			"name":         "triage",
-			"user_plugins": []any{entry},
+			"name":    "triage",
+			"plugins": []any{entry},
 		})
 
 		s.Equal(http.StatusBadRequest, status)
@@ -398,8 +421,8 @@ func (s *ConfigsSuite) TestAPluginNotInTheCatalogIsRefused() {
 
 func (s *ConfigsSuite) TestAPluginNamedTwiceInAListIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":         "triage",
-		"user_plugins": []any{"linear", map[string]any{"name": "linear", "readonly": true}},
+		"name":    "triage",
+		"plugins": []any{"linear", map[string]any{"name": "linear", "readonly": true}},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
@@ -409,8 +432,8 @@ func (s *ConfigsSuite) TestAPluginNamedTwiceInAListIsRefused() {
 func (s *ConfigsSuite) TestAPluginEntryThatIsNeitherAnIdNorAnObjectIsRefused() {
 	for _, entry := range []any{"", 7, map[string]any{"readonly": true}} {
 		status, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-			"name":         "triage",
-			"user_plugins": []any{entry},
+			"name":    "triage",
+			"plugins": []any{entry},
 		})
 
 		s.Equal(http.StatusBadRequest, status, "%v", entry)
@@ -504,7 +527,7 @@ func (s *ConfigsSuite) TestPatchingAConfigKeepsWhatWasNotSent() {
 		"name": "support", "llm": "llm-flow", "instructions": "be brief",
 		"skills": []string{"think"},
 	})
-	policy := "---\ntype: lcm\n---\nOnly answer questions about Acme."
+	policy := "---\ntype: decision_model\n---\nOnly answer questions about Acme."
 
 	var patched AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
@@ -1144,7 +1167,7 @@ func (s *ConfigsSuite) TestAFixedBindingThroughAnotherConnectorsConnectionIsRefu
 // would offer linear__<tool>.
 func (s *ConfigsSuite) TestABindingCalledWhatAPluginOfTheConfigIsIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "support", "agent_plugins": []string{"linear"}, "connectors": []map[string]any{sessionSlack("linear")},
+		"name": "support", "plugins": []string{"linear"}, "connectors": []map[string]any{sessionSlack("linear")},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
@@ -1158,7 +1181,7 @@ func (s *ConfigsSuite) TestABindingCalledWhatAPluginIsToAnotherConnectorIsRefuse
 	binding["connector_id"] = "slack"
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "support", "agent_plugins": []string{"linear", "slack"}, "connectors": []map[string]any{binding},
+		"name": "support", "plugins": []string{"linear", "slack"}, "connectors": []map[string]any{binding},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
@@ -1167,7 +1190,9 @@ func (s *ConfigsSuite) TestABindingCalledWhatAPluginIsToAnotherConnectorIsRefuse
 
 func (s *ConfigsSuite) TestABindingCalledWhatAUserPluginOfTheConfigIsIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "support", "user_plugins": []string{"linear"}, "connectors": []map[string]any{sessionSlack("linear")},
+		"name":       "support",
+		"plugins":    []any{map[string]any{"name": "linear", "user": true}},
+		"connectors": []map[string]any{sessionSlack("linear")},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
@@ -1179,17 +1204,19 @@ func (s *ConfigsSuite) TestABindingCalledWhatAUserPluginOfTheConfigIsIsRefused()
 // (AI-994 F42). The session drops the entry for the binding (Spec.withoutBoundPlugins), so the
 // two never offer the same name, and the config stays editable.
 func (s *ConfigsSuite) TestABindingToThePluginsOwnConnectorIsCalledWhatThePluginIs() {
-	for _, list := range []string{"agent_plugins", "user_plugins"} {
+	for _, user := range []bool{false, true} {
 		created := s.createConfig(map[string]any{
-			"name": "support-" + s.utils.uuid(), list: []string{"slack"}, "connectors": []map[string]any{sessionSlack("slack")},
+			"name":       "support-" + s.utils.uuid(),
+			"plugins":    []any{map[string]any{"name": "slack", "user": user}},
+			"connectors": []map[string]any{sessionSlack("slack")},
 		})
 
 		s.Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-			map[string]any{"instructions": "Answer briefly."}, nil), list)
+			map[string]any{"instructions": "Answer briefly."}, nil), "user: %v", user)
 
 		read := s.read(created.Id)
-		s.Equal("Answer briefly.", value(read.Instructions), list)
-		s.Len(value(read.Connectors), 1, list)
+		s.Equal("Answer briefly.", value(read.Instructions), "user: %v", user)
+		s.Len(value(read.Connectors), 1, "user: %v", user)
 	}
 }
 
@@ -1218,18 +1245,18 @@ func (s *ConfigsSuite) TestPatchingInAPluginABindingIsCalledIsRefused() {
 	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("linear")}})
 
 	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-		map[string]any{"agent_plugins": []string{"linear"}})
+		map[string]any{"plugins": []string{"linear"}})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "plugin")
-	s.Nil(s.read(created.Id).AgentPlugins)
+	s.Nil(s.read(created.Id).Plugins)
 }
 
 func (s *ConfigsSuite) TestUpdatingInAPluginAKeptBindingIsCalledIsRefused() {
 	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("linear")}})
 
 	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
-		map[string]any{"name": "support", "agent_plugins": []string{"linear"}})
+		map[string]any{"name": "support", "plugins": []string{"linear"}})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "plugin")

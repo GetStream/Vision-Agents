@@ -18,11 +18,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
@@ -386,10 +386,10 @@ func (answerer) Model() string               { return "stub-search" }
 // judge stands in for a classifier: it answers what it is told to.
 type judge struct {
 	name     string
-	answered lcm.Result
+	answered decisionmodel.Result
 
 	mu    sync.Mutex
-	asked []lcm.Request
+	asked []decisionmodel.Request
 }
 
 // classifiers are the two the suite routes to, so a test can tell a target apart from the
@@ -402,32 +402,32 @@ var classifiers = struct {
 }
 
 // judged is the ruling both classifiers give, one answer of each type.
-var judged = lcm.Result{
+var judged = decisionmodel.Result{
 	Model: "judge-2026-09",
-	Answers: map[string]lcm.Answer{
-		"refund": {Type: lcm.TypeNoul, Yes: 0.91},
+	Answers: map[string]decisionmodel.Answer{
+		"refund": {Type: decisionmodel.TypeNoul, Yes: 0.91},
 		"topic": {
-			Type: lcm.TypeChoice, Chosen: "billing", Confidence: 0.8,
+			Type: decisionmodel.TypeChoice, Chosen: "billing", Confidence: 0.8,
 			Probabilities: map[string]float64{"billing": 0.9, "other": 0.1},
 		},
 		"urgency": {
-			Type: lcm.TypeScore, Level: 1.4, Confidence: 0.6,
+			Type: decisionmodel.TypeScore, Level: 1.4, Confidence: 0.6,
 			Legend:        map[string]string{"0": "can wait", "1": "this week", "2": "today"},
 			Probabilities: map[string]float64{"0": 0.1, "1": 0.4, "2": 0.5},
 		},
 	},
-	Usage: lcm.Usage{InputTokens: 406, OutputTokens: 69},
+	Usage: decisionmodel.Usage{InputTokens: 406, OutputTokens: 69},
 }
 
 // refusals are the states a test asks about to be refused instead of ruled on, since what
 // a vendor will not answer is a property of the question rather than of the classifier.
 var refusals = map[string]error{
 	"unanswerable": errors.New(`typesafe: "refund" was not answered`),
-	"rate limited": fmt.Errorf("typesafe: the API returned 429: %w", lcm.ErrRateLimited),
-	"unavailable":  fmt.Errorf("typesafe: the API returned 529: %w", lcm.ErrUnavailable),
+	"rate limited": fmt.Errorf("typesafe: the API returned 429: %w", decisionmodel.ErrRateLimited),
+	"unavailable":  fmt.Errorf("typesafe: the API returned 529: %w", decisionmodel.ErrUnavailable),
 }
 
-func (j *judge) Classify(_ context.Context, request lcm.Request) (lcm.Result, error) {
+func (j *judge) Classify(_ context.Context, request decisionmodel.Request) (decisionmodel.Result, error) {
 	j.mu.Lock()
 	j.asked = append(j.asked, request)
 	j.mu.Unlock()
@@ -435,7 +435,7 @@ func (j *judge) Classify(_ context.Context, request lcm.Request) (lcm.Result, er
 	state, _ := request.State.(string)
 	for asked, failure := range refusals {
 		if strings.Contains(state, asked) {
-			return lcm.Result{}, failure
+			return decisionmodel.Result{}, failure
 		}
 	}
 	return j.answered, nil
@@ -447,21 +447,21 @@ func (j *judge) Provider() string            { return j.name }
 func (j *judge) Model() string               { return "stub" }
 
 // questions is every request this classifier has been asked to rule on.
-func (j *judge) questions() []lcm.Request {
+func (j *judge) questions() []decisionmodel.Request {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return append([]lcm.Request(nil), j.asked...)
+	return append([]decisionmodel.Request(nil), j.asked...)
 }
 
 // ruledOn is what this classifier was asked about state, and whether it was asked at all.
 // A test names its own state, since the stub is shared.
-func (j *judge) ruledOn(state string) (lcm.Request, bool) {
+func (j *judge) ruledOn(state string) (decisionmodel.Request, bool) {
 	for _, asked := range j.questions() {
 		if named, ok := asked.State.(string); ok && named == state {
 			return asked, true
 		}
 	}
-	return lcm.Request{}, false
+	return decisionmodel.Request{}, false
 }
 
 func classifyConfig() routing.ModalityConfig {
@@ -482,10 +482,10 @@ func classifyConfig() routing.ModalityConfig {
 	}
 }
 
-func classifierRegistry() *lcmrouter.Registry {
-	registry := lcmrouter.NewRegistry()
-	registry.Register("quick", func(routing.Spec) (lcm.Provider, error) { return classifiers.quick, nil })
-	registry.Register("careful", func(routing.Spec) (lcm.Provider, error) { return classifiers.careful, nil })
+func classifierRegistry() *decisionrouter.Registry {
+	registry := decisionrouter.NewRegistry()
+	registry.Register("quick", func(routing.Spec) (decisionmodel.Provider, error) { return classifiers.quick, nil })
+	registry.Register("careful", func(routing.Spec) (decisionmodel.Provider, error) { return classifiers.careful, nil })
 	return registry
 }
 

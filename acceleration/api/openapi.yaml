@@ -123,10 +123,6 @@ components:
       type: object
     AgentConfig:
       properties:
-        agent_plugins:
-          items:
-            $ref: '#/components/schemas/PluginEntry'
-          type: array
         channels:
           $ref: '#/components/schemas/AgentChannels'
         connectors:
@@ -143,7 +139,7 @@ components:
           description: Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
           type: boolean
         greeting:
-          type: string
+          $ref: '#/components/schemas/Greeting'
         guardrail:
           type: string
         harness:
@@ -172,9 +168,10 @@ components:
           items:
             $ref: '#/components/schemas/PluginEvent'
           type: array
-        progressive_tools:
-          description: Whether tools from plugins, MCP servers and connectors are offered by a summary, the first call to each returning its full description instead of running it.
-          type: boolean
+        plugins:
+          items:
+            $ref: '#/components/schemas/PluginEntry'
+          type: array
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -185,13 +182,12 @@ components:
           items:
             type: string
           type: array
-        speed:
-          format: double
-          type: number
         sts:
           description: 'A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.'
           type: string
         stt:
+          type: string
+        subagent:
           type: string
         sync_hash:
           description: Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
@@ -200,17 +196,13 @@ components:
           additionalProperties:
             type: string
           type: object
-        thinking_llm:
-          type: string
+        tools:
+          $ref: '#/components/schemas/AgentTools'
         tts:
           type: string
         updated_at:
           format: date-time
           type: string
-        user_plugins:
-          items:
-            $ref: '#/components/schemas/PluginEntry'
-          type: array
         video:
           $ref: '#/components/schemas/SessionVideo'
         visible_tools:
@@ -230,10 +222,6 @@ components:
       additionalProperties: false
       description: What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
       properties:
-        agent_plugins:
-          items:
-            $ref: '#/components/schemas/PluginEntry'
-          type: array
         channels:
           $ref: '#/components/schemas/AgentChannels'
         connectors:
@@ -247,7 +235,8 @@ components:
         episode_cards:
           type: boolean
         greeting:
-          type: string
+          $ref: '#/components/schemas/Greeting'
+          description: Replaces the greeting whole. An empty text removes it.
         guardrail:
           description: 'A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.'
           type: string
@@ -279,8 +268,10 @@ components:
             $ref: '#/components/schemas/PluginEvent'
           maxItems: 32
           type: array
-        progressive_tools:
-          type: boolean
+        plugins:
+          items:
+            $ref: '#/components/schemas/PluginEntry'
+          type: array
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -291,28 +282,21 @@ components:
           items:
             type: string
           type: array
-        speed:
-          description: The voice's rate of delivery, 1 being its own. Zero leaves it there.
-          format: double
-          minimum: 0
-          type: number
         sts:
           type: string
         stt:
+          type: string
+        subagent:
+          description: Only a voice agent names one. Switching an agent to text drops it.
           type: string
         tags:
           additionalProperties:
             type: string
           type: object
-        thinking_llm:
-          description: Only a voice agent names one. Switching an agent to text drops it.
-          type: string
+        tools:
+          $ref: '#/components/schemas/AgentTools'
         tts:
           type: string
-        user_plugins:
-          items:
-            $ref: '#/components/schemas/PluginEntry'
-          type: array
         video:
           $ref: '#/components/schemas/SessionVideo'
         visible_tools:
@@ -326,11 +310,6 @@ components:
       type: object
     AgentConfigRequest:
       properties:
-        agent_plugins:
-          description: 'Hosted MCP servers this agent may reach with the app''s own login, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear''s read-only endpoint and the scopes its login asks for.'
-          items:
-            $ref: '#/components/schemas/PluginEntry'
-          type: array
         channels:
           $ref: '#/components/schemas/AgentChannels'
           description: 'Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels.'
@@ -346,9 +325,9 @@ components:
           description: 'Whether each phone call under this agent writes an episode card into the caller''s omni-channel: an agent channel for each caller number and agent, keyed by the caller''s E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person''s other episode cards: a summary, or the last lines of the episode''s channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.'
           type: boolean
         greeting:
-          type: string
+          $ref: '#/components/schemas/Greeting'
         guardrail:
-          description: 'A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.'
+          description: 'A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.'
           type: string
         harness:
           $ref: '#/components/schemas/Harness'
@@ -382,9 +361,11 @@ components:
             $ref: '#/components/schemas/PluginEvent'
           maxItems: 32
           type: array
-        progressive_tools:
-          description: Whether the agent is offered its plugin, MCP server and connector tools by the first line of each one's description, with its arguments' descriptions left out, and the first call to a tool returns its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
-          type: boolean
+        plugins:
+          description: 'Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear''s read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.'
+          items:
+            $ref: '#/components/schemas/PluginEntry'
+          type: array
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -397,33 +378,25 @@ components:
           items:
             type: string
           type: array
-        speed:
-          description: Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
-          example: 0.9
-          format: double
-          minimum: 0
-          type: number
         sts:
           description: 'A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.'
           type: string
         stt:
           description: A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it.
           type: string
+        subagent:
+          description: 'The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent.'
+          type: string
         tags:
           additionalProperties:
             type: string
           description: Cost labels, carried onto every request a session using it makes.
           type: object
-        thinking_llm:
-          description: 'The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default thinking model.'
-          type: string
+        tools:
+          $ref: '#/components/schemas/AgentTools'
+          description: How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay.
         tts:
           type: string
-        user_plugins:
-          description: Hosted MCP servers each end user connects with their own account, named from the built-in catalog like agent_plugins. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
-          items:
-            $ref: '#/components/schemas/PluginEntry'
-          type: array
         video:
           $ref: '#/components/schemas/SessionVideo'
         visible_tools:
@@ -494,7 +467,7 @@ components:
         - type
       type: object
     AgentConnectorSelectionType:
-      description: fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own.
+      description: fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
       enum:
         - fixed
         - session
@@ -689,6 +662,13 @@ components:
       required:
         - has_more
         - items
+      type: object
+    AgentTools:
+      description: How an agent is offered its plugin, MCP server and connector tools.
+      properties:
+        progressive:
+          description: Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
+          type: boolean
       type: object
     AppSettings:
       description: What the router does for the calling app. It never carries a secret.
@@ -1229,6 +1209,12 @@ components:
         stt_used:
           description: The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over.
           type: string
+        subagent:
+          description: The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too.
+          type: string
+        subagent_used:
+          description: The provider/model delegated work ran on. Empty when nothing was handed over, or when the subagent was never reached.
+          type: string
         summary:
           description: What a model made of the call, written once it was over.
           type: string
@@ -1236,12 +1222,6 @@ components:
           additionalProperties:
             type: string
           type: object
-        thinking_llm:
-          description: The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too.
-          type: string
-        thinking_llm_used:
-          description: The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached.
-          type: string
         to_number:
           type: string
         tts:
@@ -1805,6 +1785,10 @@ components:
         auth_scheme:
           description: How the connection authenticates, one of its connector's schemes.
           type: string
+        client:
+          $ref: '#/components/schemas/ConnectionClient'
+          description: The OAuth client the connection's grant was issued to. Absent for a scheme without one, before the first consent, and for a connection last consented before the router kept it.
+          readOnly: true
         connector_id:
           type: string
         created_at:
@@ -1816,7 +1800,7 @@ components:
           readOnly: true
           type: string
         definition_revision:
-          description: 'The connector''s revision the connection reads: the one its grant was made on. Every consent runs on the connector''s latest revision, and one that connects the connection moves it there; until then it keeps this one.'
+          description: 'The connector''s revision the connection reads: the one its grant was made on. Every consent runs on the connector''s latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection''s token or key again (PUT .../credentials) moves it there too, when that revision still takes the connection''s scheme and inputs. Until then it keeps this one.'
           format: int64
           readOnly: true
           type: integer
@@ -1886,6 +1870,18 @@ components:
         - updated_at
         - used_by
       type: object
+    ConnectionClient:
+      description: Which OAuth client a connection's grant was issued to, so a client the router registered on the fly (RFC 7591) can be found at the provider. Its secret is never shown.
+      properties:
+        client_id:
+          description: The client identifier, which is not a secret (RFC 6749 section 2.2). For dcr, the one the provider issued when the router registered at the consent.
+          type: string
+        registration:
+          $ref: '#/components/schemas/ConnectorClientRegistrationMethod'
+      required:
+        - registration
+        - client_id
+      type: object
     ConnectionCredentials:
       additionalProperties: false
       description: Credentials for a connection, under the revision the caller last read. An unknown field is refused rather than ignored.
@@ -1904,15 +1900,21 @@ components:
         - expected_revision
       type: object
     ConnectionDefinitionStatus:
-      description: 'current when the connection reads its connector''s latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until a consent connects it again, on the latest revision.'
+      description: 'current when the connection reads its connector''s latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again.'
       enum:
         - current
         - outdated
         - broken
       type: string
     ConnectionInvocation:
-      description: 'One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept.'
+      description: 'One connector tool call a session ran through the connection: the binding, the tool, the shape of its arguments, how long it took and how it failed. No value the call was asked, and nothing it answered, is kept.'
       properties:
+        arguments:
+          description: The shape of what the call was asked, sorted by name. Absent for a call asked with no arguments, for an incognito session's call, for arguments that were not a JSON object, and for a call recorded before the router kept it.
+          items:
+            $ref: '#/components/schemas/InvocationArgument'
+          nullable: true
+          type: array
         binding:
           description: The alias the config binds the connector under.
           type: string
@@ -2127,7 +2129,7 @@ components:
           format: date-time
           type: string
         code:
-          description: 'What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, which only new credentials (PUT .../credentials) fix. More may be added.'
+          description: 'What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added.'
           type: string
         connection_id:
           type: string
@@ -2161,7 +2163,7 @@ components:
           type: array
       type: object
     ConnectionValidationStatus:
-      description: 'connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, new credentials. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.'
+      description: 'connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.'
       enum:
         - connected
         - pending
@@ -2239,14 +2241,14 @@ components:
         - proxy_call
       type: string
     ConnectorAuditCredential:
-      description: 'The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the token''s SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.'
+      description: 'The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the token''s SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.'
       properties:
         access_expires_at:
           description: When the access token expires. Absent when the provider did not say.
           format: date-time
           type: string
         access_fingerprint:
-          description: The access token the grant left, by fingerprint.
+          description: The access token the grant left, by fingerprint. On grant_revoked, the one that ended.
           type: string
         previous_access_fingerprint:
           description: The access token before it, by fingerprint. Absent for a first grant.
@@ -2259,7 +2261,7 @@ components:
           format: date-time
           type: string
         refresh_fingerprint:
-          description: The refresh token the grant left, by fingerprint. Absent when there is none.
+          description: The refresh token the grant left, by fingerprint. On grant_revoked, the one that ended. Absent when there is none.
           type: string
         rotated:
           description: The refresh token the connection already had was replaced, as a provider that rotates refresh tokens does on every refresh.
@@ -2285,7 +2287,7 @@ components:
           type: string
         credential:
           $ref: '#/components/schemas/ConnectorAuditCredential'
-          description: The tokens a grant row left, by fingerprint. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens.
+          description: The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens.
         id:
           type: string
         latency_ms:
@@ -2486,7 +2488,7 @@ components:
         - secret
       type: object
     ConnectorEventForward:
-      description: 'Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app''s own code next to the router''s agent. all: every verified delivery, messages and grant events included, but the provider''s URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.'
+      description: 'Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app''s own code next to the router''s agent. all: every verified delivery, messages and grant events included, but the provider''s URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there. A Slack reply that does not mention the bot, in a thread the agent is not in yet, is unhandled when it arrives. If the mention that starts the thread arrives within 10 minutes, as when Slack retries the mention, the agent answers the reply too. The forward is not taken back, and no event says that the agent answered it.'
       enum:
         - unhandled
         - all
@@ -2836,7 +2838,7 @@ components:
           description: An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
           type: string
         connector_bindings:
-          description: 'The connection to use for each of the agent config''s connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller''s own connection to the binding''s connector: an end user''s, or the one a backend names with X-Stream-User-Id, never an anonymous caller''s or a guest''s. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.'
+          description: 'The connection to use for each of the agent config''s connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller''s own connection to the binding''s connector: an end user''s, or the one a backend names with X-Stream-User-Id, never an anonymous caller''s or a guest''s. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A session binding given none here uses the caller''s own connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.'
           items:
             $ref: '#/components/schemas/SessionConnectorBinding'
           maxItems: 64
@@ -2855,8 +2857,8 @@ components:
           description: A longer note about the conversation, searched alongside the title.
           type: string
         greeting:
-          description: Said on joining without going through the model. Empty means the agent waits to be spoken to.
-          type: string
+          $ref: '#/components/schemas/Greeting'
+          description: What the agent opens the call with, over what the config says.
         history:
           description: 'The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread''s messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation''s history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent''s mouth.'
           items:
@@ -3261,6 +3263,24 @@ components:
         - hourly
         - daily
       type: string
+    Greeting:
+      description: What the agent says as it joins, before anyone speaks.
+      properties:
+        mode:
+          $ref: '#/components/schemas/GreetingMode'
+        text:
+          description: What the agent says on joining. Empty means the agent waits to be spoken to.
+          type: string
+      required:
+        - text
+      type: object
+    GreetingMode:
+      default: exact
+      description: exact says the text word for word. variation has the model say its own variation of it on every call, so callers do not hear the same opening each time. A speech-to-speech model cannot say exact words, so it always says its own rendering of the text.
+      enum:
+        - exact
+        - variation
+      type: string
     GuestUser:
       properties:
         custom:
@@ -3602,6 +3622,30 @@ components:
       required:
         - instructions
       type: object
+    InvocationArgument:
+      description: 'One argument a connector tool call was asked with: its name, its JSON type and, for a string or an array, its length, so an empty string shows as length 0. Never its value.'
+      properties:
+        length:
+          description: A string's characters (Unicode code points) or an array's elements, or for (undeclared) the number of undeclared arguments. Absent for any other type.
+          format: int64
+          type: integer
+        name:
+          description: 'The argument''s name, when the tool''s input schema declares it under properties. The arguments it does not declare, whose names a model may choose, are one entry named (undeclared): type object, length their count.'
+          type: string
+        type:
+          description: The argument's JSON type.
+          enum:
+            - object
+            - array
+            - string
+            - number
+            - boolean
+            - "null"
+          type: string
+      required:
+        - name
+        - type
+      type: object
     InvocationErrorType:
       description: 'customer_auth: the provider refused the connection''s credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding''s timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.'
       enum:
@@ -3891,7 +3935,7 @@ components:
           minLength: 1
           type: string
         user:
-          description: Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for user_plugins, rather than the app once, from the dashboard. Only a server that needs a login may set it.
+          description: Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
           type: boolean
       required:
         - name
@@ -3920,14 +3964,14 @@ components:
             $ref: '#/components/schemas/ContentPart'
           type: array
     Modality:
-      description: 'What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.'
+      description: 'What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.'
       enum:
         - stt
         - tts
         - llm
         - sts
         - search
-        - lcm
+        - decision_model
         - image
         - memory
         - knowledge
@@ -4467,7 +4511,7 @@ components:
             - not_connected
           type: string
         user:
-          description: 'True when the config names the plugin under user_plugins only: each end user connects their own account in the conversation.'
+          description: 'True when the config names the plugin with user: each end user connects their own account in the conversation.'
           type: boolean
       required:
         - logo_url
@@ -4496,7 +4540,7 @@ components:
           description: What the agent does with the event when it arrives, added to its instructions for that conversation.
           type: string
         plugin:
-          description: A catalog plugin the config names under agent_plugins or user_plugins.
+          description: A catalog plugin the config names under plugins.
           minLength: 1
           type: string
       required:
@@ -4544,6 +4588,9 @@ components:
             type: string
           maxItems: 32
           type: array
+        user:
+          description: 'Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person''s own account, such as google_calendar, is connected by each end user, and one reaching the company''s, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.'
+          type: boolean
       required:
         - name
       type: object
@@ -4562,7 +4609,7 @@ components:
         data_policy:
           $ref: '#/components/schemas/DataPolicy'
         prompt_injection:
-          description: Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
+          description: Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
           type: boolean
         require_own_stream_app:
           description: 'Keep the app out of the router''s own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization''s off. An organization''s is set by the router''s operator and read here; sending it back unchanged is fine, and changing it is refused.'
@@ -5200,12 +5247,12 @@ components:
         stt:
           description: The provider and model transcribing, once somebody has been heard.
           type: string
+        subagent:
+          description: The provider and model delegated work runs on.
+          type: string
         text:
           description: The conversation is held in writing rather than on a call.
           type: boolean
-        thinking_llm:
-          description: The provider and model delegated work runs on.
-          type: string
         title:
           type: string
         tts:
@@ -5526,7 +5573,7 @@ components:
           type: string
           writeOnly: true
         user:
-          description: 'Also name the plugin under the config''s user_plugins, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it under agent_plugins.'
+          description: 'Also name the plugin under the config''s plugins with user, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it as the app''s.'
           type: boolean
       required:
         - client_id
@@ -6116,6 +6163,45 @@ components:
         - provider
         - request_count
       type: object
+    StoredConnectorOAuthClient:
+      description: The OAuth client and provider app the router keeps for the app and one connector. It says whether each secret is stored, and never carries one.
+      properties:
+        auth_method:
+          $ref: '#/components/schemas/ConnectorOAuthClientAuthMethod'
+          description: Absent when the record leaves it to the connector.
+        client_id:
+          description: Empty for a provider app without an OAuth client, such as a Linq account.
+          type: string
+        connector_id:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        has_client_secret:
+          description: A client secret is stored, sealed. False for a public client.
+          type: boolean
+        has_signing_secret:
+          description: A signing secret for the provider app's events is stored, sealed.
+          type: boolean
+        provider_app_id:
+          description: The provider's id for the app the client belongs to. Absent when there is none.
+          type: string
+        registration:
+          $ref: '#/components/schemas/ConnectorClientRegistrationMethod'
+          description: 'customer: the app''s own, put through PUT /v1/agents/connectors/{id}/oauth-client. managed: the one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app). operator: this deployment''s own app, recorded for the app by Stream staff.'
+        updated_at:
+          description: When the client, its secrets or its method last changed.
+          format: date-time
+          type: string
+      required:
+        - connector_id
+        - registration
+        - client_id
+        - has_client_secret
+        - has_signing_secret
+        - created_at
+        - updated_at
+      type: object
     StreamAppState:
       description: Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
       enum:
@@ -6446,11 +6532,6 @@ components:
     SyncAgentRequest:
       description: An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
       properties:
-        agent_plugins:
-          description: 'Plugins the agent reaches with the app''s own login: a catalog id, or an object naming it with how it is reached.'
-          items:
-            $ref: '#/components/schemas/PluginEntry'
-          type: array
         base_change:
           description: The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
           type: string
@@ -6469,7 +6550,7 @@ components:
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
         greeting:
-          type: string
+          $ref: '#/components/schemas/Greeting'
         guardrail:
           description: 'The directory''s guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.'
           type: string
@@ -6512,9 +6593,11 @@ components:
             $ref: '#/components/schemas/PluginEvent'
           maxItems: 32
           type: array
-        progressive_tools:
-          description: Whether plugin, MCP server and connector tools are offered by a summary, the first call to each returning its full description and input schema instead of running it.
-          type: boolean
+        plugins:
+          description: 'Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.'
+          items:
+            $ref: '#/components/schemas/PluginEntry'
+          type: array
         sandbox:
           $ref: '#/components/schemas/Sandbox'
         sandbox_options:
@@ -6530,30 +6613,23 @@ components:
           items:
             $ref: '#/components/schemas/SkillRequest'
           type: array
-        speed:
-          description: The voice's rate of delivery, 1 being its own. Zero leaves it there.
-          format: double
-          minimum: 0
-          type: number
         sts:
           description: 'A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.'
           type: string
         stt:
           type: string
+        subagent:
+          description: 'Only a voice agent names one: a text agent runs everything on its llm.'
+          type: string
         tags:
           additionalProperties:
             type: string
           type: object
-        thinking_llm:
-          description: 'Only a voice agent names one: a text agent runs everything on its llm.'
-          type: string
+        tools:
+          $ref: '#/components/schemas/AgentTools'
+          description: How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored.
         tts:
           type: string
-        user_plugins:
-          description: Plugins each end user connects with their own account, from the conversation, the first time the agent needs one. Each is named like agent_plugins.
-          items:
-            $ref: '#/components/schemas/PluginEntry'
-          type: array
         video:
           $ref: '#/components/schemas/SessionVideo'
         voice:
@@ -9043,7 +9119,7 @@ paths:
       summary: What was changed about an agent since its directory was last synced
   /v1/agents/configs/{id}/plugins:
     get:
-      description: The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+      description: The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
       operationId: listConfigPlugins
       parameters:
         - description: The resource, as returned when it was created.
@@ -9422,6 +9498,8 @@ paths:
     put:
       description: |-
         Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
+
+        A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: putConnectionCredentials
@@ -10299,6 +10377,38 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Remove the app's own OAuth client for a connector
+    get:
+      description: |-
+        Says which OAuth client and provider app the app's connections to the connector use: the app's own, the one the router created for it, or this deployment's own app recorded for it. It says whether a client secret and a signing secret are stored, and never returns either. Not found when there is none: the connector then uses this deployment's client, or registers one per consent.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: getConnectorOAuthClient
+      parameters:
+        - description: The connector, such as github or custom_crm.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connector, such as github or custom_crm.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoredConnectorOAuthClient'
+          description: The client
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Read the OAuth client the router keeps for the app and a connector
     put:
       description: |-
         Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
@@ -11550,7 +11660,7 @@ paths:
       description: |-
         A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
         The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
-        `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider rejected the token or key a bearer or api_key connection holds; only new credentials fix it, so no login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
+        `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider rejected the token or key a bearer or api_key connection holds, or the connection reads a connector revision marked broken; only saving its credentials again fixes it, so no login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
         `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
         Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id.
         A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
@@ -13057,7 +13167,7 @@ paths:
   /v1/classify:
     post:
       description: |-
-        The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+        The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
         Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
         A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
       operationId: classify

@@ -17,10 +17,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -97,7 +97,7 @@ type ManagerOptions struct {
 	// Classifier is optional, and is what a session with a guardrail asks whether a turn
 	// may be answered. Without it a session declaring a guardrail that needs one is
 	// refused rather than held unguarded.
-	Classifier *lcmrouter.Router
+	Classifier *decisionrouter.Router
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
@@ -599,7 +599,6 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		VideoSource:        spec.VideoSource,
 		VideoMaxFrames:     spec.VideoMaxFrames,
 		Voice:              spec.Voice,
-		Speed:              spec.Speed,
 		LanguageHints:      spec.LanguageHints,
 		Keyterms:           spec.Keyterms,
 		MaxTokens:          spec.MaxTokens,
@@ -705,16 +704,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 
 	if spec.Greeting != "" {
-		// A native model has no way to say exact words, so it is asked to open with the
-		// greeting rather than handed it to read out: what the caller hears is the model's
-		// own rendering of it, which is the only kind of speech such a model has.
-		greet := created.voiceAgent.Say
-		greeting := spec.Greeting
-		if spec.Native() {
-			greet = created.voiceAgent.Prompt
-			greeting = "Open the call by greeting the caller. Say this, in these words or close to them: " + spec.Greeting
-		}
-		if err := greet(ctx, greeting); err != nil {
+		if err := created.voiceAgent.Greet(ctx, spec.Greeting, spec.VaryGreeting); err != nil {
 			created.Close()
 			return nil, stack.Wrap(fmt.Errorf("session: greet: %w", err))
 		}
