@@ -3,6 +3,7 @@ package telnyx
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -288,6 +289,33 @@ func (s *TelnyxSuite) TestAFailureFromTelnyxSaysWhatTelnyxSaid() {
 
 	s.ErrorContains(err, "422")
 	s.ErrorContains(err, "no such number")
+}
+
+func (s *TelnyxSuite) TestARefusalIsAVendorErrorWithTelnyxsCode() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"10015","title":"Invalid value","detail":"no such number"}]}`))
+	}
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("telnyx", vendorErr.Vendor)
+	s.Equal(http.StatusUnprocessableEntity, vendorErr.Status)
+	s.Equal("10015", vendorErr.Code)
+	s.Equal("no such number", vendorErr.Message)
+}
+
+func (s *TelnyxSuite) TestTelnyxNotAnsweringIsAVendorErrorToo() {
+	s.server.Close()
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Zero(vendorErr.Status)
+	s.Error(vendorErr.Cause)
 }
 
 func (s *TelnyxSuite) answer(body string) {
