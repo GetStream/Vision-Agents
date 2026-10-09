@@ -19,10 +19,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/standardwebhooks"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -247,6 +249,38 @@ func (s *LinqChannelSuite) TestAReplyLinqRateLimitsIsSentAgainOnce() {
 	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 }
 
+// AI-990 F28: Linq answering 400 refuses the reply, so it posted nothing: the reply is
+// unclaimed again, and the next hand-off of it sends it.
+func (s *LinqChannelSuite) TestAReplyLinqRefusesIsSentByTheNextHandOff() {
+	s.linq.refuse(1)
+	chat := s.utils.uuid()
+	s.deliver(s.received(chat, s.line, "+12025550199", "Hi"), time.Now())
+	channel := s.threadChannel(chat)
+	s.written(channel, 1)
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.Require().Eventually(func() bool { return s.linq.refusing() == 0 }, settleFor, 10*time.Millisecond, "Linq refused the reply")
+	s.Require().Eventually(func() bool {
+		var claims int
+		s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+			"SELECT count(*) FROM channel_thread_messages WHERE channel_id = ? AND kind = ?", channel, store.ClaimReply).Scan(&claims))
+		return claims == 0
+	}, settleFor, 10*time.Millisecond, "a refused reply is not kept as sent")
+	s.Empty(s.linq.sent())
+	var reply map[string]any
+	for _, stored := range s.chat.Stored(channel) {
+		if stored["user_id"] == channel {
+			reply = stored
+		}
+	}
+	s.Require().NotNil(reply, "the thread channel holds the agent's reply")
+
+	s.bridge.(*channelbridge.Bridge).Reply(conversation.FinishedReply{
+		Customer: s.customerID(), CID: "agent:" + channel, MessageID: reply["id"].(string), Text: "Noted.",
+	})
+
+	s.Equal("Noted.", s.took(1)[0].text)
+}
+
 // received is a message.received of the 2026-02-03 version (events) in chat, to line, from
 // sender, with one text part.
 func (s *LinqChannelSuite) received(chat, line, sender, text string) []byte {
@@ -347,13 +381,14 @@ func (s *LinqChannelSuite) streamDelivers(channel string, index int) int {
 
 // fakeLinq takes replies as Linq's send endpoint does (send): POST
 // /api/partner/v3/chats/{chatId}/messages, a bearer API key, and a message of parts. It answers
-// 200, or 429 for the next calls limit set.
+// 200, or 429 for the next calls limit set, or 400 for the next calls refuse set.
 type fakeLinq struct {
 	server *httptest.Server
 
 	mu       sync.Mutex
 	messages []linqMessage
 	limited  int
+	refused  int
 }
 
 // linqMessage is one message the fake took.
@@ -381,6 +416,11 @@ func (l *fakeLinq) send(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		return
 	}
+	if l.refused > 0 {
+		l.refused--
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 	var sent struct {
 		Message struct {
 			Parts []struct {
@@ -405,6 +445,20 @@ func (l *fakeLinq) limit(n int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.limited = n
+}
+
+// refuse has the next n sends answer 400.
+func (l *fakeLinq) refuse(n int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.refused = n
+}
+
+// refusing is how many more sends answer 400.
+func (l *fakeLinq) refusing() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.refused
 }
 
 func (l *fakeLinq) sent() []linqMessage {
