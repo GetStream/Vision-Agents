@@ -16,7 +16,7 @@ func TestPolicySuite(t *testing.T) {
 
 func (s *PolicySuite) TestFrontmatterSaysHowToCheckAndTheBodyIsThePolicy() {
 	policy, err := Parse(`---
-type: lcm
+type: decision_model
 mode: blocking
 threshold: 0.8
 target: typesafe/jev-latest
@@ -28,7 +28,7 @@ Nothing else.
 `)
 	s.Require().NoError(err)
 
-	s.Equal(KindClassifier, policy.Kind)
+	s.Equal(KindDecisionModel, policy.Kind)
 	s.Equal(ModeBlocking, policy.Mode)
 	s.InDelta(0.8, policy.Threshold, 0.001)
 	s.Equal("typesafe/jev-latest", policy.Target)
@@ -42,7 +42,7 @@ func (s *PolicySuite) TestProseOnItsOwnIsAGuardrail() {
 	policy, err := Parse("Only answer questions about Stream.")
 	s.Require().NoError(err)
 
-	s.Equal(KindClassifier, policy.Kind)
+	s.Equal(KindDecisionModel, policy.Kind)
 	s.Equal(ModeParallel, policy.Mode,
 		"a check that adds no latency is what a voice agent needs by default")
 	s.InDelta(DefaultThreshold, policy.Threshold, 0.001)
@@ -50,8 +50,15 @@ func (s *PolicySuite) TestProseOnItsOwnIsAGuardrail() {
 	s.Equal("Only answer questions about Stream.", policy.Text)
 }
 
+func (s *PolicySuite) TestAFileWrittenBeforeTheRenameStillChecksWithADecisionModel() {
+	policy, err := Parse("---\ntype: lcm\n---\nOnly answer questions about Stream.")
+	s.Require().NoError(err)
+
+	s.Equal(KindDecisionModel, policy.Kind)
+}
+
 func (s *PolicySuite) TestAPolicyWithNothingToJudgeAgainstIsRefused() {
-	_, err := Parse("---\ntype: lcm\n---\n")
+	_, err := Parse("---\ntype: decision_model\n---\n")
 
 	s.ErrorContains(err, "no policy")
 }
@@ -89,7 +96,7 @@ func (s *PolicySuite) TestAWebhookNeedsSomewhereToAsk() {
 func (s *PolicySuite) TestAUrlOnAPolicyThatCallsNothingIsRefused() {
 	// A setting that is present and does nothing is worse than one that is absent: the
 	// file says a server decides, and no server is ever asked.
-	_, err := Parse("---\ntype: lcm\nurl: https://example.test/check\n---\nOnly Stream questions.")
+	_, err := Parse("---\ntype: decision_model\nurl: https://example.test/check\n---\nOnly Stream questions.")
 
 	s.ErrorContains(err, "ignored")
 }

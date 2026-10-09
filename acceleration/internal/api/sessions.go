@@ -582,7 +582,11 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	spec.UserName = override(spec.UserName, request.UserName)
 	spec.AgentID = override(spec.AgentID, request.AgentId)
 	spec.Instructions = override(spec.Instructions, request.Instructions)
-	spec.Greeting = override(spec.Greeting, request.Greeting)
+	if request.Greeting != nil {
+		var mode string
+		spec.Greeting, mode = greetingOf(request.Greeting)
+		spec.VaryGreeting = mode == store.GreetingVariation
+	}
 	spec.Navigating = override(spec.Navigating, request.Navigating)
 	spec.LLMTarget = override(spec.LLMTarget, request.Llm)
 	spec.STTTarget = override(spec.STTTarget, request.Stt)
@@ -695,7 +699,7 @@ func sessionOf(found *session.Session) Session {
 		rendered.Tts = &voice
 	}
 	if think != "" {
-		rendered.ThinkingLlm = &think
+		rendered.Subagent = &think
 	}
 	if speech := found.Speech(); speech != "" {
 		rendered.Sts = &speech

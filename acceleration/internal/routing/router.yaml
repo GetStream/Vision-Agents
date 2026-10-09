@@ -2922,22 +2922,24 @@ search:
 # Typed judgements about a piece of text: a probability that a condition holds, one option
 # out of a named set, a position on a described scale. What a guardrail asks before a reply
 # is spoken, and what a flow controller asks about who holds the floor.
-lcm:
+#
+# Every vendor here answers on the same protocol, TypeSafe's System One, so every model is
+# asked the same questions the same way. Each bills input tokens only and publishes the rate
+# per million, which is what these are. Output tokens are free because there is no
+# generated text to charge for: the answer is a distribution.
+#
+# The language lists are the models' rather than a locale setting: a question and the text
+# it is asked about are both natural language, and no decision model is configured per
+# language. They are declared broadly rather than left at English so a policy written in
+# German is not refused by routing for a reason that has nothing to do with the model.
+decision_model:
   providers:
-    # TypeSafe bill input tokens only and publish the rate per million, which is what this
-    # is. Output tokens are free because there is no generated text to charge for: the
-    # answer is a distribution.
-    #
-    # The language list is the model's rather than a locale setting: a question and the
-    # text it is asked about are both natural language, and Jev is not configured per
-    # language. It is declared broadly rather than left at English so a policy written in
-    # German is not refused by routing for a reason that has nothing to do with the model.
-    #
     # Zero retention and no training are what TypeSafe's terms say for API traffic. Like
     # every other data_policy here this is config rather than fact: it is worth re-reading
     # their terms rather than trusting this line.
     - provider: typesafe
       model: jev-latest
+      description: "TypeSafe's Jev, the model the protocol was written for and every guardrail threshold here was tuned against."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -2946,6 +2948,135 @@ lcm:
         retention: none
       price:
         per_million_input_tokens: 0.042
+
+    # Everything below is reached through OpenRouter's Decisions API with one key, at
+    # OpenRouter's listed rate (openrouter.ai/api/v1/models?output_modalities=decisions,
+    # read 2026-10-09). None declares a data_policy: what happens to a request depends on
+    # the vendor OpenRouter forwards it to, so a customer who asks for a policy is kept
+    # away from all of them rather than promised something nobody checked.
+    #
+    # Jev again, pinned to 1.13: the same model as above on another host, which is the one
+    # failover that keeps a threshold tuned against Jev meaning what it meant.
+    - provider: openrouter
+      model: typesafe/jev-1.13
+      description: "Jev 1.13 through OpenRouter. The same judgements as TypeSafe's own API, on another host."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.042
+
+    - provider: openrouter
+      model: openai/gpt-6-luna-decisions
+      description: "GPT-6 Luna served as a decision model. The fastest on OpenRouter's board, and it reads up to a million tokens."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.10
+
+    # Clef Flash is Cloudflare's 9B decision model, and the most accurate on fine-grained
+    # intents of the five JevStation compared (jevstation.com/decision-models, 2026-10-07).
+    - provider: openrouter
+      model: cloudflare/clef-flash
+      description: "Cloudflare's small decision model. Very quick, and sharp on fine-grained intents."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.021
+
+    - provider: openrouter
+      model: respan/span-01-lite
+      description: "Respan's light decision model, free on OpenRouter."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        free: true
+
+    - provider: openrouter
+      model: liquid/d1
+      description: "Liquid AI's decision model."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.04
+
+    # Clef is the 27B sibling of Clef Flash and tops the Decision Index (Decision Index
+    # 0.2.1, 2026-09-28), at roughly five times Clef Flash's latency and ten times its
+    # price. It is the slower, better judge the accuracy shortcuts below resolve to.
+    - provider: openrouter
+      model: cloudflare/clef
+      description: "Cloudflare's large decision model. The most accurate here, slower and dearer than Clef Flash."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      price:
+        per_million_input_tokens: 0.24
+
+    # Kev 4B reads 8,192 tokens at most, so a long policy and a long turn can overflow it.
+    - provider: openrouter
+      model: jaredpalmer/kev-4b
+      description: "A 4B decision model with a short context: fine for a turn, not for a long policy."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.042
+
+    - provider: openrouter
+      model: perplexity/pplx-decider-v1.1-27b
+      description: "Perplexity's Decider V1.1 through OpenRouter. The cheapest per call of the large decision models."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.02
+
+    - provider: openrouter
+      model: inception/mercury-decide
+      description: "Inception's diffusion-based decision model."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.02
+
+    # The free Mercury Decide is the same model as above on an endpoint OpenRouter caps at
+    # a few requests a minute and a few dozen a day. That is a guardrail that stops
+    # answering a few turns into the day, so it is kept off the live path and is reached
+    # only by naming it.
+    - provider: openrouter
+      model: inception/mercury-decide:free
+      description: "Mercury Decide at no charge, rate limited hard. For trying it, not for a live agent."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: false
+      tier: low-latency
+      price:
+        free: true
+
+    # Perplexity's own Decisions API, at the rate its reference gives
+    # (docs.perplexity.ai/api-reference/decisions-post, read 2026-10-09). It is the only
+    # host left for Decider V1: OpenRouter lists it but no longer has an endpoint behind it.
+    - provider: perplexity
+      model: pplx-decider-v1.1-27b
+      description: "Perplexity's Decider V1.1 on Perplexity's own API."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.02
+
+    - provider: perplexity
+      model: pplx-decider-v1-27b
+      description: "Perplexity's first Decider, kept for thresholds tuned against it. V1.1 is its successor."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.02
 
   aliases:
     en-low-latency:
@@ -2958,21 +3089,22 @@ lcm:
       require_realtime: true
       tier: low-latency
 
-    # The accuracy shortcuts name no tier, which is not the oversight it looks like.
-    # There is one classifier, and asking for the most accurate judgement available has
-    # to resolve to it or the name means nothing here while meaning something everywhere
-    # else. A slower, better judge earns the tier when one exists.
     en-high-accuracy:
       languages: [en]
+      tier: high-quality
 
     multilingual-high-accuracy:
       multilingual: true
+      tier: high-quality
 
     # The shorthand a guardrail gets when nobody said which model should judge. A
-    # judgement on the live path is wanted quickly above all else.
+    # judgement on the live path is wanted quickly above all else, and every threshold in
+    # use was tuned against Jev, so Jev goes first for as long as it is up; the rest of
+    # the fast tier catches it being down.
     classify-fast:
       require_realtime: true
       tier: low-latency
+      prefer: typesafe/jev-latest
 
 # Pictures drawn from a prompt, returned as bytes rather than links and kept by nobody.
 # Every model here is off the live path: a picture takes seconds, not a turn.

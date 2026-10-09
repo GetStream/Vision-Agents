@@ -42,19 +42,26 @@ func (s *SpecSuite) TestAConfigsKeytermsBecomeTheSessions() {
 	s.Equal([]string{"Vision Agents", "Stream"}, spec.Keyterms)
 }
 
-func (s *SpecSuite) TestAConfigsSpeedBecomesTheSessions() {
-	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Speed: 0.9})
+func (s *SpecSuite) TestAConfigsVariedGreetingIsVariedInTheSession() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Greeting: "Hello.", GreetingMode: store.GreetingVariation})
 
-	s.Equal(0.9, spec.Speed)
+	s.Equal("Hello.", spec.Greeting)
+	s.True(spec.VaryGreeting)
+}
+
+func (s *SpecSuite) TestAConfigsExactGreetingIsSaidAsWritten() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Greeting: "Hello.", GreetingMode: store.GreetingExact})
+
+	s.False(spec.VaryGreeting)
 }
 
 func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {
 	spec := FromConfig(store.AgentConfig{
-		CustomerID:   "acme",
-		AgentPlugins: []store.PluginEntry{{Name: "slack"}, {Name: "calendly"}},
+		CustomerID: "acme",
+		Plugins:    []store.PluginEntry{{Name: "slack"}, {Name: "calendly", User: true}},
 	})
 
-	s.Equal([]store.PluginEntry{{Name: "slack"}, {Name: "calendly"}}, spec.AgentPlugins)
+	s.Equal([]store.PluginEntry{{Name: "slack"}, {Name: "calendly", User: true}}, spec.Plugins)
 }
 
 func (s *SpecSuite) TestAConfigsConnectorBindingsBecomeTheSessions() {
@@ -71,9 +78,8 @@ func (s *SpecSuite) TestAConfigsConnectorBindingsBecomeTheSessions() {
 // with the plugin catalog. The binding's alias plays no part.
 func (s *SpecSuite) TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider() {
 	spec := FromConfig(store.AgentConfig{
-		CustomerID:   "acme",
-		AgentPlugins: []store.PluginEntry{{Name: "linear"}, {Name: "calendly"}},
-		UserPlugins:  []store.PluginEntry{{Name: "linear"}, {Name: "gong"}},
+		CustomerID: "acme",
+		Plugins:    []store.PluginEntry{{Name: "linear"}, {Name: "calendly"}, {Name: "gong", User: true}},
 		Connectors: []store.ConnectorBinding{{Name: "tracker", ConnectorID: "linear",
 			Connection: store.ConnectionBinding{Type: selectionSession}}},
 	})
@@ -81,8 +87,7 @@ func (s *SpecSuite) TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider(
 
 	s.Require().NoError(spec.Normalize())
 
-	s.Equal([]store.PluginEntry{{Name: "calendly"}}, spec.AgentPlugins)
-	s.Equal([]store.PluginEntry{{Name: "gong"}}, spec.UserPlugins)
+	s.Equal([]store.PluginEntry{{Name: "calendly"}, {Name: "gong", User: true}}, spec.Plugins)
 }
 
 // TestAVoiceSessionIsKeyedUnderTheAgentIDItNamesBeforeNormalize: KeyedAgentID is what
@@ -115,23 +120,25 @@ func (s *SpecSuite) TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed(
 // is a no-op for a config that binds no connector, down to an empty list staying empty.
 func (s *SpecSuite) TestWithoutABindingThePluginsAreLeftExactlyAsConfigured() {
 	spec := FromConfig(store.AgentConfig{
-		CustomerID:   "acme",
-		AgentPlugins: []store.PluginEntry{{Name: "linear"}, {Name: "slack"}},
-		UserPlugins:  []store.PluginEntry{},
+		CustomerID: "acme",
+		Plugins:    []store.PluginEntry{{Name: "linear"}, {Name: "slack", User: true}},
 	})
 	spec.CallID = "call-1"
+	empty := FromConfig(store.AgentConfig{CustomerID: "acme", Plugins: []store.PluginEntry{}})
+	empty.CallID = "call-2"
 
 	s.Require().NoError(spec.Normalize())
+	s.Require().NoError(empty.Normalize())
 
-	s.Equal([]store.PluginEntry{{Name: "linear"}, {Name: "slack"}}, spec.AgentPlugins)
-	s.NotNil(spec.UserPlugins)
-	s.Empty(spec.UserPlugins)
+	s.Equal([]store.PluginEntry{{Name: "linear"}, {Name: "slack", User: true}}, spec.Plugins)
+	s.NotNil(empty.Plugins)
+	s.Empty(empty.Plugins)
 }
 
 func (s *SpecSuite) TestAPluginOfAnotherProviderStaysBesideABinding() {
 	spec := FromConfig(store.AgentConfig{
-		CustomerID:   "acme",
-		AgentPlugins: []store.PluginEntry{{Name: "slack"}},
+		CustomerID: "acme",
+		Plugins:    []store.PluginEntry{{Name: "slack"}},
 		Connectors: []store.ConnectorBinding{{Name: "slack", ConnectorID: "custom_slack",
 			Connection: store.ConnectionBinding{Type: selectionFixed, ConnectionID: "c1"}}},
 	})
@@ -139,7 +146,7 @@ func (s *SpecSuite) TestAPluginOfAnotherProviderStaysBesideABinding() {
 
 	s.Require().NoError(spec.Normalize())
 
-	s.Equal([]store.PluginEntry{{Name: "slack"}}, spec.AgentPlugins)
+	s.Equal([]store.PluginEntry{{Name: "slack"}}, spec.Plugins)
 }
 
 // A call's transcript goes into the conversation's agent channel, else the agent id's, as

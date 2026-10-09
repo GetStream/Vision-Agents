@@ -56,9 +56,9 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 // A field added to AgentConfig and forgotten here is stored on create and silently
 // dropped on every update after, which reads as a setting that will not save.
 var configColumns = []string{
-	"name", "mode", "stt", "tts", "sts", "voice", "speed", "llm", "subagent",
-	"video_source", "video_max_frames", "search", "instructions", "greeting", "guardrail",
-	"skills", "agent_plugins", "connectors", "user_plugins", "plugin_events", "mcp_servers", "channels", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
+	"name", "mode", "stt", "tts", "sts", "voice", "llm", "subagent",
+	"video_source", "video_max_frames", "search", "instructions", "greeting", "greeting_mode", "guardrail",
+	"skills", "plugins", "connectors", "plugin_events", "mcp_servers", "channels", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
 	"dispatch_incoming_call", "dispatch_text", "episode_cards", "progressive_tools", "sync_hash", "updated_at",
 }
 
@@ -503,17 +503,17 @@ func normalizeConfig(config *AgentConfig) {
 	if config.Mode == "" {
 		config.Mode = AgentModeVoice
 	}
+	if config.GreetingMode == "" {
+		config.GreetingMode = GreetingExact
+	}
 	if config.Skills == nil {
 		config.Skills = []string{}
 	}
-	if config.AgentPlugins == nil {
-		config.AgentPlugins = []PluginEntry{}
+	if config.Plugins == nil {
+		config.Plugins = []PluginEntry{}
 	}
 	if config.Connectors == nil {
 		config.Connectors = []ConnectorBinding{}
-	}
-	if config.UserPlugins == nil {
-		config.UserPlugins = []PluginEntry{}
 	}
 	if config.PluginEvents == nil {
 		config.PluginEvents = []PluginEvent{}

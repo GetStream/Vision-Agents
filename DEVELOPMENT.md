@@ -53,7 +53,7 @@ In `.claude/skills/`. Internal only:
 - `deploy`: shipping `cmd/router` to Stream's hosted environments
 
 Also useful: `router-llm`, `router-stt`, `router-tts`, `router-sts`, `router-search`,
-`router-lcm` (what each router supports), `stt` / `tts` (adding a provider),
+`decision_model` (what each router supports), `stt` / `tts` (adding a provider),
 `new_models` / `integrate_new_models`, the `sdk-*` skills per language, `commit` and `pr`.
 
 ## Specs
@@ -70,7 +70,7 @@ across providers behind one API, plus an agent that joins a call and talks.
 | `api/openapi.yaml` | Source of truth for the HTTP API; clients are generated from it |
 | `cmd/router` | The server. Other `cmd/*` are small CLIs (`agent`, `chat`, `say`, `phone`, ...) |
 | `internal/routing` | Modality-agnostic core: config, registry, selection, failover, stats. `router.yaml` lists models and tiers |
-| `internal/<modality>` | The contract per modality: `llm`, `stt`, `tts`, `sts`, `search`, `lcm`, `imagegen`. Providers live in subfolders |
+| `internal/<modality>` | The contract per modality: `llm`, `stt`, `tts`, `sts`, `search`, `decisionmodel`, `imagegen`. Providers live in subfolders |
 | `internal/<modality>router` | Registers the providers of that modality and runs sessions |
 | `internal/agent` | The conversation loop: transcribe, answer, speak, barge-in. `streamedge/` is the WebRTC transport |
 | `internal/harness`, `internal/session` | Skills, delegation and tools around the model; agent session lifecycle |

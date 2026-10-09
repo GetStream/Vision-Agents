@@ -17,19 +17,14 @@ The directory is the agent, and nothing in `mcp_plugins.py` sets up a plugin. `a
 connects each kind in a different way:
 
 ```yaml
-agent_plugins:  # connected once by the company, on the dashboard
-  - sentry
+plugins:
+  - sentry          # connected once by the company, on the dashboard
   - github
   - hubspot
   - salesforce
-user_plugins:   # connected by each person, in the chat, when the agent needs it
-  - linear
+  - linear          # a person's own: each connects it, in the chat, when the agent needs it
   - google_calendar
-  - google_drive
-  - google_docs
-  - calendly
-  - calcom
-  - slack
+  # google_drive, google_docs, calendly, calcom and slack the same way
 sandbox: daytona  # Blender, built into the router's sandbox for the render skill
 ```
 
@@ -46,7 +41,7 @@ curl -X PUT "$ROUTER/v1/agents/configs/$CONFIG_ID/plugins/google_calendar/client
 ```
 
 The secret is sealed with the router's `auth.kek` and never returned. A sync warns about a
-`user_plugins` entry that still has none, and a user who asks for it is told it is not
+plugin each person connects that still has none, and a user who asks for it is told it is not
 available. A deployment can instead give every agent the same app through the environment:
 
 | Plugin | What the router needs |
@@ -103,7 +98,7 @@ people up. `scopes` replaces that list, say to search private channels and DMs a
 to drop `chat:write` so the agent can only read:
 
 ```yaml
-user_plugins:
+plugins:
   - name: slack
     scopes:
       - search:read.public
@@ -126,10 +121,13 @@ pair `scopes` with `tools` to keep the model from seeing it:
 
 A plugin named by its id alone is reached as the catalog has it, which for Linear is
 `https://mcp.linear.app/mcp` asking for `read` and `write`. Name it with a mapping instead
-to change how it is reached and what its login asks for. Either form goes in either list:
+to change how it is reached and what its login asks for. Whether each person connects their
+own is the catalog's call: a person's own account (Linear, Slack, Calendly, Cal.com and the
+Google apps) is, a company's (Sentry, GitHub, HubSpot, Salesforce, Shopify, Gong) is the app's,
+connected once on the dashboard. `user: true` or `user: false` overrides it:
 
 ```yaml
-user_plugins:
+plugins:
   - name: linear
     readonly: true   # https://mcp.linear.app/mcp/readonly: no tool that writes, asks for read
     scopes: [read]   # replaces the scopes the login asks for
@@ -143,7 +141,7 @@ was granted, so connect the plugin again after changing either.
 does, and offers every tool when none are picked:
 
 ```yaml
-user_plugins:
+plugins:
   - name: calcom
     toolsets: [bookings, availability, event-types]
 ```
@@ -166,7 +164,7 @@ was given. `scopes` must be ones the server advertises; for Drive those are `dri
 `drive.readonly` and `drive.file`:
 
 ```yaml
-user_plugins:
+plugins:
   - name: google_drive
     scopes:
       - https://www.googleapis.com/auth/drive.readonly
@@ -180,7 +178,7 @@ take less context and give the agent less it may do. `tools` takes names or patt
 as `get_*`, works on any plugin and on `mcp_servers`, and needs no new login:
 
 ```yaml
-user_plugins:
+plugins:
   - name: linear
     tools: [list_issues, get_issue, save_comment]
 mcp_servers:
@@ -264,7 +262,7 @@ script prints. The router needs `DAYTONA_API_KEY` for this.
 ## TableJourney: an MCP server the router does not know
 
 Sentry and Google Calendar are in the router's catalog, which is what lets `agent.yaml` name
-them under `agent_plugins` and `user_plugins`. Any other MCP server goes under `mcp_servers`, by
+them under `plugins`. Any other MCP server goes under `mcp_servers`, by
 its URL:
 
 ```yaml
@@ -289,7 +287,7 @@ not). The server says whether it needs an OAuth login, and the router asks it wh
 config is saved: by its `/.well-known/oauth-protected-resource`, or by a 401 that says how
 to authenticate. The answer is the read-only `needs_login`. The app connects such a server
 once, on the dashboard, unless `user: true` has each person connect their own in the chat,
-as `user_plugins` do for the catalog:
+as it does for a catalog plugin:
 
 ```yaml
 mcp_servers:
@@ -313,7 +311,7 @@ so connect again after changing either.
 ## WhatsApp, texting and iMessage: the agent on a phone number
 
 A plugin is an account the agent reads. A channel is somewhere the conversation happens.
-Slack is both, and they are not the same thing: `slack` under `user_plugins` lets the agent
+Slack is both, and they are not the same thing: `slack` under `plugins` lets the agent
 search your workspace; the channels here are a person writing to the agent from their phone.
 
 There is no code for this in the example. The router answers the lines, so it takes three

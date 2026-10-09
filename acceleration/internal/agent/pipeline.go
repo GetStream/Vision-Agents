@@ -648,7 +648,6 @@ func (a *Agent) startVoice(s Settings, failed []string) (*ttsrouter.Session, err
 		Target:        s.TTSTarget,
 		LanguageHints: a.options.LanguageHints,
 		Voice:         s.Voice,
-		Options:       a.voiceOptions(),
 		Failed:        failed,
 	})
 }
@@ -705,16 +704,6 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 		}
 		a.consumeTTS(p, next)
 	}()
-}
-
-// voiceOptions is what the agent asks of its voice beyond a target and a speaker. Speed is
-// only named when it was set, since naming it narrows the voices that may answer.
-func (a *Agent) voiceOptions() options.TTS {
-	if a.options.Speed == 0 {
-		return options.TTS{}
-	}
-	speed := a.options.Speed
-	return options.TTS{Speed: &speed}
 }
 
 func (a *Agent) startListener(target string) (*sttrouter.Session, error) {

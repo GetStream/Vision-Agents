@@ -10,6 +10,7 @@ plugins:
     description: Search the workspace, read and send messages, and look people up.
     url: https://mcp.slack.com/mcp
     auth: oauth
+    user: true
     client_required: true
     # https://docs.slack.dev/authentication/installing-with-oauth/: a redirect URL must be
     # https, so a local router needs a tunnel.
@@ -75,6 +76,7 @@ plugins:
     description: Check availability, create scheduling links, and book meetings.
     url: https://mcp.calendly.com
     auth: oauth
+    user: true
     logo: calendly.svg
     # scopes_supported in its protected-resource metadata, read October 5, 2026.
     scopes_supported:
@@ -96,6 +98,7 @@ plugins:
     description: Manage bookings, event types and schedules.
     url: https://mcp.cal.com/mcp
     auth: oauth
+    user: true
     logo: calcom.svg
     # https://cal.com/docs/mcp-server#toolsets, opened October 5, 2026. get_app_link and
     # search_docs are offered whichever are picked.
@@ -186,6 +189,7 @@ plugins:
     description: Search issues and projects, file new issues, and comment on them.
     url: https://mcp.linear.app/mcp
     auth: oauth
+    user: true
     logo: linear.svg
     # scopes_supported in its protected-resource metadata, read October 5, 2026.
     scopes_supported:
@@ -265,6 +269,7 @@ plugins:
     description: Read calendars, events and free time.
     url: https://calendarmcp.googleapis.com/mcp/v1
     auth: oauth
+    user: true
     client_required: true
     setup_url: https://console.cloud.google.com/auth/clients
     setup_steps:
@@ -310,6 +315,7 @@ plugins:
     description: Search files and folders, and read what is in them.
     url: https://drivemcp.googleapis.com/mcp/v1
     auth: oauth
+    user: true
     client_required: true
     setup_url: https://console.cloud.google.com/auth/clients
     setup_steps:
@@ -346,6 +352,7 @@ plugins:
     description: Read documents and their contents.
     url: https://docsmcp.googleapis.com/mcp/v1
     auth: oauth
+    user: true
     client_required: true
     setup_url: https://console.cloud.google.com/auth/clients
     setup_steps:
@@ -384,6 +391,7 @@ plugins:
     description: Search and read email threads, list labels and drafts.
     url: https://gmailmcp.googleapis.com/mcp/v1
     auth: oauth
+    user: true
     client_required: true
     setup_url: https://console.cloud.google.com/auth/clients
     setup_steps:
