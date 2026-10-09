@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -287,6 +288,49 @@ func (s *SlackChannelSuite) TestAnEventOnlyAPersonsInstallSeesIsNotWritten() {
 
 	s.Equal(http.StatusOK, status)
 	s.nothingLinked()
+}
+
+// AI-989: a thread the bot was mentioned in is linked, and the bot answers there without a
+// mention. A top-level message that mentions nobody, in the same channel, is another thread.
+func (s *SlackChannelSuite) TestAnotherTopLevelMessageInAChannelWithALinkedThreadIsNotWritten() {
+	s.messaged("U0000ALICE", "check the build", "1759740000.003100", "")
+
+	s.deliver(s.event(`{"type":"message","channel":"C0000CHAN","user":"U0000BOB","text":"lunch?",`+
+		`"ts":"1759740000.003200","channel_type":"channel"}`), 0)
+
+	s.Never(func() bool { return s.threadChannels() > 1 }, dropped, 20*time.Millisecond)
+}
+
+// AI-989: connections pinned to revision 3 of slack_bot keep working: its rule answers a
+// channel message without a mention, and does not skip an app's post or an install of a person.
+// Revision 3 is the manifest as shipped before revision 4 (testdata/slack_bot_rev3.yaml).
+func (s *SlackChannelSuite) TestAConnectionPinnedToRevisionThreeStillAnswersAChannelMessageWithoutAMention() {
+	raw, err := os.ReadFile("testdata/slack_bot_rev3.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
+	s.Require().Equal(3, manifest.Revision)
+	_, err = s.store.DB().NewInsert().Model(&store.ConnectorDefinition{
+		CustomerID: store.BuiltinCustomer, ID: manifest.ID, Revision: manifest.Revision, Name: manifest.Name,
+		Category: manifest.Category, Description: manifest.Description, Manifest: manifest, CreatedAt: time.Now().UTC(),
+	}).On("CONFLICT DO NOTHING").Exec(context.Background())
+	s.Require().NoError(err)
+	credentials, err := pgsealed.New(s.store, s.sealer)
+	s.Require().NoError(err)
+	s.Require().NoError(credentials.Update(context.Background(), s.bot, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.DefinitionRevision = 3
+		return true, nil
+	}))
+
+	s.deliver(s.event(`{"type":"message","channel":"C0000CHAN","user":"U0000ALICE","text":"lunch?",`+
+		`"ts":"1759740000.002100","channel_type":"channel"}`), 0)
+	s.written(s.threadChannel("C0000CHAN:1759740000.002100"), 1)
+
+	s.deliver(s.event(`{"type":"message","channel":"C0000CHAN","user":"U0000JUSTIN","app_id":"A0000OTHERAPP","text":"hi",`+
+		`"ts":"1759740000.002200","channel_type":"channel"}`), 0)
+	s.deliver(s.eventFor(`{"type":"message","channel":"D0000PEOPLE","user":"U0000ALICE","text":"x",`+
+		`"ts":"1759740000.002300","channel_type":"im"}`, `{"team_id":"`+s.workspace+`","user_id":"U0000KANAT","is_bot":false}`), 0)
+	s.Never(func() bool { return s.threadChannels() > 1 }, dropped, 20*time.Millisecond)
 }
 
 // AI-989: in a channel the bot answers only a message that mentions it.
