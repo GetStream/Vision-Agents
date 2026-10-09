@@ -16,11 +16,15 @@
 #   [post]      https://docs.slack.dev/reference/methods/chat.postMessage
 #   [revoked]   https://docs.slack.dev/reference/events/tokens_revoked
 #   [uninstalled] https://docs.slack.dev/reference/events/app_uninstalled
+# Opened October 9, 2026:
+#   [format]    https://docs.slack.dev/messaging/formatting-message-text
 id: slack_bot
 # A new revision for any change to what this file says; see AGENTS.md. 2 adds
 # channel.subscriptions, the events an app the router creates subscribes to (T54). 3 adds
-# channel.event_id, which keys a forward to an event destination (AI-924).
-revision: 3
+# channel.event_id, which keys a forward to an event destination (AI-924). 4 (AI-989) reads
+# only events the app's bot install sees, skips a message an app posted with a person's user
+# token, captures bot_user_id, and starts a thread in a channel only on a mention of the bot.
+revision: 4
 name: Slack bot
 category: Communication
 description: Answer people in Slack threads as the workspace's own bot.
@@ -51,6 +55,11 @@ capture:
   - name: team_id
     from: token_response
     path: $.team.id
+  # [install]: the same answer names the bot's own user as bot_user_id, which a mention of
+  # the bot names (messages.addressed).
+  - name: bot_user_id
+    from: token_response
+    path: $.bot_user_id
 # The workspace: one bot token per workspace the app is installed in (T35, «identity = the
 # Slack team»). The bridge finds the connection of an event's workspace by it.
 identity: [team_id]
@@ -96,6 +105,15 @@ channel:
     # twice, and a person's message in a channel the bot is in is already a message event.
     match:
       $.event.type: message
+      # [events]: authorizations «describes one of the installations that this event is
+      # visible to», each with is_bot. An app that a person also installed with user scopes
+      # gets that person's own direct messages with other people as message.im on the same
+      # URL, under the person's install (is_bot false): seen on 2026-10-09, where the bridge
+      # took a direct message between two people as one to the bot. Only an event the bot
+      # install sees is read. The cost: when Slack names the person's install for a direct
+      # message to the bot itself, as it did on the same day, that message is not read
+      # either; the full list is apps.event.authorizations.list, an app-level token's call.
+      $.authorizations[0].is_bot: "true"
     skip_if_present:
       # Messages an app posts carry bot_id ([threads], «such as user or bot_id»), and
       # chat.postMessage answers the bot's own reply with it ([post]), so the bot's replies
@@ -110,6 +128,16 @@ channel:
       # also sends a thread_broadcast reply as a plain message in the thread is not on the
       # page. # unverified
       - $.event.subtype
+      # A message an app posts with a person's user token, such as an agent's
+      # slack_send_message through the slack connector, has no bot_id and no subtype: it is
+      # the person's, with «Sent using <app>» under it. Its event carries the posting app's
+      # app_id; a message a person types in a Slack client carries client_msg_id and no
+      # app_id. Seen on live message events delivered to a slack_bot app on 2026-10-09: four
+      # typed by people, one posted through the slack connector's user token, and three of
+      # the bot's own replies, which carry app_id beside bot_id. Without this rule, two
+      # agents in one channel answer each other's posts forever. That app_id is on every
+      # such post is not on [message] or [post]. # unverified
+      - $.event.app_id
     # [events]: team_id is on the envelope.
     provider_unit_id: $.team_id
     thread_key:
@@ -126,6 +154,17 @@ channel:
     # [message]: «ts is the unique (per-channel) timestamp»; the thread key holds the channel.
     provider_message_id: $.event.ts
     text: $.event.text
+    # In a channel the bot answers a message that mentions it, and then every reply in that
+    # thread; a direct message to the bot is always to it (AI-989, product decision of
+    # 2026-10-09). [format]: «To mention a user, provide their user ID with the following
+    # syntax»: <@U012AB3CD>. app_mention is not read
+    # instead: it needs app_mentions:read and a subscription the installed apps do not have.
+    addressed:
+      # [im]: «Differentiate direct messages from other message.* events by looking for the
+      # event's channel_type field set to "im"».
+      match:
+        $.event.channel_type: im
+      mention: "<@{bot_user_id}>"
   signals:
     # [revoked]: event.tokens.bot lists the bot user ids whose bot tokens were revoked. The
     # connection is the workspace's bot token, so a revoked bot token ends it, and a revoked
