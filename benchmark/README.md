@@ -148,7 +148,7 @@ A maintainer must review the labels in [`calibration/judge.json`](calibration/ju
 ## Methodology
 
 1. **Seed:** A YAML scenario creates known inventory, patient records, or subscriber state.
-2. **Call:** A synthesized caller follows a timed script. Noise tests add kitchen, street, or competing speech at 10 dB SNR.
+2. **Call:** A synthesized caller follows a timed script. Noise tests add kitchen, street, or competing speech at 10 dB SNR. A scenario that needs the agent to act (book, order, reschedule, dispatch) ends with the caller saying "Yes, that's right. Please go ahead.", so an agent that confirms before acting, as it should with a real caller, is answered rather than failed.
 3. **Act:** Every implementation receives the same prompt, tools, data, and caller audio. Each trial uses a new call and empty history.
 4. **Observe:** Voicebench records both legs, tool calls, and final world state. Timing comes from speech energy in the recordings.
 5. **Grade:** Deterministic checks cover state, expected tools and arguments, tool order, and entities. An LLM judge checks policy, coherence, and claims against successful tools. The scripted caller text is the canonical caller transcript for judging; caller STT remains a diagnostic artifact.
