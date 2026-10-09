@@ -3773,7 +3773,7 @@ type ConnectionValidationRequest struct {
 // ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
 type ConnectionValidationStatus string
 
-// Connector A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown, and a custom connector's endpoint. A built-in's endpoints, how an account is recognised, refresh and rate limits stay with the router.
+// Connector A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
 type Connector struct {
 	Category *string `json:"category,omitempty"`
 

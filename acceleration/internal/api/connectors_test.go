@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/url"
@@ -493,11 +494,21 @@ func (s *ConnectorsSuite) TestARefusalNamesTenUsersOfEachKindAndCountsTheRest() 
 		s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(id), &connection))
 		ids = append(ids, connection.ID)
 	}
+	var bound []string
+	for i := range usesNamed + 2 {
+		binding := sessionSlack(fmt.Sprintf("crm%02d", i))
+		binding["connector_id"] = id
+		var config AgentConfig
+		s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
+			map[string]any{"name": fmt.Sprintf("support-%02d-%s", i, s.suffix()), "connectors": []map[string]any{binding}}, &config))
+		bound = append(bound, fmt.Sprintf("%q as crm%02d", config.Name, i))
+	}
 
 	status, failure := s.serverClient.failure(http.MethodDelete, "/v1/agents/connectors/"+id, nil)
 
 	s.Equal(http.StatusConflict, status)
 	s.Equal(id+" is used by connections "+strings.Join(ids[:usesNamed], ", ")+
+		" and 2 more and by agent config bindings "+strings.Join(bound[:usesNamed], ", ")+
 		" and 2 more: delete or unbind them first, or delete with force=true", failure)
 }
 

@@ -4755,7 +4755,7 @@ export type components = {
          * @enum {string}
          */
         readonly ConnectionValidationStatus: "connected" | "pending" | "needs_reauthorization" | "needs_scopes" | "failed";
-        /** @description A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown, and a custom connector's endpoint. A built-in's endpoints, how an account is recognised, refresh and rate limits stay with the router. */
+        /** @description A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router. */
         readonly Connector: {
             readonly category?: string;
             readonly client: components["schemas"]["ConnectorClient"];

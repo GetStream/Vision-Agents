@@ -589,6 +589,47 @@ func (s *StoreSuite) TestAnUnforcedDeleteOfAUsedDefinitionNamesItsUsersAndChange
 	s.NoError(err)
 }
 
+func (s *StoreSuite) TestADeleteOfOneAppsConnectorLeavesAnotherAppsOfTheSameIdAlone() {
+	id := s.crm("acme-app")
+	s.crm("other-app")
+	theirs := s.crmConnection("other-app")
+	their := s.boundConfig("other-app", crmBinding("inbox", ""))
+
+	unforced, err := s.store.DeleteConnectorDefinition(s.ctx, "acme-app", id, false)
+	s.Require().NoError(err, "the other app's uses do not block it")
+	s.Empty(unforced.Uses.Connections)
+	s.Empty(unforced.Uses.Bindings)
+	s.crm("acme-app")
+	mine := s.crmConnection("acme-app")
+	forced, err := s.store.DeleteConnectorDefinition(s.ctx, "acme-app", id, true)
+
+	s.Require().NoError(err)
+	s.Equal([]string{mine.ID}, forced.Uses.Connections)
+	s.Empty(forced.Uses.Bindings)
+	s.Equal([]DeletedConnection{{ID: mine.ID, ConnectorID: id, OwnerType: OwnerApp}}, forced.Connections)
+	_, err = s.store.LatestConnectorDefinition(s.ctx, "other-app", id)
+	s.NoError(err, "the other app's definition is still there")
+	_, err = s.store.ConnectorConnection(s.ctx, "other-app", theirs.ID)
+	s.NoError(err, "and its connection")
+	read, err := s.store.AgentConfig(s.ctx, "other-app", their.ID)
+	s.Require().NoError(err)
+	s.Equal([]ConnectorBinding{crmBinding("inbox", "")}, read.Connectors, "and its binding")
+}
+
+func (s *StoreSuite) TestAGoneConnectionOrConfigDoesNotKeepAnUnforcedDeleteOff() {
+	id := s.crm("acme-app")
+	connection := s.crmConnection("acme-app")
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", connection.ID))
+	config := s.boundConfig("acme-app", crmBinding("inbox", ""))
+	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, "acme-app", config.ID))
+
+	deleted, err := s.store.DeleteConnectorDefinition(s.ctx, "acme-app", id, false)
+
+	s.Require().NoError(err)
+	s.Empty(deleted.Uses.Connections)
+	s.Empty(deleted.Uses.Bindings)
+}
+
 func (s *StoreSuite) TestABindingAloneKeepsAnUnforcedDeleteOff() {
 	id := s.crm("acme-app")
 	s.boundConfig("acme-app", crmBinding("inbox", ""))
@@ -605,6 +646,9 @@ func (s *StoreSuite) TestAForcedDeleteDeletesItsConnectionsAndLeavesTheBindings(
 		"UPDATE connector_connections SET credentials_sealed = 'sealed', credentials_kek_version = 1, status = 'connected' WHERE id = ?", granted.ID)
 	s.Require().NoError(err)
 	pending := s.crmConnection("acme-app")
+	user := s.crmConnection("acme-app")
+	_, err = s.store.DB().ExecContext(s.ctx, "UPDATE connector_connections SET owner_type = 'user', owner_id = 'u1' WHERE id = ?", user.ID)
+	s.Require().NoError(err)
 	config := s.boundConfig("acme-app", crmBinding("crm", granted.ID))
 
 	deleted, err := s.store.DeleteConnectorDefinition(s.ctx, "acme-app", id, true)
@@ -613,8 +657,9 @@ func (s *StoreSuite) TestAForcedDeleteDeletesItsConnectionsAndLeavesTheBindings(
 	s.Equal([]DeletedConnection{
 		{ID: granted.ID, ConnectorID: id, OwnerType: OwnerApp, HadGrant: true},
 		{ID: pending.ID, ConnectorID: id, OwnerType: OwnerApp, HadGrant: false},
+		{ID: user.ID, ConnectorID: id, OwnerType: OwnerUser, HadGrant: false},
 	}, deleted.Connections)
-	for _, gone := range []string{granted.ID, pending.ID} {
+	for _, gone := range []string{granted.ID, pending.ID, user.ID} {
 		_, err = s.store.ConnectorConnection(s.ctx, "acme-app", gone)
 		s.ErrorIs(err, ErrNoConnectorConnection)
 	}

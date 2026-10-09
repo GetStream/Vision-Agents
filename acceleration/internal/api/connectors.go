@@ -85,9 +85,8 @@ func (*ConnectorSetupStep) TransformSchema(_ huma.Registry, schema *huma.Schema)
 
 func (*Connector) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "A connector: an account elsewhere an agent may reach, built in or the " +
-		"app's own. Only what a caller chooses between is shown, and a custom connector's " +
-		"endpoint. A built-in's endpoints, how an account is recognised, refresh and rate " +
-		"limits stay with the router."
+		"app's own. Only what a caller chooses between is shown. Endpoints, how an account is " +
+		"recognised, refresh and rate limits stay with the router."
 	return schema
 }
 

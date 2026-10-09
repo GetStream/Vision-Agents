@@ -168,3 +168,16 @@ func (s *StoreSuite) TestAFixedBindingAConfigStoresReferencesItsConnection() {
 	s.Require().NoError(err)
 	s.True(referenced)
 }
+
+func (s *StoreSuite) TestABindingAddedToACustomConnectorTheCustomerHasNoneOfIsRefused() {
+	s.crm("other-app")
+	config := s.boundConfig("acme-app")
+
+	_, added, err := s.store.AddConnectorBinding(s.ctx, "acme-app", config.ID, crmBinding("inbox", ""))
+
+	s.ErrorIs(err, ErrNoConnectorDefinition)
+	s.False(added)
+	read, err := s.store.AgentConfig(s.ctx, "acme-app", config.ID)
+	s.Require().NoError(err)
+	s.Empty(read.Connectors)
+}
