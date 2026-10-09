@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -37,6 +38,8 @@ type store struct {
 	keyed map[string]App
 	// hooks are the event hooks each api key's app holds, as an app update last set them.
 	hooks map[string][]any
+	// unresolvable are the hosts an app update refuses a webhook hook on; see Unresolvable.
+	unresolvable map[string]bool
 	// asked is every request served, with the key it was made with.
 	asked []Request
 	// held is the request Hold keeps waiting, under a lock of its own: mu is taken only once
@@ -168,6 +171,22 @@ func (s *Server) EventHooks(apiKey string) []getstream.EventHook {
 		s.t.Fatalf("chattest: %v", err)
 	}
 	return hooks
+}
+
+// Unresolvable makes every app update that holds a webhook hook on host fail from now on,
+// unchanged hooks included, as Stream refuses an update holding a hook whose url does not
+// resolve: `phone hooks -remove` of one tunnel's call hook was refused over that same
+// tunnel's message hook, left in the update, with «webhook URL for hook <id> must be a
+// publicly accessible HTTP/HTTPS URL: unable to resolve url …» (UpdateApp's
+// validateHookConfigs, 2026-10-09T13:14Z, AI-990 F22). A host that resolves, such as a
+// stopped ngrok tunnel's, was kept in a later update that Stream took.
+func (s *Server) Unresolvable(host string) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	if s.db.unresolvable == nil {
+		s.db.unresolvable = map[string]bool{}
+	}
+	s.db.unresolvable[host] = true
 }
 
 // Requests are the requests made with an api key, oldest first.
@@ -334,6 +353,19 @@ func (db *store) appFor(r *http.Request) App {
 	return db.app
 }
 
+// unresolvableHook is the url of the first webhook hook in an app update whose host does
+// not resolve, or empty when every one does.
+func (db *store) unresolvableHook(hooks []any) string {
+	for _, hook := range hooks {
+		fields, _ := hook.(map[string]any)
+		address, _ := fields["webhook_url"].(string)
+		if parsed, err := url.Parse(address); err == nil && db.unresolvable[parsed.Hostname()] {
+			return address
+		}
+	}
+	return ""
+}
+
 // messagesIn returns a channel's messages in the order they were written.
 func (db *store) messagesIn(id string) []map[string]any {
 	messages := []map[string]any{}
@@ -386,6 +418,14 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if hooks, ok := body["event_hooks"].([]any); ok {
+			if refused := db.unresolvableHook(hooks); refused != "" {
+				// The status and code are unverified: the refusal was seen only as the Go
+				// client's error text, which carries the message alone.
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "StatusCode": http.StatusBadRequest,
+					"message": "webhook URL for hook must be a publicly accessible HTTP/HTTPS URL: unable to resolve url " + refused})
+				return
+			}
 			db.hooks[r.URL.Query().Get("api_key")] = hooks
 		}
 	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/channeltypes/"):

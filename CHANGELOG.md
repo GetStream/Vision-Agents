@@ -1774,6 +1774,16 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- `phone hooks -remove` works when the tunnel it names is gone. Stream refuses an update of
+  the app's hooks while any hook in it is at a host that does not resolve, and the command
+  dropped a tunnel's call hook and its message hook in two updates, so the first was refused
+  over the second. It now drops both, and points `-url`, in one update. `-remove` can be
+  given more than once, and a refusal says how to drop the hook Stream names. A router with
+  connectors on and `ROUTER_PUBLIC_URL` set now warns at startup, with the command to run,
+  when its own Stream app has no message hook at it: without one a message written in a
+  thread channel is stored and never answered. It only reads the app's hooks. `source` is
+  documented as a reserved custom field on an agent channel: a message that carries it is
+  not answered (AI-990).
 - A voice agent with tools finishes a request that takes several of them while the caller is
   still on the line. A result that called for another tool was given its own sentence, so a
   request with several steps was a hold phrase, a read-back and a model turn per tool, and a
@@ -1793,6 +1803,17 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
   answers, for example, "an agent with this name already exists", and the nine operations
   that can say it document the 409. Any other database failure on those writes is a
   `500 internal_error`, recorded with its stack, rather than a 400 quoting the database.
+- A voice lost part way through a call is replaced. A voice that stopped for good, such as
+  one whose key ran out of quota, left the caller with silence for the rest of the call, and
+  the agent counted as still talking in it: everything the caller said next was queued as
+  talking over it, and every reply was abandoned as interrupted. The agent now lets go of
+  what the lost voice was saying and opens another for the rest of the call, trying the one
+  it lost last, up to three times a call.
+- A caller's turn that waited for the agent to stop talking is stored as said. It was
+  answered without being reported as heard, so the transcript kept the caller's line open
+  and wrote whatever they said next over it.
+- A line typed into a voice call is part of its transcript. It was answered, but never
+  stored, reviewed or logged, so the conversation read back without the caller's half of it.
 - A phone vendor's own error no longer reaches the client. The `/v1/phone/*` endpoints
   answered a Twilio, Telnyx, Bandwidth or Sinch failure with `400 invalid_request` and the
   vendor's full text, which held the vendor account id. The router now logs that text and
