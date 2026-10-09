@@ -29,3 +29,19 @@ func TestScoreWERCountsASubstitution(t *testing.T) {
 		t.Fatalf("wer %v", got.WER)
 	}
 }
+
+func TestClockTimesAreReadAsSpoken(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"Booked for 7:30.", "booked for seven thirty"},
+		{"at 07:05 tonight", "at seven oh five tonight"},
+		{"19:45 works", "seven forty five works"},
+		{"see you at 8:00", "see you at eight"},
+	} {
+		if got := Normalize(c.in); got != c.want {
+			t.Errorf("Normalize(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	if wer := ScoreWER("table at 7:30", "table at seven thirty", true).WER; wer != 0 {
+		t.Fatalf("normalized WER = %v, want 0", wer)
+	}
+}

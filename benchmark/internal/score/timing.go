@@ -92,6 +92,12 @@ type Metrics struct {
 	CallerWER           float64        `json:"caller_wer,omitempty"`
 	CallerWERNormalized float64        `json:"caller_wer_normalized,omitempty"`
 	ExtraTools          []string       `json:"extra_tools,omitempty"`
+	// ArgsRight of ArgsExpected are the expected tool arguments the agent got right; with
+	// RepeatedTools and UnknownTools they say how well the tools were used, without gating.
+	ArgsRight     int      `json:"args_right"`
+	ArgsExpected  int      `json:"args_expected"`
+	RepeatedTools []string `json:"repeated_tools,omitempty"`
+	UnknownTools  []string `json:"unknown_tools,omitempty"`
 
 	// Stages is the router's own account of each caller turn, for the targets that run on
 	// it. It is a diagnostic for our own performance work: LiveKit reports nothing like it.
@@ -606,6 +612,9 @@ func WorldGates(m *Metrics, sc scenario.Scenario, sess *world.Session, agentText
 	m.EntityToolFail = world.EntityInTools(sess.Tools, sc.Entities)
 	m.EntitySpeechFail = EntityInSpeech(agentText, sc.Entities)
 	m.ExtraTools = ExtraToolNames(sess.Tools, sc.ExpectedTools)
+	m.ArgsRight, m.ArgsExpected = world.ArgAccuracy(sess.Tools, sc.ExpectedTools)
+	m.RepeatedTools = world.RepeatedTools(sess.Tools)
+	m.UnknownTools = sess.UnknownTools
 }
 
 // ExtraToolNames are distinct tools the agent called that the scenario did not expect.

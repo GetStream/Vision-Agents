@@ -105,3 +105,15 @@ func TestADigestSaysWhyItsCallsFailed(t *testing.T) {
 		}
 	}
 }
+
+func TestToolUseIsDescribedWithoutFailingTheCall(t *testing.T) {
+	call := CallResult{Outcome: OutcomePass, Passed: true}
+	call.Metrics.ArgsRight, call.Metrics.ArgsExpected = 7, 9
+	call.Metrics.RepeatedTools = []string{"check_availability ×2"}
+	call.Metrics.UnknownTools = []string{"book_table"}
+	detail := LoadCallDetail(call, nil)
+	want := "7 of 9 expected arguments right|called more than once: check_availability ×2|called tools that do not exist: book_table"
+	if got := strings.Join(detail.ToolNotes, "|"); got != want || len(detail.Failures) != 0 {
+		t.Fatalf("tool notes = %q, failures = %v", got, detail.Failures)
+	}
+}
