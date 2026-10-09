@@ -5,6 +5,7 @@ package session
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -384,6 +385,36 @@ func (s *ConnectorLoginSuite) TestACallThroughALoginLeavesOneInvocationRow() {
 	s.Equal("whoami", rows[0].Tool)
 	s.Equal("crm", rows[0].Binding)
 	s.Empty(rows[0].ErrorType)
+}
+
+// TestACallThroughALoginRecordsTheShapeOfTheToolsArguments: the row is the inner tool's
+// arguments, not the {tool, arguments} of the login's call_tool verb; so is a refused one's.
+func (s *ConnectorLoginSuite) TestACallThroughALoginRecordsTheShapeOfTheToolsArguments() {
+	mine := s.pending("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM"}
+	config := s.config(s.chosen("crm", "echo"))
+	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(config, "alice", nil)))
+	s.Require().NoError(err)
+	_, err = s.call(d, "crm__call_tool", `{"tool":"echo"}`)
+	s.Require().NoError(err)
+	s.connect(mine, "primary")
+	_, finished := d.loginFinished(s.ctx, "attempt-alice", mine)
+	s.Require().True(finished)
+	length := 2
+	inner := []store.ArgumentShape{{Name: "note", Type: "string", Length: &length}}
+
+	_, err = s.call(d, "crm__call_tool", `{"tool":"echo","arguments":{"note":"hi"}}`)
+	s.Require().NoError(err)
+	s.rebind(config, s.chosen("crm"))
+	_, err = s.call(d, "crm__call_tool", `{"tool":"echo","arguments":{"note":"hi"}}`)
+
+	s.Require().Error(err)
+	rows := s.invocations(mine, 2)
+	sort.Slice(rows, func(i, j int) bool { return rows[i].ErrorType < rows[j].ErrorType })
+	s.Empty(rows[0].ErrorType)
+	s.Equal(inner, rows[0].Arguments)
+	s.Equal(store.InvocationDenied, rows[1].ErrorType)
+	s.Equal(inner, rows[1].Arguments)
 }
 
 // TestARefusedCallThroughALoginLeavesADeniedRow: the config stopped granting the tool after

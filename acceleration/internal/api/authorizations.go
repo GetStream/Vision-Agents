@@ -724,6 +724,7 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 	}
 	s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
 		store.AuditGrantCreated, store.AuditReasonConsent, committed.Revision, row.ID, change)
+	s.recordClient(ctx, connection.ID, credentials)
 	// A reconnect brings back the MCP event subscriptions its bindings declare, as a validate
 	// does: one a disconnect or a long wait dropped is made again. The consent itself is done,
 	// so a failure here is logged and the next validate tries again.

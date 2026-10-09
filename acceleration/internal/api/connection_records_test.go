@@ -86,6 +86,9 @@ func (s *ConnectionRecordsSuite) TestAModelsToolCallLeavesOneRowInItsConnections
 	s.Equal("echo", calls[0].Tool)
 	s.Equal(opened.Id, calls[0].SessionID)
 	s.Nil(calls[0].ErrorType)
+	// AI-990 F40: the shape of what the model asked, {"text": connectorEchoText}, not its value.
+	length := len(connectorEchoText)
+	s.Equal([]InvocationArgument{{Name: "text", Type: "string", Length: &length}}, calls[0].Arguments)
 }
 
 func (s *ConnectionRecordsSuite) TestAnIncognitoSessionsCallIsLoggedWithoutTheSession() {
@@ -104,6 +107,7 @@ func (s *ConnectionRecordsSuite) TestAnIncognitoSessionsCallIsLoggedWithoutTheSe
 	calls := s.calls(s.serverClient.actingFor(s.client), mine, 1)
 	s.Empty(calls[0].SessionID)
 	s.Equal("echo", calls[0].Tool)
+	s.Empty(calls[0].Arguments, "an incognito call keeps no shape")
 }
 
 func (s *ConnectionRecordsSuite) TestAnotherUsersConnectionsCallsAreNotFound() {
@@ -142,6 +146,28 @@ func (s *ConnectionRecordsSuite) TestStoringACredentialAndDeletingTheConnectionE
 	s.Equal(2, rows[1].Revision)
 	s.Equal(request, rows[1].RequestID)
 	s.Equal(ConnectionOwnerType(store.OwnerApp), rows[1].OwnerType)
+}
+
+// TestAStoredTokenIsNamedByItsFingerprintAndAReplacedOneShowsTheChange (AI-990 F36): a static
+// token's audit row names it by fingerprint, so a replaced token can be told from the one
+// before it. It has no refresh token and no expiry.
+func (s *ConnectionRecordsSuite) TestAStoredTokenIsNamedByItsFingerprintAndAReplacedOneShowsTheChange() {
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections",
+		withScheme(appOwned(s.connector()), bearer.Name), &created))
+	replacement := "replacement-" + s.utils.uuid()
+	path := "/v1/agents/connections/" + created.ID + "/credentials"
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, path,
+		map[string]any{"expected_revision": 1, "values": map[string]string{bearer.SuppliedToken: s.token}}, nil))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, path,
+		map[string]any{"expected_revision": 2, "values": map[string]string{bearer.SuppliedToken: replacement}}, nil))
+
+	rows := s.audit(created.ID, 2)
+	s.Equal(&ConnectorAuditCredential{AccessFingerprint: core.Fingerprint(s.token)}, rows[1].Credential)
+	s.Equal(&ConnectorAuditCredential{
+		AccessFingerprint: core.Fingerprint(replacement), PreviousAccessFingerprint: core.Fingerprint(s.token),
+	}, rows[0].Credential)
 }
 
 func (s *ConnectionRecordsSuite) TestDeletingAConnectionThatNeverHadAGrantLeavesNoRow() {

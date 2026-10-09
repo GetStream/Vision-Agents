@@ -504,3 +504,50 @@ func sameManifest(stored, seeded core.Manifest) (bool, error) {
 	}
 	return bytes.Equal(a, b), nil
 }
+
+// ConnectorConnectionClient is the OAuth client a connection's grant was issued to (AI-990
+// F16), kept in connector_connection_clients
+// (20261011210000_connector_clients_and_argument_shapes.sql) so it is read without unsealing the
+// credentials. A client_id is not a secret (RFC 6749 section 2.2).
+type ConnectorConnectionClient struct {
+	bun.BaseModel `bun:"table:connector_connection_clients,alias:ccc"`
+
+	ConnectionID string                        `bun:"connection_id,pk"`
+	Registration core.ClientRegistrationMethod `bun:"registration,notnull"`
+	ClientID     string                        `bun:"client_id,notnull"`
+	UpdatedAt    time.Time                     `bun:"updated_at,notnull"`
+}
+
+// PutConnectorConnectionClient records the client a consent of the connection used, replacing
+// the one an earlier consent recorded.
+func (s *Store) PutConnectorConnectionClient(ctx context.Context, client *ConnectorConnectionClient) error {
+	if client.ConnectionID == "" || client.ClientID == "" {
+		return stack.Wrap(errors.New("store: a connection client needs a connection and a client id"))
+	}
+	client.UpdatedAt = time.Now().UTC().Truncate(time.Microsecond)
+	_, err := s.db.NewInsert().Model(client).
+		On("CONFLICT (connection_id) DO UPDATE").
+		Set("registration = EXCLUDED.registration, client_id = EXCLUDED.client_id, updated_at = EXCLUDED.updated_at").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: put connection client: %w", err))
+	}
+	return nil
+}
+
+// ConnectorConnectionClients is the recorded client of each of connectionIDs that has one, by
+// connection id. The caller has already scoped the ids to its customer.
+func (s *Store) ConnectorConnectionClients(ctx context.Context, connectionIDs []string) (map[string]ConnectorConnectionClient, error) {
+	byConnection := map[string]ConnectorConnectionClient{}
+	if len(connectionIDs) == 0 {
+		return byConnection, nil
+	}
+	clients := []ConnectorConnectionClient{}
+	if err := s.db.NewSelect().Model(&clients).Where("connection_id IN (?)", bun.In(connectionIDs)).Scan(ctx); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: list connection clients: %w", err))
+	}
+	for _, client := range clients {
+		byConnection[client.ConnectionID] = client
+	}
+	return byConnection, nil
+}

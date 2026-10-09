@@ -96,6 +96,7 @@ from .classify_usage import ClassifyUsage
 from .command_receipt import CommandReceipt
 from .connect_channel_request import ConnectChannelRequest
 from .connection import Connection
+from .connection_client import ConnectionClient
 from .connection_credentials import ConnectionCredentials
 from .connection_credentials_values import ConnectionCredentialsValues
 from .connection_definition_status import ConnectionDefinitionStatus
@@ -209,6 +210,8 @@ from .ingest_knowledge_request import IngestKnowledgeRequest
 from .ingested_knowledge import IngestedKnowledge
 from .input_parts import InputParts
 from .instructions_request import InstructionsRequest
+from .invocation_argument import InvocationArgument
+from .invocation_argument_type import InvocationArgumentType
 from .invocation_error_type import InvocationErrorType
 from .knowledge_document import KnowledgeDocument
 from .knowledge_passage import KnowledgePassage
@@ -351,6 +354,7 @@ from .speech_request import SpeechRequest
 from .speech_request_tags import SpeechRequestTags
 from .spend_bucket import SpendBucket
 from .stats_bucket import StatsBucket
+from .stored_connector_o_auth_client import StoredConnectorOAuthClient
 from .stream_app_state import StreamAppState
 from .stream_check import StreamCheck
 from .stream_credentials import StreamCredentials
@@ -516,6 +520,7 @@ __all__ = (
     "CommandReceipt",
     "ConnectChannelRequest",
     "Connection",
+    "ConnectionClient",
     "ConnectionCredentials",
     "ConnectionCredentialsValues",
     "ConnectionDefinitionStatus",
@@ -627,6 +632,8 @@ __all__ = (
     "IngestedKnowledge",
     "InputParts",
     "InstructionsRequest",
+    "InvocationArgument",
+    "InvocationArgumentType",
     "InvocationErrorType",
     "KnowledgeDocument",
     "KnowledgePassage",
@@ -769,6 +776,7 @@ __all__ = (
     "SpeechRequestTags",
     "SpendBucket",
     "StatsBucket",
+    "StoredConnectorOAuthClient",
     "StreamAppState",
     "StreamCheck",
     "StreamCredentials",

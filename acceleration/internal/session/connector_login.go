@@ -212,16 +212,17 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 	}
 	// Logged as Run logs a call, one row for each, refused or run.
 	started := time.Now()
-	if err := d.recheck(ctx, found); err != nil {
-		d.record(found, started, store.InvocationDenied)
-		return nil, err
-	}
 	arguments := string(asked.Arguments)
 	if arguments == "" || arguments == "null" {
 		arguments = "{}"
 	}
-	parts, failure, err := d.call(ctx, found, llm.ToolCall{ID: call.ID, Name: name, Arguments: arguments})
-	d.record(found, started, failure)
+	run := llm.ToolCall{ID: call.ID, Name: name, Arguments: arguments}
+	if err := d.recheck(ctx, found); err != nil {
+		d.record(found, run, started, store.InvocationDenied)
+		return nil, err
+	}
+	parts, failure, err := d.call(ctx, found, run)
+	d.record(found, run, started, failure)
 	return parts, err
 }
 
