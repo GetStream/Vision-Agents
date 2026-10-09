@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -97,9 +98,6 @@ func demoEOTSettingsFrom(lookup func(string) (string, bool)) (demoEOTSettings, e
 	if eotdefaults.IsHostedDemoOrigin(settings.endpoint) && settings.tokenFile != "" {
 		return demoEOTSettings{}, fmt.Errorf("%s requires a private EOT URL, not the hosted demo endpoint", demoEOTTokenFileVar)
 	}
-	if settings.endpoint == "" && !modeOverrode {
-		settings.mode = agent.EOTModeGate
-	}
 	return settings, nil
 }
 
@@ -107,31 +105,17 @@ func (settings demoEOTSettings) usesHostedDemoClient() bool {
 	return eotdefaults.IsHostedDemoEndpoint(settings.endpoint) && settings.tokenFile == ""
 }
 
-func newDemoEOTClient(_ context.Context, settings demoEOTSettings) (*agent.EOTClient, func(), error) {
+func newDemoEOTClient(settings demoEOTSettings) (*agent.EOTClient, error) {
 	if settings.endpoint == "" {
-		return nil, func() {}, nil
+		return nil, nil
 	}
-	if eotdefaults.IsHostedDemoOrigin(settings.endpoint) {
-		if settings.tokenFile != "" {
-			return nil, nil, fmt.Errorf("%s requires a private EOT URL, not the hosted demo endpoint", demoEOTTokenFileVar)
-		}
-		if !eotdefaults.IsHostedDemoEndpoint(settings.endpoint) {
-			return nil, nil, errors.New("the hosted demo endpoint path must be /v1/eot")
-		}
-		client, err := agent.NewHostedDemoEOTClient()
-		if err != nil {
-			return nil, nil, err
-		}
-		return client, func() {}, nil
+	if settings.usesHostedDemoClient() {
+		return agent.NewHostedDemoEOTClient()
 	}
-	client, err := agent.NewEOTClient(settings.endpoint, settings.tokenFile)
-	if err != nil {
-		return nil, nil, err
-	}
-	return client, func() {}, nil
+	return agent.NewEOTClient(settings.endpoint, settings.tokenFile)
 }
 
-func preflightDemoEOT(ctx context.Context, client *agent.EOTClient) error {
+func preflightDemoEOT(ctx context.Context, client *agent.EOTClient, hosted bool, logger *slog.Logger) error {
 	if client == nil {
 		return nil
 	}
@@ -140,26 +124,12 @@ func preflightDemoEOT(ctx context.Context, client *agent.EOTClient) error {
 	// The minimum accepted window is enough to verify auth, routing and model readiness
 	// without uploading caller audio or inventing pause metadata.
 	_, err := client.Score(preflight, "demo-preflight", make([]byte, 320*2))
+	if hosted && agent.IsTransientEOTError(err) {
+		logger.Warn("hosted EOT preflight is temporarily unavailable; runtime retries remain enabled")
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("EOT preflight failed; check endpoint availability and configuration: %w", err)
 	}
 	return nil
-}
-
-func preflightDemoEOTWithPolicy(ctx context.Context, client *agent.EOTClient, hosted bool, warn func()) error {
-	err := preflightDemoEOT(ctx, client)
-	return handleDemoEOTPreflightError(hosted, err, warn)
-}
-
-func handleDemoEOTPreflightError(hosted bool, err error, warn func()) error {
-	if err == nil {
-		return nil
-	}
-	if hosted && agent.IsTransientEOTError(err) {
-		if warn != nil {
-			warn()
-		}
-		return nil
-	}
-	return err
 }

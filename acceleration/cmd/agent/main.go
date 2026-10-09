@@ -2,8 +2,7 @@
 //
 // It is the demo for all three modalities at once. Every turn goes through the routers, so
 // the same failover, health and billing that a direct API call gets applies to a
-// conversation. The Opus path is cgo, so pkg-config, libopus, libopusfile and libsoxr must
-// be installed to build this.
+// conversation.
 package main
 
 import (
@@ -239,14 +238,11 @@ func run(options options, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	eotClient, closeEOT, err := newDemoEOTClient(ctx, eotSettings)
+	eotClient, err := newDemoEOTClient(eotSettings)
 	if err != nil {
 		return err
 	}
-	defer closeEOT()
-	if err := preflightDemoEOTWithPolicy(ctx, eotClient, eotSettings.usesHostedDemoClient(), func() {
-		logger.Warn("hosted EOT preflight is temporarily unavailable; runtime retries remain enabled")
-	}); err != nil {
+	if err := preflightDemoEOT(ctx, eotClient, eotSettings.usesHostedDemoClient(), logger); err != nil {
 		return err
 	}
 
