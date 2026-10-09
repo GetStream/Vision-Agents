@@ -1,0 +1,67 @@
+id: restaurant.monologue
+pack: restaurant
+category: checklist
+name: A minute of booking details, with thinking pauses
+persona: A caller organising a family birthday dinner who thinks aloud and pauses mid-request.
+max_duration_s: 240
+instructions: Book a patio table for six on Saturday at 7:30 with a peanut allergy, name Alvarez, callback 512-555-0142.
+hold_floor: true
+turns:
+  # About a minute of one caller turn. The pauses are where an endpointer is tempted to call
+  # the turn over; the details are spread so the last one comes at the very end.
+  - id: request
+    segments:
+      - text: "Hi, yes, so I'm calling because it's my mother's seventieth birthday this Saturday, and I really wanted to book something nice for the family."
+        pause_after_ms: 1200
+      - text: "The name for the booking is Alvarez, that's A-L-V-A-R-E-Z."
+        pause_after_ms: 900
+      - text: "We'll be six people, well, five adults and my nephew, who's eight, so we won't need a high chair or anything like that."
+        pause_after_ms: 1500
+      - text: "My aunt is driving in from Austin that afternoon, so we might be a couple of minutes late, I hope that's alright."
+        pause_after_ms: 1100
+      - text: "One really important thing, my sister has a severe peanut allergy, so that absolutely has to be on the ticket."
+        pause_after_ms: 800
+      - text: "We were hoping to sit on the patio if the weather holds, my mother loves sitting outside in the evening."
+        pause_after_ms: 2000
+      - text: "And time-wise, let me think, around 7:30 would be ideal, but nothing earlier than seven."
+        pause_after_ms: 1000
+      - text: "You can reach me at 512-555-0142 if anything changes. That's everything, I think."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  # The agent may confirm before it acts, as it should with a real caller; this is the yes.
+  - id: go_ahead
+    text: "Yes, that's right. Please go ahead."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  slots:
+    - {time: "7:30", patio: true, available: true, capacity: 6}
+    - {time: "8:15", patio: true, available: true, capacity: 6}
+end_state:
+  - path: reservation.party_size
+    eq: 6
+  - path: reservation.allergen
+    eq: peanut
+  - path: reservation.time
+    eq: "7:30"
+expected_tools:
+  - name: check_availability
+    args: {time: "7:30", party_size: 6, patio: true}
+  - name: create_reservation
+    args:
+      time: "7:30"
+      party_size: 6
+      patio: true
+      allergen: peanut
+      name: Alvarez
+      phone: "512-555-0142"
+entities:
+  - {name: last_name, value: Alvarez, in_speech: true, in_tools: true, tool: create_reservation, arg: name}
+  - {name: allergen, value: peanut, in_speech: true, in_tools: true, tool: create_reservation, arg: allergen}
+  - {name: time, value: "7:30", in_speech: true, in_tools: true, tool: create_reservation, arg: time}
+policy:
+  - Let the caller finish. Do not speak while they are still giving details, pauses included.
+  - Allergen must be recorded on the reservation.
+judge:
+  task: The agent waits for the whole request, then books the patio table for six with every detail from the long turn.
+agent_replies:
+  - "Thanks for calling The Copper Spoon, how can I help you?"
+  - "Booked Alvarez, Saturday at 7:30 on the patio for six, peanut allergy on the ticket, callback 512-555-0142."

@@ -208,3 +208,20 @@ func TestProgressSaysWhichCallAndHowItWent(t *testing.T) {
 		t.Fatalf("progress:\n%s\nwant:\n%s", b.String(), want)
 	}
 }
+
+func TestALongTurnPlaysItsSentencesWithThePausesBetween(t *testing.T) {
+	turn := scenario.Turn{ID: "request", Segments: []scenario.Segment{
+		{Text: "first", PauseAfterMS: 500},
+		{Text: "second", PauseAfterMS: 250},
+		{Text: "last", PauseAfterMS: 1000},
+	}}
+	clips := map[string][]int16{"first": {1, 1}, "second": {2}, "last": {3, 3, 3}}
+	pcm := longTurnAudio(turn, clips)
+	// 2 + 500 ms + 1 + 250 ms + 3, and nothing after the last sentence.
+	if want := 2 + 8000 + 1 + 4000 + 3; len(pcm) != want {
+		t.Fatalf("samples = %d, want %d", len(pcm), want)
+	}
+	if pcm[0] != 1 || pcm[2] != 0 || pcm[8002] != 2 || pcm[len(pcm)-1] != 3 {
+		t.Fatal("the sentences should play in order with silence between them")
+	}
+}

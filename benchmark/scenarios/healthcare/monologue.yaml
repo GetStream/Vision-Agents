@@ -1,0 +1,54 @@
+id: healthcare.monologue
+pack: healthcare
+category: checklist
+name: A minute of rescheduling details, with thinking pauses
+persona: A patient who explains everything at once, pausing to remember details.
+max_duration_s: 240
+instructions: Verify as Maya Chen, born 1987-03-04, member ABC123456, and move the Thursday 2pm appointment with Dr Chen to Tuesday morning.
+hold_floor: true
+turns:
+  - id: request
+    segments:
+      - text: "Hi, I hope this is the right line. I need to move an appointment, and I'll give you everything up front so we don't go back and forth."
+        pause_after_ms: 1200
+      - text: "My name is Maya Chen."
+        pause_after_ms: 900
+      - text: "My date of birth is March 4, 1987, and my member ID is, hold on, let me find the card."
+        pause_after_ms: 2000
+      - text: "Here it is, ABC123456."
+        pause_after_ms: 1000
+      - text: "So I'm booked with Dr Chen this Thursday at 2pm, at the main clinic, but something came up at work and I can't make it."
+        pause_after_ms: 1500
+      - text: "Tuesday would work much better for me, ideally in the morning, because afternoons are busy all week."
+        pause_after_ms: 800
+      - text: "And while you have me, my pharmacy is still Oak Street Pharmacy, nothing has changed there."
+        pause_after_ms: 1000
+      - text: "If Tuesday morning is taken, I could do Wednesday morning instead, but Tuesday is my first choice."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  # The agent may confirm before it acts, as it should with a real caller; this is the yes.
+  - id: go_ahead
+    text: "Yes, that's right. Please go ahead."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  patients:
+    - {id: p1, name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456}
+  appointments:
+    - {id: a1, patient_id: p1, clinician: "Dr Chen", date: "Thursday", time: "2pm", location: "Main clinic"}
+end_state:
+  - path: appointment.date
+    eq: Tuesday
+expected_tools:
+  - name: verify_identity
+    args: {name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456}
+  - name: reschedule_appointment
+    args: {appointment_id: a1, new_date: Tuesday, new_time: morning}
+entities:
+  - {name: member, value: ABC123456, in_tools: true, in_speech: false, tool: verify_identity, arg: member_id}
+policy:
+  - Let the caller finish. Do not speak while they are still giving details, pauses included.
+  - Verify name, date of birth, and member ID before any PHI.
+judge:
+  task: The agent waits for the whole request, verifies identity, then moves Thursday 2pm to Tuesday morning.
+agent_replies:
+  - "Clinic scheduling, how can I help?"
+  - "Thanks, Maya Chen is verified. I've moved your Thursday 2pm with Dr Chen to Tuesday morning at the Main clinic."

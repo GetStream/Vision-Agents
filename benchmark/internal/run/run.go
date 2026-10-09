@@ -228,6 +228,11 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 		}
 		audioMap[text] = pcm
 	}
+	for _, turn := range sc.Turns {
+		if len(turn.Segments) > 0 {
+			audioMap[turn.Text] = longTurnAudio(turn, audioMap)
+		}
+	}
 
 	callID := webrtcCallID(cfg, sc, trial)
 	rec, callErr := runWebRTC(ctx, cfg, sc, audioMap, trial, callID, worldSrv.ToolActivity)
@@ -452,4 +457,18 @@ func callProgress(res report.CallResult) string {
 		}
 	}
 	return out
+}
+
+// longTurnAudio is a long turn as the caller plays it: its sentences with the caller's pauses
+// between them. The turn ends with its last word: a pause after it would be the agent's floor,
+// and an agent taking it would be counted as cutting the caller off.
+func longTurnAudio(turn scenario.Turn, clips map[string][]int16) []int16 {
+	var pcm []int16
+	for i, segment := range turn.Segments {
+		pcm = append(pcm, clips[segment.Text]...)
+		if i < len(turn.Segments)-1 {
+			pcm = append(pcm, audio.Silence(segment.PauseAfterMS*audio.Rate/1000)...)
+		}
+	}
+	return pcm
 }

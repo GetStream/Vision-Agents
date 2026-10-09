@@ -564,6 +564,9 @@ func ApplyGates(m *Metrics, sc scenario.Scenario) {
 	if !m.HoldThroughOverlap {
 		notes = append(notes, "hold")
 	}
+	if sc.HoldFloor && m.FalseCutoff > 0 {
+		notes = append(notes, "false_cutoff")
+	}
 	m.GateNotes = notes
 	m.Passed = len(notes) == 0
 }

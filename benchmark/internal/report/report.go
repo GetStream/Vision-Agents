@@ -15,7 +15,7 @@ import (
 
 const SchemaVersion = 3
 const BenchmarkVersion = "0.4.0"
-const MethodologyVersion = "voicebench-live-v4"
+const MethodologyVersion = "voicebench-live-v5"
 
 const KindAgent = "agent"
 const KindSTT = "stt"
@@ -795,6 +795,9 @@ func gateDetails(m score.Metrics) []gateDetail {
 	}
 	if containsNote(m.GateNotes, "hold") {
 		add("hold", []string{"agent did not continue through mid-speech overlap"})
+	}
+	if containsNote(m.GateNotes, "false_cutoff") {
+		add("false_cutoff", []string{fmt.Sprintf("agent started talking %d time(s) while the caller was still in a turn", m.FalseCutoff)})
 	}
 	return out
 }
