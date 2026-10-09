@@ -276,6 +276,7 @@ func readConnectorEvent(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 //	the manifest's verifier                         404 errNoConnectorEvents when not registered
 //	verify                                          401, nothing changed
 //	a challenge                                     200 text/plain, the challenge
+//	each message the manifest skipped -> a debug line naming the rule
 //	each signal -> the connections of its account -> Resolver.Revoke, with when it ended
 //	the messages -> ChannelBridge.Deliver, with app
 //	a provider app's delivery -> eventforward.Forward, queued for the customer's event
@@ -299,6 +300,10 @@ func (s *Server) receiveEvent(w http.ResponseWriter, r *http.Request, body []byt
 	if event.Challenge != "" {
 		writeChallenge(w, event.Challenge)
 		return
+	}
+	// Answered 200 like any verified delivery, so the provider does not send it again.
+	for _, rule := range event.Skipped {
+		s.logger.Debug("skipped a connector event's message", "connector", manifest.ID, "rule", rule)
 	}
 	for _, signal := range event.Signals {
 		if err := s.revokeAccount(r.Context(), manifest, signal, app.CustomerID); err != nil {
