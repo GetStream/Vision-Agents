@@ -59,7 +59,10 @@ func (ConnectorEventForward) Schema(registry huma.Registry) *huma.Schema {
 			"a Slack button click, a reaction or a modal submission, and a message no agent of the app "+
 			"answers: the app's own code next to the router's agent. all: every verified delivery, "+
 			"messages and grant events included, but the provider's URL handshake: the app runs its own "+
-			"agent. Either way a message an agent of the app answers is still answered there.",
+			"agent. Either way a message an agent of the app answers is still answered there. A Slack reply "+
+			"in a thread the agent is not in yet is unhandled when it arrives. If the mention that starts "+
+			"the thread arrives after it, as when Slack retries the mention, the agent answers the reply too. "+
+			"The forward is not taken back, and no event says that the agent answered it.",
 		store.ForwardUnhandled, store.ForwardAll)
 }
 
