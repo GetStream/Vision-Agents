@@ -290,3 +290,20 @@ func (s *StoreSuite) TestTheConfigsThatBindAConnectionAreFound() {
 	s.Equal(first, configs[0].ID)
 	s.Equal(second, configs[1].ID)
 }
+
+func (s *StoreSuite) TestOnlyTheThreadThatWasLinkedIsLinked() {
+	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "C0000CHAN:1"))
+	s.Require().NoError(err)
+
+	for name, ask := range map[string][4]string{
+		"the thread":            {"acme-app", "acme", "T0000TEAM", "C0000CHAN:1"},
+		"another key":           {"acme-app", "acme", "T0000TEAM", "C0000CHAN:2"},
+		"another customer":      {"other-app", "acme", "T0000TEAM", "C0000CHAN:1"},
+		"another connector":     {"acme-app", "other", "T0000TEAM", "C0000CHAN:1"},
+		"another provider unit": {"acme-app", "acme", "T0000OTHER", "C0000CHAN:1"},
+	} {
+		linked, err := s.store.ChannelThreadLinked(s.ctx, ask[0], ask[1], ask[2], ask[3])
+		s.Require().NoError(err, name)
+		s.Equal(name == "the thread", linked, name)
+	}
+}

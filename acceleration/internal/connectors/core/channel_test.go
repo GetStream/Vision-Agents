@@ -137,6 +137,28 @@ func (s *ChannelSuite) TestAnUnknownVerifierKindIsRefusedWithItsField() {
 	s.ErrorContains(err, `channel.verifier.kind: "jwt_set" is not one of [hmac_header secret_header standard_webhooks ed25519]`)
 }
 
+// AI-989: messages.addressed needs a match or a mention, and a mention names captured values.
+func (s *ChannelSuite) TestAnAddressedRuleNeedsAMatchOrAMentionOfACapturedValue() {
+	err := s.variant("    text: $.text\n", "    text: $.text\n    addressed: {}\n")
+	s.ErrorContains(err, "channel.messages.addressed: is empty: it needs a match or a mention")
+
+	err = s.variant("    text: $.text\n", "    text: $.text\n    addressed:\n      mention: \"<@{bot}>\"\n")
+	s.ErrorContains(err, "channel.messages.addressed.mention: {bot} is not a capture rule's name")
+
+	err = s.variant("    text: $.text\n", "    text: $.text\n    addressed:\n      mention: \"@bot\"\n")
+	s.ErrorContains(err, "names no captured value")
+
+	s.NoError(s.variant("    text: $.text\n", "    text: $.text\n    addressed:\n      match:\n        $.kind: direct\n"))
+}
+
+// A block without messages.addressed marshals as it did before the field existed, so a
+// stored built-in is found unchanged (store.sameManifest).
+func (s *ChannelSuite) TestAMessagesBlockWithoutAddressedMarshalsWithoutIt() {
+	raw, err := json.Marshal(s.load("linq"))
+	s.Require().NoError(err)
+	s.NotContains(string(raw), "addressed")
+}
+
 func (s *ChannelSuite) TestAReplyBodyNamingAnUndeclaredInputIsRefused() {
 	err := s.variant(`text: "{text}"`, `text: "{text} {signature}"`)
 	s.ErrorContains(err, "channel.reply.body.text: {signature} is not text, a declared thread key part or provider_unit_id, an input, a vars entry or a captured name")

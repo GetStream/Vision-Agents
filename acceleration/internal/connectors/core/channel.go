@@ -120,13 +120,48 @@ type MessageRule struct {
 	// Text may be absent from a message, such as one that is only a file; the message is
 	// still read, with empty text.
 	Text string `yaml:"text" json:"text"`
+	// Addressed is when a message speaks to the connection's own account, such as its bot in
+	// a channel of people. A message that does not starts no thread: it is answered only on a
+	// thread already linked. Empty: every message does, as before (AI-989).
+	Addressed *AddressRule `yaml:"addressed,omitempty" json:"addressed,omitempty"`
+}
+
+// AddressRule is when a message speaks to the connection's own account: when it has match,
+// or when its text holds mention.
+type AddressRule struct {
+	// Match is values that address a message whatever its text says, compared as exact
+	// strings as messages.match is, such as a direct message.
+	Match map[string]string `yaml:"match,omitempty" json:"match,omitempty"`
+	// Mention is the text that names the account, with {name} placeholders filled from the
+	// connection's captured values, such as Slack's <@{bot_user_id}>. A connection without
+	// one of them is never mentioned.
+	Mention string `yaml:"mention,omitempty" json:"mention,omitempty"`
+}
+
+// Addresses is whether a message this rule read speaks to the connection whose captured
+// values are metadata.
+func (rule MessageRule) Addresses(message ChannelMessage, metadata map[string]string) bool {
+	if rule.Addressed == nil || message.Direct {
+		return true
+	}
+	if rule.Addressed.Mention == "" {
+		return false
+	}
+	complete := true
+	mention := placeholder.ReplaceAllStringFunc(rule.Addressed.Mention, func(match string) string {
+		value := metadata[match[1:len(match)-1]]
+		complete = complete && value != ""
+		return value
+	})
+	return complete && strings.Contains(message.Text, mention)
 }
 
 // IsZero is whether the block declares no messages, so encoding/json (omitzero) and yaml.v3
 // (omitempty) leave it out.
 func (rule MessageRule) IsZero() bool {
 	return rule.Each == "" && len(rule.Match) == 0 && len(rule.SkipIfPresent) == 0 && rule.ProviderUnitID == "" &&
-		len(rule.ThreadKey) == 0 && rule.AuthorID == "" && rule.ProviderMessageID == "" && rule.Text == ""
+		len(rule.ThreadKey) == 0 && rule.AuthorID == "" && rule.ProviderMessageID == "" && rule.Text == "" &&
+		rule.Addressed == nil
 }
 
 // ThreadKeyPart is one named part of a thread key.
@@ -317,6 +352,9 @@ type ChannelEvent struct {
 type ChannelMessage struct {
 	InboundMessage
 	ThreadParts map[string]string
+	// Direct is whether the message has messages.addressed.match, which addresses it
+	// whatever its text says.
+	Direct bool
 }
 
 // ReplyValues is what one reply is sent with.
@@ -481,6 +519,29 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 	}
 	for i, path := range msgs.SkipIfPresent {
 		checkPath(fmt.Sprintf("channel.messages.skip_if_present[%d]", i), path)
+	}
+	if a := msgs.Addressed; a != nil {
+		if len(a.Match) == 0 && a.Mention == "" {
+			fail("channel.messages.addressed", "is empty: it needs a match or a mention")
+		}
+		for _, path := range slices.Sorted(maps.Keys(a.Match)) {
+			checkPath("channel.messages.addressed.match."+path, path)
+			if a.Match[path] == "" {
+				fail("channel.messages.addressed.match."+path, "is empty")
+			}
+		}
+		names, err := placeholderNames(a.Mention)
+		if err != nil {
+			fail("channel.messages.addressed.mention", "%v", err)
+		}
+		if a.Mention != "" && len(names) == 0 {
+			fail("channel.messages.addressed.mention", "%q names no captured value, so it would address every message that holds it", a.Mention)
+		}
+		for _, name := range names {
+			if _, captured := captures[name]; !captured {
+				fail("channel.messages.addressed.mention", "{%s} is not a capture rule's name", name)
+			}
+		}
 	}
 	if msgs.ProviderUnitID != "" {
 		checkPath("channel.messages.provider_unit_id", msgs.ProviderUnitID)
@@ -867,6 +928,17 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ok 
 	if err != nil {
 		return ChannelMessage{}, false, err
 	}
+	direct := false
+	if rule.Addressed != nil && len(rule.Addressed.Match) > 0 {
+		direct = true
+		for _, path := range slices.Sorted(maps.Keys(rule.Addressed.Match)) {
+			value, found, err := readPath(root, path, bound)
+			if err != nil {
+				return ChannelMessage{}, false, err
+			}
+			direct = direct && found && value == rule.Addressed.Match[path]
+		}
+	}
 	return ChannelMessage{
 		InboundMessage: InboundMessage{
 			ProviderUnitID:    unit,
@@ -876,6 +948,7 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ok 
 			ProviderMessageID: id,
 		},
 		ThreadParts: parts,
+		Direct:      direct,
 	}, true, nil
 }
 
