@@ -296,7 +296,8 @@ func (s *ConnectionToolsSuite) TestAConnectionThatNeedsAReconnectSaysSoWithoutAs
 
 // TestATokenTheProviderRefusesMovesTheConnectionToNeedsReauthorization: the MCP server answers
 // 401 invalid_token, nothing renews a static token, so core.Transports invalidates it and the
-// validate reports what the connection now needs.
+// validate reports what the connection now needs: new credentials, not a reconnect (AI-990),
+// with a code a program branches on.
 func (s *ConnectionToolsSuite) TestATokenTheProviderRefusesMovesTheConnectionToNeedsReauthorization() {
 	id := s.connection(bearer.Name)
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, "not-a-token-the-fake-issued"), nil))
@@ -304,7 +305,12 @@ func (s *ConnectionToolsSuite) TestATokenTheProviderRefusesMovesTheConnectionToN
 	validation := s.validate(id)
 
 	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal("The provider rejected the stored token or key; replace it with PUT /v1/agents/connections/{id}/credentials", validation.Error)
 	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), s.get(id).Status)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(s.get(id).Revision, s.token), nil))
+	s.Equal(validationConnected, string(s.validate(id).Status), "a new token is what fixes it")
 }
 
 // TestABare401WhoseRefreshIsRefusedValidatesAsNeedsReauthorization: the MCP server refuses an
@@ -323,6 +329,8 @@ func (s *ConnectionToolsSuite) TestABare401WhoseRefreshIsRefusedValidatesAsNeeds
 	validation := s.validate(id)
 
 	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Empty(validation.Code, "an OAuth grant keeps the answer it had before AI-990")
+	s.Equal("The provider rejected the grant; reconnect the account", validation.Error)
 	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), s.get(id).Status)
 	s.Equal(refreshes+1, s.provider.Refreshes(), "the bare 401 was renewed first")
 }

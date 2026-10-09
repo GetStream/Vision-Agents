@@ -62,8 +62,10 @@ type Consent struct {
 
 // loginReasons are why a session binding was left out that a login in the conversation
 // fixes. Every other reason stays as it was: a shared conversation or an unverified caller
-// has nobody to log in as.
-var loginReasons = []string{unavailableNoSelection, unavailableReauthorize}
+// has nobody to log in as. A rejected token or key is offered as a login too, whose tools
+// begin no consent and tell the model it must be replaced (credentialRejected), and which
+// opens once it was (AI-990).
+var loginReasons = []string{unavailableNoSelection, unavailableReauthorize, unavailableCredentialRejected}
 
 // logins are a dispatcher's bindings waiting for their person to log in, by alias, and how
 // it asks them to.
@@ -91,6 +93,9 @@ type logins struct {
 // opened on the connection they logged into.
 type login struct {
 	binding store.ConnectorBinding
+	// rejected is a chosen connection whose token or key the provider rejected
+	// (unavailableCredentialRejected): no consent fixes it, so none is begun.
+	rejected bool
 
 	mu sync.Mutex
 	// connectionID is the connection the consents are for, empty before the first one when
@@ -137,7 +142,8 @@ func (m *Manager) offerLogin(spec Spec, binding store.ConnectorBinding, reason, 
 		d.logins = &logins{byAlias: map[string]*login{}, consents: m.options.Connectors.Consents,
 			open: m.openBinding, logger: m.logger}
 	}
-	d.logins.byAlias[binding.Name] = &login{binding: binding, connectionID: selection}
+	d.logins.byAlias[binding.Name] = &login{binding: binding, connectionID: selection,
+		rejected: reason == unavailableCredentialRejected}
 	d.tools = append(d.tools, loginTools(binding.Name)...)
 	return true
 }
@@ -289,7 +295,13 @@ func connectedSince(now, before *time.Time) bool {
 // the config no longer declares as the caller's own begins no consent. A second call in the
 // reply that already shows a consent still open reuses it rather than begin another.
 func (d *dispatcher) askToLogIn(ctx context.Context, l *login) string {
-	if !d.stillWaits(ctx, l.binding) || d.logins.canAsk == nil || !d.logins.canAsk(d.spec.Caller.UserID) {
+	if !d.stillWaits(ctx, l.binding) {
+		return loginUnavailable(l.binding.Name)
+	}
+	if l.rejected {
+		return credentialRejected(l.binding.Name)
+	}
+	if d.logins.canAsk == nil || !d.logins.canAsk(d.spec.Caller.UserID) {
 		return loginUnavailable(l.binding.Name)
 	}
 	if last := l.last; last.AuthorizationID != "" && time.Now().Before(last.ExpiresAt) &&
@@ -358,6 +370,20 @@ func loginRequired(name string) string {
 // authorizationRequired is the status a waiting binding's tools answer with until the person
 // logs in, the word a user plugin's do (plugins.AuthorizationRequired).
 const authorizationRequired = "authorization_required"
+
+// credentialRejected is what the model reads for a connection whose token or key the provider
+// rejected: nobody can log in to fix it here, whoever set it up must replace it.
+func credentialRejected(alias string) string {
+	raw, _ := json.Marshal(struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}{
+		Status: unavailableCredentialRejected,
+		Message: fmt.Sprintf("%s rejected the token or key stored for the user's connection, so it cannot be used "+
+			"until whoever set it up replaces it. Tell the user that; do not offer to connect it here.", alias),
+	})
+	return string(raw)
+}
 
 // loginUnavailable is what the model reads when nobody can be asked to log in here.
 func loginUnavailable(alias string) string {
