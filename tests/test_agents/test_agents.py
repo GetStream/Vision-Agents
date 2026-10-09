@@ -250,6 +250,25 @@ class DummyAvatar(Avatar):
     async def close(self) -> None: ...
 
 
+class ConnectingAvatar(DummyAvatar):
+    """Avatar whose provider sends audio while the avatar is still connecting."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.audio_queued_after_start = 0.0
+
+    async def start(self) -> None:
+        silence = PcmData(
+            samples=np.zeros(960, dtype=np.int16),
+            sample_rate=48000,
+            format="s16",
+            channels=1,
+        )
+        await self._audio_output.send(AudioOutputChunk(data=silence))
+        await asyncio.sleep(0.1)
+        self.audio_queued_after_start = self._audio_output.buffered
+
+
 class TestAgent:
     async def test_bare_final_marker_drains_output_track(self):
         # A bare end-of-turn marker (AudioOutputChunk with final=True but no data)
@@ -668,6 +687,18 @@ class TestAgent:
         avatar.metrics.on_llm_response(input_tokens=7)
         assert agent.metrics.llm_input_tokens__total.value() == 7
         assert agent._video_track is avatar.video_output()
+
+    async def test_avatar_audio_sent_while_connecting_is_not_queued(self, call: Call):
+        avatar = ConnectingAvatar()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            avatar=avatar,
+        )
+        async with agent.join(call, participant_wait_timeout=0):
+            assert avatar.audio_queued_after_start == 0
 
     async def test_publish_video_true_with_avatar_false_without(self):
         agent_with = Agent(

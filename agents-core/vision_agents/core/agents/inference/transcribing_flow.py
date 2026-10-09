@@ -538,6 +538,7 @@ class TranscribingInferenceFlow(InferenceFlow):
                         if remainder:
                             async for chunk in self._tts.send_iter(remainder):
                                 await tts_output.send(chunk)
+                        await tts_output.send(TTSOutputEnd())
                     elif item.delta:
                         # Chunk: accumulate and emit on sentence boundaries.
                         text = self._tts_tokenizer.update(item.text)
@@ -551,17 +552,26 @@ class TranscribingInferenceFlow(InferenceFlow):
                     if isinstance(item, TTSInput) and not item.delta:
                         async for chunk in self._tts.send_iter(item.text):
                             await tts_output.send(chunk)
+                        await tts_output.send(TTSOutputEnd())
 
     async def write_audio_output(
         self,
         tts_output: Stream[TTSOutputChunk | TTSOutputEnd],
         audio_output: AudioOutputStream,
     ):
+        # A streaming TTS speaks one reply as several segments, and each segment
+        # ends with a chunk where final=True.
+        # TTSOutputEnd is the only signal that the complete reply was synthesized,
+        # and it triggers AudioOutputChunk.final for downstream consumers.
         speaking = False
         async for item in tts_output:
             with log_exceptions(logger, "Error while processing TTS output"):
                 if isinstance(item, TTSOutputEnd):
                     if speaking:
+                        # An interrupt discards the audio already queued, so
+                        # there is no complete reply to mark.
+                        if not item.interrupted:
+                            await audio_output.send(AudioOutputChunk(final=True))
                         self.events.send(
                             AgentTurnEndedEvent(interrupted=item.interrupted)
                         )
@@ -570,9 +580,4 @@ class TranscribingInferenceFlow(InferenceFlow):
                 if not speaking:
                     self.events.send(AgentTurnStartedEvent())
                     speaking = True
-                await audio_output.send(
-                    AudioOutputChunk(data=item.data, final=item.final)
-                )
-                if item.final:
-                    self.events.send(AgentTurnEndedEvent())
-                    speaking = False
+                await audio_output.send(AudioOutputChunk(data=item.data))

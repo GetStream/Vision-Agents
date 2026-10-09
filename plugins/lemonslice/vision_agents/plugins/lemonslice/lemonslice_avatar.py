@@ -15,7 +15,7 @@ from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 from .lemonslice_client import LemonSliceClient
-from .lemonslice_rtc_manager import LemonSliceRTCManager
+from .lemonslice_rtc_manager import StreamRTCManager
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def _task_done_callback(task: asyncio.Task[None]) -> None:
 class LemonSliceAvatar(Avatar):
     """LemonSlice avatar video and audio publisher.
 
-    Sends TTS audio to LemonSlice over LiveKit and receives synchronized
+    Sends TTS audio to LemonSlice over a Stream call and receives synchronized
     avatar video and audio back.
 
     For standard LLMs: LemonSlice provides both video and audio.
@@ -48,14 +48,16 @@ class LemonSliceAvatar(Avatar):
         agent_prompt: str | None = None,
         idle_timeout: int | None = None,
         api_key: str | None = None,
-        base_url: str | None = None,
-        livekit_url: str | None = None,
-        livekit_api_key: str | None = None,
-        livekit_api_secret: str | None = None,
+        api_url: str | None = None,
+        stream_api_key: str | None = None,
+        stream_api_secret: str | None = None,
+        stream_call_type: str = "default",
         width: int = 1280,
         height: int = 720,
         fps: int = 30,
         buffer_seconds: float = 1.0,
+        avatar_join_timeout: float = 30.0,
+        lemonslice_properties: dict[str, Any] | None = None,
     ):
         """Initialize the LemonSlice avatar publisher.
 
@@ -65,15 +67,28 @@ class LemonSliceAvatar(Avatar):
             agent_prompt: Prompt describing the agent's persona.
             idle_timeout: Seconds before an idle session is closed.
             api_key: LemonSlice API key. Uses LEMONSLICE_API_KEY env var if not provided.
-            base_url: LemonSlice API base URL override.
-            livekit_url: LiveKit server URL. Uses LIVEKIT_URL env var if not provided.
-            livekit_api_key: LiveKit API key. Uses LIVEKIT_API_KEY env var if not provided.
-            livekit_api_secret: LiveKit API secret. Uses LIVEKIT_API_SECRET env var if not provided.
+            api_url: Full URL of the LemonSlice session creation endpoint.
+            stream_api_key: Stream API key. Uses STREAM_API_KEY env var if not provided.
+            stream_api_secret: Stream API secret. Uses STREAM_API_SECRET env var if not provided.
+            stream_call_type: Stream call type controlling the default feature set and
+                per-role permissions for the call. The built-in "default" type is meant
+                for 1:1/group video+audio calls: it enables audio, video, screensharing,
+                recording, HLS broadcasting, transcription and ringing, and gives
+                admins/hosts elevated permissions over regular participants.
+                If you pass a custom call type, it must grant the `call_member` role
+                the `join-call`, `read-call`, `send-audio`, and `send-video`
+                capabilities — the plugin and avatar users are attached as members
+                with that role so they can join regardless of the type's default
+                user-role grants.
             width: Output video width in pixels.
             height: Output video height in pixels.
             fps: Output video frame rate. Must be > 0.
             buffer_seconds: Max video buffer depth in seconds. Caps how many frames
                 can be queued ahead of audio playback. Must be > 0.
+            avatar_join_timeout: Seconds to wait for the avatar participant to join
+                the call before failing the connection.
+            lemonslice_properties: Extra fields added to the LemonSlice session
+                creation request.
         """
         super().__init__()
         if buffer_seconds <= 0:
@@ -84,23 +99,25 @@ class LemonSliceAvatar(Avatar):
         agent_image_url = agent_image_url or os.getenv("LEMONSLICE_AGENT_IMAGE_URL")
 
         client_kwargs: dict[str, Any] = {
+            "lemonslice_properties": lemonslice_properties,
             "agent_id": agent_id,
             "agent_image_url": agent_image_url,
             "agent_prompt": agent_prompt,
             "idle_timeout": idle_timeout,
             "api_key": api_key,
         }
-        if base_url is not None:
-            client_kwargs["base_url"] = base_url
+        if api_url is not None:
+            client_kwargs["api_url"] = api_url
 
         self._client = LemonSliceClient(**client_kwargs)
-        self._rtc_manager = LemonSliceRTCManager(
+        self._rtc_manager = StreamRTCManager(
             on_video=self._on_video_frame,
             on_audio=self._on_audio_frame,
             on_disconnect=self._on_disconnect,
-            livekit_url=livekit_url,
-            livekit_api_key=livekit_api_key,
-            livekit_api_secret=livekit_api_secret,
+            stream_api_secret=stream_api_secret,
+            stream_api_key=stream_api_key,
+            stream_call_type=stream_call_type,
+            avatar_join_timeout=avatar_join_timeout,
         )
         self._sync = AVSynchronizer(
             width=width,
@@ -158,8 +175,9 @@ class LemonSliceAvatar(Avatar):
                     await self._end_turn()
 
             elif isinstance(item, AudioOutputFlush):
-                # Audio was interrupted
-                await self._end_turn()
+                # Audio was interrupted. No end-of-utterance here: interrupt()
+                # discards the buffered audio, so a PTS covering it would point
+                # the avatar at audio that never arrives.
                 await self._sync.flush()
                 await self._rtc_manager.interrupt()
 
@@ -171,8 +189,12 @@ class LemonSliceAvatar(Avatar):
         await self._rtc_manager.connect(credentials)
         try:
             await self._client.create_session(
-                credentials.livekit_url, credentials.livekit_token
+                call_id=credentials.call_id,
+                call_type=credentials.call_type,
+                token=credentials.avatar_token,
+                api_key=credentials.api_key,
             )
+            await self._rtc_manager.wait_for_avatar()
         except Exception:
             await self._rtc_manager.close()
             raise

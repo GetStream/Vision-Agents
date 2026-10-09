@@ -544,6 +544,16 @@ class Agent:
                 with self.span("edge.publish_tracks"):
                     await self.edge.publish_tracks(audio_track, video_track)
 
+            # Play the output before the avatar starts. Its provider can send
+            # audio (e.g. idle silence) as soon as it connects; audio queued until
+            # the output plays would delay all later audio behind the video.
+            if self.publish_audio:
+                self._audio_producer_task = asyncio.create_task(
+                    self._produce_audio_output()
+                )
+            if self.avatar is not None:
+                await self.avatar.start()
+
             # Setup chat and connect it to transcript events
             self.conversation = await self.edge.create_conversation(
                 call, self.agent_user, self.instructions.full_reference
@@ -562,10 +572,6 @@ class Agent:
             self._audio_consumer_task = asyncio.create_task(
                 self._consume_incoming_audio()
             )
-            if self.publish_audio:
-                self._audio_producer_task = asyncio.create_task(
-                    self._produce_audio_output()
-                )
 
             # Start metrics broadcast if enabled
             if self._broadcast_metrics:
@@ -696,7 +702,9 @@ class Agent:
         )
 
     async def _start_components(self) -> None:
-        """Start all components concurrently; abort the agent if any fails.
+        """Start all components except the avatar concurrently; abort the agent if any fails.
+
+        The avatar starts later in ``join()``, after the agent's output plays.
 
         Errors are logged with the failing component's name and re-raised; in
         flight siblings are cancelled and awaited so we don't leak orphan
@@ -711,7 +719,11 @@ class Agent:
             ):
                 await component.start()
 
-        tasks = [asyncio.create_task(_safe_start(c)) for c in self._get_components()]
+        tasks = [
+            asyncio.create_task(_safe_start(c))
+            for c in self._get_components()
+            if c is not self.avatar
+        ]
         try:
             await asyncio.gather(*tasks)
         except BaseException:

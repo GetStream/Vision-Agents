@@ -33,6 +33,8 @@ class Avatar(Component):
         - ``attach_audio_input(stream)`` is called during ``Agent.__init__``.
         - ``start()`` is called during ``Agent.join()`` to open the
           provider connection and begin consuming the input stream.
+          The agent publishes its tracks and starts to play ``audio_output()``
+          before it, so output the provider sends at once is played live.
         - ``close()`` is called during ``Agent.close()`` for teardown.
         - ``interrupt()`` may be called at any time to stop the in-flight
           utterance at the provider.

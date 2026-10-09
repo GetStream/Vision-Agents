@@ -8,6 +8,7 @@ import av
 import av.frame
 from aiortc.mediastreams import MediaStreamError
 from getstream.video.rtc.track_util import PcmData
+from PIL import Image, ImageDraw, ImageFont
 from vision_agents.core.agents.inference import AudioOutputChunk, AudioOutputStream
 from vision_agents.core.utils.video_track import (
     QueuedVideoTrack,
@@ -23,6 +24,22 @@ logger = logging.getLogger(__name__)
 # overrides next_timestamp() to honor its configured fps using these constants.
 _VIDEO_CLOCK_RATE = 90000
 _VIDEO_TIME_BASE = fractions.Fraction(1, _VIDEO_CLOCK_RATE)
+
+
+def _loading_frame(width: int, height: int) -> av.VideoFrame:
+    image = Image.new("RGB", (width, height), color=(18, 18, 20))
+    # Large text with a thick stroke stays readable after video encoding and
+    # after the viewer scales the frame down.
+    ImageDraw.Draw(image).text(
+        (width / 2, height / 2),
+        "Waiting for video...",
+        fill=(245, 245, 245),
+        font=ImageFont.load_default(size=height // 12),
+        anchor="mm",
+        stroke_width=max(1, height // 720),
+        stroke_fill=(245, 245, 245),
+    )
+    return av.VideoFrame.from_image(image)
 
 
 class AVSynchronizer:
@@ -90,6 +107,8 @@ class _SyncedVideoTrack(QueuedVideoTrack):
         self._pending: collections.deque[tuple[float, av.VideoFrame]] = (
             collections.deque(maxlen=max_queue_size)
         )
+        # Shown until the avatar's first frame is released.
+        self.last_frame = _loading_frame(self.width, self.height)
 
     async def add_frame(self, frame: av.VideoFrame) -> None:
         """Queue a frame, delayed by the current audio buffer depth."""

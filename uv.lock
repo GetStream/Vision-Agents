@@ -2804,35 +2804,6 @@ wheels = [
 ]
 
 [[package]]
-name = "livekit-api"
-version = "1.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "livekit-protocol" },
-    { name = "protobuf" },
-    { name = "pyjwt" },
-    { name = "types-protobuf" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f8/03/00e0ec173f247e1f7ea63cb5591d5680a64c7a74ea4d5d558e5aed6cc399/livekit_api-1.1.1.tar.gz", hash = "sha256:70c7b80eecbc297b40756ebd76e4f52d00b0348fb7d212a21c1f69cc57fd9c83", size = 15196, upload-time = "2026-06-24T01:36:19.686Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/c0/d5f3ff74ab5db2d06f173801ec934885d11a754b9fb9ad768c8ede0a6c89/livekit_api-1.1.1-py3-none-any.whl", hash = "sha256:ce8c327676c366e66cf68782934368dd0ba92b9d48f578275227e255c890fe88", size = 19471, upload-time = "2026-06-24T01:36:18.42Z" },
-]
-
-[[package]]
-name = "livekit-protocol"
-version = "1.1.18"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "protobuf" },
-    { name = "types-protobuf" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e7/88/64f2be01a630e249f1dbd0d51876f109b53b7899ae41246d2ca5b647086d/livekit_protocol-1.1.18.tar.gz", hash = "sha256:187af32ebf75333a62117b0db9e551c99060bd4e1f57cfc0fce73bcd7a671da8", size = 115802, upload-time = "2026-06-27T15:31:04.102Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/80/9cc33e4d0280132538850aaf9559d6b8aa9e670c5917f75dab996400ab84/livekit_protocol-1.1.18-py3-none-any.whl", hash = "sha256:30c539410fd3cfc2e551ca3a193aaaaacaaec6dd57dabe2c9be7c7c7d15f0e01", size = 143134, upload-time = "2026-06-27T15:31:02.686Z" },
-]
-
-[[package]]
 name = "llvmlite"
 version = "0.47.0"
 source = { registry = "https://pypi.org/simple" }
@@ -7094,8 +7065,6 @@ name = "vision-agents-plugins-lemonslice"
 source = { editable = "plugins/lemonslice" }
 dependencies = [
     { name = "httpx" },
-    { name = "livekit" },
-    { name = "livekit-api" },
     { name = "vision-agents" },
 ]
 
@@ -7108,8 +7077,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1,<1" },
-    { name = "livekit", specifier = ">=1.1.2,<2" },
-    { name = "livekit-api", specifier = ">=1.1.0,<2" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

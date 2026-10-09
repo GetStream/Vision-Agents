@@ -1,5 +1,6 @@
 import logging
 from os import getenv
+from typing import Any
 
 import httpx
 
@@ -7,7 +8,7 @@ from .exceptions import LemonSliceSessionError
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BASE_URL = "https://lemonslice.com/api/liveai"
+DEFAULT_API_URL = "https://lemonslice.com/api/liveai/sessions"
 
 
 class LemonSliceClient:
@@ -24,7 +25,8 @@ class LemonSliceClient:
         agent_prompt: str | None = None,
         idle_timeout: int | None = None,
         api_key: str | None = None,
-        base_url: str = DEFAULT_BASE_URL,
+        api_url: str = DEFAULT_API_URL,
+        lemonslice_properties: dict[str, Any] | None = None,
     ):
         """Initialize the LemonSlice client.
 
@@ -34,7 +36,8 @@ class LemonSliceClient:
             agent_prompt: Prompt influencing avatar expressions and movements.
             idle_timeout: Session timeout in seconds.
             api_key: LemonSlice API key. Uses LEMONSLICE_API_KEY env var if not provided.
-            base_url: LemonSlice API base URL.
+            api_url: Full URL of the LemonSlice session creation endpoint.
+            lemonslice_properties: Extra fields added to the session creation payload.
         """
         if not agent_id and not agent_image_url:
             raise ValueError("Either agent_id or agent_image_url must be provided.")
@@ -50,9 +53,11 @@ class LemonSliceClient:
         self._agent_image_url = agent_image_url
         self._agent_prompt = agent_prompt
         self._idle_timeout = idle_timeout
+        self._lemonslice_properties = lemonslice_properties or {}
+        self._api_url = api_url
         self._session_id: str | None = None
         self._http_client = httpx.AsyncClient(
-            base_url=base_url,
+            timeout=120,
             headers={
                 "X-API-Key": self._api_key,
                 "Content-Type": "application/json",
@@ -63,21 +68,28 @@ class LemonSliceClient:
     def session_id(self) -> str | None:
         return self._session_id
 
-    async def create_session(self, livekit_url: str, livekit_token: str) -> str:
+    async def create_session(
+        self, call_id: str, call_type: str, token: str, api_key: str
+    ) -> str:
         """Create a new LemonSlice avatar session.
 
         Args:
-            livekit_url: LiveKit server URL for the avatar to connect to.
-            livekit_token: LiveKit access token for the avatar participant.
+            call_id: Stream call ID the avatar should join.
+            call_type: Stream call type (e.g. "default").
+            token: Stream access token for the avatar participant.
+            api_key: Stream API key.
 
         Returns:
             The created session ID.
         """
         payload: dict[str, object] = {
-            "transport_type": "livekit",
+            **self._lemonslice_properties,
+            "transport_type": "stream",
             "properties": {
-                "livekit_url": livekit_url,
-                "livekit_token": livekit_token,
+                "call_id": call_id,
+                "call_type": call_type,
+                "token": token,
+                "api_key": api_key,
             },
         }
 
@@ -90,9 +102,9 @@ class LemonSliceClient:
         if self._idle_timeout is not None:
             payload["idle_timeout"] = self._idle_timeout
 
-        response = await self._http_client.post("/sessions", json=payload)
+        response = await self._http_client.post(self._api_url, json=payload)
 
-        if response.status_code != 201:
+        if response.status_code >= 400:
             raise LemonSliceSessionError(
                 f"Failed to create session: {response.status_code} - {response.text}",
                 status_code=response.status_code,
