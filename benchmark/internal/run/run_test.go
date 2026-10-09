@@ -83,7 +83,7 @@ func TestBuildManifestAcceleratedDefaults(t *testing.T) {
 	if manifest.TargetTTS != "elevenlabs/eleven_v4_turbo" {
 		t.Fatalf("tts %q", manifest.TargetTTS)
 	}
-	if manifest.TargetModel != "cerebras/gemma-4-31b" || manifest.TargetLLM != "cerebras/gemma-4-31b" {
+	if manifest.TargetModel != "gemma/gemma-4-26B-A4B-it" || manifest.TargetLLM != "gemma/gemma-4-26B-A4B-it" {
 		t.Fatalf("model %q llm %q", manifest.TargetModel, manifest.TargetLLM)
 	}
 	if manifest.TargetSubagent != "openai/gpt-6.1-sol" {

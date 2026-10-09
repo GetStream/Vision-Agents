@@ -26,7 +26,9 @@ env:
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
   GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
   INWORLD_API_KEY: ${{ secrets.INWORLD_API_KEY }}
-  CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+  # Gemma 4 runs on our own Baseten deployment rather than a public API.
+  GEMMA_BASE_URL: ${{ secrets.GEMMA_BASE_URL }}
+  BASETEN_API_KEY: ${{ secrets.BASETEN_API_KEY }}
   ROUTER_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/model_router?sslmode=disable
 
 jobs:

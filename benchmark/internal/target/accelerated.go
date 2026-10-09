@@ -13,7 +13,7 @@ const defaultAccelURL = "http://127.0.0.1:8080"
 const (
 	DefaultAcceleratedSTT      = "deepgram/flux-general-en"
 	DefaultAcceleratedTTS      = "elevenlabs/eleven_v4_turbo"
-	DefaultAcceleratedModel    = "cerebras/gemma-4-31b"
+	DefaultAcceleratedModel    = "gemma/gemma-4-26B-A4B-it"
 	DefaultAcceleratedSubagent = "openai/gpt-6.1-sol"
 )
 

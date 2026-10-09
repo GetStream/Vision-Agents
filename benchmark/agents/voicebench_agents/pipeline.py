@@ -9,7 +9,7 @@ from vision_agents.plugins import openai, stream
 # run live under agents/accelerated/{pack}/.
 DEFAULT_ACCELERATED_STT = "deepgram/flux-general-en"
 DEFAULT_ACCELERATED_TTS = "elevenlabs/eleven_v4_turbo"
-DEFAULT_ACCELERATED_MODEL = "cerebras/gemma-4-31b"
+DEFAULT_ACCELERATED_MODEL = "gemma/gemma-4-26B-A4B-it"
 DEFAULT_CUSTOMER_ID = "voicebench"
 
 ACCELERATED_AGENTS = Path(__file__).resolve().parent.parent / "accelerated"
