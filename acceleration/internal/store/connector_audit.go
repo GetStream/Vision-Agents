@@ -136,17 +136,21 @@ func (s *Store) RecordConnectorAudit(ctx context.Context, event *ConnectorAuditE
 	}
 	event.ID = newID()
 	event.CreatedAt = time.Now().UTC().Truncate(time.Microsecond)
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewInsert().Model(event).Exec(ctx); err != nil {
+	var err error
+	if event.Credential == nil {
+		// One insert needs no transaction: a proxy call, a token export or a delete is most
+		// rows, and the one most often written.
+		_, err = s.db.NewInsert().Model(event).Exec(ctx)
+	} else {
+		err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			if _, err := tx.NewInsert().Model(event).Exec(ctx); err != nil {
+				return err
+			}
+			event.Credential.AuditID = event.ID
+			_, err := tx.NewInsert().Model(event.Credential).Exec(ctx)
 			return err
-		}
-		if event.Credential == nil {
-			return nil
-		}
-		event.Credential.AuditID = event.ID
-		_, err := tx.NewInsert().Model(event.Credential).Exec(ctx)
-		return err
-	})
+		})
+	}
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: record connector audit: %w", err))
 	}

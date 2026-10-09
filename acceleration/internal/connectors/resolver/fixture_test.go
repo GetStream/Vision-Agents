@@ -119,6 +119,11 @@ func newFixture(tb testing.TB, dsn string, db *store.Store) *fixture {
 // router is another router: a pool of its own, connected before it is used, and a resolver
 // whose scheme reaches the fake through client.
 func (f *fixture) router(client *http.Client) *resolver.Resolver {
+	return f.routerLogging(client, slog.New(slog.NewTextHandler(f.logs, nil)))
+}
+
+// routerLogging is router with logger as its resolver's Config.Logger, nil for its default.
+func (f *fixture) routerLogging(client *http.Client, logger *slog.Logger) *resolver.Resolver {
 	db, err := store.Open(f.dsn)
 	require.NoError(f.tb, err)
 	f.tb.Cleanup(func() { _ = db.Close() })
@@ -127,7 +132,7 @@ func (f *fixture) router(client *http.Client) *resolver.Resolver {
 	require.NoError(f.tb, err)
 	r, err := resolver.New(resolver.Config{Store: db, Credentials: credentials,
 		Schemes: map[string]core.Scheme{oauth2code.Name: f.scheme(client), oauth2cc.Name: f.clientCredentials(client)}, Now: f.clock.Now,
-		Logger: slog.New(slog.NewTextHandler(f.logs, nil))})
+		Logger: logger})
 	require.NoError(f.tb, err)
 	return r
 }

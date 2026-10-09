@@ -3,6 +3,7 @@
 package resolver_test
 
 import (
+	"log/slog"
 	"strings"
 	"time"
 
@@ -164,6 +165,24 @@ func (s *ResolverSuite) TestACredentialThatNeedsNoRenewalLogsNothing() {
 	s.Require().NoError(err)
 
 	s.Empty(s.f.logs.String())
+}
+
+// TestAResolverGivenNoLoggerLogsToTheDefault (AI-990 F33a): Config.Logger nil is
+// slog.Default(), which cmd/router sets to the router's own logger before it builds the
+// resolver, so a refresh's line reaches the router's log.
+func (s *ResolverSuite) TestAResolverGivenNoLoggerLogsToTheDefault() {
+	logged := &lockedBuffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logged, nil)))
+	defer slog.SetDefault(previous)
+	ref := s.f.connected()
+	s.f.due()
+
+	_, err := s.f.routerLogging(s.f.srv.Client(), nil).Resolve(s.f.ctx, ref, core.CredentialRequest{})
+
+	s.Require().NoError(err)
+	s.Contains(logged.String(), "event=grant_refreshed")
+	s.Contains(logged.String(), " connection="+ref.ConnectionID)
 }
 
 // line is the one logged line that holds marker.
