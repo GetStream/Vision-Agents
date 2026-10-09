@@ -12,6 +12,7 @@ import {
 import { AgentHandle } from "./handle.js";
 import { Memories } from "./memories.js";
 import { Simulations } from "./simulations.js";
+import { StreamPeers } from "./stream.js";
 
 /** The schemas from the spec, so callers can name a request or a response they build. */
 export type Schemas = components["schemas"];
@@ -113,11 +114,14 @@ export class Client {
   readonly memories: Memories;
   /** Conversations to test an agent with, and their runs. */
   readonly simulations: Simulations;
+  /** @internal The chat and video clients this client's sessions share. */
+  readonly peers: StreamPeers;
 
   constructor(backend: Backend | BackendOptions = {}) {
     this.backend = backend instanceof Backend ? backend : new Backend(backend);
     this.memories = new Memories(this);
     this.simulations = new Simulations(this);
+    this.peers = new StreamPeers(this.backend);
   }
 
   /**
@@ -135,6 +139,14 @@ export class Client {
    */
   setUser(user: StreamUser | string, token: TokenSource): Promise<void> {
     return this.backend.setUser(user, token);
+  }
+
+  /**
+   * Disconnects the Stream chat and video clients `session.chat()` and `session.video()`
+   * opened. Closing a session leaves them connected, since other sessions share them.
+   */
+  disconnect(): Promise<void> {
+    return this.peers.disconnect();
   }
 
   /**

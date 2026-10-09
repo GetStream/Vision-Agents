@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { Client, Session, Socket, Tools } from "../src/index.js";
+import { Client, ConfigurationError, Session, Socket, Tools } from "../src/index.js";
 import { TestRouter, type Connection } from "./router.js";
 
 describe("Socket", () => {
@@ -362,6 +362,57 @@ describe("Session", () => {
     assert.equal(chat.client, client);
     assert.deepEqual(chat.channel, { type: "agent", id: "support-1" });
     assert.equal(connects, 0, "no second connection");
+    await session.close();
+  });
+
+  it("says what chat needs before connecting a client with no Stream key", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(api, { text: true });
+    await router.socket();
+    const session = await opening;
+
+    await assert.rejects(session.chat(), (error: Error) => {
+      assert.ok(error instanceof ConfigurationError);
+      assert.match(error.message, /pass apiKey and call setUser/);
+      return true;
+    });
+    await session.close();
+  });
+
+  it("names the entry point to import when chat was never opted into", async () => {
+    // Each test file runs in its own process, and this one never imports the chat entry.
+    const page = new Client({ url: router.url, customerId: "local", apiKey: "vak_live_x" });
+    await page.setUser({ id: "john" }, "token-for-john");
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(page, { text: true });
+    await router.socket();
+    const session = await opening;
+
+    await assert.rejects(session.chat(), (error: Error) => {
+      assert.ok(error instanceof ConfigurationError);
+      assert.match(error.message, /import "@stream-io\/vision-agents\/chat"/);
+      return true;
+    });
     await session.close();
   });
 
