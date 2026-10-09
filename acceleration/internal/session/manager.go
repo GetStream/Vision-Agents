@@ -36,6 +36,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
@@ -79,7 +80,7 @@ type ManagerOptions struct {
 	// such a session rather than falling back to the cascade unasked.
 	STS *stsrouter.Router
 	// EOT optionally gates or resolves settled quiet-floor cascade candidates.
-	EOT          *agent.EOTClient
+	EOT          *audioturn.Client
 	EOTMode      agent.EOTMode
 	EOTThreshold float64
 

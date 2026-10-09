@@ -37,6 +37,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
@@ -159,7 +160,7 @@ type Options struct {
 	VideoSource    string
 	VideoMaxFrames int
 	// EOT is an optional raw acoustic endpoint score for settled voice candidates.
-	EOT *EOTClient
+	EOT *audioturn.Client
 	// EOTMode selects whether EOT gates or directly resolves eligible quiet-floor turns.
 	EOTMode      EOTMode
 	EOTThreshold float64
@@ -1831,7 +1832,7 @@ func (a *Agent) ask(ready candidate) {
 	retrying := false
 	if eligible && a.options.EOT != nil && a.options.EOTMode == EOTModePrimary {
 		if deadline, again := a.converse.primaryRetry(ready); again {
-			if a.eotAudioUnchanged(ready.Participant.ID) {
+			if ready.TurnProbability == nil && a.eotAudioUnchanged(ready.Participant.ID) {
 				a.waitForFreshAudio(ready, deadline)
 				return
 			}
@@ -1858,8 +1859,11 @@ func (a *Agent) ask(ready candidate) {
 		AnotherVoice: anotherVoice,
 	}
 	var snapshot eotScoringSnapshot
-	if eligible && a.options.EOT != nil {
+	if eligible && a.options.EOT != nil && ready.TurnProbability == nil {
 		snapshot, _ = a.eotScoringSnapshot(ready.Participant.ID)
+	}
+	if !eligible {
+		ready.TurnProbability = nil
 	}
 	a.decideWithEOT(p, current, ready, turn, snapshot)
 }

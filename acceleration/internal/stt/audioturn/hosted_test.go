@@ -1,4 +1,4 @@
-package agent
+package audioturn
 
 import (
 	"context"
@@ -23,14 +23,14 @@ func TestEOTConstructorsRejectCredentialsForHostedOrigin(t *testing.T) {
 		"https://audioturn-demo-eu-5gdhza7snq-ez.a.run.app:443/v1/eot",
 		"https://audioturn-demo-eu-5gdhza7snq-ez.a.run.app./v1/eot",
 	} {
-		_, err := NewEOTClient(endpoint, "")
-		require.ErrorContains(t, err, "NewHostedDemoEOTClient", endpoint)
-		_, err = NewEOTClient(endpoint, "/run/secrets/eot-token")
-		require.ErrorContains(t, err, "NewHostedDemoEOTClient", endpoint)
-		_, err = NewEOTClientWithTokenSource(endpoint, oauth2TokenSourceFunc(func() (*oauth2.Token, error) {
+		_, err := NewClient(endpoint, "")
+		require.ErrorContains(t, err, "NewHostedClient", endpoint)
+		_, err = NewClient(endpoint, "/run/secrets/eot-token")
+		require.ErrorContains(t, err, "NewHostedClient", endpoint)
+		_, err = NewClientWithTokenSource(endpoint, oauth2TokenSourceFunc(func() (*oauth2.Token, error) {
 			return &oauth2.Token{AccessToken: "must-not-be-used"}, nil
 		}))
-		require.ErrorContains(t, err, "NewHostedDemoEOTClient", endpoint)
+		require.ErrorContains(t, err, "NewHostedClient", endpoint)
 	}
 }
 
@@ -75,7 +75,7 @@ func testHostedDemoEOTAnonymousScore(t *testing.T) {
 		t.Fatalf("gcloud should be unavailable in the fresh process, PATH=%q", path)
 	}
 
-	client, err := NewHostedDemoEOTClient()
+	client, err := NewHostedClient()
 	require.NoError(t, err)
 	var requests int
 	client.client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -99,14 +99,14 @@ func testHostedDemoEOTAnonymousScore(t *testing.T) {
 		}, nil
 	})
 
-	score, err := client.Score(context.Background(), "anonymous-candidate", make([]byte, eotMinSamples*2))
+	score, err := client.Score(context.Background(), "anonymous-candidate", make([]byte, MinSamples*2))
 	require.NoError(t, err)
 	require.Equal(t, 0.75, score.Probability)
 	require.Equal(t, 1, requests)
 }
 
 func TestHostedDemoEOTClientDoesNotFollowRedirects(t *testing.T) {
-	client, err := NewHostedDemoEOTClient()
+	client, err := NewHostedClient()
 	require.NoError(t, err)
 	var requests int
 	client.client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -122,7 +122,7 @@ func TestHostedDemoEOTClientDoesNotFollowRedirects(t *testing.T) {
 			Request:    request,
 		}, nil
 	})
-	_, err = client.Score(context.Background(), "redirect-candidate", make([]byte, eotMinSamples*2))
+	_, err = client.Score(context.Background(), "redirect-candidate", make([]byte, MinSamples*2))
 	require.Error(t, err)
 	require.Equal(t, 1, requests, "the hosted client must not forward requests through redirects")
 }

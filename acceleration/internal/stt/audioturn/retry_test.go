@@ -1,4 +1,4 @@
-package agent
+package audioturn
 
 import (
 	"bytes"
@@ -31,7 +31,7 @@ func TestScoreEOTAttemptsRetriesTransientFailuresSequentially(t *testing.T) {
 		{name: "two transient then low score", transientFail: 2, probability: 0.1, wantAttempts: 3},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			pcm := make([]byte, eotMinSamples*2)
+			pcm := make([]byte, MinSamples*2)
 			for i := range pcm {
 				pcm[i] = byte(i * 31)
 			}
@@ -58,18 +58,18 @@ func TestScoreEOTAttemptsRetriesTransientFailuresSequentially(t *testing.T) {
 				writeEOTResponse(t, w, r.Header.Get("X-Request-ID"), len(got)/2, test.probability)
 			}))
 			t.Cleanup(server.Close)
-			client, err := NewEOTClient(server.URL, "")
+			client, err := NewClient(server.URL, "")
 			require.NoError(t, err)
-			ctx, cancel := context.WithTimeout(context.Background(), eotPrimaryLimit)
+			ctx, cancel := context.WithTimeout(context.Background(), PrimaryLimit)
 			defer cancel()
 
-			score, scoreErr, attempts, class, elapsed, budgetExhausted := scoreEOTAttempts(ctx, client, "candidate", pcm, true)
+			score, scoreErr, attempts, class, elapsed, budgetExhausted := ScoreAttempts(ctx, client, "candidate", pcm, true)
 			require.NoError(t, scoreErr)
 			require.Equal(t, test.wantAttempts, attempts)
 			require.Equal(t, int32(test.wantAttempts), requests.Load())
-			require.Equal(t, eotFailureClass(""), class)
+			require.Equal(t, FailureClass(""), class)
 			require.Equal(t, test.probability, score.Probability)
-			require.Less(t, elapsed, eotPrimaryLimit)
+			require.Less(t, elapsed, PrimaryLimit)
 			require.False(t, budgetExhausted)
 		})
 	}
@@ -83,18 +83,18 @@ func TestScoreEOTAttemptsExhaustsOnlyThreeAttempts(t *testing.T) {
 		http.Error(w, "temporary", http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(server.Close)
-	client, err := NewEOTClient(server.URL, "")
+	client, err := NewClient(server.URL, "")
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), eotPrimaryLimit)
+	ctx, cancel := context.WithTimeout(context.Background(), PrimaryLimit)
 	defer cancel()
 
-	_, scoreErr, attempts, class, elapsed, budgetExhausted := scoreEOTAttempts(ctx, client, "candidate", make([]byte, eotMinSamples*2), true)
+	_, scoreErr, attempts, class, elapsed, budgetExhausted := ScoreAttempts(ctx, client, "candidate", make([]byte, MinSamples*2), true)
 	require.Error(t, scoreErr)
 	require.Equal(t, 3, attempts)
 	require.Equal(t, int32(3), requests.Load())
-	require.Equal(t, eotFailureTransientHTTP, class)
+	require.Equal(t, FailureTransientHTTP, class)
 	require.False(t, budgetExhausted)
-	require.Less(t, elapsed, eotPrimaryLimit+100*time.Millisecond)
+	require.Less(t, elapsed, PrimaryLimit+100*time.Millisecond)
 }
 
 func TestScoreEOTAttemptsHonorsRetryAfterAndTerminalHTTPResponse(t *testing.T) {
@@ -104,14 +104,14 @@ func TestScoreEOTAttemptsHonorsRetryAfterAndTerminalHTTPResponse(t *testing.T) {
 		retryAfter    string
 		body          string
 		wantAttempts  int
-		wantClass     eotFailureClass
+		wantClass     FailureClass
 		wantElapsedMS time.Duration
 	}{
-		{name: "retry-after does not fit the remaining budget", status: http.StatusServiceUnavailable, retryAfter: "1", wantAttempts: 1, wantClass: eotFailureTransientHTTP, wantElapsedMS: 300 * time.Millisecond},
-		{name: "permanent status is terminal", status: http.StatusBadRequest, wantAttempts: 1, wantClass: eotFailurePermanentHTTP, wantElapsedMS: 300 * time.Millisecond},
-		{name: "unauthorized is terminal authentication failure", status: http.StatusUnauthorized, wantAttempts: 1, wantClass: eotFailureAuthentication, wantElapsedMS: 300 * time.Millisecond},
-		{name: "forbidden is terminal authentication failure", status: http.StatusForbidden, wantAttempts: 1, wantClass: eotFailureAuthentication, wantElapsedMS: 300 * time.Millisecond},
-		{name: "malformed successful response is terminal", status: http.StatusOK, body: "not json", wantAttempts: 1, wantClass: eotFailureInvalidResponse, wantElapsedMS: 300 * time.Millisecond},
+		{name: "retry-after does not fit the remaining budget", status: http.StatusServiceUnavailable, retryAfter: "1", wantAttempts: 1, wantClass: FailureTransientHTTP, wantElapsedMS: 300 * time.Millisecond},
+		{name: "permanent status is terminal", status: http.StatusBadRequest, wantAttempts: 1, wantClass: FailurePermanentHTTP, wantElapsedMS: 300 * time.Millisecond},
+		{name: "unauthorized is terminal authentication failure", status: http.StatusUnauthorized, wantAttempts: 1, wantClass: FailureAuthentication, wantElapsedMS: 300 * time.Millisecond},
+		{name: "forbidden is terminal authentication failure", status: http.StatusForbidden, wantAttempts: 1, wantClass: FailureAuthentication, wantElapsedMS: 300 * time.Millisecond},
+		{name: "malformed successful response is terminal", status: http.StatusOK, body: "not json", wantAttempts: 1, wantClass: FailureInvalidResponse, wantElapsedMS: 300 * time.Millisecond},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var requests atomic.Int32
@@ -127,12 +127,12 @@ func TestScoreEOTAttemptsHonorsRetryAfterAndTerminalHTTPResponse(t *testing.T) {
 				}
 			}))
 			t.Cleanup(server.Close)
-			client, err := NewEOTClient(server.URL, "")
+			client, err := NewClient(server.URL, "")
 			require.NoError(t, err)
-			ctx, cancel := context.WithTimeout(context.Background(), eotPrimaryLimit)
+			ctx, cancel := context.WithTimeout(context.Background(), PrimaryLimit)
 			defer cancel()
 
-			_, scoreErr, attempts, class, elapsed, budgetExhausted := scoreEOTAttempts(ctx, client, "candidate", make([]byte, eotMinSamples*2), true)
+			_, scoreErr, attempts, class, elapsed, budgetExhausted := ScoreAttempts(ctx, client, "candidate", make([]byte, MinSamples*2), true)
 			require.Error(t, scoreErr)
 			require.Equal(t, test.wantAttempts, attempts)
 			require.Equal(t, int32(test.wantAttempts), requests.Load())
@@ -146,7 +146,7 @@ func TestScoreEOTAttemptsHonorsRetryAfterAndTerminalHTTPResponse(t *testing.T) {
 func TestScoreEOTAttemptsDistinguishesAttemptTimeoutFromTotalBudget(t *testing.T) {
 	t.Run("attempt timeout retries", func(t *testing.T) {
 		var requests atomic.Int32
-		client, err := NewEOTClient("http://127.0.0.1:8000/v1/eot", "")
+		client, err := NewClient("http://127.0.0.1:8000/v1/eot", "")
 		require.NoError(t, err)
 		client.client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			count := requests.Add(1)
@@ -170,7 +170,7 @@ func TestScoreEOTAttemptsDistinguishesAttemptTimeoutFromTotalBudget(t *testing.T
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 
-		score, scoreErr, attempts, class, elapsed, budgetExhausted := scoreEOTAttempts(ctx, client, "candidate", make([]byte, eotMinSamples*2), true)
+		score, scoreErr, attempts, class, elapsed, budgetExhausted := ScoreAttempts(ctx, client, "candidate", make([]byte, MinSamples*2), true)
 		require.NoError(t, scoreErr)
 		require.Equal(t, 2, attempts)
 		require.Equal(t, int32(2), requests.Load())
@@ -183,7 +183,7 @@ func TestScoreEOTAttemptsDistinguishesAttemptTimeoutFromTotalBudget(t *testing.T
 
 	t.Run("primary total budget clips a longer parent deadline", func(t *testing.T) {
 		var requests atomic.Int32
-		client, err := NewEOTClient("http://127.0.0.1:8000/v1/eot", "")
+		client, err := NewClient("http://127.0.0.1:8000/v1/eot", "")
 		require.NoError(t, err)
 		client.client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			requests.Add(1)
@@ -198,36 +198,15 @@ func TestScoreEOTAttemptsDistinguishesAttemptTimeoutFromTotalBudget(t *testing.T
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 
-		_, scoreErr, attempts, class, elapsed, budgetExhausted := scoreEOTAttempts(ctx, client, "candidate", make([]byte, eotMinSamples*2), true)
+		_, scoreErr, attempts, class, elapsed, budgetExhausted := ScoreAttempts(ctx, client, "candidate", make([]byte, MinSamples*2), true)
 		require.Error(t, scoreErr)
 		require.Equal(t, 3, attempts)
 		require.Equal(t, int32(3), requests.Load())
-		require.Equal(t, eotFailureTimeout, class)
+		require.Equal(t, FailureTimeout, class)
 		require.True(t, budgetExhausted)
 		require.GreaterOrEqual(t, elapsed, 900*time.Millisecond)
 		require.Less(t, elapsed, 1250*time.Millisecond)
 	})
-}
-
-func TestWaitEOTRetryStopsWhenCanceledAfterEnteringBackoff(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	waiting := make(chan struct{})
-	result := make(chan bool, 1)
-	go func() {
-		result <- waitEOTRetry(ctx, time.Hour, func() { close(waiting) })
-	}()
-	select {
-	case <-waiting:
-	case <-time.After(time.Second):
-		t.Fatal("retry wait did not start")
-	}
-	cancel()
-	select {
-	case continued := <-result:
-		require.False(t, continued)
-	case <-time.After(time.Second):
-		t.Fatal("retry wait did not stop after cancellation")
-	}
 }
 
 func TestParseEOTRetryAfter(t *testing.T) {
@@ -259,16 +238,16 @@ func TestScoreEOTAttemptsDoesNotRetryAuthenticationTLSOrPermanentDNS(t *testing.
 			requests.Add(1)
 		}))
 		t.Cleanup(server.Close)
-		client, err := NewEOTClientWithTokenSource(server.URL, oauth2TokenSourceFunc(func() (*oauth2.Token, error) {
+		client, err := NewClientWithTokenSource(server.URL, oauth2TokenSourceFunc(func() (*oauth2.Token, error) {
 			return nil, errors.New("sensitive token source detail")
 		}))
 		require.NoError(t, err)
-		ctx, cancel := context.WithTimeout(context.Background(), eotPrimaryLimit)
+		ctx, cancel := context.WithTimeout(context.Background(), PrimaryLimit)
 		defer cancel()
-		_, scoreErr, attempts, class, _, budgetExhausted := scoreEOTAttempts(ctx, client, "candidate", make([]byte, eotMinSamples*2), true)
+		_, scoreErr, attempts, class, _, budgetExhausted := ScoreAttempts(ctx, client, "candidate", make([]byte, MinSamples*2), true)
 		require.Error(t, scoreErr)
 		require.Equal(t, 1, attempts)
-		require.Equal(t, eotFailureAuthentication, class)
+		require.Equal(t, FailureAuthentication, class)
 		require.False(t, budgetExhausted)
 		require.Zero(t, requests.Load())
 		require.NotContains(t, scoreErr.Error(), "sensitive")
@@ -282,20 +261,20 @@ func TestScoreEOTAttemptsDoesNotRetryAuthenticationTLSOrPermanentDNS(t *testing.
 			writeEOTResponse(t, w, r.Header.Get("X-Request-ID"), len(pcm)/2, 0.9)
 		}))
 		t.Cleanup(server.Close)
-		client, err := NewEOTClientWithTokenSource(server.URL, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "opaque"}))
+		client, err := NewClientWithTokenSource(server.URL, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "opaque"}))
 		require.NoError(t, err)
-		ctx, cancel := context.WithTimeout(context.Background(), eotPrimaryLimit)
+		ctx, cancel := context.WithTimeout(context.Background(), PrimaryLimit)
 		defer cancel()
-		_, scoreErr, attempts, class, _, budgetExhausted := scoreEOTAttempts(ctx, client, "candidate", make([]byte, eotMinSamples*2), true)
+		_, scoreErr, attempts, class, _, budgetExhausted := ScoreAttempts(ctx, client, "candidate", make([]byte, MinSamples*2), true)
 		require.Error(t, scoreErr)
 		require.Equal(t, 1, attempts)
-		require.Equal(t, eotFailureTLS, class)
+		require.Equal(t, FailureTLS, class)
 		require.False(t, budgetExhausted)
 		require.Zero(t, requests.Load())
 	})
 
 	t.Run("permanent DNS failure", func(t *testing.T) {
-		client, err := NewEOTClient("https://eot.invalid/v1/eot", "")
+		client, err := NewClient("https://eot.invalid/v1/eot", "")
 		require.NoError(t, err)
 		client.tokens = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "opaque"})
 		var requests atomic.Int32
@@ -304,12 +283,12 @@ func TestScoreEOTAttemptsDoesNotRetryAuthenticationTLSOrPermanentDNS(t *testing.
 			_ = request.Body.Close()
 			return nil, &url.Error{Op: "Post", URL: "https://eot.invalid/v1/eot", Err: &net.DNSError{Err: "no such host", Name: "eot.invalid", IsNotFound: true}}
 		})
-		ctx, cancel := context.WithTimeout(context.Background(), eotPrimaryLimit)
+		ctx, cancel := context.WithTimeout(context.Background(), PrimaryLimit)
 		defer cancel()
-		_, scoreErr, attempts, class, _, budgetExhausted := scoreEOTAttempts(ctx, client, "candidate", make([]byte, eotMinSamples*2), true)
+		_, scoreErr, attempts, class, _, budgetExhausted := ScoreAttempts(ctx, client, "candidate", make([]byte, MinSamples*2), true)
 		require.Error(t, scoreErr)
 		require.Equal(t, 1, attempts)
-		require.Equal(t, eotFailurePermanentDNS, class)
+		require.Equal(t, FailurePermanentDNS, class)
 		require.False(t, budgetExhausted)
 		require.Equal(t, int32(1), requests.Load())
 	})
@@ -321,7 +300,7 @@ func TestScoreEOTAttemptsCancellationStopsRequestAndBackoffRetries(t *testing.T)
 		started := make(chan struct{})
 		var starts sync.Once
 		var requests atomic.Int32
-		client, err := NewEOTClient("http://127.0.0.1:8000/v1/eot", "")
+		client, err := NewClient("http://127.0.0.1:8000/v1/eot", "")
 		require.NoError(t, err)
 		client.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			requests.Add(1)
@@ -335,14 +314,14 @@ func TestScoreEOTAttemptsCancellationStopsRequestAndBackoffRetries(t *testing.T)
 		done := make(chan struct {
 			err      error
 			attempts int
-			class    eotFailureClass
+			class    FailureClass
 		}, 1)
 		go func() {
-			_, scoreErr, attempts, class, _, _ := scoreEOTAttempts(ctx, client, "candidate", make([]byte, eotMinSamples*2), true)
+			_, scoreErr, attempts, class, _, _ := ScoreAttempts(ctx, client, "candidate", make([]byte, MinSamples*2), true)
 			done <- struct {
 				err      error
 				attempts int
-				class    eotFailureClass
+				class    FailureClass
 			}{scoreErr, attempts, class}
 		}()
 		select {
@@ -355,7 +334,7 @@ func TestScoreEOTAttemptsCancellationStopsRequestAndBackoffRetries(t *testing.T)
 		case result := <-done:
 			require.Error(t, result.err)
 			require.Equal(t, 1, result.attempts)
-			require.Equal(t, eotFailureCanceled, result.class)
+			require.Equal(t, FailureCanceled, result.class)
 		case <-time.After(time.Second):
 			t.Fatal("canceled upload did not drain its request body")
 		}
@@ -365,7 +344,7 @@ func TestScoreEOTAttemptsCancellationStopsRequestAndBackoffRetries(t *testing.T)
 	t.Run("between attempts", func(t *testing.T) {
 		responseClosed := make(chan struct{})
 		var requests atomic.Int32
-		client, err := NewEOTClient("http://127.0.0.1:8000/v1/eot", "")
+		client, err := NewClient("http://127.0.0.1:8000/v1/eot", "")
 		require.NoError(t, err)
 		client.client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			requests.Add(1)
@@ -383,14 +362,14 @@ func TestScoreEOTAttemptsCancellationStopsRequestAndBackoffRetries(t *testing.T)
 		done := make(chan struct {
 			err      error
 			attempts int
-			class    eotFailureClass
+			class    FailureClass
 		}, 1)
 		go func() {
-			_, scoreErr, attempts, class, _, _ := scoreEOTAttempts(ctx, client, "candidate", make([]byte, eotMinSamples*2), true)
+			_, scoreErr, attempts, class, _, _ := ScoreAttempts(ctx, client, "candidate", make([]byte, MinSamples*2), true)
 			done <- struct {
 				err      error
 				attempts int
-				class    eotFailureClass
+				class    FailureClass
 			}{scoreErr, attempts, class}
 		}()
 		select {
@@ -403,7 +382,7 @@ func TestScoreEOTAttemptsCancellationStopsRequestAndBackoffRetries(t *testing.T)
 		case result := <-done:
 			require.Error(t, result.err)
 			require.Equal(t, 1, result.attempts)
-			require.Equal(t, eotFailureCanceled, result.class)
+			require.Equal(t, FailureCanceled, result.class)
 		case <-time.After(time.Second):
 			t.Fatal("cancellation between attempts did not stop the retry")
 		}
@@ -413,7 +392,7 @@ func TestScoreEOTAttemptsCancellationStopsRequestAndBackoffRetries(t *testing.T)
 
 func TestScoreEOTAttemptsRetriesRecoverableNetworkReset(t *testing.T) {
 	var requests atomic.Int32
-	client, err := NewEOTClient("http://127.0.0.1:8000/v1/eot", "")
+	client, err := NewClient("http://127.0.0.1:8000/v1/eot", "")
 	require.NoError(t, err)
 	client.client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		count := requests.Add(1)
@@ -434,14 +413,14 @@ func TestScoreEOTAttemptsRetriesRecoverableNetworkReset(t *testing.T) {
 		}
 		return response, nil
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), eotPrimaryLimit)
+	ctx, cancel := context.WithTimeout(context.Background(), PrimaryLimit)
 	defer cancel()
 
-	score, scoreErr, attempts, class, _, budgetExhausted := scoreEOTAttempts(ctx, client, "candidate", make([]byte, eotMinSamples*2), true)
+	score, scoreErr, attempts, class, _, budgetExhausted := ScoreAttempts(ctx, client, "candidate", make([]byte, MinSamples*2), true)
 	require.NoError(t, scoreErr)
 	require.Equal(t, 2, attempts)
 	require.Equal(t, int32(2), requests.Load())
-	require.Equal(t, eotFailureClass(""), class)
+	require.Equal(t, FailureClass(""), class)
 	require.False(t, budgetExhausted)
 	require.Equal(t, 0.9, score.Probability)
 }

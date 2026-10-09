@@ -52,13 +52,14 @@ type candidate struct {
 	Participant stt.Participant
 	// Speaker is the voice the transcriber heard, for the ones that tell voices apart. It
 	// is how a second person at the caller's microphone is told from the caller.
-	Speaker      string
-	Text         string
-	Language     string
-	Confidence   float64
-	STTLatencyMs float64
-	RevisedAt    time.Time
-	ReadyAt      time.Time
+	Speaker         string
+	Text            string
+	Language        string
+	Confidence      float64
+	STTLatencyMs    float64
+	TurnProbability *float64
+	RevisedAt       time.Time
+	ReadyAt         time.Time
 	// Unfinished says the words are a provisional revision of an utterance still in
 	// progress, put to the controller to decide the floor rather than settled.
 	Unfinished bool
@@ -111,16 +112,17 @@ type cadence struct {
 type cadenceSpeaker struct {
 	participant stt.Participant
 	// speaker is the diarised voice the words were last heard in.
-	speaker     string
-	text        string
-	language    string
-	confidence  float64
-	latencyMs   float64
-	candidateID string
-	generation  int64
-	timerEpoch  int64
-	timer       cadenceTimer
-	revisedAt   time.Time
+	speaker         string
+	text            string
+	language        string
+	confidence      float64
+	latencyMs       float64
+	turnProbability *float64
+	candidateID     string
+	generation      int64
+	timerEpoch      int64
+	timer           cadenceTimer
+	revisedAt       time.Time
 	// utterance is the run of speech the words being gathered came from.
 	utterance int64
 	// revision is the number of the words as they stand, which only changes when they do.
@@ -227,6 +229,7 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.language = transcript.Language
 	current.confidence = transcript.Confidence
 	current.latencyMs = transcript.ProcessingTimeMs
+	current.turnProbability = transcript.TurnProbability
 	current.utterance = transcript.Utterance
 	unfinished := incompleteIdentifier(text) || visiblyUnfinished(text, transcript.Language)
 	final := transcript.Mode == stt.ModeFinal && !unfinished
@@ -325,6 +328,7 @@ func (c *cadence) resolve(candidateID string, wait bool, retryAfter time.Duratio
 			current.language = ""
 			current.confidence = 0
 			current.latencyMs = 0
+			current.turnProbability = nil
 			if current.timer != nil {
 				current.timer.Stop()
 				current.timer = nil
@@ -386,6 +390,7 @@ func (c *cadence) candidateSnapshot(ready candidate) (candidate, bool) {
 	ready.Language = current.language
 	ready.Confidence = current.confidence
 	ready.STTLatencyMs = current.latencyMs
+	ready.TurnProbability = current.turnProbability
 	ready.RevisedAt = current.revisedAt
 	ready.Revision = current.revision
 	return ready, true
@@ -399,14 +404,15 @@ func (c *cadence) currentCandidate(participantID string) (candidate, bool) {
 		return candidate{}, false
 	}
 	return candidate{
-		Participant:  current.participant,
-		Speaker:      current.speaker,
-		Text:         strings.TrimSpace(current.text),
-		Language:     current.language,
-		Confidence:   current.confidence,
-		STTLatencyMs: current.latencyMs,
-		RevisedAt:    current.revisedAt,
-		Revision:     current.revision,
+		Participant:     current.participant,
+		Speaker:         current.speaker,
+		Text:            strings.TrimSpace(current.text),
+		Language:        current.language,
+		Confidence:      current.confidence,
+		STTLatencyMs:    current.latencyMs,
+		TurnProbability: current.turnProbability,
+		RevisedAt:       current.revisedAt,
+		Revision:        current.revision,
 	}, true
 }
 
@@ -533,16 +539,17 @@ func (c *cadence) emit(participantID string, generation, timerEpoch int64) {
 	c.stopPreviewLocked(current)
 	c.grace = 0
 	ready := candidate{
-		ID:           current.candidateID,
-		Participant:  current.participant,
-		Speaker:      current.speaker,
-		Text:         strings.TrimSpace(current.text),
-		Language:     current.language,
-		Confidence:   current.confidence,
-		STTLatencyMs: current.latencyMs,
-		RevisedAt:    current.revisedAt,
-		ReadyAt:      time.Now(),
-		Revision:     current.revision,
+		ID:              current.candidateID,
+		Participant:     current.participant,
+		Speaker:         current.speaker,
+		Text:            strings.TrimSpace(current.text),
+		Language:        current.language,
+		Confidence:      current.confidence,
+		STTLatencyMs:    current.latencyMs,
+		TurnProbability: current.turnProbability,
+		RevisedAt:       current.revisedAt,
+		ReadyAt:         time.Now(),
+		Revision:        current.revision,
 	}
 	c.mu.Unlock()
 
@@ -641,16 +648,17 @@ func (c *cadence) emitPreview(participantID string, generation, epoch int64) {
 	current.previewEpoch = 0
 	current.previews++
 	ready := candidate{
-		ID:           replyPrefix + turnStamp(),
-		Participant:  current.participant,
-		Speaker:      current.speaker,
-		Text:         strings.TrimSpace(current.text),
-		Language:     current.language,
-		Confidence:   current.confidence,
-		STTLatencyMs: current.latencyMs,
-		RevisedAt:    current.revisedAt,
-		ReadyAt:      time.Now(),
-		Revision:     current.revision,
+		ID:              replyPrefix + turnStamp(),
+		Participant:     current.participant,
+		Speaker:         current.speaker,
+		Text:            strings.TrimSpace(current.text),
+		Language:        current.language,
+		Confidence:      current.confidence,
+		STTLatencyMs:    current.latencyMs,
+		TurnProbability: current.turnProbability,
+		RevisedAt:       current.revisedAt,
+		ReadyAt:         time.Now(),
+		Revision:        current.revision,
 	}
 	current.previewID, current.previewRevision = ready.ID, ready.Revision
 	c.mu.Unlock()

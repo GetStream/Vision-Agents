@@ -9,6 +9,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 )
 
 const maxEOTParticipants = 16
@@ -45,9 +46,9 @@ func (a *Agent) eotCandidateSnapshotLocked(gate *eotGate) (candidate, bool) {
 
 type eotResult struct {
 	gate            *eotGate
-	score           EOTScore
+	score           audioturn.Score
 	err             error
-	errorClass      eotFailureClass
+	errorClass      audioturn.FailureClass
 	attempts        int
 	budgetExhausted bool
 	latency         time.Duration
@@ -144,9 +145,9 @@ func (a *Agent) registerEOTGateLocked(ready candidate, current *harness.Harness,
 			old.cancel()
 		}
 	}
-	budget := eotGateLimit
+	budget := audioturn.GateLimit
 	if a.options.EOTMode == EOTModePrimary {
-		budget = eotPrimaryLimit
+		budget = audioturn.PrimaryLimit
 	}
 	ctx, cancel := context.WithTimeout(p.ctx, budget)
 	gate := &eotGate{
@@ -183,7 +184,7 @@ func (a *Agent) startEOT(gate *eotGate, snapshot eotScoringSnapshot) {
 	go func() {
 		defer a.running.Done()
 		defer gate.pipeline.running.Done()
-		score, err, attempts, failureClass, latency, budgetExhausted := scoreEOTAttempts(gate.ctx, a.options.EOT, gate.candidateID, pcm, gate.primary)
+		score, err, attempts, failureClass, latency, budgetExhausted := audioturn.ScoreAttempts(gate.ctx, a.options.EOT, gate.candidateID, pcm, gate.primary)
 		result := eotResult{
 			gate: gate, score: score, err: err, errorClass: failureClass,
 			attempts: attempts, budgetExhausted: budgetExhausted, latency: latency,
@@ -193,146 +194,6 @@ func (a *Agent) startEOT(gate *eotGate, snapshot eotScoringSnapshot) {
 		case <-gate.pipeline.ctx.Done():
 		}
 	}()
-}
-
-func scoreEOTAttempts(ctx context.Context, client *EOTClient, requestID string, pcm []byte, primary bool) (EOTScore, error, int, eotFailureClass, time.Duration, bool) {
-	started := time.Now()
-	budget := eotGateLimit
-	if primary {
-		budget = eotPrimaryLimit
-	}
-	maxDeadline := started.Add(budget)
-	if parentDeadline, ok := ctx.Deadline(); !ok || parentDeadline.After(maxDeadline) {
-		bounded, cancel := context.WithDeadline(ctx, maxDeadline)
-		defer cancel()
-		ctx = bounded
-	}
-	maxAttempts := 1
-	if primary {
-		maxAttempts += eotPrimaryRetryLimit
-	}
-	var lastScore EOTScore
-	var lastErr error
-	var lastClass eotFailureClass
-	attempts := 0
-	budgetExhausted := false
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if err := ctx.Err(); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				budgetExhausted = true
-				if lastErr == nil {
-					lastErr = &eotAttemptError{class: eotFailureTimeout}
-					lastClass = eotFailureTimeout
-				}
-			} else {
-				lastErr = &eotAttemptError{class: eotFailureCanceled}
-				lastClass = eotFailureCanceled
-			}
-			break
-		}
-
-		attemptLimit := eotGateLimit
-		if attempt > 0 {
-			attemptLimit = eotPrimaryRetryWindow
-		}
-		if deadline, ok := ctx.Deadline(); ok {
-			remaining := time.Until(deadline)
-			if remaining < attemptLimit {
-				attemptLimit = remaining
-			}
-		}
-		if attemptLimit <= 0 {
-			budgetExhausted = true
-			if lastErr == nil {
-				lastErr = &eotAttemptError{class: eotFailureTimeout}
-				lastClass = eotFailureTimeout
-			}
-			break
-		}
-
-		attemptCtx, cancel := context.WithTimeout(ctx, attemptLimit)
-		lastScore, lastErr = client.Score(attemptCtx, requestID, pcm)
-		cancel()
-		attempts++
-		if lastErr == nil {
-			return lastScore, nil, attempts, "", time.Since(started), false
-		}
-		var retryAfter time.Duration
-		var hasRetryAfter bool
-		lastClass, retryAfter, hasRetryAfter = eotErrorMetadata(lastErr)
-		// Read once: a cancellation landing between the checks would end the loop with the class of
-		// the attempt that failed rather than the cancellation that stopped it.
-		stopped := ctx.Err()
-		if errors.Is(stopped, context.DeadlineExceeded) {
-			budgetExhausted = true
-			if lastClass == eotFailureCanceled {
-				lastErr = &eotAttemptError{class: eotFailureTimeout}
-				lastClass = eotFailureTimeout
-			}
-			break
-		}
-		if errors.Is(stopped, context.Canceled) {
-			lastErr = &eotAttemptError{class: eotFailureCanceled}
-			lastClass = eotFailureCanceled
-			break
-		}
-		failure, typed := lastErr.(*eotAttemptError)
-		if !primary || stopped != nil || attempts >= maxAttempts ||
-			!typed || !failure.retryable() {
-			break
-		}
-
-		delay := 25 * time.Millisecond
-		if attempt == 1 {
-			delay = 50 * time.Millisecond
-		}
-		if hasRetryAfter && retryAfter > delay {
-			delay = retryAfter
-		}
-		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < delay+eotPrimaryMinRetryWindow {
-			break
-		}
-		if !waitEOTRetry(ctx, delay, nil) {
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				budgetExhausted = true
-			} else {
-				lastErr = &eotAttemptError{class: eotFailureCanceled}
-				lastClass = eotFailureCanceled
-			}
-			return EOTScore{}, lastErr, attempts, lastClass, time.Since(started), budgetExhausted
-		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			budgetExhausted = true
-			break
-		}
-		if errors.Is(ctx.Err(), context.Canceled) {
-			lastErr = &eotAttemptError{class: eotFailureCanceled}
-			lastClass = eotFailureCanceled
-			break
-		}
-		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < eotPrimaryMinRetryWindow {
-			break
-		}
-	}
-	if lastErr == nil {
-		lastErr = &eotAttemptError{class: eotFailureUnknown}
-		lastClass = eotFailureUnknown
-	}
-	return EOTScore{}, lastErr, attempts, lastClass, time.Since(started), budgetExhausted
-}
-
-func waitEOTRetry(ctx context.Context, delay time.Duration, onWait func()) bool {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	if onWait != nil {
-		onWait()
-	}
-	select {
-	case <-timer.C:
-		return true
-	case <-ctx.Done():
-		return false
-	}
 }
 
 func (a *Agent) cancelEOTGate(candidateID string) {
@@ -419,7 +280,7 @@ func (a *Agent) refreshedPrimaryFlowTurnLocked(gate *eotGate, speechPending bool
 	return turn
 }
 
-func (a *Agent) fallbackPrimaryEOT(gate *eotGate, reason string, latency time.Duration, attempts int, failureClass eotFailureClass, budgetExhausted bool) {
+func (a *Agent) fallbackPrimaryEOT(gate *eotGate, reason string, latency time.Duration, attempts int, failureClass audioturn.FailureClass, budgetExhausted bool) {
 	speechPending := a.speechPending()
 	a.mu.Lock()
 	if a.eotGates[gate.candidateID] != gate || gate.pipeline != a.pipe || gate.harness != a.harness {
@@ -504,7 +365,7 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 		result.score.Probability < 0 || result.score.Probability > 1 {
 		if gate.primary {
 			a.mu.Unlock()
-			a.fallbackPrimaryEOT(gate, "invalid_score", result.latency, result.attempts, eotFailureInvalidResponse, result.budgetExhausted)
+			a.fallbackPrimaryEOT(gate, "invalid_score", result.latency, result.attempts, audioturn.FailureInvalidResponse, result.budgetExhausted)
 			return
 		}
 		delete(a.eotGates, gate.candidateID)
@@ -607,7 +468,7 @@ func (a *Agent) consumeEOTResult(result eotResult, current *harness.Harness, p *
 }
 
 func (a *Agent) decideWithEOT(p *pipeline, current *harness.Harness, ready candidate, turn harness.FlowTurn, snapshot eotScoringSnapshot) {
-	if len(snapshot.pcm) == 0 || a.options.EOT == nil {
+	if (len(snapshot.pcm) == 0 && ready.TurnProbability == nil) || a.options.EOT == nil {
 		if a.options.EOTMode == EOTModePrimary {
 			reason := "no_audio_window"
 			if a.options.EOT == nil {
@@ -650,7 +511,11 @@ func (a *Agent) decideWithEOT(p *pipeline, current *harness.Harness, ready candi
 		return
 	}
 	if gate != nil {
-		a.startEOT(gate, snapshot)
+		if ready.TurnProbability != nil {
+			a.consumeEOTResult(eotResult{gate: gate, score: audioturn.Score{Probability: *ready.TurnProbability}}, current, p)
+		} else {
+			a.startEOT(gate, snapshot)
+		}
 	}
 }
 

@@ -27,8 +27,11 @@ type Transcript struct {
 	// is for is the microphone more than one person is talking into, where the participant
 	// the audio arrived under is the wrong answer for everyone but the first of them.
 	// Providers that cannot hear the difference leave it empty.
-	Speaker          string
-	Text             string
+	Speaker string
+	Text    string
+	// TurnProbability is an optional acoustic endpoint score for these exact words.
+	// It is distinct from transcription confidence and avoids scoring the audio twice.
+	TurnProbability  *float64
 	Confidence       float64
 	Language         string
 	Provider         string

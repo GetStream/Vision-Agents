@@ -695,7 +695,7 @@ Transcription can change while the caller is speaking. The agent starts an early
 reply after the words have stayed stable for 60 ms and the audio has been quiet
 for 120 ms. That preview cannot speak or execute tools until its turn is
 accepted. New words replace it; discarded previews still incur model usage.
-There are at most three early previews per utterance.
+The number of early previews is bounded per utterance.
 
 ### Acoustic and semantic decisions
 
@@ -726,6 +726,37 @@ For example, to use only transcript and semantic turn detection:
 ```bash
 ROUTER_EOT_URL= go run ./cmd/agent -call my-call
 ```
+
+### Use AudioTurn for transcription too
+
+AudioTurn can replace the separate STT provider. Select it explicitly:
+
+```bash
+go run ./cmd/agent -call my-call -stt audioturn/audioturn-stack16k-blend
+```
+
+For an API session or saved agent, set `"stt": "audioturn/audioturn-stack16k-blend"`.
+Existing STT targets keep their behavior; AudioTurn is excluded from automatic
+model groups unless a custom group explicitly includes it.
+
+This uses the same `ROUTER_EOT_URL`, credentials and threshold as turn detection.
+Each request asks for both words and a turn score. Transcript revisions use the
+normal STT pipeline, and eligible turn decisions reuse that score without a
+second EOT request. No other transcription provider or STT API key is needed.
+
+The server must support `POST /v1/eot?transcript=true&transcript_min_p=0`, returning
+the decision and transcript as NDJSON. Startup checks this with generated
+silence and refuses a decision-only deployment. **The public EU endpoint still
+rejected transcript requests when checked on 9 October 2026**; enabling this
+option there requires the transcript-capable rollout from gophonic #107.
+
+Audio is sampled every 200 ms while new frames arrive, with one request in
+flight and a 16-second window. Overlapping transcripts replace provisional
+words; words leaving the window are retained by their timestamps so long turns
+keep their beginning. An input backlog that exceeds the window is reported as
+an error. The server's word confidence and acoustic turn probability are separate
+values. Provider billing reports zero for this service; TPU hosting costs are
+not included in per-request statistics.
 
 ### Why a ready reply may wait
 

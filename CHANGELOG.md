@@ -883,7 +883,7 @@ dropped.
 Stable transcripts can start a reply after `ROUTER_PREVIEW_DEBOUNCE` (60ms) and
 `ROUTER_PREVIEW_QUIET` (120ms of caller silence). Incomplete endings wait longer.
 A reply survives a wait decision for the same words; revisions, a floor change or
-expired patience discard it. At most three early replies are started per utterance.
+expired patience discard it. Early replies are bounded per utterance.
 
 The first audio waits for `ROUTER_REPLY_SILENCE` (700ms), capped by
 `ROUTER_REPLY_SILENCE_MAX` (1s). Acoustic scores at or above
@@ -898,6 +898,11 @@ short clarifying question. Semantic waits retain their 700ms retry.
 `reply_hold_ms` reports the first-audio hold in session events, call timelines and
 turn storage. It is included in `tts_to_audio_ms` and `roundtrip_ms`; chat timing
 lines display it when enabled. See the acceleration README for configuration.
+
+Selecting `audioturn/audioturn-stack16k-blend` as STT uses AudioTurn for both words
+and turn scores, without a separate transcription provider or a second scoring
+request. This is opt-in and requires a transcript-capable AudioTurn deployment.
+Existing STT targets and automatic model groups keep their behavior.
 
 ### A turn says when its reply could first be heard
 

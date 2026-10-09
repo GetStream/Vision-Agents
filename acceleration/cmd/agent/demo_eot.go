@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eotdefaults"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/joho/godotenv"
 )
 
@@ -105,17 +106,17 @@ func (settings demoEOTSettings) usesHostedDemoClient() bool {
 	return eotdefaults.IsHostedDemoEndpoint(settings.endpoint) && settings.tokenFile == ""
 }
 
-func newDemoEOTClient(settings demoEOTSettings) (*agent.EOTClient, error) {
+func newDemoEOTClient(settings demoEOTSettings) (*audioturn.Client, error) {
 	if settings.endpoint == "" {
 		return nil, nil
 	}
 	if settings.usesHostedDemoClient() {
-		return agent.NewHostedDemoEOTClient()
+		return audioturn.NewHostedClient()
 	}
-	return agent.NewEOTClient(settings.endpoint, settings.tokenFile)
+	return audioturn.NewClient(settings.endpoint, settings.tokenFile)
 }
 
-func preflightDemoEOT(ctx context.Context, client *agent.EOTClient, hosted bool, logger *slog.Logger) error {
+func preflightDemoEOT(ctx context.Context, client *audioturn.Client, hosted bool, logger *slog.Logger) error {
 	if client == nil {
 		return nil
 	}
@@ -124,7 +125,7 @@ func preflightDemoEOT(ctx context.Context, client *agent.EOTClient, hosted bool,
 	// The minimum accepted window is enough to verify auth, routing and model readiness
 	// without uploading caller audio or inventing pause metadata.
 	_, err := client.Score(preflight, "demo-preflight", make([]byte, 320*2))
-	if hosted && agent.IsTransientEOTError(err) {
+	if hosted && audioturn.IsTransientError(err) {
 		logger.Warn("hosted EOT preflight is temporarily unavailable; runtime retries remain enabled")
 		return nil
 	}

@@ -29,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
@@ -633,7 +634,7 @@ type AgentSuite struct {
 	finds *stubSearch
 	// guards screens what the agent may be asked, when a test gives it a policy.
 	guards  *stubGuardrail
-	eot     *EOTClient
+	eot     *audioturn.Client
 	eotMode EOTMode
 	// performing is what a voice that acts stage directions asks to have said about it.
 	// It is set before joining, because the stub voice is built there.
@@ -2419,7 +2420,7 @@ func (s *AgentSuite) TestAcousticWaitKeepsCallerTurnPendingUntilTheNextScoreAndF
 		}
 	}))
 	s.T().Cleanup(server.Close)
-	client, err := NewEOTClient(server.URL, "")
+	client, err := audioturn.NewClient(server.URL, "")
 	s.Require().NoError(err)
 	s.eot = client
 	s.join(false)
@@ -2460,7 +2461,7 @@ func (s *AgentSuite) TestEOTServiceFailureReleasesTheSemanticDecision() {
 		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 	}))
 	s.T().Cleanup(server.Close)
-	client, err := NewEOTClient(server.URL, "")
+	client, err := audioturn.NewClient(server.URL, "")
 	s.Require().NoError(err)
 	s.eot = client
 	s.join(false)
@@ -2493,7 +2494,7 @@ func (s *AgentSuite) TestEOT429AndTimeoutFallBackToTheSemanticFlow() {
 		close(timedOut)
 	}))
 	s.T().Cleanup(server.Close)
-	client, err := NewEOTClient(server.URL, "")
+	client, err := audioturn.NewClient(server.URL, "")
 	s.Require().NoError(err)
 	s.eot = client
 	s.join(false)
@@ -2539,7 +2540,7 @@ func (s *AgentSuite) TestEOTRevisionCancelsTheOldRequestAndScoresTheNewWords() {
 		_, _ = io.WriteString(w, eotJSON(requestID, eotMinSamples, 0.9))
 	}))
 	s.T().Cleanup(server.Close)
-	client, err := NewEOTClient(server.URL, "")
+	client, err := audioturn.NewClient(server.URL, "")
 	s.Require().NoError(err)
 	s.eot = client
 	s.join(false)
@@ -2582,7 +2583,7 @@ func (s *AgentSuite) TestParticipantDepartureInvalidatesPendingEOTAndSemanticRes
 		close(firstCanceled)
 	}))
 	s.T().Cleanup(server.Close)
-	client, err := NewEOTClient(server.URL, "")
+	client, err := audioturn.NewClient(server.URL, "")
 	s.Require().NoError(err)
 	s.eot = client
 	s.join(false)
@@ -2651,7 +2652,7 @@ func (s *AgentSuite) TestInPlaceCascadeSwapInvalidatesHeldAndQueuedEOTResults() 
 		_, _ = io.WriteString(w, eotJSON(requestID, eotMinSamples, 0.9))
 	}))
 	s.T().Cleanup(server.Close)
-	client, err := NewEOTClient(server.URL, "")
+	client, err := audioturn.NewClient(server.URL, "")
 	s.Require().NoError(err)
 	s.eot = client
 	s.join(false)

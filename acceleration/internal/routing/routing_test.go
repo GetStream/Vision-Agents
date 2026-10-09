@@ -317,12 +317,16 @@ func (s *RoutingSuite) TestABaseGroupNarrowsToWhatCanServeTheTermsAsked() {
 	s.Equal([]string{"muse/muse-voice-transcribe-1.0"}, names(serving))
 }
 
-func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {
+func (s *RoutingSuite) TestDefaultConfigPricesBilledProviders() {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
 
 	for modality, section := range config {
 		for _, provider := range section.Providers {
+			// AudioTurn has no per-request provider charge; TPU hosting is deployment cost.
+			if provider.Provider == "audioturn" {
+				continue
+			}
 			s.NotZerof(provider.Price, "%s/%s has no price, so its cost would report as zero",
 				modality, provider.Name())
 		}
@@ -1173,5 +1177,22 @@ func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMet
 			continue
 		}
 		s.Emptyf(provider.InputModalities, "%s is text-only", provider.Name())
+	}
+}
+
+func (s *RoutingSuite) TestExplicitModelsDoNotJoinAutomaticAliases() {
+	provider := s.config().Providers[0]
+	provider.ExplicitOnly = true
+	s.False((Alias{Languages: []string{"en"}}).matches(provider))
+	s.True((Alias{Only: []string{provider.Name()}}).matches(provider))
+}
+
+func (s *RoutingSuite) TestAudioTurnRequiresAnExplicitSelection() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+	provider, ok := config[STT].Provider("audioturn/audioturn-stack16k-blend")
+	s.Require().True(ok)
+	for name, alias := range config[STT].Aliases {
+		s.False(alias.matches(provider), "AudioTurn unexpectedly joined %s", name)
 	}
 }

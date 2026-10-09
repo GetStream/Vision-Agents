@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -85,7 +86,7 @@ func (s *DemoEOTSuite) preflight(status int, body string, hosted bool) (error, s
 		_, _ = io.WriteString(w, body)
 	}))
 	s.T().Cleanup(server.Close)
-	client, err := agent.NewEOTClient(server.URL, "")
+	client, err := audioturn.NewClient(server.URL, "")
 	s.Require().NoError(err)
 	var logs bytes.Buffer
 	err = preflightDemoEOT(context.Background(), client, hosted, slog.New(slog.NewTextHandler(&logs, nil)))

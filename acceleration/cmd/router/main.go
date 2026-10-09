@@ -76,6 +76,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
@@ -1326,7 +1327,7 @@ func buildSessions(
 		reading = base
 	}
 
-	var eotClient *agent.EOTClient
+	var eotClient *audioturn.Client
 	if endpoint := strings.TrimSpace(settings.EOT.Endpoint); endpoint != "" {
 		client, err := configuredEOTClient(settings.EOT)
 		if err != nil {
@@ -1376,7 +1377,7 @@ func buildSessions(
 	})
 }
 
-func configuredEOTClient(settings config.EOT) (*agent.EOTClient, error) {
+func configuredEOTClient(settings config.EOT) (*audioturn.Client, error) {
 	endpoint := strings.TrimSpace(settings.Endpoint)
 	tokenFile := strings.TrimSpace(settings.IDTokenFile)
 	if endpoint == "" {
@@ -1389,9 +1390,9 @@ func configuredEOTClient(settings config.EOT) (*agent.EOTClient, error) {
 		if !eotdefaults.IsHostedDemoEndpoint(endpoint) {
 			return nil, errors.New("the hosted demo endpoint path must be /v1/eot")
 		}
-		return agent.NewHostedDemoEOTClient()
+		return audioturn.NewHostedClient()
 	}
-	return agent.NewEOTClient(endpoint, tokenFile)
+	return audioturn.NewClient(endpoint, tokenFile)
 }
 
 // buildKnowledgeURLs wires the control plane for pages a knowledge base is kept filled

@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
@@ -303,7 +304,7 @@ func (s *AgentSuite) TestPrimaryPartialGuardRejectsNoiseEchoOtherSpeakerAndBackc
 		s.Run(tc.name, func() {
 			options := Options{EOTMode: tc.mode}
 			if tc.eot {
-				options.EOT = &EOTClient{}
+				options.EOT = &audioturn.Client{}
 			}
 			agent := &Agent{
 				options:      options,
@@ -313,7 +314,7 @@ func (s *AgentSuite) TestPrimaryPartialGuardRejectsNoiseEchoOtherSpeakerAndBackc
 			s.False(agent.primaryPartialInterrupt(tc.transcript, tc.state), "this transcript must not bypass semantic overlap handling")
 		})
 	}
-	options := Options{EOT: &EOTClient{}, EOTMode: EOTModePrimary}
+	options := Options{EOT: &audioturn.Client{}, EOTMode: EOTModePrimary}
 	agent := &Agent{options: options, voices: map[string]string{participant.ID: "caller-voice"}, speakingTurn: state.Speaking}
 	s.True(agent.primaryPartialInterrupt(partial("stop", "caller-voice", stt.ModeReplacement), state), "a single explicit stop word takes the floor")
 	s.True(agent.primaryPartialInterrupt(partial("actually stop and give me another option", "caller-voice", stt.ModeReplacement), state),

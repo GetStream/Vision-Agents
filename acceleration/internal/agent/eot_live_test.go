@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -28,7 +29,7 @@ func (s *EOTLiveSuite) TestAuthenticatedEndpointScoresAudio() {
 		pcm, err = os.ReadFile(path)
 		s.Require().NoError(err)
 	}
-	client, err := NewEOTClient(endpoint, tokenFile)
+	client, err := audioturn.NewClient(endpoint, tokenFile)
 	s.Require().NoError(err)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -37,5 +38,6 @@ func (s *EOTLiveSuite) TestAuthenticatedEndpointScoresAudio() {
 
 	s.Require().NoError(err)
 	s.Equal(len(pcm)/2, score.Samples)
-	s.True(validProbability(score.Probability))
+	s.GreaterOrEqual(score.Probability, 0.0)
+	s.LessOrEqual(score.Probability, 1.0)
 }

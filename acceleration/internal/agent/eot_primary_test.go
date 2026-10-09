@@ -10,13 +10,14 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 )
 
 func (s *AgentSuite) primaryEOTServer(handler http.Handler) *httptest.Server {
 	s.eotMode = EOTModePrimary
 	server := httptest.NewServer(handler)
 	s.T().Cleanup(server.Close)
-	client, err := NewEOTClient(server.URL, "")
+	client, err := audioturn.NewClient(server.URL, "")
 	s.Require().NoError(err)
 	s.eot = client
 	return server
@@ -394,4 +395,21 @@ func (s *AgentSuite) TestPrimaryEOTLateDiarizationUsesCurrentSpeakerForFallback(
 	s.eventually(func() bool { return len(s.flow.requests()) == 1 },
 		"a same-text diarization change did not use the semantic controller")
 	s.Contains(s.flow.requests()[0].Input[0].Content, "in a different voice")
+}
+
+func (s *AgentSuite) TestATranscriptTurnScoreAnswersWithoutAnotherEOTRequest() {
+	var requests atomic.Int64
+	s.primaryEOTServer(primaryScoreHandler(s, 0.1, &requests))
+	s.join(false)
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	probability := 0.95
+	s.ears.emitter.Send(stt.Transcript{
+		Participant: participant, Mode: stt.ModeFinal, Text: "please find a table",
+		TurnProbability: &probability,
+	})
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
+		"the transcript's high score did not release the reply")
+	s.Zero(requests.Load(), "the words and turn score came from the same AudioTurn request")
+	s.Contains(said(s.voice.spoken()), "Hello there.")
 }

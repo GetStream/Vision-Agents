@@ -7,6 +7,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/assemblyai"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/deepgram"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/elevenlabs"
@@ -27,6 +28,9 @@ func NewRegistry() *Registry { return routing.NewRegistry[stt.STT]() }
 // supports.
 func DefaultRegistry() *Registry {
 	registry := NewRegistry()
+	registry.Register(audioturn.ProviderName, func(spec routing.Spec) (stt.STT, error) {
+		return audioturn.New(audioturn.Options{Model: spec.Model})
+	})
 
 	registry.Register(deepgram.ProviderName, func(spec routing.Spec) (stt.STT, error) {
 		settings := deepgramSettings{}
