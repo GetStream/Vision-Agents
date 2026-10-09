@@ -216,6 +216,21 @@ func (s *OpenAILiveSocketSuite) TestABackendToolWithEveryPropertyRequiredIsSentA
 	s.NotContains(backendTools(<-fake.starts)[0].(map[string]any), "strict")
 }
 
+// TestABackendToolDecodedFromJSONWithEveryPropertyRequiredIsSentAsBefore: required as []any, as
+// a decoded MCP schema has it, counts as much as []string.
+func (s *OpenAILiveSocketSuite) TestABackendToolDecodedFromJSONWithEveryPropertyRequiredIsSentAsBefore() {
+	fake := newFakeLive("")
+	defer fake.close()
+	provider, _ := s.connect(fake, Options{Tools: []llm.Tool{{Name: "get_weather", Parameters: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"city": map[string]any{"type": "string"}},
+		"required":   []any{"city"},
+	}}}})
+	defer func() { _ = provider.Close() }()
+
+	s.NotContains(backendTools(<-fake.starts)[0].(map[string]any), "strict")
+}
+
 func (s *OpenAILiveSocketSuite) TestASessionAskingForNothingExtraSendsNothingExtra() {
 	fake := newFakeLive("")
 	defer fake.close()

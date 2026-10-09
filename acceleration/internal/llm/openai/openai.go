@@ -644,6 +644,12 @@ func HasOptional(schema map[string]any) bool {
 // https://json-schema.org/draft/2020-12/json-schema-validation.
 var dataKeywords = map[string]bool{"enum": true, "const": true, "default": true, "examples": true}
 
+// namedSchemas hold schemas under names the schema's author chose, so a name there is never a
+// keyword (JSON Schema 2020-12 core, section 8.2.4 for $defs; applicator, sections 10.2.2.2
+// and 10.2.2.4 for patternProperties and dependentSchemas; definitions is the draft-07 name
+// of $defs).
+var namedSchemas = map[string]bool{"$defs": true, "definitions": true, "patternProperties": true, "dependentSchemas": true}
+
 func optionalIn(node any) bool {
 	switch value := node.(type) {
 	case map[string]any:
@@ -667,7 +673,19 @@ func optionalIn(node any) bool {
 			}
 		}
 		for key, child := range value {
-			if key != "properties" && !dataKeywords[key] && optionalIn(child) {
+			if key == "properties" || dataKeywords[key] {
+				continue
+			}
+			if namedSchemas[key] {
+				named, _ := child.(map[string]any)
+				for _, schema := range named {
+					if optionalIn(schema) {
+						return true
+					}
+				}
+				continue
+			}
+			if optionalIn(child) {
 				return true
 			}
 		}
