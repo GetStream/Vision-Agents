@@ -120,6 +120,19 @@ func (s *Store) LinkChannelThread(ctx context.Context, thread *ChannelThread) (c
 	return thread.ChannelID == proposed, nil
 }
 
+// ChannelThreadLinked is whether an external thread of a customer's provider unit is linked to
+// a thread channel already.
+func (s *Store) ChannelThreadLinked(ctx context.Context, customerID, connectorID, providerUnitID, threadKey string) (bool, error) {
+	linked, err := s.db.NewSelect().Model((*ChannelThread)(nil)).
+		Where("customer_id = ? AND connector_id = ? AND provider_unit_id = ? AND thread_key = ?",
+			customerID, connectorID, providerUnitID, threadKey).
+		Exists(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: channel thread linked: %w", err))
+	}
+	return linked, nil
+}
+
 // ChannelThread returns the external thread linked to a thread channel, or ErrNoChannelThread.
 func (s *Store) ChannelThread(ctx context.Context, channelID string) (ChannelThread, error) {
 	if channelID == "" {

@@ -15,7 +15,7 @@ import (
 
 const SchemaVersion = 3
 const BenchmarkVersion = "0.4.0"
-const MethodologyVersion = "voicebench-live-v3"
+const MethodologyVersion = "voicebench-live-v5"
 
 const KindAgent = "agent"
 const KindSTT = "stt"
@@ -124,17 +124,27 @@ type PackSummary struct {
 	ToolP50     int `json:"tool_p50_ms"`
 	ToolSamples int `json:"tool_samples"`
 
-	// StageP50 is the router's median for each stage of a caller turn, pooled over every turn
-	// it timed, for the targets that run on it. AgentMetricsP50 is the median across calls of
-	// what a Python agent measured about itself. Both are diagnostics, not figures to compare
-	// with LiveKit, which reports neither.
-	StageP50        map[string]int     `json:"stage_p50_ms,omitempty"`
-	StageSamples    int                `json:"stage_samples,omitempty"`
-	AgentMetricsP50 map[string]float64 `json:"agent_metrics_p50,omitempty"`
+	// StageP50 and StageP90 are the router's median and p90 for each stage of a caller turn,
+	// pooled over every turn it timed, for the targets that run on it. The ToolStage fields are
+	// the same for the replies the agent started after a tool returned, which have only the
+	// stages from the model on. AgentMetricsP50 is the median across calls of what a Python
+	// agent measured about itself. All are diagnostics, not figures to compare with LiveKit,
+	// which reports none of them.
+	StageP50         map[string]int     `json:"stage_p50_ms,omitempty"`
+	StageP90         map[string]int     `json:"stage_p90_ms,omitempty"`
+	StageSamples     int                `json:"stage_samples,omitempty"`
+	ToolStageP50     map[string]int     `json:"tool_stage_p50_ms,omitempty"`
+	ToolStageP90     map[string]int     `json:"tool_stage_p90_ms,omitempty"`
+	ToolStageSamples int                `json:"tool_stage_samples,omitempty"`
+	AgentMetricsP50  map[string]float64 `json:"agent_metrics_p50,omitempty"`
 }
 
 // stageNames are the router's stages in the order they happen, as summary.json names them.
 var stageNames = []string{"stt_ms", "cadence_ms", "decision_ms", "model_to_first_text_ms", "text_to_tts_ms", "tts_to_audio_ms", "roundtrip_ms"}
+
+// toolStageNames are the stages of a reply the agent starts after a tool returns. Nothing was
+// said to settle, so they begin at the model.
+var toolStageNames = []string{"model_to_first_text_ms", "text_to_tts_ms", "tts_to_audio_ms"}
 
 func stageValue(stage score.StageTiming, name string) int {
 	switch name {
@@ -154,6 +164,18 @@ func stageValue(stage score.StageTiming, name string) int {
 		return stage.RoundtripMs
 	}
 	return 0
+}
+
+// stagePercentiles is the median and p90 of each pooled stage, computed the one way the
+// benchmark computes a percentile.
+func stagePercentiles(pooled map[string][]int) (p50, p90 map[string]int) {
+	p50, p90 = map[string]int{}, map[string]int{}
+	for name, values := range pooled {
+		sort.Ints(values)
+		p50[name] = score.Percentile(values, 50)
+		p90[name] = score.Percentile(values, 90)
+	}
+	return p50, p90
 }
 
 // agentMetricNames are the averages a Python agent reports that bear on reply time.
@@ -239,6 +261,7 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 	var firstResponse []int
 	var durations []int
 	stages := map[string][]int{}
+	toolStages := map[string][]int{}
 	agentMetrics := map[string][]float64{}
 	var toolWait []int
 	var callerTurns []int
@@ -269,9 +292,13 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 		}
 		dropped += len(call.Metrics.Dropped)
 		for _, stage := range call.Metrics.Stages {
-			out.StageSamples++
-			for _, name := range stageNames {
-				stages[name] = append(stages[name], stageValue(stage, name))
+			names, pooled, samples := stageNames, stages, &out.StageSamples
+			if stage.Tool {
+				names, pooled, samples = toolStageNames, toolStages, &out.ToolStageSamples
+			}
+			*samples++
+			for _, name := range names {
+				pooled[name] = append(pooled[name], stageValue(stage, name))
 			}
 		}
 		for name, value := range call.Metrics.AgentMetrics {
@@ -370,11 +397,10 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 	}
 	out.V2VMean = score.Mean(v2v)
 	if out.StageSamples > 0 {
-		out.StageP50 = map[string]int{}
-		for name, values := range stages {
-			sort.Ints(values)
-			out.StageP50[name] = score.Percentile(values, 50)
-		}
+		out.StageP50, out.StageP90 = stagePercentiles(stages)
+	}
+	if out.ToolStageSamples > 0 {
+		out.ToolStageP50, out.ToolStageP90 = stagePercentiles(toolStages)
 	}
 	if len(agentMetrics) > 0 {
 		out.AgentMetricsP50 = map[string]float64{}
@@ -552,28 +578,36 @@ func Markdown(s Summary) string {
 	return b.String()
 }
 
-// writeStages is the router's account of where a caller turn's wait went, for the packs it
-// timed.
+// writeStages is the router's account of where a reply's wait went, for the packs it timed:
+// a row for the replies to the caller and one for the replies after a tool returned.
 func writeStages(b *strings.Builder, packs []PackSummary) {
 	timed := false
 	for _, p := range packs {
-		timed = timed || p.StageSamples > 0
+		timed = timed || p.StageSamples > 0 || p.ToolStageSamples > 0
 	}
 	if !timed {
 		return
 	}
 	b.WriteString("\n## Where the router's time goes\n\n")
-	b.WriteString("Medians over every caller turn the router timed. The stages from cadence to TTS to audio run one after another and make up the roundtrip. A diagnostic for our own targets; LiveKit reports nothing comparable.\n\n")
-	b.WriteString("| Pack | STT | Cadence | Decision | Model to first text | Text to TTS | TTS to audio | Roundtrip | Turns |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
-	for _, p := range packs {
-		if p.StageSamples == 0 {
-			continue
+	b.WriteString("Each cell is the median / p90 over the replies the router timed. A pack's first row is the replies to what the caller said: the stages from cadence to TTS to audio run one after another and make up the roundtrip. The row after a tool is the replies the agent starts when a tool returns. They have no caller speech to settle, so only the stages from the model to the audio are timed. A diagnostic for our own targets; LiveKit reports nothing comparable.\n\n")
+	b.WriteString("| Pack (median / p90) | STT | Cadence | Decision | Model to first text | Text to TTS | TTS to audio | Roundtrip | Turns |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+	row := func(label string, p50, p90 map[string]int, samples int) {
+		if samples == 0 {
+			return
 		}
-		fmt.Fprintf(b, "| %s |", p.Pack)
+		fmt.Fprintf(b, "| %s |", label)
 		for _, name := range stageNames {
-			fmt.Fprintf(b, " %d ms |", p.StageP50[name])
+			if value, ok := p50[name]; ok {
+				fmt.Fprintf(b, " %d / %d ms |", value, p90[name])
+			} else {
+				b.WriteString(" — |")
+			}
 		}
-		fmt.Fprintf(b, " %d |\n", p.StageSamples)
+		fmt.Fprintf(b, " %d |\n", samples)
+	}
+	for _, p := range packs {
+		row(p.Pack, p.StageP50, p.StageP90, p.StageSamples)
+		row(p.Pack+" after a tool", p.ToolStageP50, p.ToolStageP90, p.ToolStageSamples)
 	}
 }
 
@@ -795,6 +829,12 @@ func gateDetails(m score.Metrics) []gateDetail {
 	}
 	if containsNote(m.GateNotes, "hold") {
 		add("hold", []string{"agent did not continue through mid-speech overlap"})
+	}
+	if containsNote(m.GateNotes, "check_in") {
+		add("check_in", []string{"agent stayed silent while the caller went quiet: " + strings.Join(m.CheckInFail, ", ")})
+	}
+	if containsNote(m.GateNotes, "false_cutoff") {
+		add("false_cutoff", []string{fmt.Sprintf("agent started talking %d time(s) while the caller was still in a turn", m.FalseCutoff)})
 	}
 	return out
 }

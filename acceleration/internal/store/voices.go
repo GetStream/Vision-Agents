@@ -31,6 +31,9 @@ func (s *Store) CreateVoice(ctx context.Context, voice *Voice) error {
 	voice.DeletedAt = nil
 
 	if _, err := s.db.NewInsert().Model(voice).Exec(ctx); err != nil {
+		if constraint(err) == "voices_name_idx" {
+			return stack.Wrap(ErrNameTaken)
+		}
 		return stack.Wrap(fmt.Errorf("store: create voice: %w", err))
 	}
 	return nil
@@ -54,6 +57,9 @@ func (s *Store) UpdateVoice(ctx context.Context, voice *Voice) error {
 		Where("customer_id = ?", voice.CustomerID).
 		Where("deleted_at IS NULL").
 		Exec(ctx)
+	if constraint(err) == "voices_name_idx" {
+		return stack.Wrap(ErrNameTaken)
+	}
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: update voice: %w", err))
 	}

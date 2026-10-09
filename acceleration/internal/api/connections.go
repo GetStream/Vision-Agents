@@ -450,21 +450,30 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 	// no grant to revoke.
 	if len(connection.CredentialsSealed) > 0 {
 		s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
-			store.AuditGrantRevoked, store.AuditReasonDeleted, 0, "")
+			store.AuditGrantRevoked, store.AuditReasonDeleted, 0, "", core.CredentialChange{})
 	}
 	return nil, nil
 }
 
 // auditGrant records one grant the API created or revoked (T47), with the request's id
-// (core.CorrelationOf). The change is committed when it is called, so a row that cannot be
+// (core.CorrelationOf) and the tokens change names (AI-990), and logs it as one line, as the
+// resolver logs a refresh. The change is committed when it is called, so a row that cannot be
 // written is logged and the change stands. revision is the connection's once it committed, 0
-// when the change names none.
-func (s *Server) auditGrant(ctx context.Context, customerID, connectionID, connectorID, ownerType, action, reason string, revision int, attemptID string) {
-	err := s.store.RecordConnectorAudit(ctx, &store.ConnectorAuditEvent{
+// when the change names none. change is zero when no token is known, as on a delete, whose
+// credentials went sealed with the row.
+func (s *Server) auditGrant(ctx context.Context, customerID, connectionID, connectorID, ownerType, action, reason string, revision int, attemptID string, change core.CredentialChange) {
+	s.logger.Info("connector credential event", append([]any{"event", action,
+		"connection", connectionID, "connector", connectorID, "revision", revision, "reason", reason},
+		change.LogAttrs()...)...)
+	event := &store.ConnectorAuditEvent{
 		CustomerID: customerID, ConnectionID: connectionID, ConnectorID: connectorID, OwnerType: ownerType,
 		Action: action, Reason: reason, Revision: revision, RequestID: core.CorrelationOf(ctx).RequestID,
 		AttemptID: attemptID,
-	})
+	}
+	if change != (core.CredentialChange{}) {
+		event.Credential = store.AuditCredential(change)
+	}
+	err := s.store.RecordConnectorAudit(ctx, event)
 	if err != nil {
 		s.logger.Error("could not record a connector audit row", "connection", connectionID, "action", action, "error", err)
 	}

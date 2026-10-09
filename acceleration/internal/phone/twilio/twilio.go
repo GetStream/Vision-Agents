@@ -44,6 +44,9 @@ const pricesTTL = 24 * time.Hour
 // errorBodyLimit caps how much of a failed response is read into an error message.
 const errorBodyLimit = 2048
 
+// addressRequired is Twilio's error for a number sold only with a verified address.
+const addressRequired = "21631"
+
 // microsPerDollar converts Twilio's dollar strings into the micros used everywhere else.
 const microsPerDollar = 1_000_000
 
@@ -264,6 +267,9 @@ func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Numb
 
 	var bought incomingNumber
 	if err := p.post(ctx, path, form, &bought); err != nil {
+		if refused, ok := errors.AsType[*phone.VendorError](err); ok && refused.Code == addressRequired {
+			return phone.Number{}, stack.Wrap(fmt.Errorf("%w: %w", phone.ErrAddressRequired, refused))
+		}
 		return phone.Number{}, err
 	}
 
@@ -422,7 +428,7 @@ func (p *Provider) do(ctx context.Context, method, base, path string, query, for
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("twilio: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "could not build the request", Cause: err})
 	}
 	request.SetBasicAuth(p.accountSID, p.authToken)
 	request.Header.Set("Accept", "application/json")
@@ -432,22 +438,38 @@ func (p *Provider) do(ctx context.Context, method, base, path string, query, for
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("twilio: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "no answer", Cause: err})
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return stack.Wrap(fmt.Errorf("twilio: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
+		return stack.Wrap(refusal(p.Vendor(), path, response.StatusCode, detail))
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("twilio: decode %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
 	}
 	return nil
+}
+
+// refusal is Twilio's error answer, with its code and message when the body is Twilio's JSON
+// and the body as it came otherwise.
+func refusal(vendor, path string, status int, body []byte) *phone.VendorError {
+	refused := &phone.VendorError{Vendor: vendor, Path: path, Status: status, Message: strings.TrimSpace(string(body))}
+	var answer struct {
+		Code    json.Number `json:"code"`
+		Message string      `json:"message"`
+	}
+	if json.Unmarshal(body, &answer) == nil && answer.Message != "" {
+		refused.Code = answer.Code.String()
+		refused.Message = answer.Message
+	}
+	return refused
 }
 
 // dialBridge renders the TwiML that connects a call to the Stream trunk.

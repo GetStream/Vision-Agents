@@ -24,6 +24,13 @@ var errUnknownRouterConfig = APIError{
 	Message: "no such router config",
 }
 
+// errRouterNameTaken is a create or a rename to a name another of the customer's router
+// configs has.
+var errRouterNameTaken = APIError{
+	Type: ErrorTypeConflict, Code: codeNameTaken,
+	Message: "a router with this name already exists",
+}
+
 // listRouterConfigs returns the calling customer's router configs, newest first.
 func (s *Server) listRouterConfigs(ctx context.Context, _ *listRouterConfigsRequest) (*listRouterConfigsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
@@ -64,7 +71,7 @@ func (s *Server) createRouterConfig(ctx context.Context, request *createRouterCo
 
 	config := storedRouterConfig(*request.Body, customerID)
 	if err := s.configs.CreateRouterConfig(ctx, &config); err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, storeFailure(err, errRouterNameTaken)
 	}
 	stored := routerConfigOf(config)
 	s.audit(ctx, auditRecord{
@@ -116,7 +123,7 @@ func (s *Server) updateRouterConfig(ctx context.Context, request *updateRouterCo
 	config.ID = existing.ID
 	config.CreatedAt = existing.CreatedAt
 	if err := s.configs.UpdateRouterConfig(ctx, &config); err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, storeFailure(err, errRouterNameTaken)
 	}
 	stored := routerConfigOf(config)
 	s.audit(ctx, auditRecord{
@@ -452,7 +459,8 @@ func (s *Server) registerRouterconfigs(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"201": {Description: "The config was stored"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusConflict},
 	}, s.createRouterConfig)
 	huma.Register(api, huma.Operation{
 		OperationID: "getRouterConfig",
@@ -476,7 +484,8 @@ func (s *Server) registerRouterconfigs(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The config as it now is"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusNotFound, http.StatusConflict},
 	}, s.updateRouterConfig)
 	huma.Register(api, huma.Operation{
 		OperationID: "deleteRouterConfig",

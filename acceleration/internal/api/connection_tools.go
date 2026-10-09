@@ -229,6 +229,8 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 	}
 	stale := false
 	var committed *core.CredentialState
+	// The tokens a write replaces, and those it stores, for a scheme that names them.
+	change := core.CredentialChange{Current: core.FingerprintsOf(s.connectors.Schemes, credentials)}
 	err = s.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
 		if state.Revision != sent.ExpectedRevision {
 			stale = true
@@ -236,6 +238,7 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 		}
 		// The credential store leaves the revision it committed here (core.CredentialStore).
 		committed = state
+		change.Previous = core.FingerprintsOf(s.connectors.Schemes, state.Credentials)
 		state.Credentials = credentials
 		state.Status = store.ConnectionConnected
 		state.LastError = ""
@@ -262,7 +265,7 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 		return nil, errStaleRevision
 	}
 	s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
-		store.AuditGrantCreated, store.AuditReasonCredentials, committed.Revision, "")
+		store.AuditGrantCreated, store.AuditReasonCredentials, committed.Revision, "", change)
 	return s.getConnection(ctx, &connectionRequest{ID: connection.ID})
 }
 

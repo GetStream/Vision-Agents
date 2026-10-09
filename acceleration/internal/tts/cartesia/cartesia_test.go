@@ -225,6 +225,27 @@ func (s *CartesiaSuite) TestAnIdleHangUpIsReplacedBeforeAnyoneSpeaks() {
 	s.Equal("Still here.", s.generations(second, 1)[0].Transcript)
 }
 
+func (s *CartesiaSuite) TestASocketThatDropsWithoutAClosingFrameIsReplaced() {
+	fake := newFakeCartesia()
+	defer fake.close()
+	provider, first := s.connect(fake, Options{reconnect: time.Minute})
+	defer provider.Close()
+
+	s.Require().NoError(first.UnderlyingConn().Close())
+	s.collect(provider, func(event tts.Event) bool {
+		failure, ok := event.(tts.Error)
+		return ok && failure.Fatal
+	})
+
+	s.Require().NoError(provider.Synthesize(tts.Request{
+		ID: "u1", Text: "Your render is ready.", Final: true,
+	}))
+
+	second := fake.accept()
+	s.Require().NotNil(second, "the provider kept writing to a socket that had gone")
+	s.Equal("Your render is ready.", s.generations(second, 1)[0].Transcript)
+}
+
 func (s *CartesiaSuite) TestNewRequiresAPIKey() {
 	s.T().Setenv("CARTESIA_API_KEY", "")
 

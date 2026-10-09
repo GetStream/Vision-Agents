@@ -9,6 +9,10 @@ turns:
   - id: intro
     text: "Maya Chen, born March 4 1987, member ABC123456. Move Thursday 2pm with Dr Chen to Tuesday morning."
     trigger: {kind: after_agent_turn, delay_ms: 400}
+  # The agent may confirm before it acts, as it should with a real caller; this is the yes.
+  - id: go_ahead
+    text: "Yes, that's right. Please go ahead."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
 seed:
   patients:
     - {id: p1, name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456}

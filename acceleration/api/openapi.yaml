@@ -2238,6 +2238,35 @@ components:
         - token_export
         - proxy_call
       type: string
+    ConnectorAuditCredential:
+      description: 'The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the token''s SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.'
+      properties:
+        access_expires_at:
+          description: When the access token expires. Absent when the provider did not say.
+          format: date-time
+          type: string
+        access_fingerprint:
+          description: The access token the grant left, by fingerprint.
+          type: string
+        previous_access_fingerprint:
+          description: The access token before it, by fingerprint. Absent for a first grant.
+          type: string
+        previous_refresh_fingerprint:
+          description: The refresh token before it, by fingerprint. Absent for a first grant, or when there was none.
+          type: string
+        refresh_expires_at:
+          description: When the refresh token expires, by the connector's refresh_ttl. Absent when it does not say.
+          format: date-time
+          type: string
+        refresh_fingerprint:
+          description: The refresh token the grant left, by fingerprint. Absent when there is none.
+          type: string
+        rotated:
+          description: The refresh token the connection already had was replaced, as a provider that rotates refresh tokens does on every refresh.
+          type: boolean
+      required:
+        - rotated
+      type: object
     ConnectorAuditEvent:
       description: One grant a connection got, renewed or lost, one export of its access credential, or one direct call sent through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
       properties:
@@ -2254,6 +2283,9 @@ components:
         created_at:
           format: date-time
           type: string
+        credential:
+          $ref: '#/components/schemas/ConnectorAuditCredential'
+          description: The tokens a grant row left, by fingerprint. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens.
         id:
           type: string
         latency_ms:
@@ -2327,11 +2359,11 @@ components:
       description: How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
       properties:
         cancellable:
-          description: 'Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding''s timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption.'
+          description: Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running once the session stops waiting, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It does not matter with on_interrupt wait, whose call the session always waits for.
           type: boolean
         on_interrupt:
           $ref: '#/components/schemas/ConnectorOnInterrupt'
-          description: What an interruption of the turn does to a call in flight. Omitted is cancel.
+          description: What an interruption of the turn does to a call in flight. Omitted, the call goes on and the caller is told its result when it comes, unless they withdraw what they asked for, which stops it.
         pre_speech:
           description: What the agent says while one of the binding's tools runs, such as "Let me pull up your calendar.", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started.
           minLength: 1
@@ -3120,7 +3152,7 @@ components:
     ErrorDetail:
       properties:
         code:
-          description: What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.'
           type: string
         doc_url:
           description: Where the code is explained.
@@ -8817,6 +8849,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Store a named configuration a session can be created from
@@ -8911,6 +8949,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Change some of an agent config
@@ -8948,6 +8992,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Replace an agent config
@@ -12394,6 +12444,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Define a kind of work worth handing to the slower model
@@ -12483,6 +12539,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Replace a skill
@@ -12652,6 +12714,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Name a voice of the customer's own
@@ -12745,6 +12813,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Rename a voice
@@ -14667,6 +14741,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Store a named set of per-modality routing options
@@ -14760,6 +14840,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Replace a router config

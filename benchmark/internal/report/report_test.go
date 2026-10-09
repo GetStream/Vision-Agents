@@ -1,6 +1,7 @@
 package report
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -306,18 +307,83 @@ func TestSummaryPoolsTheRoutersStagesOverEveryTurn(t *testing.T) {
 			Metrics: score.Metrics{Stages: []score.StageTiming{stage(1200)}, AgentMetrics: map[string]float64{"stt_latency_ms__avg": 300}}},
 	})
 	pack := sum.Packs[0]
-	if pack.StageSamples != 3 || pack.StageP50["decision_ms"] != 500 || pack.StageP50["cadence_ms"] != 350 {
+	if pack.StageSamples != 3 || pack.StageP50["decision_ms"] != 500 || pack.StageP90["decision_ms"] != 1200 || pack.StageP50["cadence_ms"] != 350 {
 		t.Fatalf("stages are pooled over turns, not calls: %+v", pack)
 	}
 	if pack.AgentMetricsP50["stt_latency_ms__avg"] != 100 {
 		t.Fatalf("agent metrics %+v", pack.AgentMetricsP50)
 	}
 	md := Markdown(sum)
-	if !strings.Contains(md, "## Where the router's time goes") || !strings.Contains(md, "| restaurant | 0 ms | 350 ms | 500 ms | 0 ms | 0 ms | 0 ms | 2500 ms | 3 |") {
+	if !strings.Contains(md, "## Where the router's time goes") || !strings.Contains(md, "| restaurant | 0 / 0 ms | 350 / 350 ms | 500 / 1200 ms | 0 / 0 ms | 0 / 0 ms | 0 / 0 ms | 2500 / 3200 ms | 3 |") {
 		t.Fatalf("stage table missing:\n%s", md)
 	}
 	if !strings.Contains(md, "## What the agent measured") || !strings.Contains(md, "| restaurant | 100 ms | — |") {
 		t.Fatalf("agent metrics table missing:\n%s", md)
+	}
+}
+
+func TestStageP90IsTheNearestRankTailNotTheSlowestTurn(t *testing.T) {
+	var stages []score.StageTiming
+	for decision := 100; decision <= 1000; decision += 100 {
+		stages = append(stages, score.StageTiming{TurnID: "t", DecisionMs: decision, RoundtripMs: 2000 + decision})
+	}
+	sum := BuildSummary("accelerated", "run1", 1, []CallResult{
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Outcome: OutcomePass, Passed: true,
+			Metrics: score.Metrics{Stages: stages}},
+	})
+	pack := sum.Packs[0]
+	if pack.StageP50["decision_ms"] != 500 || pack.StageP90["decision_ms"] != 900 || pack.StageP90["roundtrip_ms"] != 2900 {
+		t.Fatalf("p90 is taken as the median is, over the same pooled turns: %+v", pack)
+	}
+	data, err := json.Marshal(pack)
+	if err != nil || !strings.Contains(string(data), `"stage_p90_ms":{`) {
+		t.Fatalf("summary.json should carry the p90 beside the median: %s %v", data, err)
+	}
+}
+
+func TestSummaryReportsRepliesAfterAToolOnTheirOwnRow(t *testing.T) {
+	caller := score.StageTiming{TurnID: "turn-1", STTMs: 40, CadenceMs: 350, DecisionMs: 400, ModelToTextMs: 600, TextToTTSMs: 50, TTSToAudioMs: 500, RoundtripMs: 1900}
+	afterTool := func(model, audio int) score.StageTiming {
+		return score.StageTiming{TurnID: "tool-1", Tool: true, ModelToTextMs: model, TextToTTSMs: 50, TTSToAudioMs: audio}
+	}
+	sum := BuildSummary("accelerated", "run1", 1, []CallResult{
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Outcome: OutcomePass, Passed: true,
+			Metrics: score.Metrics{Stages: []score.StageTiming{caller, afterTool(600, 400), afterTool(700, 900), afterTool(1500, 3000)}}},
+	})
+	pack := sum.Packs[0]
+	if pack.StageSamples != 1 || pack.ToolStageSamples != 3 {
+		t.Fatalf("a reply after a tool is not a caller turn: %+v", pack)
+	}
+	if pack.ToolStageP50["tts_to_audio_ms"] != 900 || pack.ToolStageP90["tts_to_audio_ms"] != 3000 {
+		t.Fatalf("replies after a tool are pooled apart: %+v", pack.ToolStageP50)
+	}
+	if _, ok := pack.ToolStageP50["roundtrip_ms"]; ok {
+		t.Fatalf("a reply after a tool has no roundtrip to report: %+v", pack.ToolStageP50)
+	}
+	md := Markdown(sum)
+	for _, want := range []string{
+		"| Pack (median / p90) |",
+		"| restaurant | 40 / 40 ms | 350 / 350 ms | 400 / 400 ms | 600 / 600 ms | 50 / 50 ms | 500 / 500 ms | 1900 / 1900 ms | 1 |",
+		"| restaurant after a tool | — | — | — | 700 / 1500 ms | 50 / 50 ms | 900 / 3000 ms | — | 3 |",
+		"The row after a tool is the replies the agent starts when a tool returns.",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("report is missing %q:\n%s", want, md)
+		}
+	}
+}
+
+func TestAPackWithOnlyRepliesAfterAToolStillGetsItsRow(t *testing.T) {
+	sum := BuildSummary("accelerated", "run1", 1, []CallResult{
+		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Outcome: OutcomePass, Passed: true,
+			Metrics: score.Metrics{Stages: []score.StageTiming{{TurnID: "tool-1", Tool: true, ModelToTextMs: 600, TextToTTSMs: 50, TTSToAudioMs: 400}}}},
+	})
+	md := Markdown(sum)
+	if !strings.Contains(md, "| restaurant after a tool | — | — | — | 600 / 600 ms | 50 / 50 ms | 400 / 400 ms | — | 1 |") {
+		t.Fatalf("replies after a tool should be reported on their own:\n%s", md)
+	}
+	if strings.Contains(md, "| restaurant | 0 / 0 ms") {
+		t.Fatalf("a pack with no caller turns timed has no row for them:\n%s", md)
 	}
 }
 

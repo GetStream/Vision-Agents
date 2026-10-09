@@ -112,7 +112,7 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		return nil, invalidRequest(message)
 	}
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, storeFailure(err, errAgentNameTaken)
 	}
 	stored := agentConfigOf(config)
 	s.audit(ctx, auditRecord{
@@ -207,7 +207,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		return nil, invalidRequest(message)
 	}
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, storeFailure(err, errAgentNameTaken)
 	}
 	stored := agentConfigOf(config)
 	s.audit(ctx, auditRecord{
@@ -287,7 +287,7 @@ func (s *Server) createSkill(ctx context.Context, request *createSkillRequest) (
 
 	skill := storedSkill(*request.Body, customerID)
 	if err := s.configs.CreateSkill(ctx, &skill); err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, storeFailure(err, errSkillNameTaken)
 	}
 	stored := skillOf(skill)
 	s.audit(ctx, auditRecord{
@@ -342,7 +342,7 @@ func (s *Server) updateSkill(ctx context.Context, request *updateSkillRequest) (
 	skill.ID = existing.ID
 	skill.CreatedAt = existing.CreatedAt
 	if err := s.configs.UpdateSkill(ctx, &skill); err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, storeFailure(err, errSkillNameTaken)
 	}
 	stored := skillOf(skill)
 	s.audit(ctx, auditRecord{
@@ -389,6 +389,36 @@ var (
 	}
 	errUnknownSkill = APIError{Type: ErrorTypeNotFound, Code: codeSkillNotFound, Message: "no such skill"}
 )
+
+// errAgentNameTaken and errSkillNameTaken are a create or a rename to a name that another
+// live agent config of the customer, or another skill of the same config, already has.
+var (
+	errAgentNameTaken = APIError{
+		Type: ErrorTypeConflict, Code: codeNameTaken,
+		Message: "an agent with this name already exists",
+	}
+	errSkillNameTaken = APIError{
+		Type: ErrorTypeConflict, Code: codeNameTaken,
+		Message: "this agent already has a skill with this name",
+	}
+)
+
+// storeFailure answers err from storing an agent config, a skill, a router config or a
+// voice. A name that another live one of its kind has is taken, a 409 the caller fixes by
+// choosing another name. A record or a connection that is not there is the invalid request
+// it has always been answered with. Anything else is the database failing rather than the
+// caller, so err goes back as it is, to be answered as a 500 and recorded with its stack.
+func storeFailure(err error, taken APIError) error {
+	switch {
+	case errors.Is(err, store.ErrNameTaken):
+		return taken
+	case errors.Is(err, store.ErrNoAgentConfig), errors.Is(err, store.ErrNoSkill),
+		errors.Is(err, store.ErrNoRouterConfig), errors.Is(err, store.ErrNoVoice),
+		errors.Is(err, store.ErrNoConnectorConnection):
+		return invalidRequest(err.Error())
+	}
+	return err
+}
 
 // configComplaint reports what is wrong with an agent config, if anything. Keyterms are
 // checked here rather than left to the transcriber, because a list nobody can serve is
@@ -1403,7 +1433,8 @@ func (s *Server) registerConfigs(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"201": {Description: "The config was stored"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusConflict},
 	}, s.createAgentConfig)
 	huma.Register(api, huma.Operation{
 		OperationID: "getAgentConfig",
@@ -1427,7 +1458,8 @@ func (s *Server) registerConfigs(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The config as it now is"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusNotFound, http.StatusConflict},
 	}, s.updateAgentConfig)
 	huma.Register(api, huma.Operation{
 		OperationID: "deleteAgentConfig",
@@ -1469,7 +1501,8 @@ func (s *Server) registerConfigs(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"201": {Description: "The skill was stored"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusNotFound, http.StatusConflict},
 	}, s.createSkill)
 	huma.Register(api, huma.Operation{
 		OperationID: "getSkill",
@@ -1491,7 +1524,8 @@ func (s *Server) registerConfigs(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The skill as it now is"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusNotFound, http.StatusConflict},
 	}, s.updateSkill)
 	huma.Register(api, huma.Operation{
 		OperationID: "deleteSkill",
@@ -1644,8 +1678,8 @@ type AgentConnectorBinding struct {
 // ConnectorBindingPolicy is a binding's policy envelope, read back as it was written.
 type ConnectorBindingPolicy struct {
 	PreSpeech   *string               `json:"pre_speech,omitempty" minLength:"1" doc:"What the agent says while one of the binding's tools runs, such as \"Let me pull up your calendar.\", in place of the phrase it picks itself when the model reached for the tool without a word. A voice session with a separate voice says it; every session reports it on tool_started."`
-	OnInterrupt *ConnectorOnInterrupt `json:"on_interrupt,omitempty" doc:"What an interruption of the turn does to a call in flight. Omitted is cancel."`
-	Cancellable *bool                 `json:"cancellable,omitempty" doc:"Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running after an interruption, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It only matters with on_interrupt cancel: a wait call is never stopped by an interruption."`
+	OnInterrupt *ConnectorOnInterrupt `json:"on_interrupt,omitempty" doc:"What an interruption of the turn does to a call in flight. Omitted, the call goes on and the caller is told its result when it comes, unless they withdraw what they asked for, which stops it."`
+	Cancellable *bool                 `json:"cancellable,omitempty" doc:"Whether the provider is told to stop a call the session stopped waiting for. Omitted is true. False leaves it running once the session stops waiting, for a tool that is not safe to stop halfway, such as a payment; the binding's timeout still ends it and tells the provider to stop it. It does not matter with on_interrupt wait, whose call the session always waits for."`
 }
 
 func (*ConnectorBindingPolicy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

@@ -303,6 +303,23 @@ func (s *Server) Stored(id string) []map[string]any {
 	return stored
 }
 
+// Delivered are a channel's messages as Chat's message.new carries them, in the order they
+// were written. A hook has a message's custom fields at the top level of the message, beside
+// its own fields, not under "custom" as Stored and the v2 API have them (Stream Chat docs,
+// «Webhook Events», message.new; AI-989).
+func (s *Server) Delivered(id string) []map[string]any {
+	var delivered []map[string]any
+	for _, stored := range s.Stored(id) {
+		message := map[string]any{"id": stored["id"], "text": stored["text"], "user": stored["user"]}
+		custom, _ := stored["custom"].(map[string]any)
+		for key, value := range custom {
+			message[key] = value
+		}
+		delivered = append(delivered, message)
+	}
+	return delivered
+}
+
 // refuse answers the way Chat does when it will not do what was asked.
 func refuse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusBadRequest)

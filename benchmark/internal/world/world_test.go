@@ -408,3 +408,76 @@ func TestSessionContactedTracksTargetCalls(t *testing.T) {
 		t.Fatal("contact leaked into the next trial")
 	}
 }
+
+func TestToolActivityCoversADelayedCall(t *testing.T) {
+	srv := New(nil)
+	if err := srv.ListenAndServe("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	srv.Seed(scenario.Scenario{
+		ID: "restaurant.tool_filler", Pack: "restaurant",
+		ToolDelayMS: map[string]int{"check_availability": 300},
+		Seed:        map[string]any{"slots": []any{map[string]any{"time": "7:30", "patio": true, "available": true, "capacity": 6}}},
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		postTool(t, srv.Addr, "check_availability", map[string]any{"time": "7:30", "party_size": 4, "patio": true})
+	}()
+	time.Sleep(150 * time.Millisecond)
+	if inFlight, _ := srv.ToolActivity(); inFlight != 1 {
+		t.Fatalf("in flight during the delay = %d, want 1", inFlight)
+	}
+	<-done
+	inFlight, lastEnded := srv.ToolActivity()
+	if inFlight != 0 || lastEnded.IsZero() {
+		t.Fatalf("after the call: in flight %d, last ended %v", inFlight, lastEnded)
+	}
+}
+
+func TestWorldStateIsMatchedLikeToolArguments(t *testing.T) {
+	state := map[string]any{"reservation": map[string]any{"allergen": "peanuts", "time": "19:30", "party_size": 6}}
+	fails := CheckAssertions(state, []scenario.Assertion{
+		{Path: "reservation.allergen", Eq: "peanut"},
+		{Path: "reservation.time", Eq: "7:30"},
+		{Path: "reservation.party_size", Eq: 6},
+	})
+	if len(fails) != 0 {
+		t.Fatalf("peanuts, 19:30 and 6 are the booking asked for: %v", fails)
+	}
+	if fails := CheckAssertions(state, []scenario.Assertion{{Path: "reservation.party_size", Eq: 4}}); len(fails) != 1 {
+		t.Fatalf("a wrong party size must still fail: %v", fails)
+	}
+}
+
+func TestToolUseIsMeasured(t *testing.T) {
+	tools := []ToolCall{
+		{Name: "check_availability", Args: map[string]any{"time": "7:30", "party_size": 4}},
+		{Name: "check_availability", Args: map[string]any{"time": "7:30", "party_size": 6}},
+		{Name: "create_reservation", Args: map[string]any{"time": "7:30", "party_size": 6, "allergen": "gluten"}},
+	}
+	expected := []scenario.ExpectedTool{
+		{Name: "check_availability", Args: map[string]any{"time": "7:30", "party_size": 6}},
+		{Name: "create_reservation", Args: map[string]any{"time": "7:30", "party_size": 6, "allergen": "peanut", "name": "Alvarez"}},
+	}
+	if right, total := ArgAccuracy(tools, expected); right != 4 || total != 6 {
+		t.Fatalf("args right = %d of %d, want 4 of 6: the best check, and two of four on the booking", right, total)
+	}
+	if got := RepeatedTools(tools); len(got) != 1 || got[0] != "check_availability ×2" {
+		t.Fatalf("repeated = %v", got)
+	}
+}
+
+func TestACallToAToolThatDoesNotExistIsKept(t *testing.T) {
+	srv := New(nil)
+	if err := srv.ListenAndServe("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	srv.Seed(scenario.Scenario{ID: "restaurant.golden", Pack: "restaurant"})
+	postToolRaw(t, srv.Addr, "book_table", map[string]any{"time": "7:30"})
+	if got := srv.Snapshot().UnknownTools; len(got) != 1 || got[0] != "book_table" {
+		t.Fatalf("unknown tools = %v", got)
+	}
+}

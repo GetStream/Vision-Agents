@@ -59,6 +59,21 @@ func (s *ToolsSuite) TestTheBuiltInSetIsUsable() {
 func (s *ToolsSuite) TestOnlyAModelWithToolsIsToldHowToUseThem() {
 	s.Empty(Tools{}.Prompt(), "a harness without tools adds nothing to the system prompt")
 	s.Equal(usePolicy, testTools().Prompt())
+	s.Empty(Tools{}.TextPrompt())
+	s.Equal(textUsePolicy, testTools().TextPrompt())
+}
+
+func (s *ToolsSuite) TestAWrittenConversationFillsNoPauseBeforeACall() {
+	// In writing every sentence before a call stays on the page, so a chain of calls opened
+	// the answer with one hold phrase per link. What the instructions have the agent say
+	// before acting, such as a read-back, still comes first.
+	s.NotContains(textUsePolicy, "say one short sentence")
+	s.Contains(textUsePolicy, "without announcing it")
+	s.Contains(textUsePolicy, "write nothing before a call or between calls")
+	s.Contains(textUsePolicy, "what your instructions ask you to write before acting")
+	s.Contains(textUsePolicy, "reading the caller's details back")
+	s.Contains(textUsePolicy, "Do not collect optional arguments")
+	s.Contains(textUsePolicy, "require confirmation first, follow them")
 }
 
 func (s *ToolsSuite) TestTheUsePolicyKeepsTheReadBackThatPrecedesAnAction() {
@@ -77,26 +92,31 @@ func (s *ToolsSuite) TestTheSentenceBeforeACallOpensWithTheHoldPhraseAndRunsOnIn
 	// heard once the wait is over. It opens the sentence and the sentence carries on, because
 	// a one-word sentence of its own leaves a pause an interruption falls into.
 	s.Contains(usePolicy, "one short sentence that opens with a brief hold phrase")
-	s.Contains(usePolicy, "\"One moment,\" and goes straight on, with no full stop between, into what")
+	s.Contains(usePolicy, "and goes straight on, with no full stop between, into what")
+	s.Contains(usePolicy, "in your own words, never the same twice")
+	s.NotContains(usePolicy, `"`, "an example hold phrase is the one every reply opens with")
 	s.Contains(usePolicy, "never as a sentence of its own")
 	s.Contains(usePolicy, "never after the call or after a result")
 }
 
 func (s *ToolsSuite) TestAResultIsAnsweredFromWithoutAnotherHoldPhrase() {
-	// The wait has one hold phrase. A result that calls for another tool starts a wait of its
-	// own, which gets its own sentence.
+	// The wait has one hold phrase. The tools a result calls for are called in the same reply,
+	// together when they do not need each other, so a request with several steps is not one
+	// spoken sentence and one model turn per tool.
 	s.Contains(usePolicy, "After a result, answer from it")
-	s.Contains(usePolicy, "if the request needs another tool, open that call with its own sentence")
+	s.Contains(usePolicy, "call them straight away without a word, together when independent")
 }
 
 func (s *ToolsSuite) TestTheUsePolicyIsShortAndNamesNoToolOrDeployment() {
-	s.LessOrEqual(len(strings.Fields(usePolicy)), 160)
-	s.GreaterOrEqual(len(strings.Fields(usePolicy)), 60)
 	built, err := DefaultTools()
 	s.Require().NoError(err)
-	for _, tool := range append(built.Tools, testTools().Tools...) {
-		s.NotContains(strings.ToLower(usePolicy), strings.ToLower(tool.Name),
-			"the policy is about any tool, not one of them")
+	for _, policy := range []string{usePolicy, textUsePolicy} {
+		s.LessOrEqual(len(strings.Fields(policy)), 160)
+		s.GreaterOrEqual(len(strings.Fields(policy)), 60)
+		for _, tool := range append(built.Tools, testTools().Tools...) {
+			s.NotContains(strings.ToLower(policy), strings.ToLower(tool.Name),
+				"the policy is about any tool, not one of them")
+		}
 	}
 }
 

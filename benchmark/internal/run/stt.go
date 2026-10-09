@@ -20,7 +20,9 @@ import (
 
 	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/report"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/synth"
 )
 
 // sttRate is the rate the router's transcription socket takes by default.
@@ -40,7 +42,9 @@ type STTConfig struct {
 	Root string
 	// Manifest is JSONL of id, reference, and audio (a 16-bit PCM WAV, relative to the
 	// manifest) or hypothesis. With no targets, hypotheses are scored as given.
-	Manifest       string
+	Manifest string
+	// Rows are clips given directly, such as ScenarioClips, in place of a manifest.
+	Rows           []STTClipRow
 	Targets        []string
 	Out            string
 	NetworkProfile string
@@ -63,13 +67,21 @@ func STT(ctx context.Context, cfg STTConfig) (report.Summary, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	raw, err := os.ReadFile(cfg.Manifest)
-	if err != nil {
-		return report.Summary{}, err
-	}
-	rows, err := parseClipRows(raw, filepath.Dir(cfg.Manifest), len(cfg.Targets) > 0)
-	if err != nil {
-		return report.Summary{}, err
+	var raw []byte
+	var rows []STTClipRow
+	var err error
+	if len(cfg.Rows) > 0 {
+		rows = cfg.Rows
+		if raw, err = json.Marshal(rows); err != nil {
+			return report.Summary{}, err
+		}
+	} else {
+		if raw, err = os.ReadFile(cfg.Manifest); err != nil {
+			return report.Summary{}, err
+		}
+		if rows, err = parseClipRows(raw, filepath.Dir(cfg.Manifest), len(cfg.Targets) > 0); err != nil {
+			return report.Summary{}, err
+		}
 	}
 	dataset, err := datasetHash(raw, rows)
 	if err != nil {
@@ -389,4 +401,46 @@ func writeBench[Clip any](out string, sum report.Summary, clips []Clip, markdown
 		return err
 	}
 	return os.WriteFile(filepath.Join(out, "report.md"), []byte(markdown), 0o644)
+}
+
+// ScenarioClips is an STT clip set made of the scenarios' caller lines: names, numbers,
+// addresses and corrections the agents have to hear, each with its script as the reference.
+// The clips are the caller audio a call plays, synthesized and cached on first use, so this is
+// synthetic speech. ids narrows it to a scenario set; nil takes every scenario.
+func ScenarioClips(root string, ids []string) ([]STTClipRow, error) {
+	inSet := map[string]bool{}
+	for _, id := range ids {
+		inSet[id] = true
+	}
+	var rows []STTClipRow
+	seen := map[string]bool{}
+	for _, pack := range scenario.Packs() {
+		scenarios, err := scenario.LoadPack(filepath.Join(root, "scenarios", pack))
+		if err != nil {
+			return nil, err
+		}
+		for _, sc := range scenarios {
+			if ids != nil && !inSet[sc.ID] {
+				continue
+			}
+			for i, text := range sc.SpeechTexts() {
+				if seen[text] {
+					continue
+				}
+				seen[text] = true
+				if _, err := synth.LoadOrSynth(root, "", text); err != nil {
+					return nil, fmt.Errorf("stt: caller audio for %s: %w", sc.ID, err)
+				}
+				rows = append(rows, STTClipRow{
+					ID:        fmt.Sprintf("%s#%d", sc.ID, i+1),
+					Audio:     synth.CachePath(root, "", text),
+					Reference: text,
+				})
+			}
+		}
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("stt: no caller lines in that scenario set")
+	}
+	return rows, nil
 }

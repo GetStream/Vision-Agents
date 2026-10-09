@@ -361,6 +361,29 @@ func (s *AuthorizationsSuite) TestAConsentLeavesOneGrantCreatedRowNamingItsAttem
 	s.NotEmpty(rows[0].RequestID, "the callback's own request")
 }
 
+// TestAReconnectsGrantNamesTheTokensItReplacedByFingerprint: each consent's row names the
+// tokens it got by fingerprint, and a reconnect's also those it replaced (AI-990).
+func (s *AuthorizationsSuite) TestAReconnectsGrantNamesTheTokensItReplacedByFingerprint() {
+	id := s.connection("")
+	s.connect(id)
+	s.connect(id)
+
+	rows := s.connectorAudit(id)
+	s.Require().Len(rows, 2)
+	first, second := rows[1].Credential, rows[0].Credential
+	s.Require().NotNil(first)
+	s.Require().NotNil(second)
+	s.Regexp(`^[0-9a-f]{8}$`, first.AccessFingerprint)
+	s.Regexp(`^[0-9a-f]{8}$`, first.RefreshFingerprint)
+	s.Empty(first.PreviousAccessFingerprint, "a first grant replaced nothing")
+	s.False(first.Rotated)
+	s.Equal(first.AccessFingerprint, second.PreviousAccessFingerprint)
+	s.Equal(first.RefreshFingerprint, second.PreviousRefreshFingerprint)
+	s.NotEqual(first.AccessFingerprint, second.AccessFingerprint)
+	s.True(second.Rotated, "the reconnect got a new refresh token")
+	s.NotNil(second.AccessExpiresAt)
+}
+
 func (s *AuthorizationsSuite) TestAConsentForAnotherAccountLeavesNoNewRow() {
 	id := s.connection("")
 	s.connect(id)

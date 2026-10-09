@@ -214,3 +214,22 @@ func TTSMarkdown(sum Summary) string {
 	}
 	return b.String()
 }
+
+// TTSSlackText is a TTS run as a chat message: one line per target.
+func TTSSlackText(title string, sum Summary) string {
+	var b strings.Builder
+	lines := 0
+	if len(sum.TTS) > 0 {
+		lines = sum.TTS[0].Clips
+	}
+	fmt.Fprintf(&b, "*%s*\n%d lines · round trip through %s\n", title, lines, score.ScoringASR)
+	for _, s := range sum.TTS {
+		fmt.Fprintf(&b, "• %s: TTFB P50 %s, P95 %s · RTF %.2f · round-trip WER %.1f%% · health %s (%d/%d/%d)",
+			s.Target, seconds(float64(s.TTFBP50Ms)), seconds(float64(s.TTFBP95Ms)), s.RTFP50, 100*s.PooledWER, s.Grade, s.Good, s.Warn, s.Fail)
+		if s.Failed > 0 {
+			fmt.Fprintf(&b, " · %d failed", s.Failed)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}

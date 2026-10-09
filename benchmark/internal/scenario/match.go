@@ -76,7 +76,24 @@ func MatchStructuredValue(got, want string) bool {
 func sameMeaning(got, want string) bool {
 	g := canonicalToken(got)
 	w := canonicalToken(want)
-	return g == w && g != ""
+	return g != "" && (g == w || singular(g) == singular(w))
+}
+
+// singular drops a plain plural ending, so "peanuts" names the same allergen as "peanut".
+// Anything holding a digit is an identifier and is left exactly as it is.
+func singular(s string) string {
+	if len(s) < 4 || strings.ContainsAny(s, "0123456789") {
+		return s
+	}
+	switch {
+	case strings.HasSuffix(s, "ies"):
+		return s[:len(s)-3] + "y"
+	case strings.HasSuffix(s, "shes"), strings.HasSuffix(s, "ches"), strings.HasSuffix(s, "xes"), strings.HasSuffix(s, "sses"):
+		return s[:len(s)-2]
+	case strings.HasSuffix(s, "s") && !strings.HasSuffix(s, "ss"):
+		return s[:len(s)-1]
+	}
+	return s
 }
 
 func canonicalToken(s string) string {

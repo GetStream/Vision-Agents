@@ -283,17 +283,20 @@ func (s *EventForwardingSuite) deliver(body []byte, retry int) (int, string) {
 	return s.slack.Deliver(s.eventsURL(), s.secret, body, retry)
 }
 
-// event is a Slack event_callback in the test's workspace (https://docs.slack.dev/apis/events-api/).
+// event is a Slack event_callback in the test's workspace (https://docs.slack.dev/apis/events-api/),
+// visible to the app's bot install.
 func (s *EventForwardingSuite) event(inner string) []byte {
 	return []byte(`{"token":"synthetic","team_id":"` + s.workspace + `","api_app_id":"` + s.app.ProviderAppID +
 		`","event":` + inner + `,"type":"event_callback","event_id":"Ev` + strings.ReplaceAll(s.utils.uuid(), "-", "") +
-		`","event_time":` + fmt.Sprint(time.Now().Unix()) + `}`)
+		`","event_time":` + fmt.Sprint(time.Now().Unix()) + `,"authorizations":[{"team_id":"` + s.workspace +
+		`","user_id":"U0000BOT","is_bot":true}]}`)
 }
 
 // message is a message.channels event by user in C0000CHAN
-// (https://docs.slack.dev/reference/events/message.channels).
+// (https://docs.slack.dev/reference/events/message.channels) that mentions the bot, which
+// starts a thread (AI-989).
 func (s *EventForwardingSuite) message(user, text, ts string) []byte {
-	raw, err := json.Marshal(map[string]string{"type": "message", "channel": "C0000CHAN", "user": user, "text": text, "ts": ts, "channel_type": "channel"})
+	raw, err := json.Marshal(map[string]string{"type": "message", "channel": "C0000CHAN", "user": user, "text": botMention + text, "ts": ts, "channel_type": "channel"})
 	s.Require().NoError(err)
 	return s.event(string(raw))
 }
@@ -345,7 +348,7 @@ func (s *EventForwardingSuite) connectedBot() string {
 		state.Credentials = core.StoredCredentials{Scheme: oauth2code.Name, Version: 1, Payload: payload}
 		state.Status = store.ConnectionConnected
 		state.AccountID = s.workspace
-		state.Metadata = map[string]string{"team_id": s.workspace}
+		state.Metadata = map[string]string{"team_id": s.workspace, "bot_user_id": "U0000BOT"}
 		state.ConnectedAt = time.Now().UTC()
 		return true, nil
 	}))

@@ -335,7 +335,8 @@ func (s *AgentSuite) TestASessionCanMoveOffAModelThatFailsEveryTurn() {
 	s.Require().NoError(s.agent.SetSettings(moving, Settings{
 		LLMTarget: "other/other-model", STTTarget: "stub/stub-model", TTSTarget: "stub/stub-model",
 	}), "a failed turn is over, so the move does not wait for the caller to talk over it")
-	s.hears(w, alice, "are you there", 1)
+	// The failed turn was spoken too, as the apology for it.
+	s.hears(w, alice, "are you there", 2)
 	s.Len(w.model("other").turns(), 1)
 }
 

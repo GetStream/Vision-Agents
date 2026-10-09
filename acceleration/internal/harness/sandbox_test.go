@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 
@@ -18,6 +19,8 @@ type stubSandbox struct {
 	mu      sync.Mutex
 	ran     []string
 	outputs [][]string
+	// results are answered one per run before result is.
+	results []sandbox.Result
 	result  sandbox.Result
 	err     error
 	closed  bool
@@ -28,6 +31,11 @@ func (s *stubSandbox) Run(_ context.Context, code string, outputs []string) (san
 	defer s.mu.Unlock()
 	s.ran = append(s.ran, code)
 	s.outputs = append(s.outputs, outputs)
+	if len(s.results) > 0 {
+		next := s.results[0]
+		s.results = s.results[1:]
+		return next, s.err
+	}
 	return s.result, s.err
 }
 
@@ -169,6 +177,56 @@ func (s *HarnessSuite) TestCodeThatExitedBadlySaysSo() {
 	last := s.slow.requests()[1].Input[len(s.slow.requests()[1].Input)-1]
 	s.Contains(last.Content, "exited with 1")
 	s.Contains(last.Content, "NameError: total")
+}
+
+func (s *HarnessSuite) TestAnAnswerAfterCodeThatFailedIsNotPassedOffAsSuccess() {
+	// A subagent whose render failed still writes something, and it is usually the script
+	// it meant to run. Told only that its colleague came back, the fast model says done.
+	s.box = &stubSandbox{err: errNoSandbox}
+	s.build(true)
+	s.slow.calls = runCode("call-1", "render()")
+	s.slow.automatic = "Here is the script: render()"
+	s.respond("turn-1", "render the clip")
+
+	s.reply("turn-1", `<ask skill="think">render the clip</ask>`)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Done, settled.State)
+	s.ErrorContains(settled.Err, errNoSandbox.Error())
+	s.respond("turn-2", "")
+	s.Contains(s.fast.requests()[1].Instructions, "do not claim anything that code was meant to produce")
+}
+
+func (s *HarnessSuite) TestCodeThatWorksOnASecondTryIsAnAnswer() {
+	s.box = &stubSandbox{
+		results: []sandbox.Result{{Output: "NameError: total", ExitCode: 1}},
+		result:  sandbox.Result{Output: "12.63"},
+	}
+	s.build(true)
+	s.slow.calls = append(runCode("call-1", "print(total)"), runCode("call-2", "print(84.20 * 0.15)")...)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Done, settled.State)
+	s.NoError(settled.Err, "the failure was recovered from")
+}
+
+func (s *HarnessSuite) TestWorkStillRunningCodeWhenItRunsOutOfRoundsFails() {
+	s.box = &stubSandbox{result: sandbox.Result{Output: "not yet"}}
+	s.build(true)
+	for i := range toolRounds + 1 {
+		s.slow.calls = append(s.slow.calls, runCode(fmt.Sprintf("call-%d", i), "try()")...)
+	}
+	s.respond("turn-1", "render the clip")
+
+	s.reply("turn-1", `<ask skill="think">render the clip</ask>`)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Failed, settled.State, "a task that never stopped running code never finished")
+	s.True(settled.Actionable())
 }
 
 func (s *HarnessSuite) TestWorkAbandonedWhileItsCodeRanStillSettles() {

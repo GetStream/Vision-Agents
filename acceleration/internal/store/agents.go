@@ -40,6 +40,9 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 			return err
 		}
 		if _, err := tx.NewInsert().Model(config).Exec(ctx); err != nil {
+			if constraint(err) == "agent_configs_name_idx" {
+				return ErrNameTaken
+			}
 			return fmt.Errorf("store: create agent config: %w", err)
 		}
 		return nil
@@ -100,6 +103,9 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 			Where("customer_id = ?", config.CustomerID).
 			Where("deleted_at IS NULL").
 			Exec(ctx)
+		if constraint(err) == "agent_configs_name_idx" {
+			return ErrNameTaken
+		}
 		if err != nil {
 			return fmt.Errorf("store: update agent config: %w", err)
 		}
@@ -355,6 +361,9 @@ func (s *Store) CreateSkill(ctx context.Context, skill *Skill) error {
 	skill.DeletedAt = nil
 
 	if _, err := s.db.NewInsert().Model(skill).Exec(ctx); err != nil {
+		if constraint(err) == "skills_name_idx" {
+			return stack.Wrap(ErrNameTaken)
+		}
 		return stack.Wrap(fmt.Errorf("store: create skill: %w", err))
 	}
 	return nil
@@ -377,6 +386,9 @@ func (s *Store) UpdateSkill(ctx context.Context, skill *Skill) error {
 		Where("customer_id = ?", skill.CustomerID).
 		Where("deleted_at IS NULL").
 		Exec(ctx)
+	if constraint(err) == "skills_name_idx" {
+		return stack.Wrap(ErrNameTaken)
+	}
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: update skill: %w", err))
 	}
@@ -525,10 +537,20 @@ func normalizeConfig(config *AgentConfig) {
 // errors always had.
 var ErrNoAgentConfig = errors.New("store: there is no agent config")
 
+// ErrNoSkill is a skill id the customer holds no live skill by, as ErrNoAgentConfig is for
+// a config.
+var ErrNoSkill = errors.New("store: there is no skill")
+
+// ErrNameTaken says a create or a rename asked for a name that another live record of the
+// same kind already has: an agent config, a router config or a voice of the same customer,
+// or a skill of the same agent config. The name is the writer's to change, so unlike the
+// database failing it is the caller's to fix.
+var ErrNameTaken = errors.New("store: the name is taken")
+
 func unknownAgentConfig(id string) error {
 	return stack.Wrap(fmt.Errorf("%w %s", ErrNoAgentConfig, id))
 }
 
 func unknownSkill(id string) error {
-	return stack.Wrap(fmt.Errorf("store: there is no skill %s", id))
+	return stack.Wrap(fmt.Errorf("%w %s", ErrNoSkill, id))
 }

@@ -235,6 +235,23 @@ func (s *OAuth2CodeSuite) TestANonRotatingRefreshKeepsTheRefreshToken() {
 	s.NotEqual(s.accessToken(stored), s.accessToken(renewed))
 }
 
+// TestFingerprintsNameTheStoredTokensAndNothingElse: the fingerprints are the stored tokens'
+// (core.Fingerprint) with their expiry, and credentials of another scheme are refused.
+func (s *OAuth2CodeSuite) TestFingerprintsNameTheStoredTokensAndNothingElse() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+
+	got, err := scheme.Fingerprints(stored)
+
+	s.Require().NoError(err)
+	s.Equal(core.Fingerprint(s.accessToken(stored)), got.Access)
+	s.Equal(core.Fingerprint(s.refreshToken(stored)), got.Refresh)
+	s.Equal(s.now.Add(fakeprovider.AccessTTL).Unix(), got.AccessExpiresAt.Unix())
+	_, err = scheme.Fingerprints(core.StoredCredentials{Scheme: "api_key", Version: 1, Payload: []byte(`{}`)})
+	s.Error(err)
+}
+
 func (s *OAuth2CodeSuite) TestAnExpiredTokenWithNoRefreshTokenIsInvalidGrant() {
 	srv := fakeprovider.New(s.T(), fakeprovider.NoRefreshToken)
 	resolved := s.preregistered(srv)
@@ -294,15 +311,16 @@ func (s *OAuth2CodeSuite) TestAFailedRefreshOfARefusedTokenHandsBackNoToken() {
 
 // TestEachRefusedRefreshIsTheOutcomeItsAnswerMeans is the table of what the token endpoint
 // can answer a refresh with and what AccessCredential makes of it. The caller's stored
-// credentials never change and none come back.
+// credentials never change and none come back. Code is the error member the answer named, for
+// the resolver's log line (AI-990).
 func (s *OAuth2CodeSuite) TestEachRefusedRefreshIsTheOutcomeItsAnswerMeans() {
 	for _, row := range []struct {
 		personality fakeprovider.Personality
 		want        core.Outcome
 	}{
-		{fakeprovider.InvalidGrant, core.Outcome{Kind: core.OutcomeInvalidGrant}},
+		{fakeprovider.InvalidGrant, core.Outcome{Kind: core.OutcomeInvalidGrant, Code: "invalid_grant"}},
 		{fakeprovider.Unavailable, core.Outcome{Kind: core.OutcomeTransient}},
-		{fakeprovider.ServerError, core.Outcome{Kind: core.OutcomeUncertain}},
+		{fakeprovider.ServerError, core.Outcome{Kind: core.OutcomeUncertain, Code: "server_error"}},
 		{fakeprovider.LostResponse, core.Outcome{Kind: core.OutcomeUncertain}},
 		{fakeprovider.RateLimited, core.Outcome{Kind: core.OutcomeRateLimited, RetryAfter: fakeprovider.RetryAfter}},
 	} {

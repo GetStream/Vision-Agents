@@ -93,7 +93,7 @@ Do not mix dirty trees into the series. `RunManifest.GitDirty` already records t
 
 ### Freeze the bench definition
 
-A metric is only comparable over time if the scenarios, contracts, and thresholds behind it did not move. `MethodologyVersion` (`voicebench-live-v3`), `scenario_hash`, and `contract_hash` already detect drift. Add a policy on top, borrowing Inworld's rule that published presets are immutable and new behaviour means a new file.
+A metric is only comparable over time if the scenarios, contracts, and thresholds behind it did not move. `MethodologyVersion` (`voicebench-live-v5`), `scenario_hash`, and `contract_hash` already detect drift. Add a policy on top, borrowing Inworld's rule that published presets are immutable and new behaviour means a new file.
 
 Keep a frozen scenario set for trend tracking. New scenarios land outside it until a version bump, so improving the bench never silently rewrites history. Bumping `MethodologyVersion` starts a new series; it does not patch the old one.
 
@@ -172,7 +172,7 @@ Acceleration is a bundled product, not a pipeline variant. Co-locating STT, LLM,
 
 Insisting on a matched provider triple would force acceleration to compete with its bundling switched off and hide the advantage it is built to win on. The headline row is acceleration as shipped against what a LiveKit or Pipecat developer actually builds today, which is OpenAI Realtime.
 
-The as-shipped pipeline is pinned to [`customer_support.py`](../examples/voice_agents/customer_support/customer_support.py): `gemini/gemini-3.5-transcribe-live`, `gemini/gemini-3.8-flash`, `inworld/inworld-tts-2-flash`, subagent `openai/gpt-5.6-sol`. Voicebench does not reuse *that* stored config, whose instructions and skills belong to a different product; it syncs a per-pack config of its own carrying the pack's skills, so the subagent runs real skills rather than an inline prompt. Changing the triple is a methodology bump.
+The pipeline the bench runs is `deepgram/flux-general-en`, `gemma/gemma-4-26B-A4B-it`, `elevenlabs/eleven_v4_turbo`, subagent `openai/gpt-6.1-sol`, from `voicebench-live-v4`; v5 adds the one-minute monologue scenarios to the frozen set. Until v3 it was pinned to [`customer_support.py`](../examples/voice_agents/customer_support/customer_support.py)'s Gemini transcribe, Gemini 3.8 Flash, Inworld TTS-2 Flash and GPT-5.6 Sol. Voicebench does not reuse *that* stored config, whose instructions and skills belong to a different product; it syncs a per-pack config of its own carrying the pack's skills, so the subagent runs real skills rather than an inline prompt. Changing the triple is a methodology bump.
 
 ### Two comparison tiers
 
@@ -196,7 +196,7 @@ The same command serves baseline-regression mode from the previous section. One 
 
 The provider suites already know how to stream a clip at call pace and score the settled transcript. What they lack is a dataset, a declared normalizer, aggregate reporting, and a direct-versus-through-the-router split.
 
-**The harness has landed; the datasets and the direct split have not.** `voicebench stt --target` streams a clip manifest through the router's STT socket at call pace and writes a `kind: stt` summary with every metric in the table below, timed the way `testaudio.Measure` times them. It cannot import the router's providers, so it measures through the router only; the direct leg of [Router overhead](#router-overhead) needs a second path. No dataset is wired in yet: a manifest is whatever clips are given to it.
+**The harness has landed; the datasets and the direct split have not.** `voicebench stt --target` streams a clip manifest through the router's STT socket at call pace and writes a `kind: stt` summary with every metric in the table below, timed the way `testaudio.Measure` times them. It cannot import the router's providers, so it measures through the router only; the direct leg of [Router overhead](#router-overhead) needs a second path. The first dataset is the scenarios' own caller lines (`--scenarios`): entity-dense and agent-shaped, with no licensing question, but synthetic. It runs nightly. Real recorded speech, such as the Pipecat set, waits on its licence.
 
 ### Metrics
 

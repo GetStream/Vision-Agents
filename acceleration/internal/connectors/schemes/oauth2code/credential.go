@@ -284,6 +284,8 @@ func (s *Scheme) redeem(ctx context.Context, endpoint string, form url.Values, c
 	}
 	if err == nil {
 		err = &TokenError{Status: response.StatusCode, Code: errorCode(raw)}
+		// The provider's word for why, for the resolver's log line; never its description.
+		outcome.Code = errorCode(raw)
 	}
 	return tokenResponse{}, &core.OutcomeError{Outcome: outcome, Err: fmt.Errorf("oauth2code: refresh: %w", err)}
 }
@@ -297,6 +299,19 @@ func (s *Scheme) warnIfLastRefresh(m core.ResolvedManifest, payload storedPayloa
 	}
 	s.cfg.Logger.Warn("oauth2code: the refresh token expires before the next refresh; the connection will need a reconnect",
 		"connector", m.ConnectorID, "connection", payload.Ref.ConnectionID, "refresh_expires_at", payload.RefreshExpiresAt)
+}
+
+// Fingerprints names the access and refresh tokens in stored by core.Fingerprint, with their
+// expiry, for the resolver's and the callback's log lines and audit rows (AI-990).
+func (s *Scheme) Fingerprints(stored core.StoredCredentials) (core.CredentialFingerprints, error) {
+	payload, err := open(stored)
+	if err != nil {
+		return core.CredentialFingerprints{}, err
+	}
+	return core.CredentialFingerprints{
+		Access: core.Fingerprint(payload.AccessToken), Refresh: core.Fingerprint(payload.RefreshToken),
+		AccessExpiresAt: payload.ExpiresAt, RefreshExpiresAt: payload.RefreshExpiresAt,
+	}, nil
 }
 
 // open reads the payload of the StoredCredentials this scheme sealed. Its errors never quote the payload.
