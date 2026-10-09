@@ -180,6 +180,10 @@ type Request struct {
 	InputModalities []string
 	// Voice selects the speaker for modalities that produce audio.
 	Voice string
+	// Failed names the candidates, as "provider/model", that the caller has already seen
+	// fail, so they are tried only after everything else. A voice lost part way through a
+	// call reopens with the one it lost named here, rather than with it again.
+	Failed []string
 	// Keyterms are the words a modality that recognises speech should expect.
 	Keyterms []string
 	// Tools are what a modality that converses may call. They are here rather than in an
@@ -357,6 +361,7 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
+	untried(candidates, request.Failed)
 
 	var failures []error
 	for _, candidate := range candidates {
@@ -733,6 +738,18 @@ func retentionUnmet(required options.Retention) string {
 func demote(candidates []Candidate) {
 	sort.SliceStable(candidates, func(i, j int) bool {
 		return candidates[i].Health.Available && !candidates[j].Health.Available
+	})
+}
+
+// untried moves the candidates the caller has already seen fail to the back, keeping the
+// order of the rest, so something not yet tried is started before any of them is again.
+func untried(candidates []Candidate, failed []string) {
+	if len(failed) == 0 {
+		return
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return !slices.Contains(failed, candidates[i].Config.Name()) &&
+			slices.Contains(failed, candidates[j].Config.Name())
 	})
 }
 
