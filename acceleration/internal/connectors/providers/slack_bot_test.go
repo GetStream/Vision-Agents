@@ -98,14 +98,15 @@ func (s *SlackBotSuite) TestAConnectionWithoutABotUserIsNeverMentioned() {
 func (s *SlackBotSuite) TestTheAgentGetsTheTextWithoutTheBotsMention() {
 	rule := s.manifest.Channel.Messages
 	for text, want := range map[string]string{
-		"<@U0000BOT> is the build green?":          "is the build green?",
-		"is the build green, <@U0000BOT>?":         "is the build green, ?",
-		"ask <@U0000BOT> about <@U0000ALICE>'s PR": "ask about <@U0000ALICE>'s PR",
-		"<@U0000BOT> <@U0000BOT> hello":            "hello",
-		"<@U0000BOT>\nfirst line\nsecond line":     "first line\nsecond line",
-		"<@U0000ALICE> can you check the build?":   "<@U0000ALICE> can you check the build?",
-		"<@U0000BOT>":                              "<@U0000BOT>",
-		"Blah":                                     "Blah",
+		"<@U0000BOT> is the build green?":              "is the build green?",
+		"is the build green, <@U0000BOT>?":             "is the build green, ?",
+		"ask <@U0000BOT> about <@U0000ALICE>'s PR":     "ask about <@U0000ALICE>'s PR",
+		"<@U0000BOT> <@U0000BOT> hello":                "hello",
+		"<@U0000BOT> hi <@U0000BOT> there <@U0000BOT>": "hi there",
+		"<@U0000BOT>\nfirst line\nsecond line":         "first line\nsecond line",
+		"<@U0000ALICE> can you check the build?":       "<@U0000ALICE> can you check the build?",
+		"<@U0000BOT>":                                  "<@U0000BOT>",
+		"Blah":                                         "Blah",
 	} {
 		s.Equal(want, rule.WithoutMention(text, s.installed), text)
 	}
