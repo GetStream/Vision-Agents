@@ -103,7 +103,8 @@ func (t Tools) Requests() []llm.Tool {
 // read-back, because the pause between two utterances is where a caller's interruption lands.
 // After a result the answer is given without another hold phrase, so a wait has one. A chain
 // of calls is one wait too: a sentence before each link queues behind the last, so the
-// caller hears a run of hold phrases while the answer is already waiting behind them.
+// caller hears a run of hold phrases while the answer is already waiting behind them. Tools
+// the request still needs are called straight away, together when they are independent.
 //
 // It gives no example of a hold phrase: the models open every reply with whatever example
 // they are shown, and a caller hears the same words before every lookup.
@@ -118,9 +119,9 @@ const usePolicy = "Before calling a tool, say one short sentence that opens with
 	"or after a result. Then call the tool in the same turn once every argument it requires " +
 	"is known. Do not collect optional arguments or ask permission for what was asked. Take " +
 	"a name or value as given (a surname is a name). After a result, answer from it; if the " +
-	"request needs another tool, call it without a word: they are already waiting. Pass bare " +
-	"values, not phrases. Where your instructions or a tool's approval require confirmation " +
-	"first, follow them."
+	"request needs tools, call them straight away without a word, together when independent. " +
+	"Pass bare values, not phrases. Where your instructions or a tool's approval require " +
+	"confirmation first, follow them."
 
 // Prompt is what the model is told about using its tools: when to call one and how to fill
 // it in. It is empty when there are none, so a harness without tools adds nothing to the
