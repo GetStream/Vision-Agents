@@ -87,6 +87,32 @@ jobs:
 
       - uses: ./.github/actions/voicebench-setup
 
+      # The Gemma deployment scales down when idle and takes minutes to come back, and calls
+      # placed while it wakes go unanswered and score as failures. Wait for it to answer first,
+      # and fail here, plainly, if it never does.
+      - name: Wake the Gemma deployment
+        if: startsWith(env.VOICEBENCH_MODEL || 'gemma/', 'gemma/')
+        timeout-minutes: 12
+        run: |
+          if [[ -z "$GEMMA_BASE_URL" || -z "$BASETEN_API_KEY" ]]; then
+            echo "::error::GEMMA_BASE_URL and BASETEN_API_KEY must be set: the agent runs on our Gemma deployment"
+            exit 1
+          fi
+          answer="$RUNNER_TEMP/gemma.json"
+          deadline=$((SECONDS + 600))
+          until [[ "$(curl -sS -m 60 -o "$answer" -w '%{http_code}' "$GEMMA_BASE_URL/chat/completions" \
+              -H "Authorization: Bearer $BASETEN_API_KEY" -H 'Content-Type: application/json' \
+              -d '{"model":"google/gemma-4-26B-A4B-it","max_tokens":1,"chat_template_kwargs":{"enable_thinking":false},"messages":[{"role":"user","content":"Hi"}]}' \
+              2>/dev/null)" == 200 ]]; do
+            if (( SECONDS >= deadline )); then
+              echo "::error::The Gemma deployment did not answer within 10 minutes: $(head -c 300 "$answer" 2>/dev/null)"
+              exit 1
+            fi
+            echo "Gemma is not answering yet: $(head -c 200 "$answer" 2>/dev/null)"
+            sleep 15
+          done
+          echo "Gemma is answering, after ${SECONDS}s of waiting"
+
       # A short or single-pack run is a quick check: it is not compared with the previous
       # night, and it does not replace it as tomorrow's baseline.
       - name: Restore the previous night
