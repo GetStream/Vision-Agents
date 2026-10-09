@@ -2,8 +2,7 @@
 //
 // It is the demo for all three modalities at once. Every turn goes through the routers, so
 // the same failover, health and billing that a direct API call gets applies to a
-// conversation. The Opus path is cgo, so pkg-config, libopus, libopusfile and libsoxr must
-// be installed to build this.
+// conversation.
 package main
 
 import (
@@ -56,62 +55,100 @@ const (
 )
 
 func main() {
-	options := options{}
-	flag.StringVar(&options.callID, "call", "", "Stream call id to join (required)")
-	flag.StringVar(&options.callType, "call-type", "agent", "Stream call type")
-	flag.StringVar(&options.userID, "user", "vision-agent", "user id to join as")
-	flag.StringVar(&options.customerID, "customer", "demo", "customer the usage is billed to")
-	flag.StringVar(&options.agentID, "agent", "", "agent id transcripts and stats are keyed by, defaults to the call id")
-	flag.StringVar(&options.appID, "app", "", "application memories are scoped to")
-	flag.Var(&options.tags, "tag", "cost label as key=value, repeat for several")
-	flag.StringVar(&options.llmTarget, "llm", "llm-fast", "llm provider/model or shortcut")
-	flag.StringVar(&options.sttTarget, "stt", "en-low-latency", "stt provider/model or shortcut")
-	flag.StringVar(&options.ttsTarget, "tts", "en-low-latency", "tts provider/model or shortcut")
-	flag.StringVar(&options.voice, "voice", "", "provider-specific voice id")
-	flag.StringVar(&options.language, "language", "", "language hint, e.g. es")
-	flag.StringVar(&options.instructions, "instructions",
-		"You are a helpful voice assistant. Keep your answers to one or two sentences.",
-		"the system prompt")
-	flag.StringVar(&options.greeting, "greeting", "Hi, I'm listening.",
-		"said on joining, without going through the model")
-	flag.StringVar(&options.subagentTarget, "subagent", "",
-		"provider/model or shortcut for the model that does the thinking, empty to answer everything on the voice model")
-	flag.StringVar(&options.skillsFile, "skills", os.Getenv(skillsEnvVar),
-		"skills the voice model may hand over, empty for the built-in set")
-	flag.StringVar(&options.toolsFile, "tools", os.Getenv(toolsEnvVar),
-		"tools the voice model may run, empty for the built-in set")
-	flag.StringVar(&options.number, "number", "",
-		"one of your numbers, which is what a transferred human sees, and what turns transferring on")
-	flag.StringVar(&options.vendor, "vendor", "telnyx", "vendor carrying an outbound leg")
-	flag.StringVar(&options.vendorCallID, "vendor-call", "",
-		"the vendor call id of an outbound leg, which is what lets the agent press digits at a menu")
-	flag.BoolVar(&options.navigating, "navigating", false,
-		"the agent placed this call, so let recordings finish and answer their menus")
-	flag.IntVar(&options.tasks, "tasks", 0, "how much delegated work may run at once")
-	flag.BoolVar(&options.backchannel, "backchannel", true,
-		"murmur while the caller is still talking, the way a person on the phone does")
-	flag.Float64Var(&options.minConfidence, "min-confidence", 0,
-		"how sure the transcriber must be for the agent to answer rather than check what was meant")
-	flag.BoolVar(&options.demo, "demo", true,
-		"open a browser on a link that joins the call, so there is somebody for the agent to talk to")
-	flag.BoolVar(&options.chatTimings, "chat-timings", false,
-		"for development: show how long each stage of a turn took after the agent's reply in the chat channel")
-	flag.DurationVar(&options.replyHedge, "reply-hedge", config.Defaults().Agent.ReplyHedge,
-		"how long a reply may say nothing before the same request is asked of another candidate as well, 0 asks once")
-	verbose := flag.Bool("verbose", false, "log lifecycle events")
-	flag.Parse()
+	parsed, verbose, err := parseOptions(os.Args[1:])
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(2)
+	}
 
 	level := slog.LevelWarn
-	if *verbose {
+	if verbose {
 		level = slog.LevelDebug
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(logger)
 
-	if err := run(options, logger); err != nil {
+	if err := run(parsed, logger); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// parseOptions loads the checkout's .env before evaluating any environment-backed flag
+// defaults, then parses the command line with an isolated FlagSet for testability.
+func parseOptions(args []string) (options, bool, error) {
+	if err := loadDemoDotEnv(); err != nil {
+		return options{}, false, err
+	}
+
+	parsed := options{}
+	flags := flag.NewFlagSet("agent", flag.ContinueOnError)
+	flags.StringVar(&parsed.callID, "call", "", "Stream call id to join (required)")
+	flags.StringVar(&parsed.callType, "call-type", "agent", "Stream call type")
+	flags.StringVar(&parsed.userID, "user", "vision-agent", "user id to join as")
+	flags.StringVar(&parsed.customerID, "customer", "demo", "customer the usage is billed to")
+	flags.StringVar(&parsed.agentID, "agent", "", "agent id transcripts and stats are keyed by, defaults to the call id")
+	flags.StringVar(&parsed.appID, "app", "", "application memories are scoped to")
+	flags.Var(&parsed.tags, "tag", "cost label as key=value, repeat for several")
+	flags.StringVar(&parsed.llmTarget, "llm", "llm-fast", "llm provider/model or shortcut")
+	flags.StringVar(&parsed.sttTarget, "stt", "en-low-latency", "stt provider/model or shortcut")
+	flags.StringVar(&parsed.ttsTarget, "tts", "en-low-latency", "tts provider/model or shortcut")
+	flags.StringVar(&parsed.voice, "voice", "", "provider-specific voice id")
+	flags.StringVar(&parsed.language, "language", "", "language hint, e.g. es")
+	flags.StringVar(&parsed.instructions, "instructions",
+		"You are a helpful voice assistant. Keep your answers to one or two sentences.",
+		"the system prompt")
+	flags.StringVar(&parsed.greeting, "greeting", "Hi, I'm listening.",
+		"said on joining, without going through the model")
+	flags.StringVar(&parsed.controllerTarget, "controller", "",
+		"provider/model or shortcut for the flow controller that decides who holds the floor, empty to use the -llm model")
+	flags.StringVar(&parsed.subagentTarget, "subagent", "",
+		"provider/model or shortcut for the model that does the thinking, empty to answer everything on the voice model")
+	flags.StringVar(&parsed.skillsFile, "skills", os.Getenv(skillsEnvVar),
+		"skills the voice model may hand over, empty for the built-in set")
+	flags.StringVar(&parsed.toolsFile, "tools", os.Getenv(toolsEnvVar),
+		"tools the voice model may run, empty for the built-in set")
+	flags.StringVar(&parsed.number, "number", "",
+		"one of your numbers, which is what a transferred human sees, and what turns transferring on")
+	flags.StringVar(&parsed.vendor, "vendor", "telnyx", "vendor carrying an outbound leg")
+	flags.StringVar(&parsed.vendorCallID, "vendor-call", "",
+		"the vendor call id of an outbound leg, which is what lets the agent press digits at a menu")
+	flags.BoolVar(&parsed.navigating, "navigating", false,
+		"the agent placed this call, so let recordings finish and answer their menus")
+	flags.IntVar(&parsed.tasks, "tasks", 0, "how much delegated work may run at once")
+	flags.BoolVar(&parsed.backchannel, "backchannel", false,
+		"murmur while the caller is still talking, the way a person on the phone does")
+	flags.BoolVar(&parsed.checkIn, "check-in", false,
+		"ask whether the caller needs anything else after a long silence")
+	flags.Float64Var(&parsed.minConfidence, "min-confidence", 0,
+		"how sure the transcriber must be for the agent to answer rather than check what was meant")
+	flags.BoolVar(&parsed.demo, "demo", true,
+		"open a browser on a link that joins the call, so there is somebody for the agent to talk to")
+	flags.BoolVar(&parsed.chatTimings, "chat-timings", config.Defaults().Agent.ChatTimings,
+		"for development: show how long each stage of a turn took after the agent's reply in the chat channel")
+	timing := config.Defaults().Agent
+	flags.DurationVar(&parsed.replySilence, "reply-silence", timing.ReplySilence,
+		"how long the caller must have been quiet before the first sound of a reply is let out, 0 lets it out as soon as it is ready")
+	flags.DurationVar(&parsed.replySilenceMax, "reply-silence-max", timing.ReplySilenceMax,
+		"the longest the first sound of a reply is held for that silence, longer than zero while it is on")
+	flags.DurationVar(&parsed.replySilenceConfident, "reply-silence-confident", timing.ReplySilenceConfident,
+		"the silence instead for a turn the acoustic end-of-turn score was sure had ended")
+	flags.Float64Var(&parsed.replyConfidentScore, "reply-confident-score", timing.ReplyConfidentScore,
+		"the acoustic end-of-turn score from which a turn is taken to have ended for sure, 0 turns the shorter silence off")
+	flags.DurationVar(&parsed.previewDebounce, "preview-debounce", timing.PreviewDebounce,
+		"how long the caller's words must hold still before the reply to them is started ahead of the wait, 0 starts it with the wait")
+	flags.DurationVar(&parsed.previewQuiet, "preview-quiet", timing.PreviewQuiet,
+		"how long the caller's audio must also have been quiet before that, 0 looks at the words alone")
+	flags.DurationVar(&parsed.replyHedge, "reply-hedge", timing.ReplyHedge,
+		"how long a reply may say nothing before the same request is asked of another candidate as well, 0 asks once")
+	verbose := flags.Bool("verbose", false, "log lifecycle events")
+	if err := flags.Parse(args); err != nil {
+		return options{}, false, err
+	}
+	return parsed, *verbose, nil
 }
 
 type options struct {
@@ -130,15 +167,24 @@ type options struct {
 	instructions string
 	greeting     string
 
-	subagentTarget string
-	skillsFile     string
-	toolsFile      string
-	tasks          int
-	backchannel    bool
-	minConfidence  float64
-	demo           bool
-	chatTimings    bool
-	replyHedge     time.Duration
+	controllerTarget string
+	subagentTarget   string
+	skillsFile       string
+	toolsFile        string
+	tasks            int
+	backchannel      bool
+	checkIn          bool
+	minConfidence    float64
+	demo             bool
+	chatTimings      bool
+
+	replySilence          time.Duration
+	replySilenceMax       time.Duration
+	replySilenceConfident time.Duration
+	replyConfidentScore   float64
+	previewDebounce       time.Duration
+	previewQuiet          time.Duration
+	replyHedge            time.Duration
 
 	number       string
 	vendor       string
@@ -158,8 +204,9 @@ func (o options) prompt() string {
 // duplex is how the agent listens and talks at the same time.
 func (o options) duplex() agent.DuplexOptions {
 	return agent.DuplexOptions{
-		Backchannel:   o.backchannel,
-		MinConfidence: o.minConfidence,
+		Backchannel:        o.backchannel,
+		DisableIdleCheckIn: !o.checkIn,
+		MinConfidence:      o.minConfidence,
 	}
 }
 
@@ -186,6 +233,18 @@ func run(options options, logger *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	eotSettings, err := demoEOTSettingsFrom(os.LookupEnv)
+	if err != nil {
+		return err
+	}
+	eotClient, err := newDemoEOTClient(eotSettings)
+	if err != nil {
+		return err
+	}
+	if err := preflightDemoEOT(ctx, eotClient, eotSettings.usesHostedDemoClient(), logger); err != nil {
+		return err
+	}
 
 	routers, cleanup, err := buildRouters(ctx, options.replyHedge, logger)
 	if err != nil {
@@ -236,32 +295,43 @@ func run(options options, logger *slog.Logger) error {
 	}
 
 	voiceAgent, err := agent.New(agent.Options{
-		Edge:           edge,
-		Instructions:   options.prompt(),
-		CustomerID:     options.customerID,
-		AgentID:        options.agent(),
-		CallID:         options.callID,
-		Tags:           options.tags.Tags,
-		SubagentTarget: options.subagentTarget,
-		Skills:         skills,
-		Telephony:      line,
-		Tools:          tools,
-		Tasks:          options.tasks,
-		Duplex:         options.duplex(),
-		LLM:            routers.llm,
-		LLMTarget:      options.llmTarget,
-		STT:            routers.stt,
-		STTTarget:      options.sttTarget,
-		TTS:            routers.tts,
-		TTSTarget:      options.ttsTarget,
-		Voice:          options.voice,
-		LanguageHints:  options.languages(),
-		Memory:         remembering,
-		AppID:          options.appID,
-		SessionID:      options.callID,
-		Store:          routers.store,
-		Live:           routers.live,
-		Logger:         logger,
+		Edge:             edge,
+		Instructions:     options.prompt(),
+		CustomerID:       options.customerID,
+		AgentID:          options.agent(),
+		CallID:           options.callID,
+		Tags:             options.tags.Tags,
+		ControllerTarget: options.controllerTarget,
+		SubagentTarget:   options.subagentTarget,
+		Skills:           skills,
+		Telephony:        line,
+		Tools:            tools,
+		Tasks:            options.tasks,
+		Duplex:           options.duplex(),
+		LLM:              routers.llm,
+		LLMTarget:        options.llmTarget,
+		STT:              routers.stt,
+		STTTarget:        options.sttTarget,
+		TTS:              routers.tts,
+		TTSTarget:        options.ttsTarget,
+		Voice:            options.voice,
+		LanguageHints:    options.languages(),
+		Memory:           remembering,
+		AppID:            options.appID,
+		SessionID:        options.callID,
+		Store:            routers.store,
+		Live:             routers.live,
+		Logger:           logger,
+		EOT:              eotClient,
+		EOTMode:          eotSettings.mode,
+		EOTThreshold:     eotSettings.threshold,
+
+		ReplySilence:          &options.replySilence,
+		ReplySilenceMax:       &options.replySilenceMax,
+		ReplySilenceConfident: &options.replySilenceConfident,
+		ReplyConfidentScore:   &options.replyConfidentScore,
+		PreviewDebounce:       &options.previewDebounce,
+		PreviewQuiet:          &options.previewQuiet,
 	})
 	if err != nil {
 		return err

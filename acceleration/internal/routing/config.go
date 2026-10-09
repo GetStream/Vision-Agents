@@ -210,6 +210,10 @@ func (t Tags) Validate() error {
 
 // ProviderConfig declares what one provider and model combination can do.
 type ProviderConfig struct {
+	// ExplicitOnly excludes a provider from automatic capability aliases. It can still
+	// be selected directly or included in an alias's explicit Only list.
+	ExplicitOnly bool `yaml:"explicit_only"`
+
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
 	// Thinking enables provider-specific reasoning for this concrete model.
@@ -335,6 +339,9 @@ type Alias struct {
 
 // matches reports whether a provider satisfies the alias.
 func (a Alias) matches(provider ProviderConfig) bool {
+	if provider.ExplicitOnly && len(a.Only) == 0 {
+		return false
+	}
 	if len(a.Only) > 0 && !slices.Contains(a.Only, provider.Name()) {
 		return false
 	}

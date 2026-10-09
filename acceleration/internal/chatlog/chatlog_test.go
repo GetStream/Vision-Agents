@@ -572,13 +572,13 @@ func (s *ChatLogSuite) TestATurnsTimingsAreQueuedForItsReply() {
 func (s *ChatLogSuite) TestTheReplyIsSplitIntoStagesThatAddUpToIt() {
 	described, ok := timingsOf(agent.Turn{
 		TurnID: "turn-1", STTLatencyMs: 6.2, CadenceMs: 350, DecisionMs: 95.6, ModelToFirstTextMs: 412,
-		LLMTTFTMs: 731, TextToTTSMs: 70, TTSToAudioMs: 143, TTSTTFBMs: 120,
+		LLMTTFTMs: 731, TextToTTSMs: 70, TTSToAudioMs: 143, TTSTTFBMs: 120, ReplyHoldMs: 300,
 		RoundtripMs: 1074, SpeechEndToAudioMs: 1080, FirstFrameQueuedMs: 1080, FirstAudibleFrameMs: 1106,
 		SpeechEndToAudibleMs: 1112, AudioOutMs: 2100,
 	})
 
 	s.Require().True(ok)
-	s.Equal("⏱ reply 1112 ms = eou 452 + llm 412 + tts 248 · ttft 731 · ttfb 120", described.line)
+	s.Equal("⏱ reply 1112 ms = eou 452 + llm 412 + tts 248 · ttft 731 · ttfb 120 · hold 300", described.line)
 	s.Equal(map[string]any{
 		"interrupted": false,
 		"reply_ms":    1112,
@@ -591,6 +591,7 @@ func (s *ChatLogSuite) TestTheReplyIsSplitIntoStagesThatAddUpToIt() {
 		"tts_ms":      248,
 		"llm_ttft_ms": 731,
 		"tts_ttfb_ms": 120,
+		"hold_ms":     300,
 	}, described.fields)
 	s.Equal(described.fields["reply_ms"], described.fields["eou_ms"].(int)+described.fields["llm_ms"].(int)+described.fields["tts_ms"].(int))
 }
@@ -621,6 +622,7 @@ func (s *ChatLogSuite) TestAFigureThatDidNotHappenIsLeftOutRatherThanShownAsZero
 	s.Require().True(ok)
 	s.Equal("⏱ reply 900 ms = eou 300 + tts 80", described.line)
 	s.NotContains(described.fields, "stt_ms")
+	s.NotContains(described.fields, "hold_ms")
 	s.NotContains(described.fields, "eot_ms", "a figure that rounds to nothing did not take any time worth showing")
 }
 

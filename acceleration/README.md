@@ -9,6 +9,9 @@ answers with a model and speaks the reply back. Because it is built from the rou
 than from provider instances, every turn of a conversation gets the same failover, health
 and billing as a direct API call.
 
+For voice setup, start with [Run](#run). [The agent](#the-agent) explains acoustic
+turn detection, reply previews and the wait before the first audio.
+
 ## Layout
 
 | Path                 | What it is                                                        |
@@ -112,9 +115,9 @@ the other commands that read them there.
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off |
-| `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
-| `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long its turn took, and the same figures as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
-| `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies are hedged, not the flow controller, the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off. `cmd/agent` takes it as `-reply-hedge` |
+| `ROUTER_SPECULATIVE_REPLIES` | Enable reply previews, on by default. See [voice timing](#why-a-ready-reply-may-wait) for silence, preview and hedge settings |
+| `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies are hedged, a preview among them, and not the flow controller, the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off |
+| `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long each stage of its turn took, and the same stages as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
 | `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
@@ -608,7 +611,29 @@ go run ./cmd/chat -target en-high-accuracy
 # Join a Stream call and talk to it. A browser opens on a link that joins the same call,
 # which -demo=false turns off when the caller is joining from somewhere else.
 go run ./cmd/agent -call my-call
+```
 
+`cmd/agent` loads the nearest parent `.env`, preserving values already set in
+its environment. It runs the routers in process and needs Stream credentials
+plus credentials for the selected STT, LLM and TTS providers; it does not need a
+running HTTP router. For example, with `STREAM_API_KEY`, `STREAM_API_SECRET`,
+`DEEPGRAM_API_KEY`, `OPENAI_API_KEY` and `CARTESIA_API_KEY` in `.env`:
+
+```bash
+go run ./cmd/agent -call my-call \
+  -stt deepgram/flux-general-en \
+  -llm openai/gpt-6.1-sol \
+  -tts cartesia/sonic-preview
+```
+
+Open the call link, allow microphone access and speak. Backchannels and idle
+check-ins are off by default; `-backchannel` and `-check-in` enable them.
+The hosted EOT scorer is used automatically. See [The agent](#the-agent) for
+how it decides when to answer, its fallback behavior and timing controls.
+The Python `simple_voice_ai` example uses the same defaults when connected to
+a router built from this branch.
+
+```bash
 # Sprint 6 stack: Gemma speaks, Sol handles the hard parts
 go run ./cmd/agent -call my-call \
   -stt parakeet/parakeet-tdt-0.6b-v3 \
@@ -657,58 +682,119 @@ deepseek/DeepSeek-V4-Flash-0731  first token 356ms  20 in  13 out  $0.000005
 
 ## The agent
 
-`internal/agent` is the Go counterpart of the Python `Agent`, built from the three routers
-plus a target each. One conversation is one LLM session and one voice session, but a
-transcription session per participant, because a speech-to-text stream is bound to a single
-speaker.
+A cascaded voice agent transcribes incoming audio, decides when the caller has
+finished, generates a reply, then speaks it:
 
-```mermaid
-flowchart LR
-  edge["Edge audio 16k mono"] --> stt["STT session per participant"]
-  stt -->|"transcript revisions"| cadence["Cadence"]
-  cadence --> flow["Fast flow controller"]
-  flow -->|"respond or clarify"| conv[Conversation history]
-  flow -->|"stop, shorten, continue"| floor["Speech floor"]
-  conv --> harness["Harness"]
-  harness --> llmSession["LLM session"]
-  llmSession -->|"text deltas"| harness
-  harness -->|"speech"| chunker["Sentence chunker"]
-  chunker --> ttsSession["TTS session"]
-  ttsSession -->|"PCM chunks"| out["Edge audio track"]
+```text
+caller audio → transcription → turn decision → reply model → speech synthesis → call
+                                  ↑
+                         acoustic end-of-turn score
 ```
 
-Three decisions are worth knowing about:
+Transcription can change while the caller is speaking. The agent starts an early
+reply after the words have stayed stable for 60 ms and the audio has been quiet
+for 120 ms. That preview cannot speak or execute tools until its turn is
+accepted. New words replace it; discarded previews still incur model usage.
+The number of early previews is bounded per utterance.
 
-- **Cadence, not turn detection, decides when to act.** Transcript revisions are debounced
-  per participant, then a separate fast-model session decides whether to wait, ignore
-  background speech, respond, or clarify. A provider final is metadata rather than the
-  response trigger; new words cancel a stale decision.
-- **The reply is spoken sentence by sentence.** A model emits a few characters at a time,
-  and a voice given two words at a time pauses in the wrong places. A streaming voice takes
-  a turn's sentences as deltas of one utterance, so one turn stays one billed synthesis; a
-  voice that cannot take deltas gets one final request per sentence.
-- **Overlap is a floor decision.** A correction stops the model and voice, a related addition
-  shortens the current answer after speech already queued, and an acknowledgement lets it
-  continue. Audio from an abandoned turn is still dropped at publication.
+### Acoustic and semantic decisions
 
-Those three decisions are where a call goes wrong, so `ROUTER_LOG_LEVEL=debug` narrates
-them: every transcript revision, when the words held still, what the flow controller was
-asked and what it answered, and why the agent then spoke, waited, murmured, queued the turn
-or stopped mid-reply. A quiet agent is usually one of `ignore`, `wait` on repeat, or a turn
-queued behind speech that never settled, and each of those says so.
+By default, both binaries use the hosted EU end-of-turn (EOT) scorer in `primary`
+mode. It receives up to 16 seconds of trailing caller audio as 16 kHz mono
+PCM16LE over HTTPS. The hosted service requires no EOT credentials.
 
+For an eligible quiet-floor turn, a score at or above `0.5` accepts the ending;
+a lower score waits for more audio. This score answers whether the speaker has
+finished. A semantic check separately determines whether the words address the
+agent and can withdraw a reply before it is heard. Interruptions and other
+ineligible candidates continue through the semantic controller.
+
+A transient scoring failure gets at most three attempts within a shared
+one-second budget, then falls back to the semantic controller. The hosted demo
+has limited capacity and no availability guarantee. Its transient startup
+preflight failures warn and allow startup; permanent failures stop the demo.
+
+| Environment variable | Effect |
+| --- | --- |
+| `ROUTER_EOT_URL` | Unset uses the hosted demo. Empty disables acoustic scoring. A private URL selects your own `/v1/eot` service. |
+| `ROUTER_EOT_MODE` | `primary` uses EOT for eligible turn endings. `gate` requires the semantic decision as well. The hosted default is `primary`; a private URL defaults to `gate`. |
+| `ROUTER_EOT_THRESHOLD` | Acceptance probability, default `0.5`, range `[0, 1]`. |
+| `ROUTER_EOT_ID_TOKEN_FILE` | Identity-token file for a private service. Otherwise private HTTPS endpoints use Google Application Default Credentials. Never used for the hosted demo. |
+
+For example, to use only transcript and semantic turn detection:
+
+```bash
+ROUTER_EOT_URL= go run ./cmd/agent -call my-call
 ```
-transcribed provider=deepgram participant=user-1 mode=replacement text="what's the weather"
-the words held still, asking whether to answer them candidate=turn-1787 waited=352ms
-the flow controller decided candidate=turn-1787 disposition=respond floor=continue
-answering candidate=turn-1787
+
+### Use AudioTurn for transcription too
+
+AudioTurn can replace the separate STT provider. Select it explicitly:
+
+```bash
+go run ./cmd/agent -call my-call -stt audioturn/audioturn-stack16k-blend
 ```
 
-`Edge` is four methods (`Join`, `Audio`, `PublishAudio`, `Leave`), which is what lets the
-whole flow be tested in-process against a loopback rather than only against a real call.
-`streamedge` is the real one: it joins over the `getstream-go-webrtc` SDK, subscribes
-to the audio of everyone else in the call (joining subscribes to nothing on its own), decodes
-inbound Opus to 16 kHz mono, and encodes the agent's speech back to 48 kHz Opus.
+For an API session or saved agent, set `"stt": "audioturn/audioturn-stack16k-blend"`.
+Existing STT targets keep their behavior; AudioTurn is excluded from automatic
+model groups unless a custom group explicitly includes it.
+
+This uses the same `ROUTER_EOT_URL` and credentials as turn detection.
+Each request asks for both words and a turn score. Transcript revisions use the
+normal STT pipeline, and eligible turn decisions reuse that score. If it says
+to wait, the retry scores newer audio. No other transcription provider or STT
+API key is needed.
+
+The server must support `POST /v1/eot?transcript=true&transcript_min_p=0`, returning
+the decision and transcript as NDJSON. Startup checks this with generated
+silence and refuses a decision-only deployment. The hosted EU endpoint supports
+this protocol; private deployments must enable transcription on the server.
+
+Audio is sampled every 200 ms during speech, with one request in
+flight and a 16-second window. Idle silence is not transcribed.
+Overlapping transcripts replace provisional
+words. A transcript settles after the audio has been quiet for 600 ms;
+decoder word durations can extend through that silence. The turn score remains
+a separate decision about when to answer. Settling keeps the audio context. When a turn
+outgrows the window, its prefix is retained and its last second stays provisional;
+overlap alignment avoids repeating already committed words.
+An input backlog that exceeds the window is reported as
+an error. The server's word confidence and acoustic turn probability are separate
+values. Provider billing reports zero for this service; TPU hosting costs are
+not included in per-request statistics.
+
+### Why a ready reply may wait
+
+Before publishing the first reply audio, the agent checks how long the caller
+has been quiet. The default is 700 ms, shortened to 300 ms when the accepted
+acoustic score is at least `0.9`. Continuous noise can hold ready audio for at
+most one second. New caller speech restarts the silence measurement; new words
+can cancel a reply that has not been heard.
+
+For example, if the caller stops at **0 ms** and reply audio is ready at
+**250 ms**, a confident ending can speak at **300 ms**: the hold adds **50 ms**.
+An ordinary ending waits until **700 ms**, adding **450 ms**. If audio is only
+ready at 800 ms and the caller stayed quiet, neither setting adds a wait.
+Greetings and backchannels bypass this hold.
+
+| Router environment variable | `cmd/agent` flag | Default |
+| --- | --- | --- |
+| `ROUTER_REPLY_SILENCE` | `-reply-silence` | `700ms`; `0` disables |
+| `ROUTER_REPLY_SILENCE_MAX` | `-reply-silence-max` | `1s` maximum hold once audio is ready |
+| `ROUTER_REPLY_SILENCE_CONFIDENT` | `-reply-silence-confident` | `300ms` |
+| `ROUTER_REPLY_CONFIDENT_SCORE` | `-reply-confident-score` | `0.9`; `0` disables the shorter silence |
+| `ROUTER_PREVIEW_DEBOUNCE` | `-preview-debounce` | `60ms`; `0` waits for the settled candidate |
+| `ROUTER_PREVIEW_QUIET` | `-preview-quiet` | `120ms`; `0` checks only transcript stability |
+| `ROUTER_REPLY_HEDGE` | `-reply-hedge` | `1200ms`; `0` disables |
+
+Use environment variables for `cmd/router` and flags for these `cmd/agent`
+settings. `ROUTER_SPECULATIVE_REPLIES=false` disables reply previews in the router.
+Hedging starts one alternative reply request if the first has produced neither
+text nor a tool call by the deadline; the first to respond wins.
+
+When the caller interrupts, queued playback is cleared and stale speech is
+cancelled. Tool work follows its cancellation policy. Text sessions and native
+speech-to-speech sessions do not use the cascaded EOT and first-audio gates.
 
 ## The harness
 
@@ -719,7 +805,7 @@ while it runs.
 
 ```mermaid
 flowchart LR
-  stt["Transcript cadence"] --> controller["Flow controller"]
+  stt["Transcript candidate"] --> controller["EOT or semantic turn decision"]
   controller -->|"respond or clarify"| h["Harness"]
   h -->|"reply"| fast["Fast LLM session"]
   fast -->|"deltas"| filter["Directive filter"]
@@ -748,7 +834,7 @@ tool instead.
   reply. A streaming filter takes it back out before the reply reaches the voice, so the
   caller hears "let me check that" and never the request. Everything that cannot yet be a
   tag is released immediately, because the caller is listening to the gap.
-- **A model that has tools is told how to use them.** The reply model is given a short block
+- **A model that has tools is told how to use them.** The reply model, and the preview of its reply, are given a short block
   after the agent's own instructions whenever the harness offers tools: before calling one,
   say one short sentence that opens with a brief hold phrase ("One moment,") and runs straight
   on, with no full stop between, into what the operator's instructions ask to be said before
@@ -816,6 +902,12 @@ Cadence and floor control are always part of the agent. `-backchannel` defaults 
 short listening noise during long speech or delegated work; pass `-backchannel=false` to turn
 it off. `-min-confidence` additionally makes the agent clarify a doubtful transcript. The
 flow controller also asks for clarification when the words are clear but the intent is not.
+
+`cmd/agent` takes the timing of a reply as flags, starting from the router's defaults:
+`-reply-silence`, `-reply-silence-max`, `-reply-silence-confident`, `-reply-confident-score`,
+`-preview-debounce`, `-preview-quiet` and `-reply-hedge` are `ROUTER_REPLY_SILENCE`,
+`ROUTER_REPLY_SILENCE_MAX`, `ROUTER_REPLY_SILENCE_CONFIDENT`, `ROUTER_REPLY_CONFIDENT_SCORE`,
+`ROUTER_PREVIEW_DEBOUNCE`, `ROUTER_PREVIEW_QUIET` and `ROUTER_REPLY_HEDGE`.
 
 ### Voices that act a direction
 
@@ -1182,7 +1274,10 @@ decision before the reply model, first reply text, TTS submission and first audi
 edge. Its `model_calls` list keeps flow, reply and subagent requests separate, with TTFT
 and full duration for each attempt. `speech_end_to_audio_ms` estimates the delay from the
 last input audio using provider STT processing time; it cannot include network transit
-or browser playback. `roundtrip_ms` and `speech_end_to_audio_ms` stop when publishing the
+or browser playback. The first reply audio can wait for caller silence (`ROUTER_REPLY_SILENCE`).
+`reply_hold_ms` reports that wait, already included in `tts_to_audio_ms`,
+`roundtrip_ms`, `transcript_to_audio_ms`, `speech_end_to_audio_ms` and first-frame
+fields. It is absent when nothing was held. `roundtrip_ms` and `speech_end_to_audio_ms` stop when publishing the
 first chunk of the reply returns, which for a chunk longer than the 400 ms outgoing queue is
 later than it could first be heard. `first_frame_queued_ms`, `first_audible_frame_ms` and
 `speech_end_to_audible_ms` stop at the first frame being queued for the outgoing track and at
@@ -1242,18 +1337,19 @@ nothing behind, and any Stream Chat client can already read a channel.
 For development, `ROUTER_CHAT_TIMINGS=true` (or `cmd/agent -chat-timings`) shows how fast each turn
 was on the agent's reply, so somebody talking to the agent in a call UI sees it without reading
 logs. Each reply gets a line after its text, such as
-`⏱ reply 1112 ms = eou 452 + llm 412 + tts 248 · ttft 731 · ttfb 120`.
+`⏱ reply 1112 ms = eou 452 + llm 412 + tts 248 · ttft 731 · ttfb 120 · hold 300`.
 `reply` is the wait the caller felt, from the end of their speech to the first audible frame of the
 reply (the first audio published, where the edge does not say when that was heard), and the three
 stages add up to it: `eou` from the end of their speech until the turn was committed to
 (transcription settling, cadence wait and end-of-turn decision), `llm` from then to the reply's
 first text (absent when a reply started beside the decision was ready by then), and `tts` from the
 first text to the first audible frame. The providers' own `ttft` and `ttfb` follow, because work
-started early hides them inside the stages. A figure that did not happen is left out, and a turn
-the caller talked over starts `⏱ interrupted ·`. The same figures, in whole milliseconds, are on
-the message as the `timings` custom field (`reply_ms`, `eou_ms`, `llm_ms`, `tts_ms`, and the parts
-and provider waits). Reading the conversation back, in a transcript or as the history of a bound
-conversation, leaves the line out, so the agent never takes it for something said. Off by default.
+started early hides them inside the stages, and `hold` is how long the reply was held for the
+caller to be quiet. A figure that did not happen is left out, and a turn the caller talked over
+starts `⏱ interrupted ·`. The same figures, in whole milliseconds, are on the message as the
+`timings` custom field (`reply_ms`, `eou_ms`, `llm_ms`, `tts_ms`, and the parts and provider waits). Reading the conversation back, in a transcript or as
+the history of a bound conversation, leaves the line out, so the agent never takes it for something
+said. Off by default.
 
 **Memory.** With `MEM0_API_KEY` set, an agent recalls what it knows about the customer on
 join and prepends it to its instructions, then hands each finished exchange over to be

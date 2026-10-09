@@ -126,6 +126,13 @@ func (s *DuplexSuite) TestWorkIsNotUpdatedOnBeforeTheCallerHasWaited() {
 	s.False(listener.Update("", time.Now().Add(-time.Hour)), "nothing is running")
 }
 
+func (s *DuplexSuite) TestIdleCheckInCanBeDisabledForAQuietDemo() {
+	listener := newDuplex(DuplexOptions{DisableIdleCheckIn: true})
+
+	s.Empty(listener.Idle(time.Now().Add(-defaultIdleGap-time.Second), true),
+		"a quiet demo should not prompt the caller when nobody has spoken")
+}
+
 func (s *DuplexSuite) TestAShortSilenceIsLeftAlone() {
 	listener := newDuplex(DuplexOptions{})
 

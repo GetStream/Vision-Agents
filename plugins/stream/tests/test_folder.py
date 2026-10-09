@@ -502,18 +502,17 @@ class TestFolder:
 
         assert load(root).hash() != before
 
-    def test_speed_and_harness_are_read_from_the_declaration(self, tmp_path: Path):
+    def test_harness_is_read_from_the_declaration(self, tmp_path: Path):
         root = tmp_path / "jean"
-        write(root, "agent.yaml", "name: jean\nspeed: 1.1\nharness: default\n")
+        write(root, "agent.yaml", "name: jean\nharness: default\n")
 
         settings = load(root).settings
 
-        assert settings.speed == 1.1
         assert settings.harness == "default"
 
-    def test_a_speed_that_is_not_a_number_is_refused(self, tmp_path: Path):
+    def test_the_removed_speed_setting_is_refused(self, tmp_path: Path):
         root = tmp_path / "jean"
-        write(root, "agent.yaml", "name: jean\nspeed: fast\n")
+        write(root, "agent.yaml", "name: jean\nspeed: 1.1\n")
 
         with pytest.raises(ValueError, match="speed"):
             load(root)

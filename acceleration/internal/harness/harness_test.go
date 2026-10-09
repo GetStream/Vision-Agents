@@ -520,6 +520,70 @@ func (s *HarnessSuite) TestWithoutToolsTheModelIsToldNothingAboutThem() {
 	s.Equal("be brief\n\n"+s.skills.Prompt()+"\n\n"+spokenDelivery, s.fast.requests()[0].Instructions)
 }
 
+func (s *HarnessSuite) TestAPreviewIsToldWhatTheReplyItBecomesIsTold() {
+	// A preview is only taken over by the reply when the two were asked the same thing, so
+	// whatever the model is told must come out of one place.
+	for _, test := range []struct {
+		name       string
+		tools      Tools
+		delegating bool
+	}{
+		{"with tools", testTools(), false},
+		{"with tools and a colleague", testTools(), true},
+		{"without tools", Tools{}, true},
+	} {
+		s.Run(test.name, func() {
+			s.SetupTest()
+			s.tools = test.tools
+			s.build(test.delegating)
+			turn := Turn{
+				ID:           "turn-1",
+				Instructions: "be brief",
+				History:      []llm.Message{{Role: llm.User, Content: "a table for two"}},
+				Note:         "the caller was hard to hear",
+			}
+
+			stream, err := s.harness.Preview(s.ctx, turn)
+			s.Require().NoError(err)
+			s.T().Cleanup(func() { _ = stream.Close() })
+			s.answer(turn)
+
+			requests := s.fast.requests()
+			s.Require().Len(requests, 2)
+			s.Equal(requests[1].Instructions, requests[0].Instructions)
+			s.Equal(requests[1].Tools, requests[0].Tools)
+			s.Equal(test.tools.Prompt() != "", strings.Contains(requests[0].Instructions, usePolicy),
+				"the model is told how to use its tools when it has some, and not otherwise")
+		})
+	}
+}
+
+func (s *HarnessSuite) TestAPreviewCannotHideWorkAlreadyRunning() {
+	s.build(true)
+	model := s.harness.PreviewModel()
+	turn := Turn{
+		ID:           "turn-2",
+		Instructions: "be brief",
+		History:      []llm.Message{{Role: llm.User, Content: "is it done yet?"}},
+	}
+	stream, err := s.harness.Preview(s.ctx, turn)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = stream.Close() })
+
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.eventually(func() bool { return s.harness.Delegating() }, "the task never started")
+
+	s.False(s.harness.AdoptPreview(turn, model), "the preview did not know about the running work")
+	s.Nil(s.harness.PreviewModel(), "running work prevents starting a preview")
+	preview, err := s.harness.Preview(s.ctx, turn)
+	s.Error(err)
+	s.Nil(preview)
+	s.answer(turn)
+	requests := s.fast.requests()
+	s.Contains(requests[len(requests)-1].Instructions, "still working on the think")
+}
+
 func (s *HarnessSuite) TestAToolCallIsReportedForSomebodyElseToRun() {
 	// The harness cannot transfer a call it does not know exists, so what it does with a
 	// tool call is say that one was asked for.
@@ -670,6 +734,8 @@ func (s *HarnessSuite) TestTheModelAskingAgainDoesNotReplaceTheCallersImages() {
 
 	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the subagent was never asked")
 	s.True(s.slow.requests()[0].HasImage(), "the task that ran is the one with the picture")
+	// The task's request can reach the subagent before its event reaches the sink.
+	s.eventually(func() bool { return len(delegatedIn(s.events.seen())) == 1 }, "the picture's task was never reported")
 	for _, settled := range settledIn(s.events.seen()) {
 		s.NotEqual(ReasonSuperseded, settled.Result.Reason, "the picture's task was replaced")
 	}
@@ -728,6 +794,25 @@ func (s *HarnessSuite) TestCompleteIdentifiersAreNotHandedToAColleague() {
 	s.Equal("A B C 1 2 3 4 5 6. ", spoken)
 	s.True(s.harness.Pending(), "the fast model still owes the caller a tool call")
 	s.Empty(s.slow.requests(), "a complete identifier must not wait on the subagent")
+}
+
+func (s *HarnessSuite) TestIdentifiersSaidInWordsAreNotHandedToAColleagueEither() {
+	for _, said := range []string{
+		"a table for two at seven thirty",
+		"my number is five one two five five five zero one four two",
+	} {
+		s.Run(said, func() {
+			s.SetupTest()
+			s.build(true)
+			s.respond("turn-1", said)
+
+			spoken := s.reply("turn-1", `Booking it. <ask skill="think">read that back</ask>`)
+
+			s.Equal("Booking it. ", spoken)
+			s.True(s.harness.Pending(), "the fast model still owes the caller a tool call")
+			s.Empty(s.slow.requests(), "a time or a number said in words is complete as well")
+		})
+	}
 }
 
 func (s *HarnessSuite) TestATurnNobodyPromptedHasSomethingToAnswer() {

@@ -189,8 +189,6 @@ class Settings:
     tts: str = ""
     sts: str | None = None
     voice: str = ""
-    speed: float = 0.0
-    """The voice's rate of delivery, 1 being its own. Zero leaves it there."""
     llm: str = ""
     harness: str = ""
     subagent: str = ""
@@ -430,12 +428,6 @@ def _declare(path: Path) -> Settings:
             settings.sts = _word(value)
         elif field_name == "voice":
             settings.voice = _word(value)
-        elif field_name == "speed":
-            if value is not None and (
-                isinstance(value, bool) or not isinstance(value, (int, float))
-            ):
-                raise ValueError(f"{path} should give speed as a number")
-            settings.speed = float(value or 0)
         elif field_name == "llm":
             settings.llm = _word(value)
         elif field_name == "harness":

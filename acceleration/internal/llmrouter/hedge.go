@@ -12,6 +12,7 @@ import (
 )
 
 // replyPurpose is what the agent calls the request a caller is waiting to hear the answer to.
+// The preview of a reply is the same request, so it is called the same.
 const replyPurpose = "reply"
 
 // hedges says whether a request is asked a second time when it is late. Only a reply is, since

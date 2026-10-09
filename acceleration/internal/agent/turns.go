@@ -44,10 +44,15 @@ type openTurn struct {
 	participant  stt.Participant
 	transcriptAt time.Time
 	readyAt      time.Time
+	decisionAt   time.Time
 	modelAt      time.Time
 	firstTextAt  time.Time
 	ttsAt        time.Time
 	firstAudioAt time.Time
+	// holdMs is how long the reply's audio waited for the caller to have been quiet, before its
+	// first sound and before the sentences that follow a pause, as they were let out. Zero when it
+	// did not wait.
+	holdMs float64
 	// queuedAt is when the edge queued the first frame of the reply for its outgoing track, and
 	// pulledAt when the track took the first frame that was not silence. Only an edge that
 	// reports them sets them, and firstAudioAt is when publishing returned, which for a chunk
@@ -62,6 +67,10 @@ type openTurn struct {
 	// audioDroppedMs is speech that was synthesised and paid for but never published,
 	// because the turn had been abandoned by the time it arrived.
 	audioDroppedMs float64
+	// audioHeldMs is speech that is waiting in a hold for the caller to have been quiet, which
+	// is neither published nor dropped yet. A turn closed while it is there reports it dropped:
+	// it was paid for, and it never reached the caller.
+	audioHeldMs float64
 	// modelDone means the reply is fully generated, so how many syntheses the turn will
 	// produce is known.
 	modelDone bool
@@ -116,8 +125,16 @@ func (t *turnTracker) begin(turnID string, participant stt.Participant, readyAt,
 func (t *turnTracker) modelStarted(turnID string, at time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if current := t.open[turnID]; current != nil && current.modelAt.IsZero() {
+	if current := t.open[turnID]; current != nil {
 		current.modelAt = at
+	}
+}
+
+func (t *turnTracker) decided(turnID string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil && current.decisionAt.IsZero() {
+		current.decisionAt = at
 	}
 }
 
@@ -127,6 +144,16 @@ func (t *turnTracker) firstText(turnID string, at time.Time) {
 	if current := t.open[turnID]; current != nil && current.firstTextAt.IsZero() {
 		current.firstTextAt = at
 	}
+}
+
+func (t *turnTracker) modelTiming(turnID string, ttftMs float64) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.llmTTFTMs = ttftMs
+		return true
+	}
+	return false
 }
 
 func (t *turnTracker) ttsStarted(turnID string, at time.Time) {
@@ -149,6 +176,15 @@ func (t *turnTracker) firstAudio(turnID string, at time.Time) {
 	}
 	current.firstAudioAt = at
 	current.roundtripMs = msBetween(current.transcriptAt, at)
+}
+
+// held records the first-audio silence hold, already included in roundtrip timing.
+func (t *turnTracker) held(turnID string, waited time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.holdMs += float64(waited.Microseconds()) / 1000
+	}
 }
 
 // marksFor returns what an edge reports the first frames of a reply to, or nil when the turn
@@ -217,6 +253,35 @@ func (t *turnTracker) dropped(turnID string, audioDurationMs float64) {
 	current.audioDroppedMs += audioDurationMs
 }
 
+// buffered records speech that has gone into a hold for the caller to have been quiet.
+func (t *turnTracker) buffered(turnID string, audioDurationMs float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.audioHeldMs += audioDurationMs
+	}
+}
+
+// unbuffered records that the speech held for the turn has left the hold to be published.
+func (t *turnTracker) unbuffered(turnID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.audioHeldMs = 0
+	}
+}
+
+// droppedFromHold records speech that was held and has been given up with its reply. It moves
+// from held to dropped in one step, so a turn closed in between does not count it twice or lose it.
+func (t *turnTracker) droppedFromHold(turnID string, audioDurationMs float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.audioHeldMs = max(0, current.audioHeldMs-audioDurationMs)
+		current.audioDroppedMs += audioDurationMs
+	}
+}
+
 // spoke records a completed synthesis. A turn spoken sentence by sentence has several,
 // so the wait is the first one's and the audio is all of them.
 func (t *turnTracker) spoke(turnID string, timeToFirstByteMs, audioDurationMs float64) {
@@ -247,13 +312,26 @@ func (t *turnTracker) completed(turnID string, timeToFirstTokenMs float64, synth
 		t.mu.Unlock()
 		return
 	}
-	current.llmTTFTMs = timeToFirstTokenMs
+	if current.llmTTFTMs == 0 {
+		current.llmTTFTMs = timeToFirstTokenMs
+	}
 	current.modelDone = true
 	current.expected = syntheses
 	finished := t.settleLocked(turnID, current)
 	t.mu.Unlock()
 
 	t.report(finished)
+}
+
+// interrupting records that a turn is being abandoned, ahead of interrupt closing it. What
+// abandoning it sets going, such as a held reply being given up, can complete the turn before
+// interrupt is reached, and a turn completed by then is reported as one nobody interrupted.
+func (t *turnTracker) interrupting(turnID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.interrupted = true
+	}
 }
 
 // interrupt closes a turn a participant talked over. Whatever was measured before the
@@ -302,16 +380,25 @@ func (t *turnTracker) report(finished *Turn) {
 }
 
 func measure(turnID string, current *openTurn) Turn {
+	decidedAt := current.decisionAt
+	if decidedAt.IsZero() {
+		decidedAt = current.modelAt
+	}
+	textWaitAt := current.modelAt
+	if decidedAt.After(textWaitAt) {
+		textWaitAt = decidedAt
+	}
 	return Turn{
 		TurnID:              turnID,
 		Participant:         current.participant,
 		StartedAt:           current.transcriptAt,
 		STTLatencyMs:        current.sttLatencyMs,
 		CadenceMs:           leg(current.transcriptAt, current.readyAt),
-		DecisionMs:          leg(current.readyAt, current.modelAt),
-		ModelToFirstTextMs:  leg(current.modelAt, current.firstTextAt),
+		DecisionMs:          leg(current.readyAt, decidedAt),
+		ModelToFirstTextMs:  leg(textWaitAt, current.firstTextAt),
 		TextToTTSMs:         leg(current.firstTextAt, current.ttsAt),
 		TTSToAudioMs:        leg(current.ttsAt, current.firstAudioAt),
+		ReplyHoldMs:         current.holdMs,
 		FirstFrameQueuedMs:  leg(current.transcriptAt, current.queuedAt),
 		FirstAudibleFrameMs: leg(current.transcriptAt, current.pulledAt),
 		LLMTTFTMs:           current.llmTTFTMs,
@@ -322,7 +409,7 @@ func measure(turnID string, current *openTurn) Turn {
 		SpeechEndToAudioMs:   speechEndToAudio(current),
 		SpeechEndToAudibleMs: speechEndToAudible(current),
 		AudioOutMs:           current.audioOutMs,
-		AudioDroppedMs:       current.audioDroppedMs,
+		AudioDroppedMs:       current.audioDroppedMs + current.audioHeldMs,
 		Interrupted:          current.interrupted,
 	}
 }
@@ -400,6 +487,7 @@ func (r *turnRecorder) Record(turn Turn) {
 		ModelToFirstTextMs:   measured(turn.ModelToFirstTextMs),
 		TextToTTSMs:          measured(turn.TextToTTSMs),
 		TTSToAudioMs:         measured(turn.TTSToAudioMs),
+		ReplyHoldMs:          measured(turn.ReplyHoldMs),
 		STTLatencyMs:         measured(turn.STTLatencyMs),
 		LLMTTFTMs:            measured(turn.LLMTTFTMs),
 		TTSTTFBMs:            measured(turn.TTSTTFBMs),

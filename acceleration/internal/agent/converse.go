@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -57,11 +58,16 @@ const (
 	interruptGrace = 150 * time.Millisecond
 	// defaultPatience is how long the same unfinished words are waited on before the
 	// caller is asked what they meant instead.
-	defaultPatience = 3 * time.Second
+	defaultPatience = 2500 * time.Millisecond
 	// callerHold is how recently the caller's words must have changed for them to still
 	// hold the floor. A revision younger than this means somebody is mid-utterance, so a
 	// turn the agent owes waits rather than talking over them.
 	callerHold = 1500 * time.Millisecond
+	// primaryEOTLowRetry is how long the same words wait before the acoustic score is asked
+	// again after it ruled they were not finished. It is shorter than the retry a flow
+	// controller's Wait gets because a score moves with the caller's silence and costs far less
+	// than a model call.
+	primaryEOTLowRetry = 200 * time.Millisecond
 )
 
 const (
@@ -121,6 +127,14 @@ type floor struct {
 	Quiet bool
 	// Speaking is the reply currently allowed to make audio, empty when there is none.
 	Speaking string
+	// Reply is what the caller has heard the agent say on its current or draining turn. It is
+	// empty while Unheard, because nothing of that reply has been heard.
+	Reply string
+	// Unheard says the reply being spoken has let none of itself out yet, because its first
+	// audio is held until the caller has been quiet. The caller has been told nothing of it,
+	// so there is nothing for them to hear finished or to echo, and what they say meanwhile
+	// replaces it.
+	Unheard bool
 	// Talking reports whether the agent is writing or saying a reply, which Quiet cannot
 	// say on its own because a tool that is running also leaves the agent not quiet.
 	Talking bool
@@ -223,8 +237,12 @@ type queuedCandidate struct {
 // unfinished is a thought the controller keeps wanting to wait on, and when the waiting
 // for it began.
 type unfinished struct {
-	text  string
-	since time.Time
+	text string
+	// revision is the accepted transcript revision the wait is about, and primary says an
+	// acoustic score has ruled on it, which is what puts it on the fast retry.
+	revision uint64
+	primary  bool
+	since    time.Time
 }
 
 // judged is what a judgement was about: who was speaking and what they said.
@@ -268,6 +286,14 @@ func newConverse(
 // Two things can come of hearing more words: they may be worth acknowledging out loud,
 // and they may make a ruling already in flight about the words as they were pointless.
 func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
+	superseded, saying := c.cadence.Observe(transcript)
+	return c.observeRevision(transcript, state, superseded, saying)
+}
+
+// observeRevision applies the conversation decisions for a cadence observation that has
+// already been made. The agent uses this seam to act on an accepted transcript revision
+// before asking the overlap controller, without observing it twice.
+func (c *converse) observeRevision(transcript stt.Transcript, state floor, superseded, saying string) []Action {
 	var actions []Action
 
 	if phrase := c.duplex.Heard(transcript.Participant, transcript.Text, state.Quiet); phrase != "" {
@@ -279,7 +305,6 @@ func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
 		}))
 	}
 
-	superseded, saying := c.cadence.Observe(transcript)
 	if saying != "" {
 		c.emitter.Send(Hearing{
 			Participant: transcript.Participant,
@@ -316,7 +341,7 @@ func (c *converse) overlap(transcript stt.Transcript, saying string, state floor
 	if strings.HasPrefix(state.Speaking, backchannelPrefix) {
 		return nil
 	}
-	if overlapNoise(saying) {
+	if overlapNoise(saying) || speechless(saying) {
 		return nil
 	}
 
@@ -386,7 +411,22 @@ func (c *converse) supersede(participant stt.Participant, candidateID string) Ac
 }
 
 // Settled registers a turn whose words have stopped changing and asks for a ruling on it.
+//
+// Words that are not words, a cough or a breath the transcriber wrote down, are not put to
+// anybody: neither the acoustic score nor the flow controller is asked, because whatever they
+// made of them there would be nothing to answer. They are let go of without being counted as
+// answered, so a transcriber that revises them into what was said next is still heard.
 func (c *converse) Settled(ready candidate, state floor) Action {
+	if speechless(ready.Text) {
+		c.cadence.Discard(ready.ID)
+		return c.decide(Action{
+			Kind:        ActIgnore,
+			Reason:      "the transcript holds no words, only a sound or a hesitation, so there is nothing to answer",
+			Candidate:   ready,
+			Participant: ready.Participant,
+			Text:        ready.Text,
+		})
+	}
 	c.mu.Lock()
 	if !state.Quiet {
 		if seen, ok := c.overlapping[ready.Participant.ID]; ok && seen.inflight != "" {
@@ -431,6 +471,35 @@ func (c *converse) Unasked(candidateID string) {
 	c.cadence.Resolve(candidateID, true)
 }
 
+// ForgetParticipant drops pending judgements and settling state when a participant
+// leaves. Unlike Unasked, departure must not schedule another attempt for stale words.
+func (c *converse) ForgetParticipant(participant stt.Participant) {
+	c.mu.Lock()
+	for id, ready := range c.candidates {
+		if ready.Participant.ID == participant.ID {
+			delete(c.candidates, id)
+			c.forgetOverlapLocked(id)
+		}
+	}
+	if c.queued != nil && c.queued.candidate.Participant.ID == participant.ID {
+		c.queued = nil
+	}
+	delete(c.waiting, participant.ID)
+	delete(c.overlapping, participant.ID)
+	for id, owner := range c.overlaps {
+		if owner == participant.ID {
+			delete(c.overlaps, id)
+		}
+	}
+	for kind, last := range c.reported {
+		if last.participant == participant.ID {
+			delete(c.reported, kind)
+		}
+	}
+	c.mu.Unlock()
+	c.cadence.Forget(participant)
+}
+
 // forgetOverlapLocked drops a provisional ask and returns what has been asked about the
 // participant it concerned, or false when the id is not a provisional ask still in flight.
 // The caller holds the lock.
@@ -454,6 +523,17 @@ func (c *converse) forgetOverlapLocked(candidateID string) (overlapState, bool) 
 // interrupted before it is answered, and a turn the agent talks through is held before
 // the reply it is waiting on is cut short.
 func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
+	return c.ruled(ruling, state, false)
+}
+
+// ruledPrimaryEOTLow is Ruled for the Wait an acoustic score below its threshold makes. The
+// score is a real answer, not a failure to get one, so the same words are put to it again
+// after primaryEOTLowRetry rather than the usual retry, within the patience for them.
+func (c *converse) ruledPrimaryEOTLow(ruling harness.Decided, state floor) []Action {
+	return c.ruled(ruling, state, true)
+}
+
+func (c *converse) ruled(ruling harness.Decided, state floor, primary bool) []Action {
 	c.mu.Lock()
 	seen, provisional := c.forgetOverlapLocked(ruling.CandidateID)
 	c.mu.Unlock()
@@ -505,8 +585,12 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 	}
 
 	if ruling.Disposition == harness.Wait {
-		if c.patient(ready) {
-			c.cadence.Resolve(ruling.CandidateID, true)
+		if patient, remaining := c.patient(ready, primary); patient {
+			retry := time.Duration(0)
+			if primary {
+				retry = min(primaryEOTLowRetry, remaining)
+			}
+			c.cadence.resolveAfter(ruling.CandidateID, true, retry)
 			return []Action{c.decide(Action{
 				Kind:        ActWait,
 				Reason:      "the caller has not finished the thought",
@@ -590,6 +674,15 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		return []Action{c.decide(answer)}
 	}
 
+	// A reply none of which has been heard answers words the caller has since added to, so
+	// finishing it, or finishing a part of it, would tell them what they have already moved on
+	// from and put the answer to what they said after it. Words that are more than a murmur
+	// replace it, whatever the controller made of the floor.
+	if state.Unheard && (ruling.Floor == harness.Shorten ||
+		ruling.Floor == harness.Continue && substantiveBargeIn(ready.Text, state.Reply)) {
+		ruling.Floor = harness.Stop
+	}
+
 	// Somebody spoke over the agent, so who keeps the floor has to be settled before the
 	// turn can be dealt with at all.
 	c.emitter.Send(OverlapDecided{
@@ -670,6 +763,11 @@ func (c *converse) overlapRuled(ruling harness.Decided, seen overlapState, state
 		c.logger.Debug("a provisional ruling let the agent keep the floor",
 			"candidate", ruling.CandidateID, "floor", ruling.Floor)
 		return nil
+	}
+	// Nothing of a reply that is still held has been heard, so there is no part of it to
+	// finish: adding to what was asked replaces it, as it does when the words settle.
+	if state.Unheard && floorDecision == harness.Shorten {
+		floorDecision = harness.Stop
 	}
 
 	c.emitter.Send(OverlapDecided{
@@ -917,16 +1015,76 @@ func settlement(result harness.Result) string {
 // nothing more, and it answers the same way every time, so waiting is a loop that only the
 // caller can end. Somebody who has gone quiet mid-sentence has usually finished and been
 // misheard, and at that point asking them is better than listening to silence.
-func (c *converse) patient(ready candidate) bool {
+func (c *converse) patient(ready candidate, primary bool) (bool, time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	waiting, known := c.waiting[ready.Participant.ID]
-	if !known || !sameWords(waiting.text, ready.Text) {
-		c.waiting[ready.Participant.ID] = unfinished{text: ready.Text, since: time.Now()}
-		return true
+	// An acoustic score says whose words it waited on by the accepted revision, which only
+	// changes when the words do, and keeps the patience deadline it started with for as long
+	// as it is asked about them.
+	same := known && sameWords(waiting.text, ready.Text)
+	if primary && ready.Revision != 0 {
+		same = known && waiting.revision == ready.Revision
 	}
-	return time.Since(waiting.since) < c.patience
+	if !same {
+		waiting = unfinished{text: ready.Text, revision: ready.Revision, since: time.Now()}
+	}
+	waiting.primary = waiting.primary || primary
+	c.waiting[ready.Participant.ID] = waiting
+	if !same {
+		return true, c.patience
+	}
+	remaining := c.patience - time.Since(waiting.since)
+	return remaining > 0, remaining
+}
+
+// primaryRetry reports whether a candidate is the acoustic score being asked again about
+// the revision it already ruled unfinished, and when the patience for it runs out.
+func (c *converse) primaryRetry(ready candidate) (time.Time, bool) {
+	if ready.Revision == 0 {
+		return time.Time{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	waiting, known := c.waiting[ready.Participant.ID]
+	if !known || !waiting.primary || waiting.revision != ready.Revision {
+		return time.Time{}, false
+	}
+	return waiting.since.Add(c.patience), true
+}
+
+// unaskedAfter is Unasked with the retry chosen by the caller: the turn was not put to a
+// ruling because nothing had changed since the last one, so it is checked again in a moment.
+func (c *converse) unaskedAfter(candidateID string, retryAfter time.Duration) {
+	c.mu.Lock()
+	delete(c.candidates, candidateID)
+	c.forgetOverlapLocked(candidateID)
+	c.mu.Unlock()
+	c.cadence.resolveAfter(candidateID, true, retryAfter)
+}
+
+// patienceEnds is when the wait on a participant's unfinished words runs out, after which
+// the same words are answered with a question instead. It reports false when nothing is
+// being waited on for them.
+func (c *converse) patienceEnds(participantID string) (time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	waiting, known := c.waiting[participantID]
+	if !known {
+		return time.Time{}, false
+	}
+	return waiting.since.Add(c.patience), true
+}
+
+// patienceSpan is how long the same unfinished words are waited on before the caller is asked
+// what they meant.
+func (c *converse) patienceSpan() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.patience
 }
 
 // hold keeps a turn until the agent has stopped talking. Only one is kept: a caller who
@@ -1009,6 +1167,143 @@ func overlapNoise(text string) bool {
 	switch t {
 	case "huh", "uh", "mm", "hm", "hmm":
 		return true
+	}
+	return false
+}
+
+// markerWords is the longest a bracketed stretch of a transcript can be and still be taken for
+// a transcriber's note about a sound, "(clears throat)" or "[people talking in the
+// background]", rather than for words somebody said.
+const markerWords = 6
+
+// markerPairs are what a transcriber puts a note about a sound between.
+var markerPairs = map[rune]rune{'(': ')', '[': ']', '{': '}', '<': '>', '*': '*'}
+
+// withoutMarkers is the text with the transcriber's notes about sounds taken out. A note that
+// is never closed is words, because the transcript may have been cut off part way through
+// them, and so is a bracketed stretch too long to be a note.
+func withoutMarkers(text string) string {
+	var kept strings.Builder
+	rest := text
+	for len(rest) > 0 {
+		symbol, size := utf8.DecodeRuneInString(rest)
+		if closing, opens := markerPairs[symbol]; opens {
+			if end := strings.IndexRune(rest[size:], closing); end >= 0 &&
+				len(strings.Fields(rest[size:size+end])) <= markerWords {
+				rest = rest[size+end+utf8.RuneLen(closing):]
+				kept.WriteByte(' ')
+				continue
+			}
+		}
+		kept.WriteString(rest[:size])
+		rest = rest[size:]
+	}
+	return kept.String()
+}
+
+// speechless reports whether a settled transcript carries nothing anybody said: it is empty,
+// only punctuation, only the transcriber's notes about sounds, or only the hesitations a
+// transcriber writes down for a throat being cleared or a breath being taken. Whatever the
+// acoustic model made of the ending, there are no words for the agent to answer, so no reply
+// is started for them.
+//
+// A hesitation that can also be an answer is only taken for noise on its own. "Mm hmm" is a
+// yes, and so is a bare "cough" to somebody asked what their symptoms are, so neither is
+// here.
+func speechless(text string) bool {
+	heard := strings.Fields(strings.ToLower(words(withoutMarkers(text))))
+	if len(heard) == 1 {
+		switch heard[0] {
+		case "hm", "hmm", "hmmm", "mm", "mmm":
+			return true
+		}
+	}
+	for _, word := range heard {
+		switch word {
+		case "uh", "uhm", "um", "umm", "er", "erm", "eh", "ah", "ahem":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// substantiveBargeIn distinguishes a caller taking the floor from a brief acknowledgement
+// or a transcript that is simply echoing what the agent just said.
+func substantiveBargeIn(text, reply string) bool {
+	normalized := strings.ToLower(words(text))
+	if normalized == "" || speechless(text) || shortBackchannel(normalized) ||
+		wordSequenceEcho(reply, normalized) {
+		return false
+	}
+
+	lexicalWords := 0
+	firstLexical := ""
+	for _, word := range strings.Fields(normalized) {
+		if backchannelWord(word) {
+			continue
+		}
+		if lexicalWords == 0 {
+			firstLexical = word
+		}
+		lexicalWords++
+	}
+	if lexicalWords == 1 && explicitInterruptionWord(firstLexical) {
+		return true
+	}
+	return lexicalWords >= 2
+}
+
+func shortBackchannel(text string) bool {
+	switch strings.ToLower(words(text)) {
+	case "mhm", "mm", "hm", "hmm", "uh", "uh huh", "mm hmm", "yeah", "yep", "yup",
+		"yes", "okay", "ok", "right", "sure", "i see", "got it", "thanks", "thank you",
+		"great", "correct", "absolutely", "all right", "alright":
+		return true
+	default:
+		return false
+	}
+}
+
+func backchannelWord(word string) bool {
+	switch word {
+	case "mhm", "mm", "hm", "hmm", "uh", "huh", "yeah", "yep", "yup", "yes",
+		"okay", "ok", "right", "sure", "got", "it", "thanks", "thank", "you", "great",
+		"correct", "absolutely", "all", "alright":
+		return true
+	default:
+		return false
+	}
+}
+
+func explicitInterruptionWord(word string) bool {
+	switch word {
+	case "stop", "wait", "no", "hold", "cancel", "pause":
+		return true
+	default:
+		return false
+	}
+}
+
+// wordSequenceEcho checks a complete token sequence, with word boundaries on both ends.
+// It cannot mistake a short word such as "no" inside "know" for the caller repeating it.
+func wordSequenceEcho(reply, text string) bool {
+	wanted := strings.Fields(strings.ToLower(words(text)))
+	heard := strings.Fields(strings.ToLower(words(reply)))
+	if len(wanted) == 0 || len(wanted) > len(heard) {
+		return false
+	}
+	for start := 0; start+len(wanted) <= len(heard); start++ {
+		match := true
+		for index, word := range wanted {
+			if heard[start+index] != word {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
 	}
 	return false
 }

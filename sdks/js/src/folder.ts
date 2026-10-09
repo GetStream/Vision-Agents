@@ -486,7 +486,6 @@ const SCALARS = new Set([
   "tts",
   "sts",
   "voice",
-  "speed",
   "llm",
   "harness",
   "subagent",
@@ -502,7 +501,6 @@ const LISTS = new Set(["plugins", "keyterms"]);
  * ```yaml
  * name: receptionist
  * llm: openai/gpt-5.6
- * speed: 0.9
  * harness: default
  * keyterms: [Vision Agents, Stream]
  * tags:
@@ -550,7 +548,7 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       }
       const value = scalar(inline);
       if (value !== undefined && (value || key === "sts")) {
-        assign(declared, key, value, where);
+        assign(declared, key, value);
       }
     } else if (LISTS.has(key)) {
       const items = inline ? flowList(inline, key, where) : nested.map((item) => listItem(item, key, where));
@@ -573,7 +571,7 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
   return declared;
 }
 
-function assign(declared: Declaration, key: string, value: string, where: string): void {
+function assign(declared: Declaration, key: string, value: string): void {
   switch (key) {
     case "mode":
       declared.mode = value as Schemas["AgentMode"];
@@ -584,17 +582,6 @@ function assign(declared: Declaration, key: string, value: string, where: string
     case "harness":
       declared.harness = value as Schemas["Harness"];
       break;
-    case "speed": {
-      const speed = Number(value);
-      if (!Number.isFinite(speed) || speed < 0) {
-        throw new ConfigurationError(`${where}: speed is a rate of delivery, 1 being the voice's own`);
-      }
-      // Zero leaves the voice where it is, which is what saying nothing does.
-      if (speed > 0) {
-        declared.speed = speed;
-      }
-      break;
-    }
     default:
       declared[key as "name"] = value;
   }

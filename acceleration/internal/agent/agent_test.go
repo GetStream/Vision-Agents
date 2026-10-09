@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -26,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
@@ -182,6 +186,7 @@ type stubLLM struct {
 	// refuses, if set, is returned instead of a response: the model a session opens onto
 	// happily but that answers nothing, which is what a rejected key looks like.
 	refuses error
+	delay   time.Duration
 
 	// scripts are the responses handed out, keyed by the id the caller correlates on, so
 	// a test can write one as it goes and see which were abandoned.
@@ -212,11 +217,18 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	}
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
-	hold, refuses := s.holdCreate, s.refuses
+	hold, refuses, delay := s.holdCreate, s.refuses, s.delay
 	s.mu.Unlock()
 
 	if refuses != nil {
 		return nil, refuses
+	}
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 
 	if hold != nil {
@@ -378,7 +390,10 @@ type stubTTS struct {
 	said       []tts.Request
 	interrupts int
 	// silent stops the stub producing audio, so a test can hold a turn open.
-	silent bool
+	silent           bool
+	delay            time.Duration
+	interruptEntered chan struct{}
+	interruptRelease chan struct{}
 }
 
 func newStubTTS(streaming bool) *stubTTS {
@@ -390,24 +405,31 @@ func (s *stubTTS) Start(context.Context) error { return nil }
 func (s *stubTTS) Synthesize(request tts.Request) error {
 	s.mu.Lock()
 	s.said = append(s.said, request)
-	silent := s.silent
+	silent, delay := s.silent, s.delay
 	s.mu.Unlock()
 
 	if silent {
 		return nil
 	}
 	if request.Text != "" {
+		if delay > 0 {
+			time.Sleep(delay)
+		}
 		s.emitter.Send(tts.AudioChunk{
 			SynthesisID: request.ID,
 			Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
 		})
 	}
 	if request.Final {
+		ttfb := float64(delay.Milliseconds())
+		if delay == 0 {
+			ttfb = 5
+		}
 		s.emitter.Send(tts.SynthesisComplete{
 			SynthesisID:       request.ID,
 			Characters:        int64(len(request.Text)),
 			AudioDurationMs:   10,
-			TimeToFirstByteMs: 5,
+			TimeToFirstByteMs: ttfb,
 		})
 	}
 	return nil
@@ -415,8 +437,16 @@ func (s *stubTTS) Synthesize(request tts.Request) error {
 
 func (s *stubTTS) Interrupt() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.interrupts++
+	entered, release := s.interruptEntered, s.interruptRelease
+	s.interruptEntered, s.interruptRelease = nil, nil
+	if entered != nil {
+		close(entered)
+	}
+	s.mu.Unlock()
+	if release != nil {
+		<-release
+	}
 	return nil
 }
 
@@ -544,9 +574,7 @@ type AgentSuite struct {
 	suite.Suite
 	ctx context.Context
 
-	edge *loopbackEdge
-	// edgeFactory wraps the loopback in an edge with more to it, for a test of what only such
-	// an edge does. Without it the agent joins the loopback itself.
+	edge        *loopbackEdge
 	edgeFactory func(*loopbackEdge) Edge
 	voice       *stubTTS
 	model       *stubLLM
@@ -574,9 +602,27 @@ type AgentSuite struct {
 	// duplex is how the agent listens and talks at the same time, off unless a test says
 	// otherwise.
 	duplex DuplexOptions
-	// speculates starts replies before the flow controller has ruled, off unless a test
-	// says otherwise.
-	speculates bool
+	// speculation says whether replies start before the flow controller has ruled, and is
+	// nil, which leaves them on, unless a test says otherwise.
+	speculation *bool
+	// replySilence is how long a reply waits for the caller to have been quiet, and is nil,
+	// which leaves the default, unless a test says otherwise.
+	replySilence *time.Duration
+	// replySilenceMax is the longest a reply is held for it, and is nil, which leaves the
+	// default, unless a test says otherwise.
+	replySilenceMax *time.Duration
+	// previewDebounce is how long words hold still before the reply to them is started, and is
+	// nil, which leaves the default, unless a test says otherwise.
+	previewDebounce *time.Duration
+	// previewQuiet is how long the caller's audio has to have been quiet before the reply to
+	// their words is started early, and is nil, which leaves the default, unless a test says
+	// otherwise.
+	previewQuiet *time.Duration
+	// replySilenceConfident and replyConfidentScore are the silence a reply to a sure ending is
+	// held for and the score that makes it one, and are nil, which leaves the defaults, unless a
+	// test says otherwise.
+	replySilenceConfident *time.Duration
+	replyConfidentScore   *float64
 	// remembers is the memory store the agent joins with, when a test gives it one.
 	remembers *stubMemory
 	// incognito holds the session off the record.
@@ -589,7 +635,9 @@ type AgentSuite struct {
 	// provider.
 	finds *stubSearch
 	// guards screens what the agent may be asked, when a test gives it a policy.
-	guards *stubGuardrail
+	guards  *stubGuardrail
+	eot     *audioturn.Client
+	eotMode EOTMode
 	// performing is what a voice that acts stage directions asks to have said about it.
 	// It is set before joining, because the stub voice is built there.
 	performing string
@@ -617,6 +665,8 @@ func (s *AgentSuite) SetupTest() {
 	s.namespace = ""
 	s.finds = nil
 	s.guards = nil
+	s.eot = nil
+	s.eotMode = EOTModeGate
 	s.subagent = nil
 	s.skills = harness.Skills{}
 	s.line = nil
@@ -624,7 +674,13 @@ func (s *AgentSuite) SetupTest() {
 	s.runner = nil
 	s.toolPolicy = nil
 	s.duplex = DuplexOptions{}
-	s.speculates = false
+	s.speculation = nil
+	s.replySilence = nil
+	s.replySilenceMax = nil
+	s.previewDebounce = nil
+	s.previewQuiet = nil
+	s.replySilenceConfident = nil
+	s.replyConfidentScore = nil
 	s.performing = ""
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -788,7 +844,6 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		finding = s.searchRouter()
 		searchTarget = "stub/now"
 	}
-
 	var edge Edge = s.edge
 	if s.edgeFactory != nil {
 		edge = s.edgeFactory(s.edge)
@@ -810,7 +865,11 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		ToolPolicy:         s.toolPolicy,
 		Tools:              s.tools,
 		Duplex:             s.duplex,
-		SpeculativeReplies: s.speculates,
+		SpeculativeReplies: s.speculation,
+		ReplySilence:       s.replySilence,
+		ReplySilenceMax:    s.replySilenceMax,
+		PreviewDebounce:    s.previewDebounce,
+		PreviewQuiet:       s.previewQuiet,
 		LLM:                reasoner,
 		LLMTarget:          "en-low-latency",
 		STT:                transcriber,
@@ -823,7 +882,13 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		Search:             finding,
 		SearchTarget:       searchTarget,
 		Guardrail:          s.screening(),
+		EOT:                s.eot,
+		EOTMode:            s.eotMode,
+		EOTThreshold:       0.5,
 		Logger:             logger,
+
+		ReplySilenceConfident: s.replySilenceConfident,
+		ReplyConfidentScore:   s.replyConfidentScore,
 	})
 	s.Require().NoError(err)
 	s.agent = agent
@@ -853,6 +918,17 @@ func (s *AgentSuite) synthesises(turnID string) {
 		SynthesisID: turnID,
 		Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
 	})
+}
+
+// openingReplyStarted separates the live reply's Create from an earlier speculative
+// preview. Tests that hold Create use it before introducing an overlap.
+func (s *AgentSuite) openingReplyStarted() bool {
+	if len(s.model.requests()) == 0 {
+		return false
+	}
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	return s.agent.generating && s.agent.speakingTurn != ""
 }
 
 func (s *AgentSuite) says(participant stt.Participant, text string) {
@@ -909,7 +985,57 @@ func (s *AgentSuite) saysInVoice(participant stt.Participant, text, voice string
 // eventually waits for a condition, which is how a test asserts on a flow that crosses
 // goroutines without sleeping for a fixed time.
 func (s *AgentSuite) eventually(condition func() bool, message string) {
-	s.Require().Eventually(condition, settleFor, 5*time.Millisecond, message)
+	s.T().Helper()
+	s.eventuallyWithin(condition, settleFor, message)
+}
+
+// eventuallyWithin is eventually for a flow that is given longer than settleFor.
+func (s *AgentSuite) eventuallyWithin(condition func() bool, waitFor time.Duration, message string) {
+	s.T().Helper()
+	if !holds(condition, waitFor, 5*time.Millisecond) {
+		s.Require().Fail("Condition never satisfied", message)
+	}
+}
+
+// neverWithin asserts that something stays untrue for as long as it is given.
+func (s *AgentSuite) neverWithin(condition func() bool, waitFor time.Duration, message string) {
+	s.T().Helper()
+	if holds(condition, waitFor, 5*time.Millisecond) {
+		s.Require().Fail("Condition satisfied", message)
+	}
+}
+
+// holds polls the condition on the test's own goroutine until it is true or waitFor has
+// passed. Testify polls on a goroutine of its own, which can still be reading the suite's
+// fields when the test has ended and the next one replaces them.
+func holds(condition func() bool, waitFor, tick time.Duration) bool {
+	deadline := time.Now().Add(waitFor)
+	for {
+		if condition() {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(tick)
+	}
+}
+
+// Eventually and Never are testify's, polling on the test's goroutine as holds does.
+func (s *AgentSuite) Eventually(condition func() bool, waitFor, tick time.Duration, msgAndArgs ...any) bool {
+	s.T().Helper()
+	if holds(condition, waitFor, tick) {
+		return true
+	}
+	return s.Fail("Condition never satisfied", msgAndArgs...)
+}
+
+func (s *AgentSuite) Never(condition func() bool, waitFor, tick time.Duration, msgAndArgs ...any) bool {
+	s.T().Helper()
+	if !holds(condition, waitFor, tick) {
+		return true
+	}
+	return s.Fail("Condition satisfied", msgAndArgs...)
 }
 
 // reported returns the events seen so far.
@@ -1047,7 +1173,6 @@ func (s *AgentSuite) TestASettledTurnIsAnsweredAndSpoken() {
 }
 
 func (s *AgentSuite) TestASpeculativeReplyStartsBeforeTheRulingAndIsSpokenOnlyAfterIt() {
-	s.speculates = true
 	s.join(true)
 	ruling := make(chan struct{})
 	s.flow.holdCreate = ruling
@@ -1073,7 +1198,6 @@ func (s *AgentSuite) TestASpeculativeReplyStartsBeforeTheRulingAndIsSpokenOnlyAf
 }
 
 func (s *AgentSuite) TestASpeculativeReplyIsDroppedWhenTheRulingDoesNotAnswer() {
-	s.speculates = true
 	s.join(true)
 	s.flow.reply = []string{`{"disposition":"ignore","floor":"continue"}`}
 	ruling := make(chan struct{})
@@ -1096,7 +1220,6 @@ func (s *AgentSuite) TestASpeculativeReplyIsDroppedWhenTheRulingDoesNotAnswer() 
 func (s *AgentSuite) TestAClarifyingRulingStartsAgainRatherThanUsingTheEarlyReply() {
 	// The early reply was written without the note that says the words were ambiguous, so
 	// speaking it would answer a question the caller may not have asked.
-	s.speculates = true
 	s.join(true)
 	s.flow.reply = []string{`{"disposition":"clarify","floor":"continue"}`}
 	ruling := make(chan struct{})
@@ -1116,6 +1239,8 @@ func (s *AgentSuite) TestAClarifyingRulingStartsAgainRatherThanUsingTheEarlyRepl
 }
 
 func (s *AgentSuite) TestWithoutSpeculationTheReplyWaitsForTheRuling() {
+	off := false
+	s.speculation = &off
 	s.join(true)
 	ruling := make(chan struct{})
 	s.flow.holdCreate = ruling
@@ -1127,8 +1252,75 @@ func (s *AgentSuite) TestWithoutSpeculationTheReplyWaitsForTheRuling() {
 
 	s.Never(func() bool { return len(s.model.requests()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
 		"without speculation the reply is only asked for once the ruling is in")
+	s.Zero(s.previewsHeld(), "nothing is held ahead of the ruling when speculation is off")
 	close(ruling)
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply never started")
+}
+
+// previewsHeld is how many replies started ahead of their ruling are still waiting on it.
+func (s *AgentSuite) previewsHeld() int {
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	return len(s.agent.previews)
+}
+
+func (s *AgentSuite) TestAnAnsweredTurnLeavesNoPreviewHeld() {
+	s.join(true)
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+	s.eventually(func() bool { return s.previewsHeld() == 1 }, "the reply was never started ahead of the ruling")
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the answer was never spoken")
+	s.Zero(s.previewsHeld(), "the answer took the reply that was started for it")
+	s.Len(s.model.requests(), 1, "one reply is started, not one before the ruling and one after it")
+}
+
+func (s *AgentSuite) TestAnIgnoredTurnLetsGoOfItsPreview() {
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"ignore","floor":"continue"}`}
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "child", Name: "Child"}
+	s.speak(participant)
+
+	s.says(participant, "mom where is my backpack")
+	s.eventually(func() bool { return s.previewsHeld() == 1 }, "the reply was never started ahead of the ruling")
+	close(ruling)
+
+	s.eventually(func() bool { return s.previewsHeld() == 0 }, "an ignored turn kept its preview")
+}
+
+func (s *AgentSuite) TestARulingForWordsThatMovedOnLetsGoOfTheirPreview() {
+	s.join(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.agent.mu.Lock()
+	s.agent.previews["gone"] = &replyPreview{cancel: cancel}
+	s.agent.mu.Unlock()
+
+	s.agent.rule(harness.Decided{CandidateID: "gone", Disposition: harness.Respond, Floor: harness.Continue})
+
+	s.Zero(s.previewsHeld())
+	s.Error(ctx.Err(), "the preview was left running")
+}
+
+func (s *AgentSuite) TestClosingTheAgentLetsGoOfAPreview() {
+	s.join(true)
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+	s.eventually(func() bool { return s.previewsHeld() == 1 }, "the reply was never started ahead of the ruling")
+
+	s.Require().NoError(s.agent.Close())
+
+	s.Zero(s.previewsHeld())
 }
 
 func (s *AgentSuite) TestARevisionReplacesTheWordsBeforeCadenceActs() {
@@ -1187,9 +1379,106 @@ func (s *AgentSuite) TestBackgroundSpeechIsIgnored() {
 
 	s.eventually(func() bool { return len(s.flow.requests()) == 1 },
 		"the flow controller never considered the speech")
-	s.Empty(s.model.requests(), "speech addressed to somebody else should stay in the background")
+	s.Empty(s.edge.heard(), "a speculative reply must not speak before the floor decision")
 	s.Empty(s.agent.History())
 	s.Zero(countOf[Heard](s.reported()))
+}
+
+func (s *AgentSuite) TestReplyIsReadyWhileTheControllerDecidesButCannotSpeakEarly() {
+	s.join(true)
+	s.flow.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is the weather")
+
+	s.eventually(func() bool {
+		return len(s.flow.requests()) == 1 && len(s.model.requests()) == 1
+	}, "the reply did not start beside the floor decision")
+	s.Empty(s.edge.heard())
+	s.Empty(s.agent.History())
+
+	decision := s.flow.requests()[0].ID
+	s.eventually(func() bool { return s.flow.script(decision) != nil }, "flow did not open")
+	s.flow.writes(decision, `{"disposition":"respond","floor":"continue"}`)
+	s.flow.finishes(decision)
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 },
+		"the accepted preview was not spoken")
+	s.Equal("what is the weather", s.agent.History()[0].Content)
+	s.Len(s.model.requests(), 1, "the accepted preview was requested again")
+}
+
+func (s *AgentSuite) TestConcurrentDecisionAndReplyReduceTimeToFirstAudio() {
+	s.join(true)
+	s.flow.delay = 550 * time.Millisecond
+	s.model.delay = 650 * time.Millisecond
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "tell me a story")
+
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 },
+		"the paced turn never reached audio")
+	turn, _ := firstOf[Turn](s.reported())
+	s.T().Logf("paced voice turn: speech_end_to_audio_ms=%.0f cadence_ms=%.0f decision_ms=%.0f model_to_first_text_ms=%.0f tts_to_audio_ms=%.0f",
+		turn.SpeechEndToAudioMs, turn.CadenceMs, turn.DecisionMs,
+		turn.ModelToFirstTextMs, turn.TTSToAudioMs)
+	s.Greater(turn.DecisionMs, 500.0)
+	s.Greater(turn.SpeechEndToAudioMs, 650.0)
+	s.Less(turn.SpeechEndToAudioMs, 1000.0,
+		"the two provider waits should overlap instead of adding to the critical path")
+}
+
+func (s *AgentSuite) pacedVoiceTurn(flow, reply, voice time.Duration, sttMs float64) Turn {
+	s.join(true)
+	s.flow.delay = flow
+	s.model.delay = reply
+	s.voice.delay = voice
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.saysAfter(participant, "could you help me plan dinner?", sttMs)
+	s.eventuallyWithin(func() bool { return countOf[Turn](s.reported()) == 1 },
+		5*time.Second, "the paced voice turn never reached audio")
+	turn, _ := firstOf[Turn](s.reported())
+	s.T().Logf("paced voice turn: speech_end_to_audio_ms=%.0f stt_ms=%.0f cadence_ms=%.0f decision_ms=%.0f model_to_first_text_ms=%.0f tts_to_audio_ms=%.0f llm_ttft_ms=%.0f",
+		turn.SpeechEndToAudioMs, turn.STTLatencyMs, turn.CadenceMs, turn.DecisionMs,
+		turn.ModelToFirstTextMs, turn.TTSToAudioMs, turn.LLMTTFTMs)
+	return turn
+}
+
+func (s *AgentSuite) TestPacedVoiceTurnWithSlowController() {
+	turn := s.pacedVoiceTurn(1050*time.Millisecond, 825*time.Millisecond,
+		900*time.Millisecond, 170)
+	s.InDelta(2180, turn.SpeechEndToAudioMs, 100,
+		"decision and reply should overlap while STT, cadence and TTS remain on the path")
+}
+
+func (s *AgentSuite) TestPacedVoiceTurnWithSlowReply() {
+	turn := s.pacedVoiceTurn(450*time.Millisecond, 650*time.Millisecond,
+		450*time.Millisecond, 120)
+	s.InDelta(1280, turn.SpeechEndToAudioMs, 100,
+		"the slower reply should continue through the controller decision")
+}
+
+func (s *AgentSuite) TestRevisedSpeechCannotReleaseAnObsoletePreview() {
+	s.join(true)
+	s.flow.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.mutters(participant, "set the timer for five")
+	s.eventually(func() bool {
+		return len(s.flow.requests()) == 1 && len(s.model.requests()) == 1
+	}, "the first stable revision was not previewed")
+	s.mutters(participant, "set the timer for fifteen minutes")
+	s.eventually(func() bool {
+		return len(s.flow.requests()) == 2 && len(s.model.requests()) == 2
+	}, "the revision did not replace the first request")
+	decision := s.flow.requests()[1].ID
+	s.eventually(func() bool { return s.flow.script(decision) != nil }, "revised flow did not open")
+	s.flow.writes(decision, `{"disposition":"respond","floor":"continue"}`)
+	s.flow.finishes(decision)
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 },
+		"the revised turn was not spoken")
+	s.Equal("set the timer for fifteen minutes", s.agent.History()[0].Content)
+	s.Len(s.agent.History(), 2, "the obsolete turn entered conversation history")
 }
 
 func (s *AgentSuite) TestASecondVoiceAtTheSameMicrophoneIsNotTakenForTheCaller() {
@@ -1240,8 +1529,14 @@ func (s *AgentSuite) TestAmbiguousSpeechAsksAClarifyingQuestion() {
 
 	s.mutters(participant, "do it like last time")
 
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Contains(s.model.requests()[0].Instructions, "ambiguous")
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			if strings.Contains(request.Instructions, "ambiguous") {
+				return true
+			}
+		}
+		return false
+	}, "the clarification was never requested")
 }
 
 func (s *AgentSuite) TestAnEmptyTurnIsNotAnswered() {
@@ -1759,8 +2054,8 @@ func (s *AgentSuite) TestAnAnswerComingBackWaitsForSpeechToGoOut() {
 		return countOf[Responded](s.reported()) == 1 && countOf[TaskSettled](s.reported()) == 1 &&
 			countOf[Spoke](s.reported()) >= 1
 	}, "the first reply never finished")
-	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
-		presenceTick+100*time.Millisecond, 10*time.Millisecond,
+	s.neverWithin(func() bool { return len(s.model.requests()) > 1 },
+		presenceTick+100*time.Millisecond,
 		"a follow-up must not start while speech is still going out")
 
 	s.edge.holdSpeech(false)
@@ -1787,8 +2082,8 @@ func (s *AgentSuite) TestAStuckPlayoutSignalDoesNotStrandAFollowUp() {
 		return countOf[Responded](s.reported()) == 1 && countOf[TaskSettled](s.reported()) == 1 &&
 			countOf[Spoke](s.reported()) >= 1
 	}, "the first reply never finished")
-	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
-		presenceTick+100*time.Millisecond, 10*time.Millisecond,
+	s.neverWithin(func() bool { return len(s.model.requests()) > 1 },
+		presenceTick+100*time.Millisecond,
 		"a fresh tail still gets time to drain")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
@@ -2088,6 +2383,327 @@ func (s *AgentSuite) TestWithoutDuplexNothingIsMurmured() {
 	s.Empty(s.voice.spoken())
 }
 
+func (s *AgentSuite) TestAcousticWaitKeepsCallerTurnPendingUntilTheNextScoreAndFlowRuling() {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/eot" {
+			s.T().Errorf("unexpected EOT request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Content-Type"); got != "audio/pcm;rate=16000;channels=1;format=s16le" {
+			s.T().Errorf("unexpected EOT content type %q", got)
+		}
+		requestID := r.Header.Get("X-Request-ID")
+		if requestID == "" {
+			s.T().Error("EOT request did not identify its candidate")
+		}
+		if r.Header.Get("X-EOT-Pauses") != "" || r.Header.Get("X-EOT-Elapsed-Seconds") != "" {
+			s.T().Error("EOT request fabricated pause metadata")
+		}
+		pcm, err := io.ReadAll(r.Body)
+		if err != nil {
+			s.T().Errorf("read EOT audio: %v", err)
+		}
+		if len(pcm) != eotMinSamples*2 {
+			s.T().Errorf("EOT request sent %d bytes, want %d", len(pcm), eotMinSamples*2)
+		}
+		count := requests.Add(1)
+		probability := 0.2
+		if count > 1 {
+			probability = 0.9
+		}
+		if _, err := io.WriteString(w, eotJSON(requestID, len(pcm)/2, probability)); err != nil {
+			s.T().Errorf("write EOT score: %v", err)
+		}
+	}))
+	s.T().Cleanup(server.Close)
+	client, err := audioturn.NewClient(server.URL, "")
+	s.Require().NoError(err)
+	s.eot = client
+	s.join(false)
+
+	// The low score arrives before the semantic response. It must create an ordinary
+	// Wait and cancel speculative speech; a later high score still needs the semantic
+	// controller's Respond before the caller turn completes.
+	s.flow.mu.Lock()
+	s.flow.delay = 100 * time.Millisecond
+	s.flow.mu.Unlock()
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	s.eventually(func() bool {
+		return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2
+	}, "the participant audio window was not retained")
+	s.says(participant, "could you help me")
+	s.eventually(func() bool { return requests.Load() == 1 }, "the first acoustic request never arrived")
+	s.eventually(func() bool {
+		s.agent.converse.mu.Lock()
+		defer s.agent.converse.mu.Unlock()
+		_, waiting := s.agent.converse.waiting[participant.ID]
+		return waiting
+	}, "a low acoustic score did not leave the caller turn waiting")
+	s.Empty(s.voice.spoken(), "a low acoustic score must cancel the speculative reply")
+	s.Empty(s.agent.History(), "a low acoustic score must not complete the caller turn")
+
+	s.eventually(func() bool { return requests.Load() >= 2 }, "the normal cadence retry did not score again")
+	s.eventually(func() bool { return said(s.voice.spoken()) != "" }, "the semantic Respond was not released after a high score")
+	s.Contains(said(s.voice.spoken()), "Hello there.")
+	s.EqualValues(2, requests.Load(), "each quiet settled candidate gets one scalar request")
+}
+
+func (s *AgentSuite) TestEOTServiceFailureReleasesTheSemanticDecision() {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+	}))
+	s.T().Cleanup(server.Close)
+	client, err := audioturn.NewClient(server.URL, "")
+	s.Require().NoError(err)
+	s.eot = client
+	s.join(false)
+	s.flow.mu.Lock()
+	s.flow.delay = 100 * time.Millisecond
+	s.flow.mu.Unlock()
+
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2 },
+		"the participant audio window was not retained")
+	s.says(participant, "please help me")
+	s.eventually(func() bool { return requests.Load() == 1 }, "the EOT request did not arrive")
+	s.eventually(func() bool { return said(s.voice.spoken()) != "" },
+		"an unavailable EOT service did not release the semantic answer")
+	s.Contains(said(s.voice.spoken()), "Hello there.")
+}
+
+func (s *AgentSuite) TestEOT429AndTimeoutFallBackToTheSemanticFlow() {
+	var requests atomic.Int64
+	timedOut := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := requests.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		if count == 1 {
+			http.Error(w, "busy", http.StatusTooManyRequests)
+			return
+		}
+		<-r.Context().Done()
+		close(timedOut)
+	}))
+	s.T().Cleanup(server.Close)
+	client, err := audioturn.NewClient(server.URL, "")
+	s.Require().NoError(err)
+	s.eot = client
+	s.join(false)
+	s.flow.mu.Lock()
+	s.flow.delay = 100 * time.Millisecond
+	s.flow.mu.Unlock()
+
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2 },
+		"the participant audio window was not retained")
+	s.says(participant, "please help with a booking")
+	s.eventually(func() bool { return requests.Load() == 1 }, "the 429 request did not arrive")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
+		"a 429 did not release the semantic answer")
+
+	s.says(participant, "and make it for four")
+	s.eventually(func() bool { return requests.Load() == 2 }, "the second EOT request did not arrive")
+	select {
+	case <-timedOut:
+	case <-time.After(settleFor):
+		s.FailNow("the bounded EOT request did not time out")
+	}
+	s.eventually(func() bool { return countOf[Responded](s.reported()) >= 2 },
+		"an EOT timeout did not release the semantic answer")
+	s.EqualValues(2, requests.Load(), "429 and timeout must not trigger EOT retries")
+}
+
+func (s *AgentSuite) TestEOTRevisionCancelsTheOldRequestAndScoresTheNewWords() {
+	var requests atomic.Int64
+	firstStarted := make(chan struct{})
+	firstCanceled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := requests.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		if count == 1 {
+			close(firstStarted)
+			<-r.Context().Done()
+			close(firstCanceled)
+			return
+		}
+		requestID := r.Header.Get("X-Request-ID")
+		_, _ = io.WriteString(w, eotJSON(requestID, eotMinSamples, 0.9))
+	}))
+	s.T().Cleanup(server.Close)
+	client, err := audioturn.NewClient(server.URL, "")
+	s.Require().NoError(err)
+	s.eot = client
+	s.join(false)
+	s.flow.mu.Lock()
+	s.flow.delay = 500 * time.Millisecond
+	s.flow.mu.Unlock()
+
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2 },
+		"the participant audio window was not retained")
+	s.says(participant, "could you find a table")
+	select {
+	case <-firstStarted:
+	case <-time.After(settleFor):
+		s.FailNow("the first EOT request did not start")
+	}
+	s.mutters(participant, "could you find a table for four")
+	select {
+	case <-firstCanceled:
+	case <-time.After(settleFor):
+		s.FailNow("a transcript revision did not cancel the old EOT request")
+	}
+	s.eventually(func() bool { return requests.Load() >= 2 }, "the revised candidate was not scored")
+	s.eventually(func() bool { return said(s.voice.spoken()) != "" },
+		"the revised candidate's semantic answer was not released")
+	s.Contains(said(s.voice.spoken()), "Hello there.")
+	s.EqualValues(2, requests.Load(), "a revision should replace, not duplicate, the old request")
+}
+
+func (s *AgentSuite) TestParticipantDepartureInvalidatesPendingEOTAndSemanticResults() {
+	var requests atomic.Int64
+	firstStarted := make(chan struct{})
+	firstCanceled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(firstStarted)
+		<-r.Context().Done()
+		close(firstCanceled)
+	}))
+	s.T().Cleanup(server.Close)
+	client, err := audioturn.NewClient(server.URL, "")
+	s.Require().NoError(err)
+	s.eot = client
+	s.join(false)
+	s.flow.mu.Lock()
+	s.flow.delay = 100 * time.Millisecond
+	s.flow.mu.Unlock()
+
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2 },
+		"the participant audio window was not retained")
+	s.says(participant, "please find a table")
+	select {
+	case <-firstStarted:
+	case <-time.After(settleFor):
+		s.FailNow("the EOT request did not start")
+	}
+	var old *eotGate
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		for _, gate := range s.agent.eotGates {
+			if gate.held != nil {
+				old = gate
+				return true
+			}
+		}
+		return false
+	}, "the semantic result was not held behind the EOT request")
+	s.agent.unbind(participant)
+	select {
+	case <-firstCanceled:
+	case <-time.After(settleFor):
+		s.FailNow("participant departure did not cancel its EOT request")
+	}
+	s.agent.decideFromHarness(s.agent.pipe, s.agent.harness, *old.held)
+	s.Empty(s.voice.spoken(), "a departed participant's stale result produced speech")
+	s.agent.mu.Lock()
+	_, hasRing := s.agent.audioHistory[participant.ID]
+	_, hasGate := s.agent.eotGates[old.candidateID]
+	s.agent.mu.Unlock()
+	s.False(hasRing, "departure retained participant audio")
+	s.False(hasGate, "departure retained the EOT join")
+	s.agent.converse.mu.Lock()
+	_, hasCandidate := s.agent.converse.candidates[old.candidateID]
+	s.agent.converse.mu.Unlock()
+	s.False(hasCandidate, "departure retained the semantic candidate")
+	time.Sleep(800 * time.Millisecond)
+	s.EqualValues(1, requests.Load(), "departure retried cadence for a participant who left")
+}
+
+func (s *AgentSuite) TestInPlaceCascadeSwapInvalidatesHeldAndQueuedEOTResults() {
+	var requests atomic.Int64
+	firstStarted := make(chan struct{})
+	firstCanceled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := requests.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		if count == 1 {
+			close(firstStarted)
+			<-r.Context().Done()
+			close(firstCanceled)
+			return
+		}
+		requestID := r.Header.Get("X-Request-ID")
+		_, _ = io.WriteString(w, eotJSON(requestID, eotMinSamples, 0.9))
+	}))
+	s.T().Cleanup(server.Close)
+	client, err := audioturn.NewClient(server.URL, "")
+	s.Require().NoError(err)
+	s.eot = client
+	s.join(false)
+	s.flow.mu.Lock()
+	s.flow.delay = 100 * time.Millisecond
+	s.flow.mu.Unlock()
+
+	participant := stt.Participant{ID: "caller", UserID: "caller", Name: "Caller"}
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2 },
+		"the participant audio window was not retained")
+	s.says(participant, "please find a table")
+	select {
+	case <-firstStarted:
+	case <-time.After(settleFor):
+		s.FailNow("the EOT request did not start")
+	}
+	var old *eotGate
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		for _, gate := range s.agent.eotGates {
+			if gate.held != nil {
+				old = gate
+				return true
+			}
+		}
+		return false
+	}, "the semantic result was not held behind the EOT request")
+
+	// Exercise the actual in-place cascade swap while the candidate join is live. The
+	// late event below models a Decided already queued when CancelDecision runs.
+	s.agent.mu.Lock()
+	settings := s.agent.settingsLocked()
+	current, p := s.agent.harness, s.agent.pipe
+	s.agent.switching.Store(true)
+	s.agent.mu.Unlock()
+	s.agent.swapCascade(settings, settings, &prepared{})
+	s.agent.switching.Store(false)
+	select {
+	case <-firstCanceled:
+	case <-time.After(settleFor):
+		s.FailNow("the in-place swap did not cancel its pending EOT request")
+	}
+	s.agent.decideFromHarness(p, current, *old.held)
+	s.Empty(s.voice.spoken(), "a stale queued semantic result crossed the cascade swap")
+	s.speak(participant)
+	s.eventually(func() bool { return len(s.agent.eotAudioSnapshot(participant.ID)) == eotMinSamples*2 },
+		"fresh post-swap audio was not retained")
+	s.eventually(func() bool { return requests.Load() >= 2 }, "the canceled candidate was not retried")
+	s.eventually(func() bool { return said(s.voice.spoken()) != "" },
+		"the retried candidate did not complete under the current pipeline")
+	s.Contains(said(s.voice.spoken()), "Hello there.")
+}
+
 func (s *AgentSuite) TestAReplyWaitingOnHeadersDoesNotBlockTheFloor() {
 	s.join(true)
 	s.model.reply = nil
@@ -2096,7 +2712,7 @@ func (s *AgentSuite) TestAReplyWaitingOnHeadersDoesNotBlockTheFloor() {
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 	s.says(participant, "explain the menu")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.eventually(s.openingReplyStarted, "the first reply never started")
 	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
 
 	s.mutters(participant, "okay")
@@ -2114,7 +2730,7 @@ func (s *AgentSuite) TestBargeInCancelsAReplyThatIsStillOpening() {
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 	s.says(participant, "explain the menu")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.eventually(s.openingReplyStarted, "the first reply never started")
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
 
 	s.mutters(participant, "wait stop")
@@ -2125,12 +2741,16 @@ func (s *AgentSuite) TestBargeInCancelsAReplyThatIsStillOpening() {
 }
 
 func (s *AgentSuite) TestRelatedOverlapShortensThenAnswersTheAddition() {
+	// The reply is not held to the caller's silence, so it is being spoken: a reply that is
+	// still held has told the caller nothing, and an addition replaces it instead.
+	noHold := time.Duration(0)
+	s.replySilence = &noHold
 	s.join(true)
 	s.model.reply = nil
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 	s.says(participant, "explain the menu")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.eventually(s.openingReplyStarted, "the first reply never started")
 	s.flow.then = []string{`{"disposition":"respond","floor":"shorten"}`}
 
 	s.says(participant, "only the vegetarian options")
@@ -2150,7 +2770,7 @@ func (s *AgentSuite) TestAcknowledgementOverlapLetsTheCurrentReplyContinue() {
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 	s.says(participant, "explain the menu")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.eventually(s.openingReplyStarted, "the first reply never started")
 	first := s.model.requests()[0].ID
 	s.flow.then = []string{`{"disposition":"respond","floor":"continue"}`}
 
@@ -2200,7 +2820,7 @@ func (s *AgentSuite) TestAnAcknowledgementInProgressDoesNotStopTheAgent() {
 	s.voice.silent = true
 	s.speak(participant)
 	s.says(participant, "explain the menu")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.eventually(s.openingReplyStarted, "the first reply never started")
 	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
 
 	s.mutters(participant, "okay")
@@ -2213,14 +2833,17 @@ func (s *AgentSuite) TestAnAcknowledgementInProgressDoesNotStopTheAgent() {
 
 func (s *AgentSuite) TestTheControllerIsToldWhatTheAgentIsSaying() {
 	// A ruling on partial words overlapping the reply has to see the reply, or it cannot
-	// tell a correction from the caller's line echoing the agent back.
+	// tell a correction from the caller's line echoing the agent back. The reply is not held to
+	// the caller's silence, so it is being heard: a reply that is still held has said nothing.
+	noHold := time.Duration(0)
+	s.replySilence = &noHold
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
 	s.model.reply = nil
 	s.voice.silent = true
 	s.speak(participant)
 	s.says(participant, "explain the menu")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.eventually(s.openingReplyStarted, "the first reply never started")
 	turnA := s.model.requests()[0].ID
 	s.model.writes(turnA, "The menu has three courses")
 	s.eventually(func() bool { return countOf[ResponseDelta](s.reported()) >= 1 }, "the reply never streamed")
@@ -2277,12 +2900,12 @@ func (s *AgentSuite) TestShorteningLeavesSpeechAlreadyOnItsWayOut() {
 	// but what has already been said is still worth hearing, so nothing that has been
 	// published is thrown away.
 	s.join(true)
-	s.model.reply = nil
+	s.edge.holdSpeech(true)
+	s.model.reply = []string{"The menu has a vegetarian option and two other courses."}
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 	s.says(participant, "explain the menu")
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
-	s.synthesises(s.model.requests()[0].ID)
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was never published")
 	s.flow.then = []string{`{"disposition":"respond","floor":"shorten"}`}
 
@@ -2329,7 +2952,9 @@ func (s *AgentSuite) TestASecondToolDoesNotStartACompetingReply() {
 	s.says(participant, "where are my orders")
 
 	s.eventually(func() bool { return len(s.runner.asked()) == 2 }, "both tools should run")
-	s.eventually(func() bool { return s.spokenText("Both came back") },
+	// The agent goes quiet once the results have been answered, so what it asked the model
+	// is counted then: a second answer follows the first within microseconds.
+	s.eventually(func() bool { return s.spokenText("Both came back") && !s.agent.Busy() },
 		"the caller was left in silence after the second tool stole the floor")
 	s.Len(s.model.requests(), 2, "a second tool must not start a competing generate")
 }
@@ -2345,8 +2970,13 @@ func (s *AgentSuite) TestTheReplyToAToolResultContinuesTheTurnThatAskedForIt() {
 
 	s.says(participant, "where is my order")
 
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 2 },
-		"the tool result was never answered")
+	// The agent goes quiet once the result has been answered, so what it did is counted
+	// then: a result answered twice shows as a third reply however quickly it began.
+	s.eventually(func() bool {
+		return countOf[Responding](s.reported()) >= 2 && !s.agent.Busy()
+	}, "the tool result was never answered")
+	s.Equal(2, countOf[Responding](s.reported()), "the tool result was answered more than once")
+	s.Len(s.model.requests(), 2, "the tool result was answered more than once")
 	var asked, followed Responding
 	for _, event := range s.reported() {
 		if responding, ok := event.(Responding); ok {
@@ -2359,6 +2989,57 @@ func (s *AgentSuite) TestTheReplyToAToolResultContinuesTheTurnThatAskedForIt() {
 	}
 	s.Empty(asked.Continues, "a question somebody asked continues nothing")
 	s.Equal(asked.TurnID, followed.Continues)
+}
+
+func (s *AgentSuite) TestAToolResultAnotherTurnHasTakenIsNotAnsweredAgain() {
+	// A reply that finishes as its tool comes back runs follow, which takes the result,
+	// while the tool's own goroutine has already decided to answer it.
+	s.join(false)
+	s.agent.mu.Lock()
+	s.agent.toolReply = false
+	s.agent.mu.Unlock()
+
+	s.Require().NoError(s.agent.respondAfterTool(toolPrefix + "late"))
+
+	s.Empty(s.model.requests(), "the result had been answered by the turn that took it")
+	s.Zero(countOf[Responding](s.reported()))
+}
+
+func (s *AgentSuite) TestAToolResultIsLeftOwedWhileAnotherTurnIsBeingWritten() {
+	s.join(false)
+	s.agent.mu.Lock()
+	s.agent.toolReply = true
+	s.agent.generating = true
+	s.agent.mu.Unlock()
+
+	s.Require().NoError(s.agent.respondAfterTool(toolPrefix + "late"))
+
+	s.Empty(s.model.requests(), "a second turn must not start beside the one being written")
+	s.agent.mu.Lock()
+	owed := s.agent.toolReply
+	s.agent.generating = false
+	s.agent.mu.Unlock()
+	s.True(owed, "follow can still deliver the result")
+}
+
+func (s *AgentSuite) TestTheToolThatReturnedFirstDoesNotAnswerAgainWhatTheLastAnswered() {
+	// Both tools return before either goroutine gets as far as queueing the reply, and the
+	// one that returned first is the slower to get there.
+	s.join(false)
+	s.agent.mu.Lock()
+	s.agent.pendingTools = 2
+	s.agent.mu.Unlock()
+	s.agent.owesToolReply(s.ctx)
+	s.agent.noteToolDone(nil)
+	s.agent.owesToolReply(s.ctx)
+	s.agent.noteToolDone(nil)
+
+	s.agent.queueToolReply()
+	s.eventually(func() bool { return len(s.model.requests()) == 1 && !s.agent.Busy() },
+		"the results were never answered")
+	s.agent.queueToolReply()
+
+	s.Len(s.model.requests(), 1, "the results the turn already answered were answered again")
 }
 
 func (s *AgentSuite) TestALostVoiceIsReplacedForTheRestOfTheCall() {
@@ -2435,8 +3116,18 @@ func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
 	// itself, to say what a tool came back with, does not: the reply that promised to go
 	// and check is still coming out of the voice, and dropping the rest of it is the
 	// agent cutting itself off mid-sentence.
-	s.ownsTools("order 12 ships tomorrow")
+	s.ownsTools("")
+	releaseTool := make(chan struct{})
+	var releaseOnce sync.Once
+	s.T().Cleanup(func() { releaseOnce.Do(func() { close(releaseTool) }) })
+	toolEntered := make(chan struct{})
+	s.runner = &stubToolRunner{
+		entered: toolEntered,
+		release: releaseTool,
+		result:  "order 12 ships tomorrow",
+	}
 	s.join(false)
+	s.edge.holdSpeech(true)
 	s.model.reply = []string{"Let me check."}
 	s.model.then = []string{"It ships tomorrow."}
 	s.asksFor("lookup_order", `{"order":"12"}`)
@@ -2444,27 +3135,25 @@ func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
 	s.speak(participant)
 
 	s.says(participant, "where is my order")
+	select {
+	case <-toolEntered:
+	case <-time.After(settleFor):
+		s.FailNow("the tool was never asked for the order")
+	}
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 },
+		"the promise to check was never published")
+	alreadyQueued := len(s.edge.heard())
+	releaseOnce.Do(func() { close(releaseTool) })
 
 	// Being asked a second time is the tool turn taking the floor from the first.
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
 		"the tool result was never answered")
-
-	// The tail of the first reply, arriving late the way a provider sends it. It is a
-	// size nothing else in the test produces, so it can be picked out of what was heard.
-	promised := s.model.requests()[0].ID
-	s.voice.emitter.Send(tts.AudioChunk{
-		SynthesisID: promised,
-		Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
-	})
-
-	s.eventually(func() bool {
-		for _, chunk := range s.edge.heard() {
-			if len(chunk.Samples) == 200 {
-				return true
-			}
-		}
-		return false
-	}, "the end of the sentence the agent was already speaking was thrown away")
+	s.eventually(func() bool { return len(s.edge.heard()) > alreadyQueued },
+		"the tool result never reached the voice")
+	// The old turn's already-published chunk remains in the edge queue while the tool
+	// result starts another turn; ordinary rollover must not drop valid audio tails.
+	s.Greater(len(s.edge.heard()), alreadyQueued,
+		"the second reply publishes without clearing the first reply's queued audio")
 }
 
 func (s *AgentSuite) TestBargeInWithNothingToSayIsIgnored() {

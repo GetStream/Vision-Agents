@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eotdefaults"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -61,6 +62,114 @@ func (s *ConfigSuite) TestTheEnvironmentWinsOverTheEmbeddedFile() {
 
 	s.Equal("postgres://elsewhere/db", config.Postgres.DSN)
 	s.True(strings.HasPrefix(config.Redis.Addr, "localhost:"), "the file fills in what is unset")
+}
+
+func (s *ConfigSuite) TestAcousticEndpointDefaultsToHostedPrimaryAndRemainsEnvironmentBacked() {
+	defaults, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(eotdefaults.HostedDemoEndpoint, defaults.EOT.Endpoint)
+	s.Equal("primary", defaults.EOT.Mode)
+	s.Equal(0.5, defaults.EOT.Threshold)
+
+	s.T().Setenv("ROUTER_EOT_MODE", "primary")
+	s.T().Setenv("ROUTER_EOT_URL", "https://eot.example.run.app")
+	s.T().Setenv("ROUTER_EOT_ID_TOKEN_FILE", "/run/secrets/eot-id-token")
+	s.T().Setenv("ROUTER_EOT_THRESHOLD", "0.72")
+	configured, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("primary", configured.EOT.Mode)
+	s.Equal("https://eot.example.run.app", configured.EOT.Endpoint)
+	s.Equal("/run/secrets/eot-id-token", configured.EOT.IDTokenFile)
+	s.Equal(0.72, configured.EOT.Threshold)
+}
+
+func (s *ConfigSuite) TestEmptyEndpointFromEnvironmentOrYAMLStaysDisabled() {
+	s.T().Setenv("ROUTER_EOT_URL", "")
+	fromEnvironment, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(fromEnvironment.EOT.Endpoint)
+	s.Equal("gate", fromEnvironment.EOT.Mode)
+	value, present := os.LookupEnv("ROUTER_EOT_URL")
+	s.True(present)
+	s.Empty(value)
+
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("eot:\n  endpoint: ''\n"), 0o600))
+	s.Require().NoError(os.Unsetenv("ROUTER_EOT_URL"))
+	fromFile, _, err := Load(path)
+	s.Require().NoError(err)
+	s.Empty(fromFile.EOT.Endpoint)
+	s.Equal("gate", fromFile.EOT.Mode)
+	value, present = os.LookupEnv("ROUTER_EOT_URL")
+	s.True(present, "an explicit empty YAML endpoint must survive config export")
+	s.Empty(value)
+
+	reloaded, _, err := Load(path)
+	s.Require().NoError(err)
+	s.Empty(reloaded.EOT.Endpoint, "a second env-backed load must not re-enable the hosted scorer")
+	s.Equal("gate", reloaded.EOT.Mode)
+}
+
+func (s *ConfigSuite) TestCustomEndpointDefaultsToGateAndPrivateAuthStaysExplicit() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("eot:\n  endpoint: https://private.example/v1/eot\n  id_token_file: /run/secrets/eot-token\n"), 0o600))
+	settings, _, err := Load(path)
+	s.Require().NoError(err)
+	s.Equal("https://private.example/v1/eot", settings.EOT.Endpoint)
+	s.Equal("gate", settings.EOT.Mode)
+	s.Equal("/run/secrets/eot-token", settings.EOT.IDTokenFile)
+
+	s.Require().NoError(os.Unsetenv("ROUTER_EOT_URL"))
+	s.Require().NoError(os.Unsetenv("ROUTER_EOT_MODE"))
+	s.T().Setenv("ROUTER_EOT_ID_TOKEN_FILE", "/run/secrets/eot-token")
+	_, _, err = Load("")
+	s.ErrorContains(err, "cannot be used with the hosted demo endpoint")
+
+	s.T().Setenv("ROUTER_EOT_URL", eotdefaults.HostedDemoEndpoint)
+	_, _, err = Load("")
+	s.ErrorContains(err, "cannot be used with the hosted demo endpoint")
+
+	for _, endpoint := range []string{
+		"https://audioturn-demo-eu-5gdhza7snq-ez.a.run.app",
+		"https://audioturn-demo-eu-5gdhza7snq-ez.a.run.app:443/v1/eot",
+		"https://audioturn-demo-eu-5gdhza7snq-ez.a.run.app./v1/eot",
+	} {
+		s.T().Setenv("ROUTER_EOT_URL", endpoint)
+		_, _, err = Load("")
+		s.ErrorContains(err, "cannot be used with the hosted demo endpoint", endpoint)
+	}
+}
+
+func (s *ConfigSuite) TestExplicitModeWinsForTheHostedEndpointAndEmptyModeIsInvalid() {
+	s.T().Setenv("ROUTER_EOT_URL", eotdefaults.HostedDemoEndpoint)
+	s.T().Setenv("ROUTER_EOT_MODE", "gate")
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("gate", settings.EOT.Mode)
+
+	s.T().Setenv("ROUTER_EOT_MODE", "")
+	_, _, err = Load("")
+	s.ErrorContains(err, "eot.mode")
+}
+
+func (s *ConfigSuite) TestEOTModeMustBeGateOrPrimary() {
+	for _, mode := range []string{"semantic", "PRIMARY"} {
+		s.T().Setenv("ROUTER_EOT_MODE", mode)
+		_, _, err := Load("")
+		s.ErrorContains(err, "eot.mode")
+		s.T().Setenv("ROUTER_EOT_MODE", "")
+		s.Require().NoError(os.Unsetenv("ROUTER_EOT_MODE"))
+	}
+}
+
+func (s *ConfigSuite) TestAcousticThresholdMustBeFiniteAndInRange() {
+	for _, threshold := range []string{"-0.1", "1.1", "NaN", "+Inf"} {
+		s.T().Setenv("ROUTER_EOT_THRESHOLD", threshold)
+		_, _, err := Load("")
+		s.ErrorContains(err, "eot.threshold", threshold)
+		s.T().Setenv("ROUTER_EOT_THRESHOLD", "")
+		s.Require().NoError(os.Unsetenv("ROUTER_EOT_THRESHOLD"))
+	}
 }
 
 func (s *ConfigSuite) TestTheTestingFileWinsOverTheEnvironment() {
@@ -144,8 +253,13 @@ func (s *ConfigSuite) TestSettingsAreReadableFromTheEnvironmentAfterwards() {
 		"cmd/agent and the suites find the database the same way")
 }
 
-func (s *ConfigSuite) TestSpeculativeRepliesAreOffUnlessAskedFor() {
+func (s *ConfigSuite) TestSpeculativeRepliesAreOnUnlessTurnedOff() {
 	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.True(config.Agent.SpeculativeReplies)
+
+	s.T().Setenv("ROUTER_SPECULATIVE_REPLIES", "false")
+	config, _, err = Load("")
 	s.Require().NoError(err)
 	s.False(config.Agent.SpeculativeReplies)
 
@@ -153,6 +267,155 @@ func (s *ConfigSuite) TestSpeculativeRepliesAreOffUnlessAskedFor() {
 	config, _, err = Load("")
 	s.Require().NoError(err)
 	s.True(config.Agent.SpeculativeReplies)
+}
+
+func (s *ConfigSuite) TestAReplyWaitsForTheCallerToBeQuietUnlessTurnedOff() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(700*time.Millisecond, config.Agent.ReplySilence)
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE", "250ms")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(250*time.Millisecond, config.Agent.ReplySilence)
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Agent.ReplySilence, "zero turns the wait off rather than falling back to the default")
+	s.Equal("0s", os.Getenv("ROUTER_REPLY_SILENCE"), "what is exported says the same")
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE", "-1s")
+	_, _, err = Load("")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "agent.reply_silence")
+}
+
+func (s *ConfigSuite) TestAHeldReplyIsLetOutAfterAtMostASecondUnlessToldOtherwise() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(time.Second, config.Agent.ReplySilenceMax)
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE_MAX", "1500ms")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(1500*time.Millisecond, config.Agent.ReplySilenceMax)
+	s.Equal("1.5s", os.Getenv("ROUTER_REPLY_SILENCE_MAX"), "what is exported says the same")
+
+	for _, value := range []string{"0", "-1s"} {
+		s.T().Setenv("ROUTER_REPLY_SILENCE_MAX", value)
+		_, _, err = Load("")
+		s.Require().Error(err, "a limit of %s lets a reply be held for as long as the line is noisy", value)
+		s.Contains(err.Error(), "agent.reply_silence_max")
+	}
+
+	// With the wait for silence off there is nothing to limit.
+	s.T().Setenv("ROUTER_REPLY_SILENCE", "0")
+	s.T().Setenv("ROUTER_REPLY_SILENCE_MAX", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Agent.ReplySilenceMax)
+}
+
+func (s *ConfigSuite) TestAReplyIsStartedWhenTheWordsHaveHeldStillUnlessTurnedOff() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(60*time.Millisecond, config.Agent.PreviewDebounce)
+
+	s.T().Setenv("ROUTER_PREVIEW_DEBOUNCE", "80ms")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(80*time.Millisecond, config.Agent.PreviewDebounce)
+
+	s.T().Setenv("ROUTER_PREVIEW_DEBOUNCE", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Agent.PreviewDebounce, "zero starts the reply with the candidate rather than falling back to the default")
+	s.Equal("0s", os.Getenv("ROUTER_PREVIEW_DEBOUNCE"), "what is exported says the same")
+
+	s.T().Setenv("ROUTER_PREVIEW_DEBOUNCE", "-1s")
+	_, _, err = Load("")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "agent.preview_debounce")
+}
+
+func (s *ConfigSuite) TestAConfidentEndingIsHeldForAShorterSilence() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(300*time.Millisecond, config.Agent.ReplySilenceConfident)
+	s.Equal(0.9, config.Agent.ReplyConfidentScore)
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE_CONFIDENT", "250ms")
+	s.T().Setenv("ROUTER_REPLY_CONFIDENT_SCORE", "0.95")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(250*time.Millisecond, config.Agent.ReplySilenceConfident)
+	s.Equal(0.95, config.Agent.ReplyConfidentScore)
+	s.Equal("250ms", os.Getenv("ROUTER_REPLY_SILENCE_CONFIDENT"), "what is exported says the same")
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE_CONFIDENT", "0")
+	s.T().Setenv("ROUTER_REPLY_CONFIDENT_SCORE", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Agent.ReplySilenceConfident, "zero lets the reply out at once rather than falling back to the default")
+	s.Zero(config.Agent.ReplyConfidentScore, "zero turns the shorter silence off rather than falling back to the default")
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE_CONFIDENT", "-1s")
+	_, _, err = Load("")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "agent.reply_silence_confident")
+
+	s.T().Setenv("ROUTER_REPLY_SILENCE_CONFIDENT", "300ms")
+	for _, value := range []string{"-0.1", "1.1", "NaN"} {
+		s.T().Setenv("ROUTER_REPLY_CONFIDENT_SCORE", value)
+		_, _, err = Load("")
+		s.Require().Error(err, "a score of %s is not a probability", value)
+		s.Contains(err.Error(), "agent.reply_confident_score")
+	}
+}
+
+func (s *ConfigSuite) TestAReplyIsStartedAheadOfTheWaitOnlyOnceTheCallerHasBeenQuietUnlessTurnedOff() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(120*time.Millisecond, config.Agent.PreviewQuiet)
+
+	s.T().Setenv("ROUTER_PREVIEW_QUIET", "200ms")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(200*time.Millisecond, config.Agent.PreviewQuiet)
+
+	s.T().Setenv("ROUTER_PREVIEW_QUIET", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Agent.PreviewQuiet, "zero looks at the words alone rather than falling back to the default")
+	s.Equal("0s", os.Getenv("ROUTER_PREVIEW_QUIET"), "what is exported says the same")
+
+	s.T().Setenv("ROUTER_PREVIEW_QUIET", "-1s")
+	_, _, err = Load("")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "agent.preview_quiet")
+}
+
+func (s *ConfigSuite) TestALateReplyIsAskedOfAnotherCandidateAfterTheHedgeUnlessTurnedOff() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(1200*time.Millisecond, config.Agent.ReplyHedge)
+
+	s.T().Setenv("ROUTER_REPLY_HEDGE", "800ms")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(800*time.Millisecond, config.Agent.ReplyHedge)
+
+	s.T().Setenv("ROUTER_REPLY_HEDGE", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Agent.ReplyHedge, "zero asks once rather than falling back to the default")
+	s.Equal("0s", os.Getenv("ROUTER_REPLY_HEDGE"), "what is exported says the same")
+
+	s.T().Setenv("ROUTER_REPLY_HEDGE", "-1s")
+	_, _, err = Load("")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "agent.reply_hedge")
 }
 
 func (s *ConfigSuite) TestConnectorsAreOffUnlessAskedFor() {
@@ -324,28 +587,6 @@ func (s *ConfigSuite) TestALimitThatIsNotANumberIsRefused() {
 	s.T().Setenv("ROUTER_RATE_LIMIT_TOKENS_PER_DAY", "lots")
 	_, _, err := Load("")
 	s.Error(err)
-}
-
-func (s *ConfigSuite) TestALateReplyIsAskedOfAnotherCandidateAfterTheHedgeUnlessTurnedOff() {
-	config, _, err := Load("")
-	s.Require().NoError(err)
-	s.Equal(1200*time.Millisecond, config.Agent.ReplyHedge)
-
-	s.T().Setenv("ROUTER_REPLY_HEDGE", "800ms")
-	config, _, err = Load("")
-	s.Require().NoError(err)
-	s.Equal(800*time.Millisecond, config.Agent.ReplyHedge)
-
-	s.T().Setenv("ROUTER_REPLY_HEDGE", "0")
-	config, _, err = Load("")
-	s.Require().NoError(err)
-	s.Zero(config.Agent.ReplyHedge, "zero asks once rather than falling back to the default")
-	s.Equal("0s", os.Getenv("ROUTER_REPLY_HEDGE"), "what is exported says the same")
-
-	s.T().Setenv("ROUTER_REPLY_HEDGE", "-1s")
-	_, _, err = Load("")
-	s.Require().Error(err)
-	s.Contains(err.Error(), "agent.reply_hedge")
 }
 
 func (s *ConfigSuite) TestRegistrationSettingsAreOffAndEmptyUnlessSet() {

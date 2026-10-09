@@ -266,6 +266,7 @@ func (s *STT) handleTurnInfo(turn *msginterfaces.TurnInfoResponse) {
 		s.endUtterance()
 	case msginterfaces.TurnEventStartOfTurn:
 		s.endUtterance()
+		s.sendTranscript(participant, turn, text, stt.ModeReplacement, latencyMs)
 	case msginterfaces.TurnEventTurnResumed:
 		// A resumed turn is the same run of speech carrying on after Flux thought it had
 		// ended, so it keeps the number it already had.

@@ -49,8 +49,11 @@ type FlowTurn struct {
 	Text         string
 	Speaking     bool
 	// Reply is what the agent is currently saying, so the controller can tell a cough
-	// overlapping a read-back from a caller who is correcting it.
+	// overlapping a read-back from a caller who is correcting it. It is empty while Unheard.
 	Reply string
+	// Unheard says the reply the agent is about to speak has let none of itself out yet, so
+	// the caller has heard nothing of it and there is nothing for their words to echo.
+	Unheard bool
 	// Unfinished says the words are what has been heard so far of an utterance still in
 	// progress, so the only question is who keeps the floor rather than what to answer.
 	Unfinished bool
@@ -81,6 +84,9 @@ type flow struct {
 	// request open until headers or a 429 retry, and waiting for that used to leave the
 	// follow-up never asked.
 	inFlight string
+	// closed is set by Close, after which no decision is started: every one Close waits for
+	// was counted in running while this was still false.
+	closed bool
 	// retired are controllers a swap replaced, closed with the flow so a decision they
 	// were still making can settle.
 	retired []*llmrouter.Session
@@ -134,16 +140,17 @@ Choose respond for a complete, relevant thought.
 A recorded menu reading out its options is one thought and not several, however long the
 pauses between them: choose wait until it has asked for a choice, and never interrupt one,
 because it is not listening and starts again from the top if it is talked over.
-If the agent is speaking, stop for a correction or direct interruption, shorten for a related
-addition that makes the current answer too long, and continue for a brief acknowledgement,
+If the agent is speaking, stop for a correction or direct interruption, shorten when the caller
+adds one more item of the same kind to what the agent is answering (another day, person, item
+or address for the same request, neither correcting nor replacing it), and continue for a brief acknowledgement,
 a cough or other non-speech noise, or clearly unrelated background speech. If the agent is
 not speaking, choose continue.
 Words that only repeat what the agent is saying are the caller's line echoing it back, so
 choose continue.
 When the caller has not finished and is talking over the agent, decide only the floor and
 always choose wait for the disposition: stop as soon as what has been said so far is a
-correction, a new request, a question, or a direct interruption such as "wait", "no", or
-"hang on"; shorten for a related addition; and continue while it is only an acknowledgement,
+correction, a different request, a question, or a direct interruption such as "wait", "no", or
+"hang on"; shorten for one more item of the same kind for the same request; and continue while it is only an acknowledgement,
 a noise, an echo of the agent's own words, or too short to tell.`
 
 func newFlow(model *llmrouter.Session, emitter *Emitter, logger *slog.Logger) *flow {
@@ -171,6 +178,13 @@ func (f *flow) Decide(turn FlowTurn) error {
 	asked := &candidate{turn: turn, askedAt: time.Now(), ctx: ctx, cancel: cancel}
 
 	f.mu.Lock()
+	if f.closed {
+		// The conversation is over, and Close is waiting for the decisions that were
+		// started before it.
+		f.mu.Unlock()
+		cancel()
+		return nil
+	}
 	f.pending[turn.ID] = asked
 	f.dropWaitingLocked()
 	if f.inFlight != "" {
@@ -179,9 +193,9 @@ func (f *flow) Decide(turn FlowTurn) error {
 		return nil
 	}
 	f.inFlight = turn.ID
+	f.running.Add(1)
 	f.mu.Unlock()
 
-	f.running.Add(1)
 	go f.run(asked)
 	return nil
 }
@@ -258,8 +272,8 @@ func (f *flow) advance(turnID string) {
 		return
 	}
 	f.inFlight = next.turn.ID
-	f.mu.Unlock()
 	f.running.Add(1)
+	f.mu.Unlock()
 	go f.run(next)
 }
 
@@ -302,7 +316,9 @@ func flowQuestion(turn FlowTurn) string {
 	state := "is not speaking"
 	if turn.Speaking {
 		state = "is speaking right now"
-		if reply := strings.TrimSpace(turn.Reply); reply != "" {
+		if turn.Unheard {
+			state = "is speaking right now, though none of its reply has reached the caller yet"
+		} else if reply := strings.TrimSpace(turn.Reply); reply != "" {
 			state = fmt.Sprintf("is speaking right now and has so far said %q", reply)
 		}
 	}
@@ -333,8 +349,12 @@ func (f *flow) Cancel(candidateID string) error {
 		return nil
 	}
 	asked, pending := f.pending[candidateID]
+	var stream *llm.Stream
 	if pending {
 		delete(f.pending, candidateID)
+		// run sets the stream under this lock. One it sets after this is closed by run, which
+		// finds the turn no longer pending.
+		stream = asked.stream
 	}
 	f.mu.Unlock()
 
@@ -346,14 +366,15 @@ func (f *flow) Cancel(candidateID string) error {
 	// must not wait for that. advance starts it now, and the leftover call from run does
 	// nothing because the turn in flight has moved on.
 	f.advance(candidateID)
-	if asked.stream == nil {
+	if stream == nil {
 		return nil
 	}
-	return asked.stream.Close()
+	return stream.Close()
 }
 
 func (f *flow) Close() error {
 	f.mu.Lock()
+	f.closed = true
 	f.dropWaitingLocked()
 	for _, asked := range f.pending {
 		asked.cancel()

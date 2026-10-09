@@ -28,6 +28,17 @@
 
 stt:
   providers:
+    - provider: audioturn
+      explicit_only: true
+      model: audioturn-stack16k-blend
+      description: "AudioTurn transcription and acoustic turn detection in one request. Requires a transcript-enabled EOT service."
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      data_policy:
+        trains_on_data: "no"
+        retention: none
+
     # Deepgram do not store transcripts, and a request that asked not to be trained on
     # carries mip_opt_out=true, which is what excludes it from the Model Improvement
     # Partnership Program - their only route from an API request into a training set.

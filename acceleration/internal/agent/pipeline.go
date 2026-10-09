@@ -25,15 +25,20 @@ import (
 // belong to the agent and outlive it, which is what lets a session move onto other models
 // without leaving the call.
 type pipeline struct {
-	native  bool
-	ctx     context.Context
-	cancel  context.CancelFunc
-	running sync.WaitGroup
+	native     bool
+	ctx        context.Context
+	cancel     context.CancelFunc
+	running    sync.WaitGroup
+	eotResults chan eotResult
 }
 
 func newPipeline(parent context.Context, native bool) *pipeline {
 	ctx, cancel := context.WithCancel(parent)
-	return &pipeline{native: native, ctx: ctx, cancel: cancel}
+	p := &pipeline{native: native, ctx: ctx, cancel: cancel}
+	if !native {
+		p.eotResults = make(chan eotResult, eventBuffer)
+	}
+	return p
 }
 
 // Settings is what a running session is moved onto. A speech-to-speech target makes it
@@ -293,6 +298,14 @@ func (a *Agent) quiesce(ctx context.Context) error {
 // swapCascade moves a running cascade onto the sessions prepared for it, in place.
 func (a *Agent) swapCascade(current, next Settings, prep *prepared) []error {
 	a.mu.Lock()
+	if prep.tts != nil {
+		// The edge keeps the call while its speaker changes. Invalidate the old
+		// publication epoch before the previous voice is closed, so a late chunk
+		// cannot be rebound to the replacement voice's epoch.
+		a.cancelPlayoutAndForgetLocked()
+	}
+	canceledEOT := a.cancelEOTGatesLocked(a.pipe)
+	staleAudio := a.detachEOTAudioLocked()
 	replacedLLM, replacedTTS := a.llm, a.tts
 	if prep.llm != nil {
 		a.llm = prep.llm
@@ -312,6 +325,10 @@ func (a *Agent) swapCascade(current, next Settings, prep *prepared) []error {
 	}
 	model, conversation, p := a.llm, a.harness, a.pipe
 	a.mu.Unlock()
+	a.cancelEOTPreviews(canceledEOT)
+	// A preview kept for a Wait was written by the model being replaced.
+	a.dropKeptPreviews()
+	clearEOTAudio(staleAudio)
 
 	if prep.llm != nil || prep.controller != nil {
 		conversation.SetModel(model, prep.controller)
@@ -374,7 +391,7 @@ func (a *Agent) startCascade(prep *prepared) {
 	a.nativeMode.Store(false)
 
 	a.running.Add(1)
-	go a.consumeHarness(prep.harness, drained)
+	go a.consumeHarness(p, prep.harness, drained)
 	p.running.Add(1)
 	go a.consumeLLM(p, replies)
 	// The other three all begin at a microphone or end at a speaker, so a conversation
@@ -409,7 +426,7 @@ func (a *Agent) startNative(prep *prepared) {
 
 	if drained != nil {
 		a.running.Add(1)
-		go a.consumeHarness(prep.harness, drained)
+		go a.consumeHarness(p, prep.harness, drained)
 	}
 	events := make(chan sts.Event, sts.EmitterBuffer)
 	p.running.Add(3)
@@ -437,9 +454,14 @@ func (a *Agent) stopPipeline(keepHarness bool) []error {
 // releasePipeline cancels the running pipeline and closes its sessions, in the order that
 // lets each of its goroutines run out of work. It does not wait for them.
 func (a *Agent) releasePipeline(keepHarness bool) (*pipeline, []error) {
-	a.dropSpeculations()
+	a.cancelPreviews()
 	a.mu.Lock()
+	// A released voice may still have a writer waiting for edge capacity. Cancel its
+	// shared epoch before any session close or pipeline wait can depend on that writer.
+	a.cancelPlayoutAndForgetLocked()
 	p := a.pipe
+	canceledEOT := a.cancelEOTGatesLocked(p)
+	staleAudio := a.detachEOTAudioLocked()
 	listeners := make([]*sttrouter.Session, 0, len(a.listeners))
 	for _, listener := range a.listeners {
 		listeners = append(listeners, listener)
@@ -448,6 +470,8 @@ func (a *Agent) releasePipeline(keepHarness bool) (*pipeline, []error) {
 	conversation, drained := a.harness, a.harnessDrained
 	model, voice, speech, replies := a.llm, a.tts, a.sts, a.replies
 	a.mu.Unlock()
+	a.cancelEOTPreviews(canceledEOT)
+	clearEOTAudio(staleAudio)
 
 	if p != nil {
 		p.cancel()
@@ -528,7 +552,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 		MaxTokens:    a.options.MaxTokens,
 		Overwrites:   s.Overwrites,
 		CacheKey:     a.options.ConfigID,
-		OnModelCall:  func(timing llm.CallTiming) { a.emitter.Send(ModelCall{CallTiming: timing}) },
+		OnModelCall:  a.recordModelCall,
 		Logger:       a.logger,
 	})
 	if err != nil {
@@ -554,7 +578,7 @@ func (a *Agent) openNative(s Settings) (*prepared, error) {
 		prep.harness, err = harness.New(harness.Options{
 			OpenSubagent: subagent, Capture: a.captureVideo, Skills: a.options.Skills,
 			Sandbox: a.options.Sandbox, Publish: a.options.Publish, Tasks: a.options.Tasks, Logger: a.logger,
-			OnModelCall: func(timing llm.CallTiming) { a.emitter.Send(ModelCall{CallTiming: timing}) },
+			OnModelCall: a.recordModelCall,
 		})
 		if err != nil {
 			return nil, err

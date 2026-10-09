@@ -20,6 +20,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/redis/rueidis"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -45,6 +46,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eotdefaults"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -74,6 +76,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
@@ -578,8 +581,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 		gate = policies
 	}
 
-	if settings.Agent.SpeculativeReplies {
-		logger.Info("starting replies before the flow controller rules on them",
+	if !settings.Agent.SpeculativeReplies {
+		logger.Info("asking for each reply only once the flow controller has ruled",
 			"env", "ROUTER_SPECULATIVE_REPLIES")
 	}
 
@@ -1325,19 +1328,38 @@ func buildSessions(
 		reading = base
 	}
 
+	var eotClient *audioturn.Client
+	if endpoint := strings.TrimSpace(settings.EOT.Endpoint); endpoint != "" {
+		client, err := configuredEOTClient(settings.EOT)
+		if err != nil {
+			logger.Warn("acoustic endpoint gate is disabled", "reason", "invalid configuration")
+		} else {
+			eotClient = client
+			logger.Info("acoustic endpoint is configured", "mode", settings.EOT.Mode,
+				"threshold", settings.EOT.Threshold)
+		}
+	}
+
 	return session.NewManager(session.ManagerOptions{
-		LLM:        streams.LLM,
-		STT:        streams.STT,
-		TTS:        streams.TTS,
-		STS:        streams.STS,
-		Memory:     remembering,
-		Knowledge:  reading,
-		Search:     finding,
-		Classifier: judging,
-		Phone:      telephony,
+		LLM:          streams.LLM,
+		STT:          streams.STT,
+		TTS:          streams.TTS,
+		STS:          streams.STS,
+		EOT:          eotClient,
+		EOTMode:      agent.EOTMode(settings.EOT.Mode),
+		EOTThreshold: settings.EOT.Threshold,
+		Memory:       remembering,
+		Knowledge:    reading,
+		Search:       finding,
+		Classifier:   judging,
+		Phone:        telephony,
 		// Off unless the deployment asks: a reply started before its ruling is paid for
 		// whether or not it is spoken.
-		SpeculativeReplies: settings.Agent.SpeculativeReplies,
+		SpeculativeReplies: &settings.Agent.SpeculativeReplies,
+		ReplySilence:       &settings.Agent.ReplySilence,
+		ReplySilenceMax:    &settings.Agent.ReplySilenceMax,
+		PreviewDebounce:    &settings.Agent.PreviewDebounce,
+		PreviewQuiet:       &settings.Agent.PreviewQuiet,
 		Stream:             stream,
 		Store:              pgStore,
 		Live:               liveClient,
@@ -1350,7 +1372,28 @@ func buildSessions(
 		// The session's dispatcher shares the validate endpoint's transports, so each
 		// connection has one outbound client in the router.
 		Connectors: connectors,
+
+		ReplySilenceConfident: &settings.Agent.ReplySilenceConfident,
+		ReplyConfidentScore:   &settings.Agent.ReplyConfidentScore,
 	})
+}
+
+func configuredEOTClient(settings config.EOT) (*audioturn.Client, error) {
+	endpoint := strings.TrimSpace(settings.Endpoint)
+	tokenFile := strings.TrimSpace(settings.IDTokenFile)
+	if endpoint == "" {
+		return nil, nil
+	}
+	if eotdefaults.IsHostedDemoOrigin(endpoint) {
+		if tokenFile != "" {
+			return nil, errors.New("eot.id_token_file cannot be used with the hosted demo endpoint; configure a private endpoint")
+		}
+		if !eotdefaults.IsHostedDemoEndpoint(endpoint) {
+			return nil, errors.New("the hosted demo endpoint path must be /v1/eot")
+		}
+		return audioturn.NewHostedClient()
+	}
+	return audioturn.NewClient(endpoint, tokenFile)
 }
 
 // buildKnowledgeURLs wires the control plane for pages a knowledge base is kept filled

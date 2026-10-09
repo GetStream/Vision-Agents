@@ -37,7 +37,7 @@ const (
 	// loudest and 127 is silence.
 	audioLevelSilent   = 127
 	audioLevelSpeaking = 20
-	// audibleSample is the level a sample has to reach, in either direction, for the piece
+	// audibleSample is the level a sample has to reach, in either direction, for the frame
 	// holding it to count as speech: about -48 dBFS, above what a voice leaves in its pauses.
 	audibleSample = 128
 )
@@ -54,8 +54,12 @@ type speaker struct {
 	track.BaseSampleProvider
 
 	logger *slog.Logger
-	// now is the clock the playout moments are read from.
+	// now is the clock the playout milestones are read from.
 	now func() time.Time
+	// writeGate keeps provider chunks in order without blocking DropSpeech or the track.
+	// It has one token and is also selectable on context cancellation and Close.
+	writeGate  chan struct{}
+	closedDone chan struct{}
 
 	mu sync.Mutex
 	// drained wakes a writer once the queue is back under the playout bound.
@@ -63,10 +67,20 @@ type speaker struct {
 	// pulled is set once the track has asked for its first frame. Until it does, nothing
 	// written here is going anywhere.
 	pulled bool
+	// generation changes whenever queued speech is abandoned or the call closes. Writers
+	// capture it before publishing, so a Background writer cannot refill after DropSpeech.
+	generation uint64
+	// cancelWake is cached for one publication context, since each TTS chunk in an epoch
+	// shares its Done channel. It is installed only when the queue first blocks.
+	cancelWakeDone <-chan struct{}
+	cancelWakeStop func() bool
+	// writers prevents NextSample from treating an internal PCM slice boundary as the
+	// end of an utterance and flushing the encoder's tail.
+	writers int
 	// frames are encoded and waiting to be sent, oldest first.
 	frames [][]byte
 	// head counts the frames that have left the queue, taken by the track or dropped, so a
-	// frame keeps its number, head plus its place in the queue, as the ones ahead of it go.
+	// queued frame stays at the position head plus its index as the ones ahead of it go.
 	head uint64
 	// armed are the replies waiting for the track to take the first frame of theirs that is
 	// not silence, oldest first.
@@ -81,19 +95,25 @@ type speaker struct {
 	closed    bool
 }
 
-// armedMark is a reply waiting on the track, with the number of the frame to report it at. The
-// frame may not exist yet: the encoder holds back what does not fill a frame, so the first
-// audible one can be the next to come out of it.
+// armedMark is a reply waiting on the track, with where in the queue its frame is and the
+// generation it was queued in, so a frame that outlives its reply is never reported for it.
 type armedMark struct {
-	marks agent.PlayoutMarks
-	seq   uint64
+	marks      agent.PlayoutMarks
+	seq        uint64
+	generation uint64
 }
 
 func newSpeaker(logger *slog.Logger) *speaker {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	talker := &speaker{logger: logger, now: time.Now}
+	talker := &speaker{
+		logger:     logger,
+		now:        time.Now,
+		writeGate:  make(chan struct{}, 1),
+		closedDone: make(chan struct{}),
+	}
+	talker.writeGate <- struct{}{}
 	talker.drained = sync.NewCond(&talker.mu)
 	return talker
 }
@@ -101,17 +121,28 @@ func newSpeaker(logger *slog.Logger) *speaker {
 // Write queues a chunk of the agent's speech, blocking while the queue is full so the agent
 // publishes at the rate the audio is heard rather than as fast as it is synthesised.
 func (s *speaker) Write(pcm audio.PcmData) error {
-	return s.WriteMarked(pcm, nil)
+	return s.WriteContext(context.Background(), pcm)
 }
 
-// WriteMarked is Write that also tells marks when the first frame of the chunk was queued and
-// when the track took the first one that was not silence. Write returns once the queue is
-// back under its bound, which for a chunk longer than the queue is as the track drains all
-// but the end of it, so neither moment can be read from the return.
+// WriteContext queues speech until the track has room for it, or ctx is cancelled.
+// Feeding the encoder in at most 20 ms source pieces bounds both the queue and the
+// time spent encoding while holding the speaker lock.
+func (s *speaker) WriteContext(ctx context.Context, pcm audio.PcmData) error {
+	return s.WriteMarked(ctx, pcm, nil)
+}
+
+// WriteMarked is WriteContext that also tells marks when the first frame of the chunk was
+// queued and when the track took the first one that was not silence. WriteContext returns
+// with the whole chunk queued, which for one longer than the queue is as the track drains
+// all but the end of it, so neither moment can be read from the return.
 //
-// Speech dropped before the track reached it is forgotten along with the report owed for it,
-// so abandoned speech is never counted as the start of the reply that follows.
-func (s *speaker) WriteMarked(pcm audio.PcmData, marks agent.PlayoutMarks) error {
+// Both belong to the generation the chunk was queued in: DropSpeech forgets the frames
+// still waiting, and with them the report owed for them, so abandoned speech is never
+// counted as the start of the reply that follows.
+func (s *speaker) WriteMarked(ctx context.Context, pcm audio.PcmData, marks agent.PlayoutMarks) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(pcm.Samples) == 0 {
 		return nil
 	}
@@ -122,115 +153,270 @@ func (s *speaker) WriteMarked(pcm audio.PcmData, marks agent.PlayoutMarks) error
 		return fmt.Errorf("streamedge: audio has no sample rate")
 	}
 
-	queuedAt, err := s.queue(pcm, marks)
-	if err != nil {
+	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
 		return err
 	}
-	// Told with the lock released: the marks belong to the turn, and the track must never
-	// wait on one.
-	if marks != nil && !queuedAt.IsZero() {
-		marks.FirstFrameQueued(queuedAt)
+	if s.closed {
+		s.mu.Unlock()
+		return errors.New("streamedge: the call has been left")
 	}
-	s.waitForRoom()
+	generation := s.generation
+	s.writers++
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.writers--
+		s.drained.Broadcast()
+		s.mu.Unlock()
+	}()
+
+	select {
+	case <-s.writeGate:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.closedDone:
+		return errors.New("streamedge: the call has been left")
+	}
+	defer func() { s.writeGate <- struct{}{} }()
+	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	if s.closed {
+		s.mu.Unlock()
+		return errors.New("streamedge: the call has been left")
+	}
+	if generation != s.generation {
+		s.mu.Unlock()
+		return context.Canceled
+	}
+	s.mu.Unlock()
+
+	// Integer division keeps each source piece at or below 20 ms; common provider rates
+	// divide evenly by 50.
+	samplesPerPiece := pcm.SampleRate / int(time.Second/opusFrameDuration)
+	if samplesPerPiece < 1 {
+		samplesPerPiece = 1
+	}
+	// Convert once so each encoded piece can be a view into the same sample buffer rather
+	// than allocating a fresh PCM conversion for every 20 ms slice. Check cancellation at
+	// the same boundaries used for encoding so even conversion of a large provider chunk
+	// does not delay an abandoned reply.
+	inputSamples := make([]float32, len(pcm.Samples))
+	for start := 0; start < len(pcm.Samples); start += samplesPerPiece {
+		if err := ctx.Err(); err != nil {
+			s.mu.Lock()
+			s.resetTailAfterCancellationLocked(ctx, generation, err)
+			s.mu.Unlock()
+			return err
+		}
+		end := min(start+samplesPerPiece, len(pcm.Samples))
+		for i := start; i < end; i++ {
+			inputSamples[i] = float32(pcm.Samples[i]) * (1.0 / 32768.0)
+		}
+	}
+
+	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.resetTailAfterCancellationLocked(ctx, generation, err)
+		s.mu.Unlock()
+		return err
+	}
+	if s.closed {
+		s.mu.Unlock()
+		return errors.New("streamedge: the call has been left")
+	}
+	if generation != s.generation {
+		s.mu.Unlock()
+		return context.Canceled
+	}
+	s.mu.Unlock()
+
+	var waited time.Time
+	var queued int
+	// queuedAt is when the first frame went into the queue. It is reported as soon as the
+	// piece holding it is done, or on the way out if the write ends first.
+	var queuedAt time.Time
+	var told, listening, armed bool
+	defer func() {
+		if marks != nil && !told && !queuedAt.IsZero() {
+			marks.FirstFrameQueued(queuedAt)
+		}
+	}()
+	for start := 0; start < len(pcm.Samples); {
+		s.mu.Lock()
+		if err := s.waitForRoomLocked(ctx, generation, &waited, &queued); err != nil {
+			s.resetTailAfterCancellationLocked(ctx, generation, err)
+			s.mu.Unlock()
+			return err
+		}
+		if s.encoder == nil {
+			encoder, err := opus.NewEncoder(opus.Config{SampleRate: opusSampleRate, FrameDuration: opusFrameDuration})
+			if err != nil {
+				s.mu.Unlock()
+				return fmt.Errorf("streamedge: build opus encoder: %w", err)
+			}
+			s.encoder = encoder
+		}
+
+		end := min(start+samplesPerPiece, len(pcm.Samples))
+		piece := inputSamples[start:end]
+		if marks != nil && !armed && !listening {
+			listening = audible(pcm.Samples[start:end])
+		}
+		packets, err := s.encoder.Encode(webrtcaudio.FromFloat32(piece, pcm.SampleRate, 1))
+		if err != nil {
+			s.mu.Unlock()
+			return fmt.Errorf("streamedge: encode speech: %w", err)
+		}
+		if generation != s.generation {
+			s.mu.Unlock()
+			return context.Canceled
+		}
+		if err := ctx.Err(); err != nil {
+			s.resetTailAfterCancellationLocked(ctx, generation, err)
+			s.mu.Unlock()
+			return err
+		}
+		s.unflushed = true
+		for _, packet := range packets {
+			if err := s.waitForRoomLocked(ctx, generation, &waited, &queued); err != nil {
+				s.resetTailAfterCancellationLocked(ctx, generation, err)
+				s.mu.Unlock()
+				return err
+			}
+			// Check under mu immediately before enqueue. A cancelled writer that was waiting
+			// when DropSpeech ran can never refill the cleared queue.
+			if err := ctx.Err(); err != nil {
+				s.resetTailAfterCancellationLocked(ctx, generation, err)
+				s.mu.Unlock()
+				return err
+			}
+			seq := s.head + uint64(len(s.frames))
+			s.frames = append(s.frames, packet)
+			if marks == nil {
+				continue
+			}
+			if queuedAt.IsZero() {
+				queuedAt = s.now()
+			}
+			if listening && !armed {
+				s.armed = append(s.armed, armedMark{marks: marks, seq: seq, generation: generation})
+				armed = true
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			s.resetTailAfterCancellationLocked(ctx, generation, err)
+			s.mu.Unlock()
+			return err
+		}
+		if generation != s.generation {
+			s.mu.Unlock()
+			return context.Canceled
+		}
+		start = end
+		s.mu.Unlock()
+		if marks != nil && !told && !queuedAt.IsZero() {
+			marks.FirstFrameQueued(queuedAt)
+			told = true
+		}
+	}
+
+	if !waited.IsZero() {
+		elapsed := time.Since(waited)
+		if elapsed > time.Duration(queued)*opusFrameDuration+time.Second {
+			s.mu.Lock()
+			pulled := s.pulled
+			s.mu.Unlock()
+			s.logger.Warn("speech waited to go out, the call was not taking audio",
+				"waited", elapsed, "queued", queued, "pulled", pulled)
+		}
+	}
 	return nil
 }
 
-// queue encodes a chunk and puts its frames in the queue. It returns when the first of them
-// went in, or the zero time when the encoder held all of it back or marks is nil.
-func (s *speaker) queue(pcm audio.PcmData, marks agent.PlayoutMarks) (time.Time, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return time.Time{}, errors.New("streamedge: the call has been left")
-	}
-	if s.encoder == nil {
-		encoder, err := opus.NewEncoder(opus.Config{SampleRate: opusSampleRate, FrameDuration: opusFrameDuration})
-		if err != nil {
-			return time.Time{}, fmt.Errorf("streamedge: build opus encoder: %w", err)
+// audible reports whether a piece of speech has anything in it above the noise a voice leaves
+// in its pauses.
+func audible(samples []int16) bool {
+	for _, sample := range samples {
+		if sample >= audibleSample || sample <= -audibleSample {
+			return true
 		}
-		s.encoder = encoder
 	}
-
-	// A chunk can open with silence, so the first frame to be heard is not always its first.
-	// What comes before the first piece with speech in it is encoded on its own, which makes
-	// the frame that follows the one to report. The encoder takes audio in whatever pieces it
-	// is given, so this does not change what is sent.
-	speech := pcm.Samples
-	lead := -1
-	if marks != nil {
-		lead = firstAudible(pcm)
-	}
-	queued := len(s.frames)
-	if lead > 0 {
-		packets, err := s.encode(speech[:lead], pcm.SampleRate)
-		if err != nil {
-			return time.Time{}, err
-		}
-		s.frames = append(s.frames, packets...)
-		s.unflushed = true
-		speech = speech[lead:]
-	}
-	seq := s.head + uint64(len(s.frames))
-	packets, err := s.encode(speech, pcm.SampleRate)
-	if err != nil {
-		return time.Time{}, err
-	}
-	s.frames = append(s.frames, packets...)
-	s.unflushed = true
-	if lead >= 0 {
-		s.armed = append(s.armed, armedMark{marks: marks, seq: seq})
-	}
-	if marks == nil || len(s.frames) == queued {
-		return time.Time{}, nil
-	}
-	return s.now(), nil
+	return false
 }
 
-func (s *speaker) encode(samples []int16, sampleRate int) ([][]byte, error) {
-	packets, err := s.encoder.Encode(webrtcaudio.FromInt16(samples, sampleRate, 1))
-	if err != nil {
-		return nil, fmt.Errorf("streamedge: encode speech: %w", err)
-	}
-	return packets, nil
-}
-
-// waitForRoom blocks while the queue is over its bound.
-func (s *speaker) waitForRoom() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if len(s.frames) <= playoutFrames || s.closed {
-		return
-	}
-	// Waiting here is normal: it is what paces the agent to the speed of speech, so a chunk
-	// that is seconds long is seconds spent here. Waiting much longer than the queue was deep
-	// is not, and means the track has stopped taking frames, in which case this speech is
-	// sitting in the queue rather than going out.
-	waited := time.Now()
-	queued := len(s.frames)
-	for len(s.frames) > playoutFrames && !s.closed {
+// waitForRoomLocked returns with s.mu held. DropSpeech and Close wake waiting writers;
+// callers check cancellation and the generation under the lock before publishing.
+func (s *speaker) waitForRoomLocked(ctx context.Context, generation uint64,
+	waited *time.Time, queued *int) error {
+	for len(s.frames) >= playoutFrames && !s.closed {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if waited.IsZero() {
+			*waited = time.Now()
+			*queued = len(s.frames)
+			s.registerCancellationWakeLocked(ctx)
+		}
 		s.drained.Wait()
 	}
-	elapsed := time.Since(waited)
-	if elapsed > time.Duration(queued)*opusFrameDuration+time.Second {
-		s.logger.Warn("speech waited to go out, the call was not taking audio",
-			"waited", elapsed, "queued", queued, "pulled", s.pulled)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+	if s.closed {
+		return errors.New("streamedge: the call has been left")
+	}
+	if generation != s.generation {
+		return context.Canceled
+	}
+	return nil
 }
 
-// firstAudible is where the first 20 ms piece of speech with anything in it above the noise a
-// voice leaves in its pauses begins, in samples, or -1 when there is none.
-func firstAudible(pcm audio.PcmData) int {
-	piece := max(pcm.SampleRate/int(time.Second/opusFrameDuration), 1)
-	for start := 0; start < len(pcm.Samples); start += piece {
-		for _, sample := range pcm.Samples[start:min(start+piece, len(pcm.Samples))] {
-			if sample >= audibleSample || sample <= -audibleSample {
-				return start
-			}
-		}
+// registerCancellationWakeLocked caches one waiter callback per context Done channel.
+// Agent publications reuse their epoch context for each provider chunk, so the callback
+// is not allocated again for every chunk in the same epoch.
+func (s *speaker) registerCancellationWakeLocked(ctx context.Context) {
+	done := ctx.Done()
+	if done == s.cancelWakeDone {
+		return
 	}
-	return -1
+	if s.cancelWakeStop != nil {
+		s.cancelWakeStop()
+	}
+	s.cancelWakeDone = done
+	s.cancelWakeStop = nil
+	if done == nil {
+		return
+	}
+	s.cancelWakeStop = context.AfterFunc(ctx, func() {
+		s.mu.Lock()
+		s.drained.Broadcast()
+		s.mu.Unlock()
+	})
+}
+
+// stopCancellationWakeLocked releases the cached context until the next blocked write.
+func (s *speaker) stopCancellationWakeLocked() {
+	if s.cancelWakeStop != nil {
+		s.cancelWakeStop()
+	}
+	s.cancelWakeDone = nil
+	s.cancelWakeStop = nil
+}
+
+// resetTailAfterCancellationLocked ensures a partially encoded cancelled write cannot be
+// flushed by a later NextSample. DropSpeech clears complete queued frames as well.
+func (s *speaker) resetTailAfterCancellationLocked(ctx context.Context, generation uint64, err error) {
+	if generation == s.generation && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil) {
+		if s.encoder != nil {
+			s.encoder.Reset()
+		}
+		s.unflushed = false
+	}
 }
 
 // NextSample hands the track one frame, or silence when the agent has nothing to say.
@@ -259,7 +445,7 @@ func (s *speaker) next() (webrtcmedia.Sample, agent.PlayoutMarks, time.Time) {
 		s.pulled = true
 		s.logger.Debug("the call started taking the agent's audio")
 	}
-	if len(s.frames) == 0 {
+	if len(s.frames) == 0 && s.writers == 0 {
 		s.flush()
 	}
 	if len(s.frames) == 0 {
@@ -275,18 +461,15 @@ func (s *speaker) next() (webrtcmedia.Sample, agent.PlayoutMarks, time.Time) {
 	s.drained.Signal()
 
 	sample := webrtcmedia.Sample{Data: frame, Duration: opusFrameDuration}
-	// A report whose frame never came, because the encoder had nothing to give for it, is
-	// behind the track by now and is let go rather than left to hold up the ones after it.
-	for len(s.armed) > 0 && s.armed[0].seq < seq {
-		s.armed[0] = armedMark{}
-		s.armed = s.armed[1:]
-	}
 	if len(s.armed) == 0 || s.armed[0].seq != seq {
 		return sample, nil, time.Time{}
 	}
 	marked := s.armed[0]
 	s.armed[0] = armedMark{}
 	s.armed = s.armed[1:]
+	if marked.generation != s.generation {
+		return sample, nil, time.Time{}
+	}
 	return sample, marked.marks, s.now()
 }
 
@@ -320,6 +503,8 @@ func (s *speaker) drop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.generation++
+	s.stopCancellationWakeLocked()
 	if s.encoder != nil {
 		s.encoder.Reset()
 	}
@@ -376,6 +561,9 @@ func (s *speaker) Close() error {
 		return nil
 	}
 	s.closed = true
+	s.generation++
+	close(s.closedDone)
+	s.stopCancellationWakeLocked()
 	s.forgetFramesLocked()
 	s.drained.Broadcast()
 	s.encoder = nil

@@ -107,11 +107,22 @@ func (a *Agent) hear(inbound InboundAudio) {
 // unbind frees the session for the next speaker when the bound participant leaves.
 func (a *Agent) unbind(participant stt.Participant) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.bound.ID == participant.ID {
 		a.bound = stt.Participant{}
 	}
 	delete(a.arrivals, participant.ID)
+	canceled := a.cancelParticipantEOTLocked(participant)
+	ring := a.audioHistory[participant.ID]
+	delete(a.audioHistory, participant.ID)
+	a.mu.Unlock()
+	if a.voiced != nil {
+		a.voiced.forget(participant.ID)
+	}
+	a.cancelEOTPreviews(canceled)
+	a.dropKeptPreview(participant.ID)
+	if ring != nil {
+		ring.clear()
+	}
 }
 
 // receiveSTS stops interrupted playback before queuing the remaining ordered events.
@@ -364,7 +375,8 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 	}
 	var err error
 	if marked, ok := a.options.Edge.(MarkedPlayout); ok {
-		err = marked.PublishAudioMarked(chunk.Audio, a.turns.marksFor(chunk.ResponseID))
+		err = marked.PublishAudioMarked(context.Background(), chunk.Audio,
+			a.turns.marksFor(chunk.ResponseID))
 	} else {
 		err = a.options.Edge.PublishAudio(chunk.Audio)
 	}

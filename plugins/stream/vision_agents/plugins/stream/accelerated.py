@@ -30,6 +30,7 @@ from ._generated.api.default import create_session, list_agent_configs, stop_ses
 from ._generated.models import (
     CreateSessionRequest,
     CreateSessionRequestTags,
+    Greeting,
     Session,
     SessionMemory,
     SessionMemoryFilter,
@@ -334,7 +335,7 @@ class Accelerated(OmniLLM):
         if call.instructions:
             request.instructions = call.instructions
         if self.greeting:
-            request.greeting = self.greeting
+            request.greeting = Greeting(text=self.greeting)
         if self.model:
             request.llm = self.model
         if self.stt:

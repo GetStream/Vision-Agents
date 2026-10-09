@@ -189,6 +189,8 @@ type Turn struct {
 	// StartedAt is when the last transcript revision arrived, before cadence settling.
 	StartedAt time.Time
 	// These consecutive legs run from transcript arrival to the first audio published.
+	// A reply begun beside the floor decision contributes only its remaining wait after
+	// approval; its full provider duration is reported by the model-call event.
 	CadenceMs          float64
 	DecisionMs         float64
 	ModelToFirstTextMs float64
@@ -205,12 +207,14 @@ type Turn struct {
 	// SpeechEndToAudioMs is voice in to voice out: the roundtrip plus the time the
 	// transcriber spent deciding the participant had stopped.
 	SpeechEndToAudioMs float64
+	// ReplyHoldMs is the first-audio silence hold, included in TTSToAudioMs and RoundtripMs.
+	ReplyHoldMs float64
 	// FirstFrameQueuedMs and FirstAudibleFrameMs run from the last transcript revision, like
 	// RoundtripMs, to the two moments publishing returning stands in for: the edge queueing the
 	// first frame of the reply for its outgoing track, and the track taking the first frame
 	// that was not silence, which is when the reply could first be heard. Publishing returns
-	// once no more than the queue is left of the chunk, so for a chunk longer than the queue it
-	// returns later than both. Zero where the edge does not report them.
+	// once the whole chunk is queued, so for a chunk longer than the queue it returns later
+	// than both. Zero where the edge does not report them.
 	FirstFrameQueuedMs  float64
 	FirstAudibleFrameMs float64
 	// SpeechEndToAudibleMs is SpeechEndToAudioMs measured to FirstAudibleFrameMs instead.
@@ -218,7 +222,8 @@ type Turn struct {
 	// AudioOutMs is how much speech the agent published for the turn.
 	AudioOutMs float64
 	// AudioDroppedMs is speech that was synthesised for the turn but never published,
-	// because it arrived after the turn had been abandoned.
+	// because it arrived after the turn had been abandoned, or was still held for the
+	// caller to have been quiet when it was.
 	AudioDroppedMs float64
 	Interrupted    bool
 }

@@ -308,6 +308,7 @@ class TestAccelerated:
                 "model_to_first_text_ms": 220,
                 "text_to_tts_ms": 20,
                 "tts_to_audio_ms": 130,
+                "tts_ttfb_ms": 45,
                 "speech_end_to_audio_ms": 1020,
             }
         )
@@ -316,17 +317,21 @@ class TestAccelerated:
         assert "purpose=flow" in caplog.text
         assert "duration_ms=110" in caplog.text
         assert (
-            "voice latency DAG turn=turn-1 | speech end -> first audio ~1,020 ms"
+            "voice latency DAG turn=turn-1 | speech end -> first publish return ~1,020 ms"
             in caplog.text
         )
+        assert "publish return may include queued drain" in caplog.text
+        assert "first RTP/client playback is unmeasured" in caplog.text
         assert "[STT 120 ms]" in caplog.text
-        assert "[cadence 350 ms]" in caplog.text
+        assert "[transcript -> candidate 350 ms]" in caplog.text
         assert "[decision 180 ms]" in caplog.text
+        assert "reply model calls may overlap this decision" in caplog.text
         assert "+-- flow stub/fast: TTFT 80 ms, full 110 ms" in caplog.text
-        assert "[first speakable text 220 ms]" in caplog.text
+        assert "[remaining reply wait after decision 220 ms]" in caplog.text
         assert "+-- reply stub/answer: TTFT 90 ms, full 600 ms" in caplog.text
         assert "[TTS handoff 20 ms]" in caplog.text
-        assert "[first audio 130 ms]" in caplog.text
+        assert "[first publish return 130 ms]" in caplog.text
+        assert "TTS provider first byte 45 ms (included above)" in caplog.text
 
     async def test_latency_logging_is_quiet_by_default(
         self,

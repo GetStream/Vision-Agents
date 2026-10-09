@@ -29,7 +29,7 @@ type timings struct {
 //   - llm: from the commitment to the reply's first text, which is nothing when a reply started
 //     beside the decision was ready by then;
 //   - tts: from the first text to the first audible frame (handing it to the voice, the voice's
-//     first audio and the edge playing it out).
+//     first audio, any hold for the caller to be quiet, and the edge playing it out).
 //
 // The providers' own first-token and first-byte waits follow, because work started early hides
 // them inside the stages. It reports false for a turn with nothing to say: it was not cut off,
@@ -52,7 +52,7 @@ func timingsOf(turn agent.Turn) (timings, bool) {
 	if heard && turn.FirstAudibleFrameMs > 0 {
 		tts = ms(turn.FirstAudibleFrameMs - turn.CadenceMs - turn.DecisionMs - turn.ModelToFirstTextMs)
 	}
-	ttft, ttfb := ms(turn.LLMTTFTMs), ms(turn.TTSTTFBMs)
+	ttft, ttfb, hold := ms(turn.LLMTTFTMs), ms(turn.TTSTTFBMs), ms(turn.ReplyHoldMs)
 
 	fields := map[string]any{"interrupted": turn.Interrupted}
 	set := func(key string, v int) {
@@ -72,6 +72,7 @@ func timingsOf(turn agent.Turn) (timings, bool) {
 	set("tts_ms", tts)
 	set("llm_ttft_ms", ttft)
 	set("tts_ttfb_ms", ttfb)
+	set("hold_ms", hold)
 
 	var stages []string
 	for _, stage := range []struct {
@@ -97,7 +98,7 @@ func timingsOf(turn agent.Turn) (timings, bool) {
 	for _, provider := range []struct {
 		name string
 		ms   int
-	}{{"ttft", ttft}, {"ttfb", ttfb}} {
+	}{{"ttft", ttft}, {"ttfb", ttfb}, {"hold", hold}} {
 		if provider.ms > 0 {
 			parts = append(parts, fmt.Sprintf("%s %d", provider.name, provider.ms))
 		}

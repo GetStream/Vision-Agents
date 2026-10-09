@@ -262,16 +262,6 @@ func (h *Harness) Remember(response llm.Response) {
 	h.stored.identity = response.Provider + "/" + response.Model
 }
 
-// Forget drops what a provider that keeps its replies is known to have read, because a
-// reply was asked for and then thrown away unread. Respond recorded that input as sent, so
-// without this the next turn with the same words would send nothing new and continue from
-// a reply that never saw them. The next turn sends the whole conversation instead.
-func (h *Harness) Forget() {
-	h.mu.Lock()
-	h.stored = stored{}
-	h.mu.Unlock()
-}
-
 // resume works out how much of the input still has to be sent, and what to continue from.
 //
 // It returns the whole input and no previous response whenever the shortcut cannot be
@@ -361,6 +351,73 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		// read back from there on every turn after.
 		PromptCacheKey: h.options.CacheKey,
 	}.Overwrite(overwrites))
+}
+
+// Preview starts an ordinary reply while the floor controller is deciding whether the
+// caller has finished. It reads the prompt state without consuming notes or changing
+// provider resumption state. A turn with running work or pending delegated findings needs
+// Respond instead, so the model is told about the work it must not request again.
+func (h *Harness) Preview(ctx context.Context, turn Turn) (*llm.Stream, error) {
+	working := h.Working()
+	h.mu.Lock()
+	if h.options.Model == nil || len(h.notes) != 0 || len(working) != 0 {
+		h.mu.Unlock()
+		return nil, errors.New("harness: reply cannot be previewed")
+	}
+	session := h.options.Model
+	// With no notes, instructions only resets state left by the preceding reply.
+	// Preview must leave that state alone until the controller accepts this turn.
+	parts := h.head(turn.Instructions, true)
+	if turn.Note != "" {
+		parts = append(parts, turn.Note)
+	}
+	instructions := strings.Join(parts, "\n\n")
+	input := answerable(turn.History)
+	previous := ""
+	if model := session.Capabilities(); model.Store && h.stored.responseID != "" &&
+		h.stored.identity == session.Provider()+"/"+session.Model() &&
+		h.stored.instructions == instructions && appendsTo(h.stored.sent, input) {
+		input, previous = input[len(h.stored.sent):], h.stored.responseID
+	}
+	params := llm.ResponseParams{
+		ID: turn.ID, Purpose: "reply", TurnID: turn.ID,
+		OnTiming:           h.options.OnModelCall,
+		Instructions:       instructions,
+		Input:              input,
+		MaxOutputTokens:    h.options.MaxTokens,
+		Tools:              h.options.Tools.Requests(),
+		Store:              session.Capabilities().Store,
+		PreviousResponseID: previous,
+		PromptCacheKey:     h.options.CacheKey,
+	}.Overwrite(h.options.Overwrites)
+	h.mu.Unlock()
+	return session.Create(ctx, params)
+}
+
+// AdoptPreview commits only the prompt state of a preview whose ruling was accepted.
+// Work, a finding or a model switch that arrived meanwhile invalidates the preview; the
+// caller then gets a normal reply with the new context instead.
+func (h *Harness) AdoptPreview(turn Turn, model *llmrouter.Session) bool {
+	working := h.Working()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.options.Model != model || len(h.notes) != 0 || len(working) != 0 {
+		return false
+	}
+	h.history = append([]llm.Message(nil), turn.History...)
+	instructions := h.instructions(turn, working)
+	h.stored = stored{instructions: instructions, sent: answerable(turn.History)}
+	return true
+}
+
+func (h *Harness) PreviewModel() *llmrouter.Session {
+	working := h.Working()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.notes) != 0 || len(working) != 0 {
+		return nil
+	}
+	return h.options.Model
 }
 
 // Release makes what a reply was handed owed to the caller again, because that reply was
@@ -767,6 +824,45 @@ func (h *Harness) consumeTasks() {
 	}
 }
 
+// head is how every reply opens, whatever else is added to it: what the agent was told to
+// be, what it may hand over, and, when the model is offered tools, how to use them. The
+// reply and the preview of it both start from here, so a preview is only ever asked what the
+// reply would have been, which is what lets it be taken over.
+func (h *Harness) head(agent string, tools bool) []string {
+	parts := make([]string, 0, 5)
+	if agent != "" {
+		parts = append(parts, agent)
+	}
+	if h.tasks != nil {
+		index := h.options.Skills.Prompt()
+		if h.options.Text {
+			index = h.options.Skills.TextPrompt()
+		}
+		if index != "" {
+			parts = append(parts, index)
+		}
+	}
+	// Somebody reading needs no pause filled before a call.
+	use := h.options.Tools.Prompt()
+	if h.options.Text {
+		use = h.options.Tools.TextPrompt()
+	}
+	if tools && use != "" {
+		parts = append(parts, use)
+	}
+	// Said on every turn rather than only those handing something over, so the
+	// instructions stay the same from one turn to the next and a provider that keeps its
+	// replies can carry on from the last one. Previews need the same instructions too.
+	if h.tasks != nil || len(h.options.Tools.Tools) > 0 {
+		if h.options.Text {
+			parts = append(parts, writtenDelivery)
+		} else {
+			parts = append(parts, spokenDelivery)
+		}
+	}
+	return parts
+}
+
 // instructions is the system prompt for a turn: what the agent was told to be, what it
 // may hand over, and whatever has come back since it last spoke. It must be called with
 // the lock held, because taking the notes is what hands them to the turn.
@@ -788,39 +884,9 @@ func (h *Harness) instructions(turn Turn, working []string) string {
 		}
 		h.asking = h.asking || written.asking
 	}
-
-	parts := make([]string, 0, 7)
-	if turn.Instructions != "" {
-		parts = append(parts, turn.Instructions)
-	}
-	if h.tasks != nil {
-		index := h.options.Skills.Prompt()
-		if h.options.Text {
-			index = h.options.Skills.TextPrompt()
-		}
-		if index != "" {
-			parts = append(parts, index)
-		}
-	}
 	// A reply carrying a colleague's question is offered no tools, so it is not told how to
-	// use them either. Somebody reading needs no pause filled before a call.
-	use := h.options.Tools.Prompt()
-	if h.options.Text {
-		use = h.options.Tools.TextPrompt()
-	}
-	if !h.asking && use != "" {
-		parts = append(parts, use)
-	}
-	// Said on every turn rather than only those handing something over, so the
-	// instructions stay the same from one turn to the next and a provider that keeps its
-	// replies can carry on from the last one.
-	if h.tasks != nil || len(h.options.Tools.Tools) > 0 {
-		if h.options.Text {
-			parts = append(parts, writtenDelivery)
-		} else {
-			parts = append(parts, spokenDelivery)
-		}
-	}
+	// use them either.
+	parts := h.head(turn.Instructions, !h.asking)
 	if len(lines) > 0 {
 		parts = append(parts, strings.Join(lines, "\n"))
 	}
@@ -895,16 +961,17 @@ var (
 )
 
 // identifiersAlreadyComplete reports whether the caller already said a clock time, a
-// member or order id, or a phone number. Those turns are the fast model's to answer and
-// to call tools on; handing them to a colleague is a multi-second wait on a complete
-// thought.
+// member or order id, or a phone number, in digits or spelled out as words. Those turns
+// are the fast model's to answer and to call tools on; handing them to a colleague is a
+// multi-second wait on a complete thought.
 func identifiersAlreadyComplete(history []llm.Message) bool {
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].Role != llm.User {
 			continue
 		}
 		text := history[i].Content
-		return spokenClock.MatchString(text) || spokenID.MatchString(text) || spokenPhone.MatchString(text)
+		return spokenClock.MatchString(text) || spokenID.MatchString(text) || spokenPhone.MatchString(text) ||
+			spokenNumbers(text)
 	}
 	return false
 }

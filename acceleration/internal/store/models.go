@@ -165,6 +165,8 @@ type Turn struct {
 	RoundtripMs *float64 `bun:"roundtrip_ms"`
 	// SpeechEndToAudioMs is voice in to voice out.
 	SpeechEndToAudioMs *float64 `bun:"speech_end_to_audio_ms"`
+	// ReplyHoldMs is the first-audio silence hold, included in TTSToAudioMs and RoundtripMs.
+	ReplyHoldMs *float64 `bun:"reply_hold_ms"`
 	// FirstFrameQueuedMs is settled transcript to the edge queueing the first frame of the reply,
 	// FirstAudibleFrameMs to the track taking the first frame that was not silence, and
 	// SpeechEndToAudibleMs is SpeechEndToAudioMs measured to that moment. RoundtripMs stops at
@@ -175,7 +177,8 @@ type Turn struct {
 	// AudioOutMs is how much speech the agent published for this turn.
 	AudioOutMs *float64 `bun:"audio_out_ms"`
 	// AudioDroppedMs is speech that was synthesised for this turn but never published.
-	// Set on a turn that was not interrupted, it means the agent cut itself off.
+	// Set on a turn that was not interrupted, it means the agent cut itself off. On one that was,
+	// it is the speech still held for the caller to have been quiet when they took the floor.
 	AudioDroppedMs *float64 `bun:"audio_dropped_ms"`
 	Interrupted    bool     `bun:"interrupted,notnull"`
 }

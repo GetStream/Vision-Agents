@@ -266,6 +266,9 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		}
 		return
 	}
+	if !left && a.followsTool(requested) {
+		a.owesToolReply(ctx)
+	}
 	a.noteToolDone(hold)
 	if ctx.Err() != nil {
 		return

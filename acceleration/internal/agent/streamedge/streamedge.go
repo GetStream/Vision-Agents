@@ -205,11 +205,16 @@ func (e *Edge) Attendance() <-chan agent.Attendance { return e.attending.Events(
 // PublishAudio sends a chunk of the agent's speech to the call.
 func (e *Edge) PublishAudio(pcm audio.PcmData) error { return e.speaker.Write(pcm) }
 
-// PublishAudioMarked sends a chunk of speech like PublishAudio, and tells marks when its first
-// frame was queued and when the call took the first one that was not silence, satisfying
-// agent.MarkedPlayout.
-func (e *Edge) PublishAudioMarked(pcm audio.PcmData, marks agent.PlayoutMarks) error {
-	return e.speaker.WriteMarked(pcm, marks)
+// PublishAudioContext queues a chunk of speech, stopping when ctx is cancelled.
+func (e *Edge) PublishAudioContext(ctx context.Context, pcm audio.PcmData) error {
+	return e.speaker.WriteContext(ctx, pcm)
+}
+
+// PublishAudioMarked queues a chunk of speech like PublishAudioContext, and tells marks when
+// its first frame was queued and when the call took the first one that was not silence,
+// satisfying agent.MarkedPlayout.
+func (e *Edge) PublishAudioMarked(ctx context.Context, pcm audio.PcmData, marks agent.PlayoutMarks) error {
+	return e.speaker.WriteMarked(ctx, pcm, marks)
 }
 
 // SpeechPending reports whether published speech is still waiting to go out, satisfying
@@ -381,8 +386,11 @@ func (e *Edge) listen(remote rtc.OnTrackReceived) {
 		participant.Name = remote.Participant.Name
 	}
 
-	reader, err := audiortc.NewTrackReader(remote.Track,
-		audiortc.ReaderConfig{Opus: opus.Config{SampleRate: stt.SampleRate}})
+	codec := remote.Track.Codec().RTPCodecCapability
+	reader, err := audiortc.NewRTPReader(
+		remote.Track, codec,
+		audiortc.ReaderConfig{Opus: opus.Config{SampleRate: stt.SampleRate}},
+	)
 	if err != nil {
 		e.logger.Error("could not decode a participant's audio",
 			"participant", participant.UserID, "error", err)

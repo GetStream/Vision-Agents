@@ -17,10 +17,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eotdefaults"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env/v2"
 	"github.com/knadh/koanf/providers/file"
@@ -71,6 +73,7 @@ type Config struct {
 	RateLimit       RateLimit  `koanf:"rate_limit"`
 	DataMove        DataMove   `koanf:"data_move"`
 	Stream          Stream     `koanf:"stream"`
+	EOT             EOT        `koanf:"eot"`
 	Agent           Agent      `koanf:"agent"`
 	Connectors      Connectors `koanf:"connectors"`
 	Episodes        Episodes   `koanf:"episodes"`
@@ -191,17 +194,48 @@ type Agent struct {
 	// SpeculativeReplies starts a reply while the flow controller is still deciding
 	// whether the words were meant for the agent, and holds it until the ruling says to
 	// answer. It saves the ruling's round trip on every answered turn and pays for the
-	// replies a ruling throws away. Off by default.
+	// replies a ruling throws away. On by default; false asks for each reply only once the
+	// ruling is in.
 	SpeculativeReplies bool `koanf:"speculative_replies"`
-	// ChatTimings shows how long each stage of a turn took after the agent's reply in its
-	// chat channel, for a developer talking to the agent. Off by default: it is not something a
-	// caller should read.
-	ChatTimings bool `koanf:"chat_timings"`
+	// ReplySilence is how long a caller must have been quiet, on their audio rather than their
+	// words, before the first sound of the reply to them is let out. A reply that is ready
+	// sooner waits for it, and a voice in the meantime only restarts the count: the wait delays
+	// the reply and never drops it. 700ms by default; 0 lets a reply start the moment it is
+	// ready.
+	ReplySilence time.Duration `koanf:"reply_silence"`
+	// ReplySilenceMax is the longest the first sound of a reply is held for that silence once it
+	// is ready. A line that never goes quiet, because of a conversation in the room or a steady
+	// babble, does not confirm the silence, so the reply is let out when this has passed.
+	// 1s by default; it must be longer than zero while reply_silence is on.
+	ReplySilenceMax time.Duration `koanf:"reply_silence_max"`
+	// ReplySilenceConfident is the silence that applies instead of reply_silence when the reply
+	// is to a turn decided by an acoustic end-of-turn score of at least reply_confident_score:
+	// the silence is there for endings in doubt, and a score that high says this one is not. The
+	// flow controller's decisions and lower scores keep reply_silence. 300ms by default; 0 lets
+	// such a reply out as soon as it is ready.
+	ReplySilenceConfident time.Duration `koanf:"reply_silence_confident"`
+	// ReplyConfidentScore is the acoustic end-of-turn score from which the turn is taken to have
+	// ended for sure. Between 0 and 1, 0.9 by default; 0 turns the shorter silence off.
+	ReplyConfidentScore float64 `koanf:"reply_confident_score"`
+	// PreviewDebounce is how long a caller's words have to hold still before the reply to them
+	// is started, ahead of the wait that decides whether they have finished. Words that change
+	// again restart it. It applies wherever SpeculativeReplies does. 60ms by default; 0 starts
+	// the reply when that wait is over.
+	PreviewDebounce time.Duration `koanf:"preview_debounce"`
+	// PreviewQuiet is how long the caller's audio has to have been quiet, as well as their words
+	// having held still for preview_debounce, before the reply to them is started ahead of that
+	// wait. At most three replies are started this way for one run of the caller's words. 120ms
+	// by default; 0 looks at the words alone.
+	PreviewQuiet time.Duration `koanf:"preview_quiet"`
 	// ReplyHedge is how long a reply may say nothing, neither text nor a tool call, before the same
 	// request is asked of another candidate of its target as well. Whichever says something first is
 	// kept and the other is cancelled. It only applies to a target with more than one candidate.
 	// 1.2s by default; 0 turns it off.
 	ReplyHedge time.Duration `koanf:"reply_hedge"`
+	// ChatTimings shows how long each stage of a turn took after the agent's reply in its
+	// chat channel, for a developer talking to the agent. Off by default: it is not something a
+	// caller should read.
+	ChatTimings bool `koanf:"chat_timings"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -231,6 +265,14 @@ type Sandbox struct {
 	Recipients         int   `koanf:"recipients"`
 	MessagesPerDay     int64 `koanf:"messages_per_day"`
 	AudioMinutesPerDay int64 `koanf:"audio_minutes_per_day"`
+}
+
+// EOT is the optional acoustic endpoint scorer for settled cascade turns.
+type EOT struct {
+	Mode        string  `koanf:"mode"`
+	Endpoint    string  `koanf:"endpoint"`
+	IDTokenFile string  `koanf:"id_token_file"`
+	Threshold   float64 `koanf:"threshold"`
 }
 
 // variables maps each setting to the environment variable that has always carried it.
@@ -266,15 +308,26 @@ var variables = map[string]string{
 	"stream.trust_api_key_header": "ROUTER_STREAM_TRUST_API_KEY_HEADER",
 	"stream.deny_registration":    "ROUTER_STREAM_DENY_REGISTRATION",
 
+	"eot.mode":          "ROUTER_EOT_MODE",
+	"eot.endpoint":      "ROUTER_EOT_URL",
+	"eot.id_token_file": "ROUTER_EOT_ID_TOKEN_FILE",
+	"eot.threshold":     "ROUTER_EOT_THRESHOLD",
+
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
 
-	"agent.speculative_replies": "ROUTER_SPECULATIVE_REPLIES",
-	"agent.chat_timings":        "ROUTER_CHAT_TIMINGS",
-	"agent.reply_hedge":         "ROUTER_REPLY_HEDGE",
-	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
-	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
-	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
+	"agent.speculative_replies":     "ROUTER_SPECULATIVE_REPLIES",
+	"agent.reply_silence":           "ROUTER_REPLY_SILENCE",
+	"agent.reply_silence_max":       "ROUTER_REPLY_SILENCE_MAX",
+	"agent.reply_silence_confident": "ROUTER_REPLY_SILENCE_CONFIDENT",
+	"agent.reply_confident_score":   "ROUTER_REPLY_CONFIDENT_SCORE",
+	"agent.preview_debounce":        "ROUTER_PREVIEW_DEBOUNCE",
+	"agent.preview_quiet":           "ROUTER_PREVIEW_QUIET",
+	"agent.reply_hedge":             "ROUTER_REPLY_HEDGE",
+	"agent.chat_timings":            "ROUTER_CHAT_TIMINGS",
+	"auth.proxy_declares_kind":      "ROUTER_AUTH_PROXY_DECLARES_KIND",
+	"connectors.enabled":            "ROUTER_CONNECTORS_ENABLED",
+	"episodes.idle_after":           "ROUTER_EPISODES_IDLE_AFTER",
 
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
 	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
@@ -296,7 +349,17 @@ func Defaults() Config {
 		// can come to millions of tokens.
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 5_000_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
-		Agent:     Agent{ReplyHedge: 1200 * time.Millisecond},
+		Agent: Agent{
+			SpeculativeReplies:    true,
+			ReplySilence:          700 * time.Millisecond,
+			ReplySilenceMax:       time.Second,
+			ReplySilenceConfident: 300 * time.Millisecond,
+			ReplyConfidentScore:   0.9,
+			PreviewDebounce:       60 * time.Millisecond,
+			PreviewQuiet:          120 * time.Millisecond,
+			ReplyHedge:            1200 * time.Millisecond,
+		},
+		EOT: EOT{Endpoint: eotdefaults.HostedDemoEndpoint, Mode: "primary", Threshold: 0.5},
 		// One hour is Kanat's decision of 2026-10-07 (D4, wave 3b), not a measurement:
 		// unverified against any traffic. The only external bound is maxEpisodeIdle.
 		Episodes: Episodes{IdleAfter: time.Hour},
@@ -355,10 +418,21 @@ func Load(path string) (Config, string, error) {
 			return Config{}, "", err
 		}
 	}
+	modeExplicit := k.Exists("eot.mode")
 
 	config := Defaults()
 	if err := k.Unmarshal("", &config); err != nil {
 		return Config{}, "", fmt.Errorf("config: %s: %w", name, err)
+	}
+	config.EOT.Endpoint = strings.TrimSpace(config.EOT.Endpoint)
+	config.EOT.IDTokenFile = strings.TrimSpace(config.EOT.IDTokenFile)
+	config.EOT.Mode = strings.TrimSpace(config.EOT.Mode)
+	if !modeExplicit {
+		if eotdefaults.IsHostedDemoEndpoint(config.EOT.Endpoint) {
+			config.EOT.Mode = "primary"
+		} else {
+			config.EOT.Mode = "gate"
+		}
 	}
 	if err := config.validate(); err != nil {
 		return Config{}, "", err
@@ -417,6 +491,46 @@ func (c Config) validate() error {
 	}
 	if c.DataMove.Retention < 0 {
 		return fmt.Errorf("config: data_move.retention cannot be negative, got %s", c.DataMove.Retention)
+	}
+	if c.Agent.ReplySilence < 0 {
+		return fmt.Errorf("config: agent.reply_silence cannot be negative, got %s", c.Agent.ReplySilence)
+	}
+	if c.Agent.ReplySilenceMax < 0 {
+		return fmt.Errorf("config: agent.reply_silence_max cannot be negative, got %s", c.Agent.ReplySilenceMax)
+	}
+	// Without a limit a line that never goes quiet holds a reply for as long as it lasts.
+	if c.Agent.ReplySilence > 0 && c.Agent.ReplySilenceMax == 0 {
+		return errors.New("config: agent.reply_silence_max must be longer than zero while agent.reply_silence is on")
+	}
+	if c.Agent.ReplySilenceConfident < 0 {
+		return fmt.Errorf("config: agent.reply_silence_confident cannot be negative, got %s", c.Agent.ReplySilenceConfident)
+	}
+	if math.IsNaN(c.Agent.ReplyConfidentScore) || c.Agent.ReplyConfidentScore < 0 || c.Agent.ReplyConfidentScore > 1 {
+		return fmt.Errorf("config: agent.reply_confident_score must be between 0 and 1, got %v", c.Agent.ReplyConfidentScore)
+	}
+	if c.Agent.PreviewDebounce < 0 {
+		return fmt.Errorf("config: agent.preview_debounce cannot be negative, got %s", c.Agent.PreviewDebounce)
+	}
+	if c.Agent.PreviewQuiet < 0 {
+		return fmt.Errorf("config: agent.preview_quiet cannot be negative, got %s", c.Agent.PreviewQuiet)
+	}
+	if c.Agent.ReplyHedge < 0 {
+		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)
+	}
+	if c.EOT.Mode != "gate" && c.EOT.Mode != "primary" {
+		return fmt.Errorf("config: eot.mode must be gate or primary, got %q", c.EOT.Mode)
+	}
+	if eotdefaults.IsHostedDemoOrigin(c.EOT.Endpoint) {
+		if !eotdefaults.IsHostedDemoEndpoint(c.EOT.Endpoint) {
+			return errors.New("config: the hosted demo endpoint path must be /v1/eot")
+		}
+		if strings.TrimSpace(c.EOT.IDTokenFile) != "" {
+			return errors.New("config: eot.id_token_file cannot be used with the hosted demo endpoint; configure a private endpoint")
+		}
+	}
+	if math.IsNaN(c.EOT.Threshold) || math.IsInf(c.EOT.Threshold, 0) ||
+		c.EOT.Threshold < 0 || c.EOT.Threshold > 1 {
+		return fmt.Errorf("config: eot.threshold must be between 0 and 1, got %v", c.EOT.Threshold)
 	}
 	if c.Episodes.IdleAfter <= 0 || c.Episodes.IdleAfter >= maxEpisodeIdle {
 		return fmt.Errorf("config: episodes.idle_after is more than zero and less than %s, got %s",
@@ -492,12 +606,22 @@ func (c Config) export() error {
 		"stream.app_id":                 appID(c.Stream.AppID),
 		"stream.trust_api_key_header":   fmt.Sprint(c.Stream.TrustAPIKeyHeader),
 		"stream.deny_registration":      strings.Join(c.Stream.DenyRegistration, ","),
+		"eot.endpoint":                  c.EOT.Endpoint,
+		"eot.mode":                      c.EOT.Mode,
+		"eot.id_token_file":             c.EOT.IDTokenFile,
+		"eot.threshold":                 fmt.Sprint(c.EOT.Threshold),
 		"data_move.retention":           c.DataMove.Retention.String(),
 		"rate_limit.messages_per_day":   fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":     fmt.Sprint(c.RateLimit.TokensPerDay),
 		"agent.speculative_replies":     fmt.Sprint(c.Agent.SpeculativeReplies),
-		"agent.chat_timings":            fmt.Sprint(c.Agent.ChatTimings),
+		"agent.reply_silence":           c.Agent.ReplySilence.String(),
+		"agent.reply_silence_max":       c.Agent.ReplySilenceMax.String(),
+		"agent.reply_silence_confident": c.Agent.ReplySilenceConfident.String(),
+		"agent.reply_confident_score":   fmt.Sprint(c.Agent.ReplyConfidentScore),
+		"agent.preview_debounce":        c.Agent.PreviewDebounce.String(),
+		"agent.preview_quiet":           c.Agent.PreviewQuiet.String(),
 		"agent.reply_hedge":             c.Agent.ReplyHedge.String(),
+		"agent.chat_timings":            fmt.Sprint(c.Agent.ChatTimings),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
 		"episodes.idle_after":           c.Episodes.IdleAfter.String(),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),
@@ -506,7 +630,7 @@ func (c Config) export() error {
 		"sandbox.audio_minutes_per_day": fmt.Sprint(c.Sandbox.AudioMinutesPerDay),
 	}
 	for key, value := range values {
-		if value == "" {
+		if value == "" && key != "eot.endpoint" {
 			continue
 		}
 		if err := os.Setenv(variables[key], value); err != nil {

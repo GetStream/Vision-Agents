@@ -148,6 +148,74 @@ func (s *TurnRecorderSuite) TestTurnTimingCarriesWhenTheEdgeQueuedAndPlayedTheFi
 	s.Less(turns[0].FirstFrameQueuedMs, turns[0].RoundtripMs)
 }
 
+func (s *TurnRecorderSuite) TestTurnTimingCarriesHowLongTheFirstAudioWasHeldForTheCallerToBeQuiet() {
+	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	var done reported
+	tracker := newTurnTracker(done.add)
+	tracker.begin("turn-1", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
+	tracker.ttsStarted("turn-1", base.Add(600*time.Millisecond))
+
+	tracker.held("turn-1", 700*time.Millisecond)
+	tracker.firstAudio("turn-1", base.Add(1400*time.Millisecond))
+	tracker.spoke("turn-1", 160, 500)
+	tracker.completed("turn-1", 280, 1)
+
+	turns := done.all()
+	s.Require().Len(turns, 1)
+	s.InDelta(700, turns[0].ReplyHoldMs, 0.001)
+	s.InDelta(800, turns[0].TTSToAudioMs, 0.001, "the hold is inside the leg from the text to the audio")
+	s.InDelta(1400, turns[0].RoundtripMs, 0.001)
+}
+
+func (s *TurnRecorderSuite) TestAudioStillHeldWhenATurnIsClosedIsReportedAsDropped() {
+	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	var done reported
+	tracker := newTurnTracker(done.add)
+	tracker.begin("turn-1", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
+
+	tracker.buffered("turn-1", 40)
+	tracker.buffered("turn-1", 20)
+	tracker.interrupt("turn-1")
+
+	turns := done.all()
+	s.Require().Len(turns, 1)
+	s.InDelta(60, turns[0].AudioDroppedMs, 0.001, "what was held when the caller took the floor never reached them")
+	s.True(turns[0].Interrupted)
+}
+
+func (s *TurnRecorderSuite) TestHeldAudioIsCountedOnceWhetherItIsLetOutOrGivenUp() {
+	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	var done reported
+	tracker := newTurnTracker(done.add)
+	tracker.begin("let-out", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
+	tracker.begin("given-up", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
+
+	tracker.buffered("let-out", 40)
+	tracker.unbuffered("let-out")
+	tracker.interrupt("let-out")
+	tracker.buffered("given-up", 40)
+	tracker.buffered("given-up", 20)
+	tracker.droppedFromHold("given-up", 40)
+	tracker.interrupt("given-up")
+
+	turns := done.all()
+	s.Require().Len(turns, 2)
+	s.Zero(turns[0].AudioDroppedMs, "audio that was let out is not dropped")
+	s.InDelta(60, turns[1].AudioDroppedMs, 0.001, "what was given up and what was still held are counted once")
+}
+
+func (s *TurnRecorderSuite) TestATurnThatWasNotHeldHasNoHold() {
+	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	var done reported
+	tracker := newTurnTracker(done.add)
+
+	spokenTurn(tracker, base, 900*time.Millisecond)
+
+	turns := done.all()
+	s.Require().Len(turns, 1)
+	s.Zero(turns[0].ReplyHoldMs)
+}
+
 func (s *TurnRecorderSuite) TestAnEdgeThatReportsNothingLeavesTheNewMomentsEmpty() {
 	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
 	var done reported
@@ -253,6 +321,24 @@ func (s *TurnRecorderSuite) TestAnInterruptionClosesATurnWaitingOnTheTrack() {
 	s.Require().Len(turns, 1, "a turn closes exactly once")
 	s.True(turns[0].Interrupted)
 	s.Zero(turns[0].FirstAudibleFrameMs, "speech heard after the turn was closed is not part of it")
+}
+
+func (s *TurnRecorderSuite) TestATurnCompletedWhileItIsBeingAbandonedIsReportedInterrupted() {
+	// Giving up a held reply settles its synthesis, which can complete the turn before the
+	// interruption reaches it.
+	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	var done reported
+	tracker := newTurnTracker(done.add)
+	tracker.begin("turn-1", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
+	tracker.completed("turn-1", 280, 1)
+
+	tracker.interrupting("turn-1")
+	tracker.spoke("turn-1", 160, 300)
+	tracker.interrupt("turn-1")
+
+	turns := done.all()
+	s.Require().Len(turns, 1, "a turn closes exactly once")
+	s.True(turns[0].Interrupted)
 }
 
 func (s *TurnRecorderSuite) TestAReportThatOutlivesItsTurnIsDropped() {
