@@ -407,6 +407,8 @@ func cmdDigest(ctx context.Context, root string, args []string) error {
 func cmdSTT(ctx context.Context, root string, args []string) error {
 	fs := flag.NewFlagSet("stt", flag.ExitOnError)
 	manifest := fs.String("manifest", "", "JSONL of id, reference, and audio (a WAV to stream) or hypothesis (to score as given)")
+	fromScenarios := fs.String("scenarios", "", "use the caller lines of a scenario set as the clips instead of a manifest: frozen, short, or all")
+	post := fs.Bool("slack", false, "post a summary to VOICEBENCH_SLACK_CHANNEL as the bot behind VOICEBENCH_SLACK_BOT_TOKEN")
 	var targets stringList
 	fs.Var(&targets, "target", "provider/model or shortcut to stream each clip to through the router; repeat for several")
 	out := fs.String("out", "", "output directory (default out/stt-<time>)")
@@ -414,8 +416,30 @@ func cmdSTT(ctx context.Context, root string, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *manifest == "" {
-		return fmt.Errorf("stt: --manifest is required")
+	var rows []run.STTClipRow
+	switch *fromScenarios {
+	case "":
+		if *manifest == "" {
+			return fmt.Errorf("stt: --manifest or --scenarios is required")
+		}
+	case "all", "frozen", "short":
+		var ids []string
+		if *fromScenarios != "all" {
+			list := scenario.FrozenPath(root)
+			if *fromScenarios == "short" {
+				list = scenario.ShortPath(root)
+			}
+			var err error
+			if ids, err = scenario.LoadIDList(list); err != nil {
+				return err
+			}
+		}
+		var err error
+		if rows, err = run.ScenarioClips(root, ids); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("stt: --scenarios is frozen, short or all, not %q", *fromScenarios)
 	}
 	dir := *out
 	if dir == "" {
@@ -424,6 +448,7 @@ func cmdSTT(ctx context.Context, root string, args []string) error {
 	sum, err := run.STT(ctx, run.STTConfig{
 		Root:           root,
 		Manifest:       *manifest,
+		Rows:           rows,
 		Targets:        targets,
 		Out:            dir,
 		NetworkProfile: *networkProfile,
@@ -434,6 +459,11 @@ func cmdSTT(ctx context.Context, root string, args []string) error {
 	}
 	fmt.Print(report.STTMarkdown(sum))
 	fmt.Printf("\nresults in %s\n", dir)
+	if *post {
+		if err := postText(ctx, report.STTSlackText("Voicebench STT", sum)); err != nil {
+			return err
+		}
+	}
 	for _, target := range sum.STT {
 		if target.Failed > 0 {
 			return fmt.Errorf("stt: %d clip(s) for %s ended in an error, see clips.jsonl", target.Failed, target.Target)
@@ -460,6 +490,7 @@ func cmdTTS(ctx context.Context, root string, args []string) error {
 	corpus := fs.String("corpus", "", "JSONL of id and text (default every scenario's agent reply lines)")
 	voice := fs.String("voice", "", "voice for every target, when the target's default is not wanted")
 	out := fs.String("out", "", "output directory (default out/tts-<time>)")
+	postTTS := fs.Bool("slack", false, "post a summary to VOICEBENCH_SLACK_CHANNEL as the bot behind VOICEBENCH_SLACK_BOT_TOKEN")
 	networkProfile := fs.String("network-profile", os.Getenv("VOICEBENCH_NETWORK_PROFILE"), "stable label for the runner region and network setup")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -498,12 +529,23 @@ func cmdTTS(ctx context.Context, root string, args []string) error {
 	}
 	fmt.Print(report.TTSMarkdown(sum))
 	fmt.Printf("\nresults in %s\n", dir)
+	if *postTTS {
+		if err := postText(ctx, report.TTSSlackText("Voicebench TTS", sum)); err != nil {
+			return err
+		}
+	}
 	for _, target := range sum.TTS {
 		if target.Failed > 0 {
 			return fmt.Errorf("tts: %d line(s) for %s ended in an error, see clips.jsonl", target.Failed, target.Target)
 		}
 	}
 	return nil
+}
+
+// postText posts a message with no attachments to the bench channel.
+func postText(ctx context.Context, text string) error {
+	client := slack.Client{Token: os.Getenv("VOICEBENCH_SLACK_BOT_TOKEN")}
+	return client.Post(ctx, os.Getenv("VOICEBENCH_SLACK_CHANNEL"), text, nil)
 }
 
 func loadDotEnv(root string) {

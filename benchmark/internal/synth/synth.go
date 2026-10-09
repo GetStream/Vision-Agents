@@ -44,6 +44,11 @@ func pathFor(root, voice, text string) string {
 	return filepath.Join(cacheDir(root), hash(voice, text)+".wav")
 }
 
+// CachePath is where LoadOrSynth keeps text spoken in voice, empty for the default voice.
+func CachePath(root, voice, text string) string {
+	return pathFor(root, VoiceID(voice), text)
+}
+
 // LoadOrSynth returns 16 kHz PCM for text, synthesizing via ElevenLabs on a miss.
 func LoadOrSynth(root, voice, text string) ([]int16, error) {
 	voice = VoiceID(voice)

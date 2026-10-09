@@ -4,6 +4,11 @@ on:
     - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
+      bench:
+        description: 'agents (calls against the agent) or components (the STT and TTS benches)'
+        type: choice
+        options: [ agents, components ]
+        default: agents
       set:
         description: 'Scenario set: frozen (the nightly, compared with the previous night) or short (a quicker check, compared with nothing)'
         type: choice
@@ -45,6 +50,7 @@ jobs:
   # for a file on the default branch, so a run on that branch checks out accelerate, where
   # the benchmark lives; Run workflow on any other branch benchmarks that branch.
   nightly:
+    if: github.event_name == 'schedule' || inputs.bench != 'components'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     # The agent syncs its config to the router, which keeps configs in Postgres, and the
@@ -172,6 +178,60 @@ jobs:
         with:
           name: voicebench-nightly
           path: benchmark/out/nightly
+          retention-days: 30
+
+
+  # Nightly too: the STT bench on the short set's caller lines and the TTS bench on the
+  # scenarios' agent lines, against a router built from the checkout. No calls are placed.
+  components:
+    if: github.event_name == 'schedule' || inputs.bench == 'components'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: model_router
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d model_router"
+          --health-interval 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: benchmark
+    env:
+      VOICEBENCH_SLACK_BOT_TOKEN: ${{ secrets.VOICEBENCH_SLACK_BOT_TOKEN }}
+      VOICEBENCH_SLACK_CHANNEL: ${{ secrets.VOICEBENCH_SLACK_CHANNEL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name == github.event.repository.default_branch && 'accelerate' || '' }}
+
+      - uses: ./.github/actions/voicebench-setup
+
+      - name: Run the STT and TTS benches
+        run: scripts/components.sh out/components
+
+      - name: Report
+        if: always()
+        run: cat out/components/stt/report.md out/components/tts/report.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: voicebench-components
+          path: benchmark/out/components
           retention-days: 30
 
 concurrency:
