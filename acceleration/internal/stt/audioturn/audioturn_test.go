@@ -220,10 +220,12 @@ func (s *AudioTurnSuite) TestUntranscribedAudioCannotBeSilentlyOverwritten() {
 	s.ErrorContains(err, "fell behind")
 }
 
-func (s *AudioTurnSuite) TestTheLastWordCanExtendPastTheAudioFrame() {
+func (s *AudioTurnSuite) TestWordTimestampsCanRoundPastTheWindowEdges() {
 	s.start()
-	s.replies <- transcriptionReply{probability: 0.9, words: []Word{{Text: "gold.", StartMS: -600, EndMS: 40, Confidence: 0.868}}}
-	s.feed(1)
+	s.replies <- transcriptionReply{probability: 0.9, words: []Word{{Text: "gold.", StartMS: -1001, EndMS: 40, Confidence: 0.868}}}
+	s.Require().NoError(s.provider.ProcessAudio(stt.PcmData{
+		Samples: make([]int16, SampleRate+1), SampleRate: SampleRate, Channels: 1,
+	}, stt.Participant{ID: "caller"}))
 	partial := s.transcript()
 	s.False(partial.Final())
 	s.Equal("gold.", partial.Text)

@@ -362,7 +362,7 @@ func (c *Client) score(ctx context.Context, requestID string, pcm []byte, transc
 			return Score{}, nil, errors.New("agent: EOT transcript unavailable")
 		}
 		transcript = result.Transcript
-		previous := -wantedSamples * 1000 / SampleRate
+		previous := -(wantedSamples*1000 + SampleRate - 1) / SampleRate
 		for i := range transcript.Words {
 			word := &transcript.Words[i]
 			if strings.TrimSpace(word.Text) == "" || word.StartMS < previous || word.EndMS < word.StartMS ||

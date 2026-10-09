@@ -181,7 +181,8 @@ func (s *STT) run() {
 		s.mu.Lock()
 		s.scored = end
 		s.mu.Unlock()
-		text := words.update(*transcript, end*1000/SampleRate)
+		endMS := (end*1000 + SampleRate - 1) / SampleRate
+		text := words.update(*transcript, endMS)
 		if text != previous {
 			previous, revised = text, end
 		}
@@ -190,7 +191,7 @@ func (s *STT) run() {
 		}
 		// A turn score decides when to answer, not whether these words can still
 		// change. Settle only after a stable hypothesis and a pause after its tail.
-		final := end-revised >= SampleRate*400/1000 && end*1000/SampleRate-int64(words.words[len(words.words)-1].EndMS) >= 600
+		final := end-revised >= SampleRate*400/1000 && endMS-int64(words.words[len(words.words)-1].EndMS) >= 600
 		mode := stt.ModeReplacement
 		if final {
 			mode = stt.ModeFinal
