@@ -302,7 +302,7 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 				continue
 			}
 			d.routes[tool.Name] = route{binding: binding, connection: connection, toolset: toolset,
-				tool: name, digest: digests[name], timeout: timeout,
+				tool: name, digest: digests[name], timeout: timeout, declared: declaredArguments(tool.Parameters),
 				limit: manifest.RateLimitKey(connection.CustomerID, resolved.Connection)}
 			d.tools = append(d.tools, harness.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
 			offered++

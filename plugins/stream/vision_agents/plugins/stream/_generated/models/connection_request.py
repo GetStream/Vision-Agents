@@ -24,7 +24,8 @@ class ConnectionRequest:
         connector_id (str): A built-in, such as slack, or one of the app's own.
         owner (ConnectionOwner): Whose a connection is: the app's, which any of its agents may be bound to, or one
             user's.
-        auth_scheme (str | Unset): One of the connector's schemes. Omitted is its only one; a connector with several
+        auth_scheme (str | Unset): One of the connector's schemes. Omitted is its only one, or else its only one that is
+            not a static token or key (bearer, api_key), such as oauth2_code for github; a connector with several others
             needs it named.
         inputs (ConnectionRequestInputs | Unset): Values for the connector's inputs, such as a region. One without a
             default is required, and each must match the connector's enum or pattern.

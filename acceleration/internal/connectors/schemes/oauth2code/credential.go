@@ -314,6 +314,16 @@ func (s *Scheme) Fingerprints(stored core.StoredCredentials) (core.CredentialFin
 	}, nil
 }
 
+// Client is the OAuth client stored was issued to: its registration and client_id, never its
+// secret (AI-990 F16).
+func (s *Scheme) Client(stored core.StoredCredentials) (core.OAuthClient, error) {
+	payload, err := open(stored)
+	if err != nil {
+		return core.OAuthClient{}, err
+	}
+	return core.OAuthClient{Registration: payload.Client.RegistrationMethod, ID: payload.Client.ID}, nil
+}
+
 // open reads the payload of the StoredCredentials this scheme sealed. Its errors never quote the payload.
 func open(stored core.StoredCredentials) (storedPayload, error) {
 	if stored.Scheme != Name || stored.Version != payloadVersion {

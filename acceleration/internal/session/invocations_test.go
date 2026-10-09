@@ -42,11 +42,14 @@ func (s *InvocationLogSuite) logged(connection string, count int) []store.Connec
 	return read()
 }
 
-// stored is every column of connection's log rows as Postgres holds them, as text.
+// stored is every column of connection's log rows as Postgres holds them, with their argument
+// shapes (connector_invocation_arguments), as text.
 func (s *InvocationLogSuite) stored(connection string) string {
 	var rows string
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
-		"SELECT coalesce(string_agg(to_jsonb(ci)::text, ' '), '') FROM connector_invocations AS ci WHERE connection_id = ?",
+		"SELECT coalesce(string_agg(to_jsonb(ci)::text || ' ' || coalesce(to_jsonb(cia)::text, ''), ' '), '') "+
+			"FROM connector_invocations AS ci LEFT JOIN connector_invocation_arguments AS cia ON cia.invocation_id = ci.id "+
+			"WHERE connection_id = ?",
 		connection).Scan(&rows))
 	return rows
 }
@@ -274,9 +277,60 @@ func (s *InvocationLogSuite) TestAnIncognitoSessionsCallIsLoggedWithoutItsSessio
 	s.Equal("you said "+note, said)
 	rows := s.logged(app, 1)
 	s.Empty(rows[0].SessionID)
+	s.Nil(rows[0].Arguments, "the lengths come from the conversation, so an incognito call keeps no shape")
 	stored := s.stored(app)
 	s.NotContains(stored, note, "neither the argument nor the result is stored")
 	s.NotContains(stored, spec.ID)
+}
+
+// TestARecordedSessionsRowHoldsTheShapeOfItsArguments (AI-990 F40): each argument's name, type
+// and length, so an empty one shows afterwards; the value is not stored.
+func (s *InvocationLogSuite) TestARecordedSessionsRowHoldsTheShapeOfItsArguments() {
+	app := s.connection("", "primary")
+	d, _, _, err := s.attach(s.spec(s.config(s.fixed("crm", app, "echo")), "", nil))
+	s.Require().NoError(err)
+	note := "note-" + uuid.NewString()
+
+	_, err = s.call(d, "crm__echo", `{"note": "`+note+`"}`)
+
+	s.Require().NoError(err)
+	length := len(note)
+	s.Equal([]store.ArgumentShape{{Name: "note", Type: "string", Length: &length}}, s.logged(app, 1)[0].Arguments)
+	s.Contains(s.stored(app), `"name": "note"`)
+	s.NotContains(s.stored(app), note)
+}
+
+// TestARefusedCallKeepsTheShapeOfWhatItWasAsked: the arguments a source refused are what a
+// reader most needs to see the shape of.
+func (s *InvocationLogSuite) TestARefusedCallKeepsTheShapeOfWhatItWasAsked() {
+	app := s.connection("", "primary")
+	d, _, _, err := s.attach(s.spec(s.config(s.fixed("crm", app, "echo")), "", nil))
+	s.Require().NoError(err)
+
+	_, err = s.call(d, "crm__echo", `{"note": 42}`)
+
+	s.Require().Error(err)
+	row := s.logged(app, 1)[0]
+	s.Equal(store.InvocationDenied, row.ErrorType)
+	s.Equal([]store.ArgumentShape{{Name: "note", Type: "number"}}, row.Arguments)
+}
+
+// TestAKeyTheModelChoseIsNeverRecordedByName: the tool takes additionalProperties, so a key can
+// be content. Its row names the declared argument and counts the rest.
+func (s *InvocationLogSuite) TestAKeyTheModelChoseIsNeverRecordedByName() {
+	app := s.connection("", "primary")
+	d, _, _, err := s.attach(s.spec(s.config(s.fixed("crm", app, "open")), "", nil))
+	s.Require().NoError(err)
+
+	_, err = s.call(d, "crm__open", `{"note": "hi", "alice@example.com": "x", "bob@example.com": 1}`)
+
+	s.Require().NoError(err)
+	length, count := 2, 2
+	s.Equal([]store.ArgumentShape{
+		{Name: "(undeclared)", Type: "object", Length: &count},
+		{Name: "note", Type: "string", Length: &length},
+	}, s.logged(app, 1)[0].Arguments)
+	s.NotContains(s.stored(app), "example.com")
 }
 
 func (s *InvocationLogSuite) TestARecordedSessionsRowHoldsNoArgumentOrResultEither() {

@@ -605,6 +605,27 @@ func (s *AuthorizationsSuite) TestAConsentForAConnectorTakingTheAppsOwnClientUse
 	s.Equal(ConnectionStatus(store.ConnectionConnected), s.get(created.ID).Status)
 }
 
+// TestAConsentRecordsTheClientItsGrantWasIssuedTo (AI-990 F16): a connection's reads name the
+// OAuth client its consent used, by registration and client_id, from the consent on; before
+// it there is none.
+func (s *AuthorizationsSuite) TestAConsentRecordsTheClientItsGrantWasIssuedTo() {
+	connector := s.connectorRegistering("customer", "")
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	s.Nil(created.Client)
+	s.Nil(s.get(created.ID).Client, "no consent yet")
+
+	s.putClient(connector, s.provider.ClientSecret)
+	s.connect(created.ID)
+
+	want := &ConnectionClient{Registration: ConnectorClientRegistrationMethod(core.ClientCustomer), ClientID: s.provider.ClientID}
+	s.Equal(want, s.get(created.ID).Client)
+	var page ConnectionPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections?owner_type=app&connector_id="+connector, nil, &page))
+	s.Require().Len(page.Items, 1)
+	s.Equal(want, page.Items[0].Client)
+}
+
 func (s *AuthorizationsSuite) TestARotatedSecretIsWhatTheNextRefreshOfEveryConnectionSends() {
 	// A margin longer than CommaScopes' 12-hour access token, so every Retrieve refreshes.
 	connector := s.connectorRegistering("customer", "refresh:\n  margin: 24h\n")

@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -55,4 +56,24 @@ func (s *FingerprintSuite) TestASchemeThatNamesNoTokensGivesNoFingerprints() {
 
 	s.Equal(core.CredentialFingerprints{}, core.FingerprintsOf(map[string]core.Scheme{"plain": nil}, stored))
 	s.Equal(core.CredentialFingerprints{}, core.FingerprintsOf(nil, stored))
+}
+
+// AI-990 F33c: an expiry the provider did not say is left out of the log line, not logged as
+// Go's zero time (0001-01-01), and one it said is logged.
+func (s *FingerprintSuite) TestALogLineLeavesOutAnExpiryNobodySaid() {
+	static := core.CredentialChange{Current: core.CredentialFingerprints{Access: "aaaaaaaa"}}
+	expiry := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	expiring := core.CredentialChange{Current: core.CredentialFingerprints{Access: "aaaaaaaa", AccessExpiresAt: expiry, RefreshExpiresAt: expiry}}
+
+	s.Equal([]any{
+		"previous_access_fingerprint", "", "access_fingerprint", "aaaaaaaa",
+		"previous_refresh_fingerprint", "", "refresh_fingerprint", "",
+		"rotated", false,
+	}, static.LogAttrs())
+	s.Equal([]any{
+		"previous_access_fingerprint", "", "access_fingerprint", "aaaaaaaa",
+		"previous_refresh_fingerprint", "", "refresh_fingerprint", "",
+		"rotated", false,
+		"access_expires_at", expiry, "refresh_expires_at", expiry,
+	}, expiring.LogAttrs())
 }

@@ -54,8 +54,9 @@ var errNoToken = errors.New("bearer: the credential is not a bearer credential")
 type Scheme struct{}
 
 var (
-	_ core.Scheme = (*Scheme)(nil)
-	_ core.Static = (*Scheme)(nil)
+	_ core.Scheme        = (*Scheme)(nil)
+	_ core.Fingerprinter = (*Scheme)(nil)
+	_ core.Static        = (*Scheme)(nil)
 )
 
 // New returns the scheme. It takes no configuration: the header and its prefix are RFC
@@ -145,6 +146,17 @@ func (*Scheme) Revoke(_ context.Context, stored core.StoredCredentials, _ core.R
 		return err
 	}
 	return ErrNotRevocable
+}
+
+// Fingerprints names the token in stored as its access token, by core.Fingerprint, so a
+// replaced token can be told from the one before it in the audit and the log (AI-990). It has
+// no refresh token and no expiry.
+func (*Scheme) Fingerprints(stored core.StoredCredentials) (core.CredentialFingerprints, error) {
+	p, err := open(stored)
+	if err != nil {
+		return core.CredentialFingerprints{}, err
+	}
+	return core.CredentialFingerprints{Access: core.Fingerprint(p.Token)}, nil
 }
 
 // open reads the payload this scheme sealed. Its errors never quote the payload.

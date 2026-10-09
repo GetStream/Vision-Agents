@@ -20,6 +20,10 @@ import (
 
 const noOAuthClient = "the app has no OAuth client of its own for this connector"
 
+// noStoredOAuthClient is a read of a connector for which the router keeps no client for the
+// app: neither the app's own, nor one it created, nor the operator's recorded for the app.
+const noStoredOAuthClient = "the router keeps no OAuth client or provider app for the app and this connector"
+
 // errClientIDRequired is what Huma answered for a put without client_id while the schema required
 // it. Without connectors no provider app exists, so the put keeps answering it.
 var errClientIDRequired = APIError{Type: ErrorTypeInvalidRequest, Code: codeValidationFailed,
@@ -47,6 +51,27 @@ type ConnectorOAuthClient struct {
 func (*ConnectorOAuthClient) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "The OAuth client the app registered with a connector's provider itself. " +
 		"The client secret and the signing secret are write-only: no response carries them."
+	return schema
+}
+
+// StoredConnectorOAuthClient is the OAuth client and provider app the router keeps for the app
+// and one connector, as GET reads it (AI-990 F15): which client, and whether each secret is
+// stored, never the secrets.
+type StoredConnectorOAuthClient struct {
+	ConnectorID      string                            `json:"connector_id"`
+	Registration     ConnectorClientRegistrationMethod `json:"registration" doc:"customer: the app's own, put through PUT /v1/agents/connectors/{id}/oauth-client. managed: the one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app). operator: this deployment's own app, recorded for the app by Stream staff."`
+	ClientID         string                            `json:"client_id" doc:"Empty for a provider app without an OAuth client, such as a Linq account."`
+	AuthMethod       ConnectorOAuthClientAuthMethod    `json:"auth_method,omitempty" doc:"Absent when the record leaves it to the connector."`
+	ProviderAppID    string                            `json:"provider_app_id,omitempty" doc:"The provider's id for the app the client belongs to. Absent when there is none."`
+	HasClientSecret  bool                              `json:"has_client_secret" doc:"A client secret is stored, sealed. False for a public client."`
+	HasSigningSecret bool                              `json:"has_signing_secret" doc:"A signing secret for the provider app's events is stored, sealed."`
+	CreatedAt        time.Time                         `json:"created_at"`
+	UpdatedAt        time.Time                         `json:"updated_at" doc:"When the client, its secrets or its method last changed."`
+}
+
+func (*StoredConnectorOAuthClient) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "The OAuth client and provider app the router keeps for the app and one connector. " +
+		"It says whether each secret is stored, and never carries one."
 	return schema
 }
 
@@ -101,6 +126,10 @@ type oauthClientRequest struct {
 	Body ConnectorOAuthClientRequest
 }
 
+type getOAuthClientRequest struct {
+	ID string `path:"id" doc:"The connector, such as github or custom_crm."`
+}
+
 type deleteOAuthClientRequest struct {
 	ID string `path:"id" doc:"The connector, such as github or custom_crm."`
 }
@@ -110,7 +139,11 @@ type oauthClientResponse struct {
 	Body   ConnectorOAuthClient
 }
 
-// registerOAuthClients declares the operations on an app's own OAuth client. Both are
+type getOAuthClientResponse struct {
+	Body StoredConnectorOAuthClient
+}
+
+// registerOAuthClients declares the operations on an app's own OAuth client. All are
 // server-side only: the client secret is the app's backend's to hold, as every connector
 // operation is (registerConnectors).
 func (s *Server) registerOAuthClients(api huma.API) {
@@ -142,6 +175,21 @@ func (s *Server) registerOAuthClients(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
 			http.StatusNotFound, http.StatusConflict},
 	}, s.setConnectorOAuthClient)
+	huma.Register(api, huma.Operation{
+		OperationID: "getConnectorOAuthClient",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/connectors/{id}/oauth-client",
+		Summary:     "Read the OAuth client the router keeps for the app and a connector",
+		Description: "Says which OAuth client and provider app the app's connections to the " +
+			"connector use: the app's own, the one the router created for it, or this " +
+			"deployment's own app recorded for it. It says whether a client secret and a " +
+			"signing secret are stored, and never returns either. Not found when there is none: " +
+			"the connector then uses this deployment's client, or registers one per consent.\n\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{"200": {Description: "The client"}},
+		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getConnectorOAuthClient)
 	huma.Register(api, huma.Operation{
 		OperationID:   "deleteConnectorOAuthClient",
 		Method:        http.MethodDelete,
@@ -234,6 +282,36 @@ func (s *Server) setConnectorOAuthClient(ctx context.Context, request *oauthClie
 		status = http.StatusCreated
 	}
 	return &oauthClientResponse{Status: status, Body: oauthClientOf(*record)}, nil
+}
+
+// getConnectorOAuthClient reads the record of the caller's client for a connector, of
+// whichever registration it is, without its secrets.
+func (s *Server) getConnectorOAuthClient(ctx context.Context, request *getOAuthClientRequest) (*getOAuthClientResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.store == nil {
+		return nil, errNoConnectors
+	}
+	record, err := s.store.ConnectorOAuthClient(ctx, customerID, request.ID)
+	if errors.Is(err, store.ErrNoConnectorOAuthClient) {
+		return nil, notFound(noStoredOAuthClient)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &getOAuthClientResponse{Body: StoredConnectorOAuthClient{
+		ConnectorID:      record.ConnectorID,
+		Registration:     ConnectorClientRegistrationMethod(record.Registration),
+		ClientID:         record.ClientID,
+		AuthMethod:       ConnectorOAuthClientAuthMethod(record.AuthMethod),
+		ProviderAppID:    record.ProviderAppID,
+		HasClientSecret:  len(record.SecretSealed) > 0,
+		HasSigningSecret: len(record.SigningSecretSealed) > 0,
+		CreatedAt:        record.CreatedAt,
+		UpdatedAt:        record.UpdatedAt,
+	}}, nil
 }
 
 // deleteConnectorOAuthClient removes the caller's own client for a connector.
