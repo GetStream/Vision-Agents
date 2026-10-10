@@ -6,9 +6,12 @@
 package chat
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 
@@ -57,19 +60,117 @@ func (s *Stream) PointMessageHook(ctx context.Context, url string) (bool, error)
 		return false, fmt.Errorf("chat: %s is not a url Stream can reach", url)
 	}
 
-	response, err := s.client.GetApp(ctx, &getstream.GetAppRequest{})
+	read, err := ReadHooks(ctx, s.client)
 	if err != nil {
 		return false, fmt.Errorf("chat: get app: %w", err)
 	}
 
-	hooks, updated, err := WithMessageHook(response.Data.App.EventHooks, url)
+	hooks, updated, err := WithMessageHook(read, url)
 	if err != nil {
 		return false, err
 	}
-	if _, err := s.client.UpdateApp(ctx, &getstream.UpdateAppRequest{EventHooks: hooks}); err != nil {
+	if err := WriteHooks(ctx, s.client, hooks); err != nil {
 		return false, fmt.Errorf("chat: update app: %w", err)
 	}
 	return updated, nil
+}
+
+// Hook is one of the app's event hooks: the fields the router reads and changes, and the
+// hook as Stream sent it.
+//
+// It is written back as it was read, with only the fields the router changed replaced.
+// Stream replaces each hook whole on an app update (GetStream/chat
+// monolith/app_store/orm.go), and the SDK's EventHook leaves out fields Stream keeps: an SQS
+// FIFO hook's sqs_event_based_message_group_id_enabled, a Pub/Sub hook's gcp_pubsub_*, an
+// S3 failover's s3_* (monolith/types/event_hook.go). Written back through EventHook, the
+// first is switched off and the others make Stream refuse the whole update
+// (lib/core/api/app/controller/update_app.go), every time.
+type Hook struct {
+	getstream.EventHook
+	// read is the hook as Stream sent it, or nil for one the router adds.
+	read json.RawMessage
+}
+
+// UnmarshalJSON keeps the hook as Stream sent it beside the fields the router reads.
+func (h *Hook) UnmarshalJSON(data []byte) error {
+	h.read = slices.Clone(data)
+	return json.Unmarshal(data, &h.EventHook)
+}
+
+// MarshalJSON is the hook as Stream sent it when the router changed nothing in it, and
+// otherwise that hook with only the fields the router set replaced.
+func (h Hook) MarshalJSON() ([]byte, error) {
+	if h.read == nil {
+		return json.Marshal(h.EventHook)
+	}
+	var was getstream.EventHook
+	if err := json.Unmarshal(h.read, &was); err != nil {
+		return nil, err
+	}
+	before, err := fieldsOf(was)
+	if err != nil {
+		return nil, err
+	}
+	after, err := fieldsOf(h.EventHook)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(h.read, &fields); err != nil {
+		return nil, err
+	}
+	changed := false
+	for key, value := range after {
+		if !bytes.Equal(before[key], value) {
+			fields[key], changed = value, true
+		}
+	}
+	if !changed {
+		return h.read, nil
+	}
+	return json.Marshal(fields)
+}
+
+// fieldsOf is each field of a hook the SDK models, as it writes it.
+func fieldsOf(hook getstream.EventHook) (map[string]json.RawMessage, error) {
+	encoded, err := json.Marshal(hook)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	return fields, json.Unmarshal(encoded, &fields)
+}
+
+// appHooks is the part of the app the hooks are read from.
+type appHooks struct {
+	App struct {
+		EventHooks []Hook `json:"event_hooks"`
+	} `json:"app"`
+}
+
+// hooksUpdate is an app update that sends the hooks and nothing else. The SDK's
+// UpdateAppRequest sends every setting it is not given as null (grants,
+// user_search_disallowed_roles, webhook_events and more), and the hooks are all the router
+// means to change.
+type hooksUpdate struct {
+	EventHooks []Hook `json:"event_hooks"`
+}
+
+// ReadHooks is the app's event hooks, each kept as Stream sent it so WriteHooks can send
+// back what the router did not change exactly as it was.
+func ReadHooks(ctx context.Context, client *getstream.Stream) ([]Hook, error) {
+	var app appHooks
+	if _, err := getstream.MakeRequest[any](client.Client, ctx, http.MethodGet, "/api/v2/app", nil, nil, &app, nil); err != nil {
+		return nil, err
+	}
+	return app.App.EventHooks, nil
+}
+
+// WriteHooks makes hooks the app's event hooks, in one update that changes nothing else.
+func WriteHooks(ctx context.Context, client *getstream.Stream, hooks []Hook) error {
+	var response getstream.Response
+	_, err := getstream.MakeRequest(client.Client, ctx, http.MethodPatch, "/api/v2/app", nil, &hooksUpdate{EventHooks: hooks}, &response, nil)
+	return err
 }
 
 // WithMessageHook is hooks with url delivering new messages: the hook already at url asking
@@ -77,7 +178,7 @@ func (s *Stream) PointMessageHook(ctx context.Context, url string) (bool, error)
 // Stream in one update (phone.Stream.ChangeHooks).
 //
 // Reports whether a hook at url was updated rather than one added.
-func WithMessageHook(hooks []getstream.EventHook, url string) ([]getstream.EventHook, bool, error) {
+func WithMessageHook(hooks []Hook, url string) ([]Hook, bool, error) {
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return nil, false, errors.New("chat: a message hook needs a url to deliver to")
@@ -88,7 +189,7 @@ func WithMessageHook(hooks []getstream.EventHook, url string) ([]getstream.Event
 
 	enabled := true
 	for index, hook := range hooks {
-		if webhookURL(hook) != url {
+		if webhookURL(hook.EventHook) != url {
 			continue
 		}
 		hooks[index].EventTypes = messageHookEvents
@@ -96,12 +197,12 @@ func WithMessageHook(hooks []getstream.EventHook, url string) ([]getstream.Event
 		hooks[index].HookType = ptr(webhookHookType)
 		return hooks, true, nil
 	}
-	return append(hooks, getstream.EventHook{
+	return append(hooks, Hook{EventHook: getstream.EventHook{
 		HookType:   ptr(webhookHookType),
 		WebhookUrl: &url,
 		Enabled:    &enabled,
 		EventTypes: messageHookEvents,
-	}), false, nil
+	}}), false, nil
 }
 
 // DeliversMessagesTo reports whether the app has a hook, switched on, that delivers new
@@ -141,23 +242,23 @@ func (s *Stream) RemoveMessageHook(ctx context.Context, url string) (bool, error
 		return false, errors.New("chat: a url is required")
 	}
 
-	response, err := s.client.GetApp(ctx, &getstream.GetAppRequest{})
+	read, err := ReadHooks(ctx, s.client)
 	if err != nil {
 		return false, fmt.Errorf("chat: get app: %w", err)
 	}
 
-	kept := make([]getstream.EventHook, 0, len(response.Data.App.EventHooks))
-	for _, hook := range response.Data.App.EventHooks {
-		if webhookURL(hook) == url {
+	kept := make([]Hook, 0, len(read))
+	for _, hook := range read {
+		if webhookURL(hook.EventHook) == url {
 			continue
 		}
 		kept = append(kept, hook)
 	}
-	if len(kept) == len(response.Data.App.EventHooks) {
+	if len(kept) == len(read) {
 		return false, nil
 	}
 
-	if _, err := s.client.UpdateApp(ctx, &getstream.UpdateAppRequest{EventHooks: kept}); err != nil {
+	if err := WriteHooks(ctx, s.client, kept); err != nil {
 		return false, fmt.Errorf("chat: update app: %w", err)
 	}
 	return true, nil

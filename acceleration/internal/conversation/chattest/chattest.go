@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -36,8 +37,11 @@ type store struct {
 	appReads int
 	// keyed are apps answered for one api key, standing in for several apps at one URL.
 	keyed map[string]App
-	// hooks are the event hooks each api key's app holds, as an app update last set them.
-	hooks map[string][]any
+	// hooks are the event hooks each api key's app holds, as an app update last set them,
+	// each exactly as it was sent.
+	hooks map[string][]json.RawMessage
+	// updates are the bodies of the app updates made with each api key, as they were sent.
+	updates map[string][]json.RawMessage
 	// unresolvable are the hosts an app update refuses a webhook hook on; see Unresolvable.
 	unresolvable map[string]bool
 	// asked is every request served, with the key it was made with.
@@ -104,7 +108,8 @@ func NewServer(t *testing.T) *Server {
 	db := &store{
 		channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
 		users: map[string]map[string]any{}, trunks: map[string]map[string]any{},
-		rules: map[string]map[string]any{}, calls: map[string][]string{}, hooks: map[string][]any{}, now: time.Now,
+		rules: map[string]map[string]any{}, calls: map[string][]string{}, hooks: map[string][]json.RawMessage{},
+		updates: map[string][]json.RawMessage{}, now: time.Now,
 		app: App{ID: 1, ChannelTypes: map[string]map[string][]string{"agent": safeGrants}, CallTypes: []string{"agent"}},
 	}
 	server := httptest.NewServer(http.HandlerFunc(db.serve))
@@ -171,6 +176,30 @@ func (s *Server) EventHooks(apiKey string) []getstream.EventHook {
 		s.t.Fatalf("chattest: %v", err)
 	}
 	return hooks
+}
+
+// SetEventHooks gives the app of an api key these hooks, each exactly as written, the way
+// Stream holds fields the SDK's EventHook does not model.
+func (s *Server) SetEventHooks(apiKey string, hooks ...json.RawMessage) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.hooks[apiKey] = hooks
+}
+
+// EventHooksJSON are the event hooks the app of an api key holds, each exactly as the last
+// app update sent it.
+func (s *Server) EventHooksJSON(apiKey string) []json.RawMessage {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return slices.Clone(s.db.hooks[apiKey])
+}
+
+// AppUpdates are the bodies of the app updates made with an api key, oldest first, as they
+// were sent.
+func (s *Server) AppUpdates(apiKey string) []json.RawMessage {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return slices.Clone(s.db.updates[apiKey])
 }
 
 // Unresolvable makes every app update that holds a webhook hook on host fail from now on,
@@ -355,10 +384,13 @@ func (db *store) appFor(r *http.Request) App {
 
 // unresolvableHook is the url of the first webhook hook in an app update whose host does
 // not resolve, or empty when every one does.
-func (db *store) unresolvableHook(hooks []any) string {
+func (db *store) unresolvableHook(hooks []json.RawMessage) string {
 	for _, hook := range hooks {
-		fields, _ := hook.(map[string]any)
-		address, _ := fields["webhook_url"].(string)
+		var fields struct {
+			Address string `json:"webhook_url"`
+		}
+		_ = json.Unmarshal(hook, &fields)
+		address := fields.Address
 		if parsed, err := url.Parse(address); err == nil && db.unresolvable[parsed.Hostname()] {
 			return address
 		}
@@ -383,10 +415,12 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	defer db.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	db.asked = append(db.asked, Request{Method: r.Method, Path: r.URL.Path, APIKey: r.URL.Query().Get("api_key")})
-	var body map[string]any
+	var raw []byte
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		raw, _ = io.ReadAll(r.Body)
 	}
+	var body map[string]any
+	_ = json.Unmarshal(raw, &body)
 	parts := strings.Split(r.URL.Path, "/")
 	result := map[string]any{}
 	switch {
@@ -417,7 +451,13 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 5, "message": "api key not valid", "StatusCode": http.StatusUnauthorized})
 			return
 		}
-		if hooks, ok := body["event_hooks"].([]any); ok {
+		db.updates[r.URL.Query().Get("api_key")] = append(db.updates[r.URL.Query().Get("api_key")], raw)
+		var update struct {
+			EventHooks *[]json.RawMessage `json:"event_hooks"`
+		}
+		_ = json.Unmarshal(raw, &update)
+		if update.EventHooks != nil {
+			hooks := *update.EventHooks
 			if refused := db.unresolvableHook(hooks); refused != "" {
 				// The status and code are unverified: the refusal was seen only as the Go
 				// client's error text, which carries the message alone.
