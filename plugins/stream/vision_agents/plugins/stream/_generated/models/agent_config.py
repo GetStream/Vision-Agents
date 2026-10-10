@@ -61,8 +61,8 @@ class AgentConfig:
         knowledge_namespace (str | Unset):
         llm (str | Unset):
         mcp_servers (list[McpServer] | Unset):
-        plugin_events (list[PluginEvent] | Unset):
-        plugins (list[PluginWithOptions | str] | Unset):
+        plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors.
+        plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector.
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.
@@ -310,9 +310,7 @@ class AgentConfig:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_channels import AgentChannels
         from ..models.agent_config_tags import AgentConfigTags
-        from ..models.agent_connector_binding import (
-            AgentConnectorBinding,
-        )
+        from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_tools import AgentTools
         from ..models.greeting import Greeting

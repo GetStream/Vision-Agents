@@ -73,8 +73,9 @@ def sync_detailed(
 ) -> Response[Any | ErrorResponse]:
     """Finish a plugin login
 
-     The provider redirects here with a code. The path is unauthenticated because the browser arrives
-    from the identity provider, and the state is the secret.
+     Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a
+    code. The path is unauthenticated because the browser arrives from the identity provider, and the
+    state is the secret.
 
     Args:
         code (str | Unset):
@@ -111,8 +112,9 @@ def sync(
 ) -> Any | ErrorResponse | None:
     """Finish a plugin login
 
-     The provider redirects here with a code. The path is unauthenticated because the browser arrives
-    from the identity provider, and the state is the secret.
+     Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a
+    code. The path is unauthenticated because the browser arrives from the identity provider, and the
+    state is the secret.
 
     Args:
         code (str | Unset):
@@ -144,8 +146,9 @@ async def asyncio_detailed(
 ) -> Response[Any | ErrorResponse]:
     """Finish a plugin login
 
-     The provider redirects here with a code. The path is unauthenticated because the browser arrives
-    from the identity provider, and the state is the secret.
+     Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a
+    code. The path is unauthenticated because the browser arrives from the identity provider, and the
+    state is the secret.
 
     Args:
         code (str | Unset):
@@ -180,8 +183,9 @@ async def asyncio(
 ) -> Any | ErrorResponse | None:
     """Finish a plugin login
 
-     The provider redirects here with a code. The path is unauthenticated because the browser arrives
-    from the identity provider, and the state is the secret.
+     Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a
+    code. The path is unauthenticated because the browser arrives from the identity provider, and the
+    state is the secret.
 
     Args:
         code (str | Unset):

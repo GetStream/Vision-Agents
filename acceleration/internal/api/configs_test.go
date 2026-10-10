@@ -15,6 +15,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -24,6 +25,8 @@ type ConfigsSuite struct {
 	// describing runs whenever the router asks a config's MCP server about itself, which a
 	// save does between checking the config and writing it. Nil runs nothing.
 	describing atomic.Pointer[func()]
+	// logged is what the router logged, for the tests of the deprecation it warns of.
+	logged *lockedLog
 }
 
 func TestConfigsSuite(t *testing.T) {
@@ -42,6 +45,8 @@ func (s *ConfigsSuite) SetupSuite() {
 		}
 		return nil, errors.New("tests reach no real MCP server")
 	})}
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -1217,6 +1222,28 @@ func (s *ConfigsSuite) TestABindingToThePluginsOwnConnectorIsCalledWhatThePlugin
 		read := s.read(created.Id)
 		s.Equal("Answer briefly.", value(read.Instructions), "user: %v", user)
 		s.Len(value(read.Connectors), 1, "user: %v", user)
+	}
+}
+
+// TestASavedPluginEntryABindingReplacesIsNotCountedAsUnbound: the deprecation warning is the
+// evidence for removing plugins, so an entry the session drops for a binding (a migrated
+// config's, with connectors on) is not real use, and an entry no binding replaces (linear, beside a slack binding) is.
+func (s *ConfigsSuite) TestASavedPluginEntryABindingReplacesIsNotCountedAsUnbound() {
+	migrated := s.createConfig(map[string]any{
+		"name":       "migrated-" + s.utils.uuid(),
+		"plugins":    []any{map[string]any{"name": "slack"}},
+		"connectors": []map[string]any{sessionSlack("slack")},
+	})
+	live := s.createConfig(map[string]any{
+		"name":       "live-" + s.utils.uuid(),
+		"plugins":    []any{map[string]any{"name": "slack"}, map[string]any{"name": "linear"}},
+		"connectors": []map[string]any{sessionSlack("inbox")},
+	})
+
+	for id, unbound := range map[string]string{migrated.Id: "unbound=0", live.Id: "unbound=1"} {
+		lines := deprecations(s.logged, plugins.PathConfigSave, id)
+		s.Require().Len(lines, 1, id)
+		s.Contains(lines[0], " "+unbound+" ", id)
 	}
 }
 

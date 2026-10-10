@@ -279,7 +279,9 @@ func documentHandWritten(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/plugins/callback",
 		Summary:     "Finish a plugin login",
-		Description: "The provider redirects here with a code. The path is unauthenticated because the " +
+		Deprecated:  true,
+		Description: "Deprecated: a connector login finishes at finishConnectorConsent. " +
+			"The provider redirects here with a code. The path is unauthenticated because the " +
 			"browser arrives from the identity provider, and the state is the secret.",
 		Security: []map[string][]string{},
 		Parameters: []*huma.Param{
@@ -508,7 +510,9 @@ func documentHandWritten(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/plugins/{plugin_id}/logo",
 		Summary:     "A plugin's logo",
-		Description: "The image a card uses to show which plugin it is asking about, as an SVG. The path " +
+		Deprecated:  true,
+		Description: "Deprecated with the plugin catalog. Connectors have no logo route. " +
+			"The image a card uses to show which plugin it is asking about, as an SVG. The path " +
 			"is unauthenticated because what draws it is an `<img>` in a chat client or a browser, " +
 			"which has no credential of this API's to send, and because the catalog is the same " +
 			"built-in list for every customer, so there is nothing of anybody's here.",
@@ -526,7 +530,9 @@ func documentHandWritten(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/v1/agents/plugins/events/{token}",
 		Summary:     "Receive a plugin's MCP event",
-		Description: "Where a plugin's MCP server delivers the events an agent subscribed to, signed " +
+		Deprecated:  true,
+		Description: "Deprecated: a connector binding's events are delivered to receiveConnectionEvent. " +
+			"Where a plugin's MCP server delivers the events an agent subscribed to, signed " +
 			"with Standard Webhooks. The path is unauthenticated because the server is not a " +
 			"customer: the token names the subscription and its secret signs each delivery. A " +
 			"verification is answered with its challenge, and an event opens a text conversation.",
