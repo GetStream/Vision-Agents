@@ -166,7 +166,10 @@ go run ./cmd/voicebench digest --title "Voicebench" --out out/digest out/<run-di
 `out/digest/voicebench.html` gives passed out of total and a 0-100 score per pack and scenario
 type, every failure with its cause, the router's median per stage, and under each call a "What
 happened" with the caller's script beside what the agent heard, the agent's turns, the tool
-calls and the judge's notes. Read the causes before blaming the model:
+calls and the judge's notes. `digest.sh` also streams every caller line of the frozen or short set alone through the
+agent's speech-to-text (`out/<run>/stt`) and the report shows its WER in a Speech-to-text
+section: what the model hears, apart from turn-taking. `VOICEBENCH_DIGEST_STT=0` skips it;
+pass an `stt` run directory to `digest` to add one by hand. Read the causes before blaming the model:
 
 - **infra**: no verdict. A key, quota, a cold Gemma, a service: fix the setup, never the agent.
 - **heard wrong**: the caller said a value the agent's speech-to-text never heard.

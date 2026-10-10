@@ -260,6 +260,8 @@ type Server struct {
 	garbledPosts int
 	// account is the user the next consent is by: UserID until SwitchAccount.
 	account string
+	// mcpStatus is what every MCP request is answered with (AnswerMCP); zero answers them.
+	mcpStatus int
 
 	// The fake Slack (slack.go): configuration tokens by token, refresh tokens with whether
 	// they were spent, successful rotations, and apps by id in the order they were made.

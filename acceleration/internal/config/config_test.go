@@ -429,6 +429,23 @@ func (s *ConfigSuite) TestConnectorsAreOffUnlessAskedFor() {
 	s.True(config.Connectors.Enabled)
 }
 
+// TestDirectCallsAreCappedAtSixtyAMinuteUnlessAskedOtherwise: the default, the variable that
+// changes it, 0 that turns it off, and a negative cap refused (AI-958).
+func (s *ConfigSuite) TestDirectCallsAreCappedAtSixtyAMinuteUnlessAskedOtherwise() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.EqualValues(60, config.Connectors.ProxyCallsPerMinute)
+
+	s.T().Setenv("ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Connectors.ProxyCallsPerMinute)
+
+	s.T().Setenv("ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE", "-1")
+	_, _, err = Load("")
+	s.ErrorContains(err, "connectors.proxy_calls_per_minute")
+}
+
 func (s *ConfigSuite) TestAnEpisodeIsIdleAfterAnHourUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

@@ -152,6 +152,8 @@ type RouterSuite struct {
 	// denied are the app ids the suite refuses registration to.
 	denied []string
 	server *httptest.Server
+	// router is the suite's router itself, for what cmd/router calls on it besides serving.
+	router *Server
 	app    testApp
 
 	// streams, modalities and conversations are what the suite's router was built from,
@@ -216,6 +218,9 @@ type RouterSuite struct {
 	// ROUTER_CONNECTORS_ENABLED unset has, for a control suite to set before it starts the
 	// harness. The suite's store, resolver and sealer are still built.
 	connectorsOff bool
+	// proxyCallsPerMinute caps one customer's direct calls to one connector, for a suite about
+	// the connection proxy to set before it starts the harness. Zero caps nothing.
+	proxyCallsPerMinute int64
 	// eventSecrets and bridge are the connector events endpoint's secrets and channel
 	// bridge, for a suite about connector events to set before it starts the harness. Nil
 	// takes no events and drops messages, as a deployment without them does.
@@ -498,6 +503,7 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorResolver:     s.resolver,
 		ConnectorTransports:   serverTransports,
 		ConnectorLimiter:      connectorLimiter,
+		ProxyCallsPerMinute:   s.proxyCallsPerMinute,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
@@ -511,6 +517,7 @@ func (s *RouterSuite) SetupSuite() {
 	listener.Start()
 	public.PublicURL = listener.URL
 	s.server = listener
+	s.router = server
 	s.T().Cleanup(s.server.Close)
 }
 
