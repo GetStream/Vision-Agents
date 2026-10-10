@@ -55,7 +55,7 @@ type Connection struct {
 	UpdatedAt              time.Time                  `json:"updated_at" readOnly:"true"`
 	UsedBy                 []ConnectionUse            `json:"used_by" readOnly:"true" doc:"The agent config bindings that name this connection as their fixed connection, which deleting it would break. A binding a session fills with the caller's own connection names none, so it is never listed."`
 	Client                 *ConnectionClient          `json:"client,omitempty" readOnly:"true" doc:"The OAuth client the connection's grant was issued to. Absent for a scheme without one, before the first consent, and for a connection last consented before the router kept it."`
-	LastValidation         *ConnectionLastValidation  `json:"last_validation,omitempty" readOnly:"true" doc:"What the last validate (POST .../validate) found. Absent until the first one."`
+	LastValidation         *ConnectionLastValidation  `json:"last_validation,omitempty" readOnly:"true" doc:"What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh)."`
 }
 
 // ConnectionLastValidation is what a connection's last validate found
@@ -63,7 +63,7 @@ type Connection struct {
 type ConnectionLastValidation struct {
 	Status    ConnectionValidationStatus `json:"status"`
 	Code      string                     `json:"code,omitempty" doc:"The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies."`
-	Error     string                     `json:"error,omitempty" doc:"Why the status is not connected, for a person to read, as the validate answered it. It never holds a credential."`
+	Error     string                     `json:"error,omitempty" doc:"Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote."`
 	CheckedAt time.Time                  `json:"checked_at" doc:"When the validate ran."`
 }
 
@@ -445,7 +445,7 @@ func (s *Server) listConnections(ctx context.Context, request *listConnectionsRe
 	listed := ConnectionPage{Items: make([]Connection, 0, len(kept)), HasMore: more}
 	for _, connection := range kept {
 		listed.Items = append(listed.Items, connectionOf(connection, uses[connection.ID], definitions[connection.ID],
-			clientOf(clients, connection.ID), lastValidationOf(validations, connection.ID)))
+			clientOf(clients, connection.ID), lastValidationOf(validations, connection)))
 	}
 	if more {
 		last := kept[len(kept)-1]
@@ -477,7 +477,7 @@ func (s *Server) getConnection(ctx context.Context, request *connectionRequest) 
 		return nil, err
 	}
 	return &connectionResponse{Body: connectionOf(connection, uses[connection.ID], definitions[connection.ID],
-		clientOf(clients, connection.ID), lastValidationOf(validations, connection.ID))}, nil
+		clientOf(clients, connection.ID), lastValidationOf(validations, connection))}, nil
 }
 
 // deleteConnection soft deletes one connection the caller may have, unless an
@@ -687,11 +687,16 @@ func connectionOf(connection store.ConnectorConnection, uses []store.ConnectionU
 	}
 }
 
-// lastValidationOf is the recorded last validate of the connection id names, nil when there is
-// none.
-func lastValidationOf(validations map[string]store.ConnectorConnectionValidation, id string) *ConnectionLastValidation {
-	validation, ok := validations[id]
-	if !ok {
+// lastValidationOf is the recorded last validate of connection, nil when there is none or when
+// it no longer describes the connection's grant: new credentials since (a token saved, a
+// consent, a refresh) moved the connection's revision past the validate's, or a grant began
+// after it ran. The second is a token saved again as it was, which leaves the revision
+// (pgsealed's commit seals only changed credentials anew) but connects a connection that was
+// not connected from then on (ConnectedAt), and a consent, which always begins a grant.
+func lastValidationOf(validations map[string]store.ConnectorConnectionValidation, connection store.ConnectorConnection) *ConnectionLastValidation {
+	validation, ok := validations[connection.ID]
+	if !ok || validation.Revision < connection.Revision ||
+		connection.ConnectedAt != nil && validation.CheckedAt.Before(*connection.ConnectedAt) {
 		return nil
 	}
 	return &ConnectionLastValidation{Status: ConnectionValidationStatus(validation.Status), Code: validation.Code,

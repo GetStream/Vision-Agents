@@ -725,29 +725,35 @@ func (s *Store) ConnectorConnectionClients(ctx context.Context, connectionIDs []
 
 // ConnectorConnectionValidation is the last validate of a connection (AI-1052), kept in
 // connector_connection_validations (20261016120000_connector_connection_validations.sql): its
-// status, its code (a stable reason, or the provider's HTTP status), its error and when it ran.
-// The error is the one the validate answered, which holds no credential.
+// status, its code (a stable reason, or the provider's HTTP status), its error and when it ran,
+// and the revision of the credentials it checked. The error is the validate's with the
+// credential's values cut out, and capped (api.storedError).
 type ConnectorConnectionValidation struct {
 	bun.BaseModel `bun:"table:connector_connection_validations,alias:ccv"`
 
-	ConnectionID string    `bun:"connection_id,pk"`
-	Status       string    `bun:"status,notnull"`
-	Code         string    `bun:"code,notnull"`
-	Error        string    `bun:"error,notnull"`
-	CheckedAt    time.Time `bun:"checked_at,notnull"`
+	ConnectionID string `bun:"connection_id,pk"`
+	// Revision is the connection's revision (ConnectorConnection.Revision) whose credentials
+	// the validate checked. A connection read at a later revision has newer credentials than
+	// the validate saw.
+	Revision  int       `bun:"revision,notnull"`
+	Status    string    `bun:"status,notnull"`
+	Code      string    `bun:"code,notnull"`
+	Error     string    `bun:"error,notnull"`
+	CheckedAt time.Time `bun:"checked_at,notnull"`
 }
 
 // PutConnectorConnectionValidation records a validate of the connection, replacing the one an
-// earlier validate recorded. Of two validates at once, the one that ran later stays, whichever
-// writes last.
+// earlier validate recorded. Of two validates at once, the one of the later revision stays,
+// and of two of the same revision the one that ran later, whichever writes last: a validate
+// of credentials replaced while it ran never covers one of the new credentials.
 func (s *Store) PutConnectorConnectionValidation(ctx context.Context, validation *ConnectorConnectionValidation) error {
 	if validation.ConnectionID == "" || validation.Status == "" || validation.CheckedAt.IsZero() {
 		return stack.Wrap(errors.New("store: a connection validation needs a connection, a status and a time"))
 	}
 	_, err := s.db.NewInsert().Model(validation).
 		On("CONFLICT (connection_id) DO UPDATE").
-		Set("status = EXCLUDED.status, code = EXCLUDED.code, error = EXCLUDED.error, checked_at = EXCLUDED.checked_at").
-		Where("ccv.checked_at <= EXCLUDED.checked_at").
+		Set("revision = EXCLUDED.revision, status = EXCLUDED.status, code = EXCLUDED.code, error = EXCLUDED.error, checked_at = EXCLUDED.checked_at").
+		Where("(ccv.revision, ccv.checked_at) <= (EXCLUDED.revision, EXCLUDED.checked_at)").
 		Exec(ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: put connection validation: %w", err))

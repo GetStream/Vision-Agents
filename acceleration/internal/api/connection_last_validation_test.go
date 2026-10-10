@@ -5,6 +5,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -250,10 +253,199 @@ func (s *ConnectionToolsSuite) TestAPendingConnectionsValidateIsRecordedWithoutA
 	s.Empty(got.Code)
 }
 
+// TestANewTokenHidesTheLastValidationOfTheOldOne (R1.1 of PR #874): what a validate found of
+// a token says nothing of the token saved after it, so GET and list show no last validation
+// until the next validate. The connection stays connected throughout (a 503), so only the
+// revision tells the two tokens apart.
+func (s *ConnectionToolsSuite) TestANewTokenHidesTheLastValidationOfTheOldOne() {
+	connector := s.connector(bearer.Name, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	s.answerMCP(http.StatusServiceUnavailable)
+	s.validate(id)
+	s.Require().NotNil(s.get(id).LastValidation)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(s.get(id).Revision, s.token+"-new"), nil))
+
+	got := s.get(id)
+	s.Equal(3, got.Revision, "new credentials")
+	s.Nil(got.LastValidation)
+	var page ConnectionPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections?owner_type=app&connector_id="+connector, nil, &page))
+	s.Require().Len(page.Items, 1)
+	s.Nil(page.Items[0].LastValidation)
+}
+
+// TestSavingARefusedTokenAgainHidesItsLastValidation (R1.1 of PR #874, the reviewer's probe):
+// the same token saved again connects the connection again at the same revision, and GET and
+// list no longer show needs_reauthorization beside status connected.
+func (s *ConnectionToolsSuite) TestSavingARefusedTokenAgainHidesItsLastValidation() {
+	connector := s.connector(bearer.Name, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	s.answerMCP(http.StatusBadRequest)
+	s.Require().Equal(validationNeedsReauthorization, string(s.validate(id).Status))
+	s.provider.AnswerMCP(0)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(s.get(id).Revision, s.token), nil))
+
+	got := s.get(id)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), got.Status)
+	s.Equal(2, got.Revision, "the same credentials")
+	s.Nil(got.LastValidation)
+	var page ConnectionPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections?owner_type=app&connector_id="+connector, nil, &page))
+	s.Require().Len(page.Items, 1)
+	s.Nil(page.Items[0].LastValidation)
+}
+
+// TestATokenSavedDuringAValidateIsNotMovedNorShownTheOldResult (R1.1, R1.3 of PR #874): the
+// provider refuses the old token with 400 only after a new one was saved. The new token stays
+// connected (Invalidate's revision guard, given the credential the validate sent), and the
+// late result, of the old token, is not shown beside it.
+func (s *ConnectionToolsSuite) TestATokenSavedDuringAValidateIsNotMovedNorShownTheOldResult() {
+	arrived, release := make(chan struct{}, 1), make(chan struct{})
+	blocking := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		select {
+		case arrived <- struct{}{}:
+		default:
+		}
+		<-release
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+	}))
+	s.T().Cleanup(blocking.Close)
+	id := s.connectionTo(s.connectorAt(blocking.URL + "/mcp"))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	done := make(chan int, 1)
+	go func() {
+		done <- s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil, nil)
+	}()
+	<-arrived
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(s.get(id).Revision, s.token+"-new"), nil))
+	close(release)
+	s.Require().Equal(http.StatusOK, <-done)
+
+	got := s.get(id)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), got.Status, "the new token is not moved by the old one's 400")
+	s.Nil(got.LastValidation, "the old token's result is not the new one's")
+}
+
+// TestAValidateThatRenewsTheGrantShowsWhatItFound (R1.1 of PR #874): an expired access token
+// is renewed by the validate's own Resolve, which moves the revision. What the validate found
+// is of the renewed token, so it is shown, not hidden as a result of the token before.
+func (s *ConnectionToolsSuite) TestAValidateThatRenewsTheGrantShowsWhatItFound() {
+	access, refresh := s.codeGrant()
+	id := s.connection(oauth2code.Name)
+	grant := s.importedGrant(access, "chat:write")
+	grant["values"].(map[string]string)[oauth2code.SuppliedRefreshToken] = refresh
+	grant["values"].(map[string]string)[oauth2code.SuppliedExpiresAt] = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", grant, nil))
+	refreshes := s.provider.Refreshes()
+
+	s.Require().Equal(validationConnected, string(s.validate(id).Status))
+
+	s.Require().Equal(refreshes+1, s.provider.Refreshes(), "the validate renewed the grant")
+	got := s.get(id)
+	s.Equal(3, got.Revision, "the renewed credentials")
+	s.Require().NotNil(got.LastValidation)
+	s.Equal(validationConnected, string(got.LastValidation.Status))
+}
+
+// TestAnErrorThatEchoesTheCredentialIsStoredWithoutItAndCut (R1.2 of PR #874): go-sdk puts a
+// non-transient error answer's body in the error, and a provider can echo the request's
+// Authorization header in it, padded to megabytes. The last validation keeps neither the token
+// nor more than maxStoredErrorBytes, in the row, on GET and on list, and cuts no character in
+// two: the "x" prefixes move the cut across each byte of the 3-byte "€".
+func (s *ConnectionToolsSuite) TestAnErrorThatEchoesTheCredentialIsStoredWithoutItAndCut() {
+	for _, scheme := range []string{bearer.Name, oauth2code.Name} {
+		for offset := range 3 {
+			s.Run(scheme+"/"+strconv.Itoa(offset), func() {
+				// 501: a non-transient answer (go-sdk keeps the body) that moves no credential, so
+				// both schemes stay connected and the validate fails.
+				echo := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					_, _ = io.ReadAll(r.Body)
+					authorization := r.Header.Get("Authorization")
+					_, token, _ := strings.Cut(authorization, " ")
+					message := "bad credentials: " + authorization + " token=" + token + " " + strings.Repeat("x", offset) + strings.Repeat("€", 1<<20)
+					body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "error": map[string]any{"code": -32600, "message": message}})
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusNotImplemented)
+					_, _ = w.Write(body)
+				}))
+				s.T().Cleanup(echo.Close)
+				connector := s.connectorWith(scheme, echo.URL+"/mcp")
+				id := s.connectionTo(connector)
+				credentials := s.bearerToken(1, s.token)
+				if scheme == oauth2code.Name {
+					credentials = s.importedGrant(s.token, "chat:write")
+				}
+				s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", credentials, nil))
+
+				s.Require().Equal(validationFailed, string(s.validate(id).Status))
+
+				var row string
+				s.Require().NoError(s.store.DB().NewRaw("SELECT error FROM connector_connection_validations WHERE connection_id = ?", id).Scan(s.T().Context(), &row))
+				one := s.get(id).LastValidation
+				s.Require().NotNil(one)
+				var page ConnectionPage
+				s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections?owner_type=app&connector_id="+connector, nil, &page))
+				s.Require().Len(page.Items, 1)
+				s.Require().NotNil(page.Items[0].LastValidation)
+				for where, text := range map[string]string{"row": row, "get": one.Error, "list": page.Items[0].LastValidation.Error} {
+					// s.False on strings.Contains, not s.NotContains, so a failure never prints the token.
+					s.False(strings.Contains(text, s.token), where+" holds the token")
+					s.True(strings.Contains(text, "bad credentials: "+storedRedacted+" token="+storedRedacted+" "+strings.Repeat("x", offset)+"€"),
+						where+" keeps the start of the provider's error")
+					s.LessOrEqual(len(text), maxStoredErrorBytes, where)
+					s.True(utf8.ValidString(text), where+" cuts no character")
+					s.True(strings.HasSuffix(text, storedErrorCut), where)
+				}
+			})
+		}
+	}
+}
+
+// codeGrant is an access and a refresh token the fake issued to its preregistered client
+// through an authorization code grant with PKCE (RFC 6749 section 4.1, RFC 7636), so the
+// router's oauth2_code can renew the access token.
+func (s *ConnectionToolsSuite) codeGrant() (string, string) {
+	verifier := "verifier-" + strings.Repeat("x", 43)
+	digest := sha256.Sum256([]byte(verifier))
+	callback, err := s.provider.Consent(s.provider.URL + fakeprovider.PathAuthorize + "?" + url.Values{
+		"response_type": {"code"}, "client_id": {s.provider.ClientID}, "redirect_uri": {fakeprovider.RedirectURI},
+		"code_challenge": {base64.RawURLEncoding.EncodeToString(digest[:])}, "code_challenge_method": {"S256"},
+		"state": {"state"}, "resource": {s.provider.URL + fakeprovider.PathMCP},
+	}.Encode())
+	s.Require().NoError(err)
+	form := url.Values{"grant_type": {"authorization_code"}, "code": {callback.Query().Get("code")},
+		"redirect_uri": {fakeprovider.RedirectURI}, "code_verifier": {verifier}, "resource": {s.provider.URL + fakeprovider.PathMCP}}
+	request, err := http.NewRequest(http.MethodPost, s.provider.URL+fakeprovider.PathToken, strings.NewReader(form.Encode()))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.SetBasicAuth(s.provider.ClientID, s.provider.ClientSecret)
+	response, err := s.provider.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	var tokens struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	s.Require().NoError(json.NewDecoder(response.Body).Decode(&tokens))
+	s.Require().NotEmpty(tokens.RefreshToken)
+	return tokens.AccessToken, tokens.RefreshToken
+}
+
 // connectorAt stores a bearer connector of the suite's app whose MCP endpoint is mcp.
 func (s *ConnectionToolsSuite) connectorAt(mcp string) string {
+	return s.connectorWith(bearer.Name, mcp)
+}
+
+// connectorWith stores a connector of the suite's app taking scheme whose MCP endpoint is mcp.
+func (s *ConnectionToolsSuite) connectorWith(scheme, mcp string) string {
 	connector := "custom_tools" + strings.ReplaceAll(s.utils.uuid(), "-", "")
-	yaml := strings.Replace(s.manifest(connector, 1, bearer.Name, ""),
+	yaml := strings.Replace(s.manifest(connector, 1, scheme, ""),
 		"mcp: "+s.provider.URL+fakeprovider.PathMCP, "mcp: "+mcp, 1)
 	manifest, err := core.ParseManifest([]byte(yaml))
 	s.Require().NoError(err)

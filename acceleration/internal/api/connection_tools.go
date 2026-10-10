@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -332,14 +333,28 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 	if s.connectorResolver == nil || s.connectorTransports == nil {
 		return nil, errConnectionToolsOff
 	}
+	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
 	answered := &lastAnswer{}
-	response, err := s.checkConnection(ctx, connection, request.Body, answered)
+	// The revision the validate checks: the credential's, or, when none was resolved, the
+	// connection's as read before, so a credential saved since is never shown with this result.
+	revision := connection.Revision
+	// The resolver refuses a connection that is not connected before anything is sent, and
+	// moves one whose renewal the provider refused; either way the row says what to do.
+	credential, err := s.connectorResolver.Resolve(ctx, ref, core.CredentialRequest{})
+	var response *validationResponse
+	if err != nil {
+		response, err = s.validationAfter(ctx, connection, err)
+	} else {
+		revision = credential.Revision
+		response, err = s.checkConnection(ctx, connection, credential, request.Body, answered)
+	}
 	if err != nil {
 		return nil, err
 	}
 	validation := response.Body
-	record := &store.ConnectorConnectionValidation{ConnectionID: connection.ID, Status: string(validation.Status),
-		Code: validation.Code, Error: validation.Error, CheckedAt: time.Now().UTC().Truncate(time.Microsecond)}
+	record := &store.ConnectorConnectionValidation{ConnectionID: connection.ID, Revision: revision, Status: string(validation.Status),
+		Code: validation.Code, Error: storedError(validation.Error, s.connectors.Schemes[connection.AuthScheme], credential),
+		CheckedAt: time.Now().UTC().Truncate(time.Microsecond)}
 	if validation.CheckedAt != nil {
 		record.CheckedAt = *validation.CheckedAt
 	}
@@ -352,17 +367,12 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 	return response, nil
 }
 
-// checkConnection resolves the connection's credential, lists its tools through each of its
-// sources, stores the list, and compares the granted scopes with what the tools need. answered
-// is told the provider's answers.
-func (s *Server) checkConnection(ctx context.Context, connection store.ConnectorConnection, body *ConnectionValidationRequest, answered *lastAnswer) (*validationResponse, error) {
+// checkConnection lists the connection's tools through each of its sources with credential,
+// the one Resolve gave, stores the list, and compares the granted scopes with what the tools
+// need. answered is told the provider's answers.
+func (s *Server) checkConnection(ctx context.Context, connection store.ConnectorConnection, credential core.AccessCredential,
+	body *ConnectionValidationRequest, answered *lastAnswer) (*validationResponse, error) {
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
-	// The resolver refuses a connection that is not connected before anything is sent, and
-	// moves one whose renewal the provider refused; either way the row says what to do.
-	credential, err := s.connectorResolver.Resolve(ctx, ref, core.CredentialRequest{})
-	if err != nil {
-		return s.validationAfter(ctx, connection, err)
-	}
 	scheme, found := s.connectors.Schemes[connection.AuthScheme]
 	if !found {
 		return nil, invalidRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has", connection.AuthScheme))
@@ -507,6 +517,81 @@ func (a *lastAnswer) status() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.answer
+}
+
+// maxStoredErrorBytes caps the error a last validation keeps. A provider's error body reaches
+// it whole: go-sdk v1.8.0 copies the body of a non-transient non-2xx answer into the error
+// (mcp/streamable.go checkResponse), up to the 4 MiB the mcp source reads
+// (sources/mcp/source.go maxResponseBytes), and a list page of up to 200 connections
+// (listConnectionsRequest.Limit) would serve 800 MiB of them. 1 KiB is a choice, unverified
+// and not measured: it keeps every error the router writes itself whole (the longest, a
+// broken revision's, is under 300 bytes before the manifest's reason) and the start of a
+// provider's, which is what a person reads first.
+const maxStoredErrorBytes = 1 << 10
+
+// storedErrorCut ends an error that was cut at maxStoredErrorBytes.
+const storedErrorCut = " [cut]"
+
+// storedRedacted stands for a credential value cut out of an error.
+const storedRedacted = "[redacted]"
+
+// storedError is text as a last validation keeps it: every value scheme sends credential as cut
+// out, since a provider can echo a request in its error (an Authorization header in a JSON-RPC
+// error message), then at most maxStoredErrorBytes of what is left, never splitting a UTF-8
+// sequence. The validate's own answer is left as it is.
+func storedError(text string, scheme core.Scheme, credential core.AccessCredential) string {
+	for _, value := range sentValues(scheme, credential) {
+		text = strings.ReplaceAll(text, value, storedRedacted)
+	}
+	if len(text) <= maxStoredErrorBytes {
+		return text
+	}
+	cut := maxStoredErrorBytes - len(storedErrorCut)
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + storedErrorCut
+}
+
+// sentValues are the header values scheme's Wrap puts on a request for credential, longest
+// first, and each one's part after its auth scheme (the token in "Bearer <token>", RFC 6750
+// section 2.1), since a provider may echo either. Wrap is asked rather than the credential read,
+// since only the scheme that issued it reads its secret (core.AccessCredential.Secret). Nothing
+// is sent: the request stops at headerCatch. A zero credential or no scheme sends none.
+func sentValues(scheme core.Scheme, credential core.AccessCredential) []string {
+	if scheme == nil || credential.Scheme == "" {
+		return nil
+	}
+	caught := &headerCatch{}
+	request, err := http.NewRequest(http.MethodGet, "https://validate.invalid/", nil)
+	if err != nil {
+		return nil
+	}
+	_, _ = scheme.Wrap(caught, credential).RoundTrip(request) //nolint:bodyclose // headerCatch returns no response
+	var values []string
+	for _, sent := range caught.header {
+		for _, value := range sent {
+			if value != "" {
+				values = append(values, value)
+			}
+			if _, token, found := strings.Cut(value, " "); found && token != "" {
+				values = append(values, token)
+			}
+		}
+	}
+	slices.SortFunc(values, func(a, b string) int { return len(b) - len(a) })
+	return values
+}
+
+// headerCatch is a RoundTripper that keeps the header of the request it is handed and sends
+// nothing.
+type headerCatch struct {
+	header http.Header
+}
+
+func (c *headerCatch) RoundTrip(request *http.Request) (*http.Response, error) {
+	c.header = request.Header.Clone()
+	return nil, errors.New("api: a caught request is not sent")
 }
 
 // refusedStatic says a validate whose provider last answered status moves a connection of

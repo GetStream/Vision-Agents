@@ -1830,7 +1830,7 @@ components:
           type: string
         last_validation:
           $ref: '#/components/schemas/ConnectionLastValidation'
-          description: What the last validate (POST .../validate) found. Absent until the first one.
+          description: What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
           readOnly: true
         metadata:
           additionalProperties:
@@ -1984,7 +1984,7 @@ components:
           description: The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
           type: string
         error:
-          description: Why the status is not connected, for a person to read, as the validate answered it. It never holds a credential.
+          description: 'Why the status is not connected, for a person to read: the validate''s error with every value the credential is sent as cut out, and cut at 1 KiB. A provider''s own error text in it can still hold anything else the provider wrote.'
           type: string
         status:
           $ref: '#/components/schemas/ConnectionValidationStatus'
