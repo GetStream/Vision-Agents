@@ -12,6 +12,10 @@
 # VOICEBENCH_SLACK_BOT_TOKEN, both read from benchmark/.env like the provider keys;
 # VOICEBENCH_DIGEST_POST=0 writes it to the run directory without posting. Results go to
 # out/digest-<time>, or to the directory given as the argument.
+#
+# The agent's speech-to-text (VOICEBENCH_STT, Flux by default) also transcribes every caller
+# line of the frozen or short set alone, and the report shows its WER beside the calls;
+# VOICEBENCH_DIGEST_STT=0 skips it.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -151,6 +155,16 @@ done
 for pack in $packs; do
   full_log "$pack: accelerated" "$out/$pack-accelerated.log"
 done
+
+# The agent's speech-to-text on the same caller lines, alone: what it hears, apart from how the
+# call was taken. It places no calls; the stt bench reads frozen and short sets only.
+if [[ "${VOICEBENCH_DIGEST_STT:-1}" != "0" && ( "$scenario_set" == frozen || "$scenario_set" == short ) ]]; then
+  echo "== speech-to-text on the $scenario_set set's caller lines"
+  "$voicebench" stt --scenarios "$scenario_set" --target "${VOICEBENCH_STT:-deepgram/flux-general-en}" \
+    --network-profile "$profile" --out "$out/stt" > "$out/stt.log" 2>&1 \
+    || echo "   speech-to-text failed, see $out/stt.log"
+  full_log "speech-to-text" "$out/stt.log"
+fi
 
 # LiveKit's arms take turns: each spawns a worker of its own.
 for pack in $packs; do

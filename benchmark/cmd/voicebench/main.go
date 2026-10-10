@@ -344,10 +344,16 @@ func cmdDigest(ctx context.Context, root string, args []string) error {
 		return fmt.Errorf("digest: need at least one run directory")
 	}
 	var runs []report.LabeledRun
+	var stt []report.STTSummary
 	for _, dir := range fs.Args() {
 		sum, err := report.LoadSummary(dir)
 		if err != nil {
 			return fmt.Errorf("digest: %s: %w", dir, err)
+		}
+		// A speech-to-text bench on the same caller lines is reported beside the calls.
+		if sum.Kind == report.KindSTT {
+			stt = append(stt, sum.STT...)
+			continue
 		}
 		label := sum.System
 		if label == "" {
@@ -364,6 +370,7 @@ func cmdDigest(ctx context.Context, root string, args []string) error {
 	}
 	runs = report.MergeRuns(runs)
 	digest := report.BuildDigest(runs)
+	digest.STT = stt
 	digest.Scenarios = map[string]scenario.Scenario{}
 	for _, pack := range scenario.Packs() {
 		scenarios, err := scenario.LoadPack(filepath.Join(root, "scenarios", pack))
