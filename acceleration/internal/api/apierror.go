@@ -93,6 +93,7 @@ const (
 	codeSimulationRunNotFound   = "simulation_run_not_found"
 	codeSkillNotFound           = "skill_not_found"
 	codeVoiceNotFound           = "voice_not_found"
+	codeModelNotFound           = "model_not_found"
 	codeCardedSessionToNative   = "carded_session_to_native"
 	codeUnsyncedChanges         = "unsynced_changes"
 	codePhoneNumberNeedsAddress = "phone_number_needs_address"

@@ -46,7 +46,8 @@ type dataTable struct {
 // connector_authorization_attempts: one lives minutes, is sealed under this deployment's
 // key and finishes at this deployment's callback, so a copy could only expire. And
 // connector_oauth_clients: a client's secret is sealed under this deployment's key, and a
-// client without it cannot authenticate, so the app puts it again where it moved to. And
+// client without it cannot authenticate, so the app puts it again where it moved to. So is
+// custom_models, whose endpoint keys are sealed the same way. And
 // connector_config_tokens, sealed under this deployment's key for the provider app whose
 // events URL is this deployment's. And connector_event_destinations, whose signing secrets are
 // sealed under this deployment's key, with connector_event_deliveries, forwards in flight. And

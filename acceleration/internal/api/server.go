@@ -203,6 +203,9 @@ type Options struct {
 	// Absent when the deployment has no key encryption key, in which case the paths that
 	// would store one say so rather than holding it in the clear.
 	Secrets *auth.Sealer
+	// PrivateModelEndpoints lets a customer's model sit on a private address or plain http,
+	// which only a router no other tenant shares should allow.
+	PrivateModelEndpoints bool
 	// PublicURL is where this process is reachable, which plugin OAuth callbacks need.
 	PublicURL string
 	// DashboardURL is where a finished plugin login sends the browser.
@@ -311,6 +314,7 @@ type Server struct {
 	library           *voices.Catalogue
 	dispatch          *dispatch.Pool
 	secrets           *auth.Sealer
+	privateModels     bool
 	corsOrigins       []string
 	publicURL         string
 	dashboardURL      string
@@ -448,6 +452,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		library:           options.VoiceLibrary,
 		dispatch:          options.Dispatch,
 		secrets:           options.Secrets,
+		privateModels:     options.PrivateModelEndpoints,
 		corsOrigins:       options.CORSOrigins,
 		publicURL:         options.PublicURL,
 		dashboardURL:      options.DashboardURL,

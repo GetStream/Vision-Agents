@@ -75,6 +75,15 @@ type Config struct {
 	Connectors      Connectors `koanf:"connectors"`
 	Episodes        Episodes   `koanf:"episodes"`
 	Sandbox         Sandbox    `koanf:"sandbox"`
+	Models          Models     `koanf:"models"`
+}
+
+// Models are the language models a customer serves themselves, named custom/<name>.
+type Models struct {
+	// PrivateEndpoints lets one be served from a private address or over plain http, such
+	// as a vLLM server beside a self-hosted router. Off by default, and never on for a
+	// router tenants share: there a tenant's endpoint would be a way into its network.
+	PrivateEndpoints bool `koanf:"private_endpoints"`
 }
 
 // Postgres is where everything worth keeping is written. An empty DSN is a router that
@@ -275,6 +284,7 @@ var variables = map[string]string{
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
+	"models.private_endpoints":  "ROUTER_MODELS_PRIVATE_ENDPOINTS",
 
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
 	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
