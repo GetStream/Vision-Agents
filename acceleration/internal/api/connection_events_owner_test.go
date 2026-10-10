@@ -3,9 +3,11 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -141,6 +143,40 @@ func (s *ConnectionEventsSuite) TestAnOlderConfigThatGainsTheEventIsAnsweredBefo
 	s.Equal(http.StatusOK, s.provider.DeliverEvent(owner.URL, owner.Secret, owner.ID, event, issueCreated, map[string]any{}),
 		"the event the newer's subscription carried opens no second conversation")
 	s.Equal(http.StatusGone, s.provider.DeliverEvent(carrier.URL, carrier.Secret, carrier.ID, "evt_"+s.utils.uuid(), issueCreated, map[string]any{}))
+}
+
+// TestACarrierStillTakesADeliveryOnceTheOwnersSubscriptionIsActive: the server may send an
+// event to the carrying subscription alone just before the owner's is active. The carrier takes
+// it, claimed as the owner's, and then goes. The owner's row here is written as another router
+// would leave it, active, with no attempt due, so this router's worker never touches it.
+func (s *ConnectionEventsSuite) TestACarrierStillTakesADeliveryOnceTheOwnersSubscriptionIsActive() {
+	connection := s.connection()
+	binding := s.binding(connection, issueCreated)
+	quiet := map[string]any{}
+	for key, value := range binding {
+		quiet[key] = value
+	}
+	delete(quiet, "events")
+	older := s.config(quiet)
+	newer := s.config(binding)
+	s.validate(connection)
+	s.Require().Eventually(func() bool { return s.activeFor(connection, newer) }, settleFor, 20*time.Millisecond)
+	carrier := s.atTheFake(connection)[0]
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+older,
+		map[string]any{"connectors": []map[string]any{binding}}, nil))
+	arguments := map[string]any{"project": "web"}
+	_, err := s.store.AddConnectionEventSubscription(context.Background(), &store.ConnectionEventSubscription{
+		CustomerID: s.customerID(), ConnectionID: connection, ConfigID: older, Binding: "crm",
+		Event: issueCreated, Arguments: arguments, Key: mcpevents.Key(issueCreated, arguments),
+		Token: s.utils.uuid(), SecretSealed: []byte("synthetic"), KEKVersion: 1, Status: store.ConnectionEventActive,
+	})
+	s.Require().NoError(err)
+	marker := s.utils.uuid()
+
+	s.Equal(http.StatusAccepted, s.provider.DeliverEvent(carrier.URL, carrier.Secret, carrier.ID, "evt_"+s.utils.uuid(), issueCreated, map[string]any{"title": marker}))
+
+	s.Eventually(func() bool { return s.modelWasAsked(marker) }, settleFor, 20*time.Millisecond)
+	s.Eventually(func() bool { return s.activeFor(connection, older) }, settleFor, 20*time.Millisecond, "the carrier goes")
 }
 
 // TestOneConfigWithTwoBindingsOfAnEventIsSubscribedOnce: one config binds the connection twice
