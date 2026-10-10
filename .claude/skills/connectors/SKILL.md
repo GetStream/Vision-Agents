@@ -76,7 +76,7 @@ The same with the API (operations in `acceleration/api/openapi.yaml`):
 Dashboard: open the agent › **Tools** › **Connectors** › **Add connector**.
 
 1. Pick the connector.
-2. Choose whose account: **One app connection** (`fixed`), **Signed-in user** or **End user** (`session`).
+2. Under **Whose account**, choose **One app connection** (`fixed`) or **Each user’s own** (`session`). The list then shows «App connection <name>» or «Each user’s own account».
 3. **Connect** lists the connection's tools. Tick the ones the agent may call. There is no
    wildcard: a tool that is not ticked is never offered.
 4. Save.
