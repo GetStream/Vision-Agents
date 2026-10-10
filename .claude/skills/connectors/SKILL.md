@@ -43,7 +43,7 @@ binding on agent config "support": name linear, connection.type session, tools [
 | `ROUTER_PUBLIC_URL` | The provider sends the browser back to `<ROUTER_PUBLIC_URL>/v1/agents/connectors/oauth/callback`. The dashboard shows this redirect URI on each OAuth connector |
 | `DASHBOARD_BASE_URL` | The consent popup reports back only to this origin. Unset, it reports to the wrong place and the dashboard waits forever |
 | `ROUTER_CORS_ORIGINS` | The dashboard origin, when the browser calls the router directly |
-| `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | Stream's own OAuth client for a connector whose manifest lists `operator` (for example `SLACK_MCP_CLIENT_ID` for `slack`). Without it, the app must set its own client |
+| `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | Stream's own OAuth client for a connector whose manifest lists `operator` (for example `SLACK_MCP_CLIENT_ID` for `slack`, `SLACK_BOT_MCP_CLIENT_ID` for `slack_bot`). Without it, the app must set its own client |
 
 Full list: `acceleration/README.md`, «Configuration». Local setup: the `dashboard` skill.
 Restart the router after a change.
@@ -76,7 +76,7 @@ The same with the API (operations in `acceleration/api/openapi.yaml`):
 Dashboard: open the agent › **Tools** › **Connectors** › **Add connector**.
 
 1. Pick the connector.
-2. Choose whose account: **an app connection** (`fixed`) or **each user's own** (`session`).
+2. Choose whose account: **One app connection** (`fixed`), **Signed-in user** or **End user** (`session`).
 3. **Connect** lists the connection's tools. Tick the ones the agent may call. There is no
    wildcard: a tool that is not ticked is never offered.
 4. Save.
@@ -115,13 +115,14 @@ dashboard or the API for now.
 `slack_bot` also receives messages. Someone mentions the bot in Slack, and the agent answers
 in the thread. It needs more than tools:
 
-1. **A Slack app.** In **OAuth & Permissions › Redirect URLs**, add the router's redirect URI.
-   In **Event Subscriptions**, set the Request URL to
-   `<ROUTER_PUBLIC_URL>/v1/connectors/events/slack_bot/<slack app id>`. Slack checks it
-   once; the router must already know the app's signing secret.
+1. **A Slack app.** Create it. In **OAuth & Permissions › Redirect URLs**, add the router's
+   redirect URI. Do not set the Request URL yet.
 2. **The app's client in the router.** `PUT /v1/agents/connectors/slack_bot/oauth-client`
    with the client id, secret, `provider_app_id` and `signing_secret` (dashboard: Library ›
-   Connectors › Slack bot › OAuth client).
+   Connectors › Slack bot › OAuth client). Do this before the next step: Slack checks the
+   Request URL at once, and the router must already hold the signing secret.
+   Then, in the Slack app's **Event Subscriptions**, set the Request URL to
+   `<ROUTER_PUBLIC_URL>/v1/connectors/events/slack_bot/<slack app id>`.
 3. **A connection.** New connection › Slack bot › install the app into the workspace.
 4. **One live agent per connection.** Bind it `fixed` on exactly one agent config. With two,
    the bridge does not know which agent answers.
@@ -133,6 +134,11 @@ in the thread. It needs more than tools:
    go run ./cmd/phone hooks                     # read only: shows every hook on the app
    go run ./cmd/phone hooks -url <ROUTER_PUBLIC_URL> -app <stream app id>
    ```
+
+   `hooks` needs `STREAM_API_KEY` and `STREAM_API_SECRET` in the environment. When the router
+   runs per-app tenancy, `-app <stream app id>` is required, and the hook path is
+   `/v1/chat/hooks/stream/<stream app id>`. Saving the app's own Slack OAuth client
+   (`PUT …/oauth-client`) does not point the hook. Run `hooks`, or set it in the dashboard.
 
    Hooks are one setting for the whole Stream app, and the command also points the call
    hooks. Look first, and change only your own. In the dashboard they are under
@@ -147,13 +153,12 @@ Check the router log first (`docker compose logs -f router` locally).
 
 | What you see | Cause | Fix |
 |---|---|---|
-| The browser console says «blocked by CORS policy», a header is not allowed | The proxy or `ROUTER_CORS_ORIGINS` does not allow the dashboard origin or header | Allow the origin and header there |
-| `GET /v1/agents/connections?owner_type=user` answers 400 | The router got no `X-Stream-User-Id`. A proxy in front dropped it | Forward the header for a server-side caller |
+| `GET /v1/agents/connections?owner_type=user` answers 400, or the browser console says a header is not allowed | The router got no `X-Stream-User-Id`. A proxy or gateway in front dropped it | Forward the header for a server-side caller |
 | The consent popup finishes, the dashboard keeps waiting | `DASHBOARD_BASE_URL` is unset or another origin | Set it to the dashboard origin |
 | «no OAuth client available» on consent | No Stream client (`<ENV>_MCP_CLIENT_ID`) and no app client | Set one of them |
 | 409 «Another customer's record already names this provider app» | That Slack app is registered to another customer on this router | Use another Slack app, or remove the old record |
-| A 401 from the proxy on `/v1/connectors/events/…` | The proxy does not let the provider's request through | Allowlist the events routes: the router checks the provider's signature itself |
-| The events request gets 200, but no reply | The Stream message hook points at another router (`go run ./cmd/phone hooks`), or two configs bind the connection, or the mention came from an app | Steps 4.4 to 4.6 |
+| A 401 on `/v1/connectors/events/…` with the text `api_key is required` | The gateway in front does not allow the route. The router's own refusal is a different body: it checks the provider's signature | Allowlist the events routes on the gateway |
+| The events request gets 200, but no reply. The router you expect logs nothing, and the router the hook points at logs «an arriving message's channel names a config nobody in its app holds» | The Stream message hook points at another router. Read it in **Chat › Settings › Webhooks**, or `GET` the app's `event_hooks`. Do not wait for a startup warning: in app tenancy it is skipped | Point the hook (step 4.5). Also check that two configs do not bind the connection, and that the mention did not come from an app (steps 4.4, 4.6) |
 | A `session` binding opens with no tools | The user has no connected connection, or the caller is not a verified end user | Connect from Playground; check the user header |
 | Validate says failed | The provider refused the credential | Replace the token, or Reconnect for OAuth |
 
