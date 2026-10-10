@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -166,4 +167,19 @@ func (s *HooksSuite) TestPointingAtAURLThatIsNotOneIsRefusedBeforeAnUpdate() {
 
 	s.Require().Error(err)
 	s.Equal(before, s.updates())
+}
+
+// An SQS FIFO hook carries a field the SDK's EventHook does not model
+// (sqs_event_based_message_group_id_enabled, chat monolith/types/event_hook.go): moving the
+// router's hooks sends it back exactly as Stream sent it, rather than with it switched off.
+func (s *HooksSuite) TestMovingKeepsAnotherHookAsStreamSentIt() {
+	sqs := json.RawMessage(`{"id":"h1","hook_type":"sqs","enabled":true,"event_types":null,"sqs_queue_url":"https://sqs.example/q.fifo","sqs_region":"us-east-1","sqs_event_based_message_group_id_enabled":true}`)
+	s.chat.SetEventHooks("test", append(s.chat.EventHooksJSON("test"), sqs)...)
+
+	_, err := changeHooks(context.Background(), s.stream, "https://new.ngrok-free.dev", []string{goneBase}, "")
+
+	s.Require().NoError(err)
+	hooks := s.chat.EventHooksJSON("test")
+	s.Require().Len(hooks, 4)
+	s.Equal(string(sqs), string(hooks[1]))
 }

@@ -1101,6 +1101,8 @@ export type paths = {
          * Set the app's own OAuth client for a connector
          * @description Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
          *
+         *     A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
+         *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly put: operations["setConnectorOAuthClient"];
@@ -3810,7 +3812,7 @@ export type components = {
             readonly stt?: string;
             /** @description The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent. */
             readonly subagent?: string;
-            /** @description Cost labels, carried onto every request a session using it makes. */
+            /** @description Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds. */
             readonly tags?: {
                 readonly [key: string]: string;
             };
@@ -4610,6 +4612,8 @@ export type components = {
                 readonly [key: string]: string;
             };
             readonly label?: string;
+            /** @description What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh). */
+            readonly last_validation?: components["schemas"]["ConnectionLastValidation"];
             /** @description What the provider said about the account when it was connected, such as a workspace id. Empty until then. */
             readonly metadata: {
                 readonly [key: string]: string;
@@ -4679,6 +4683,19 @@ export type components = {
             readonly items: readonly components["schemas"]["ConnectionInvocation"][] | null;
             /** @description Pass as cursor for the next page. Absent on the last one. */
             readonly next_cursor?: string;
+        };
+        /** @description What a connection's last validate found, kept so it is still shown after the validate's answer is gone. A validate whose provider refused a bearer or api_key credential with any 4xx but 429 also moves the connection to needs_reauthorization. */
+        readonly ConnectionLastValidation: {
+            /**
+             * Format: date-time
+             * @description When the validate ran.
+             */
+            readonly checked_at: string;
+            /** @description The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies. */
+            readonly code?: string;
+            /** @description Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote. */
+            readonly error?: string;
+            readonly status: components["schemas"]["ConnectionValidationStatus"];
         };
         /** @description Whose a connection is: the app's, which any of its agents may be bound to, or one user's. */
         readonly ConnectionOwner: {
@@ -5343,7 +5360,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -10478,6 +10495,15 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly deleteConnectorOAuthClient: {

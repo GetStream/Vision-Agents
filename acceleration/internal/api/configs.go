@@ -404,13 +404,38 @@ var (
 	}
 )
 
+// errChannelConnectionTaken is a save that would have a second live agent config bind a
+// channel connection, such as a Slack bot's, as fixed: one agent answers each message that
+// comes in on it, so the connection belongs to the live config that bound it first (AI-1049).
+// A test copy is not refused, since it answers nothing. channelConnectionTaken names the
+// config that has it.
+var errChannelConnectionTaken = APIError{
+	Type: ErrorTypeConflict, Code: codeChannelConnectionTaken,
+	Message: "another agent already answers on this channel connection",
+}
+
+// channelConnectionTaken is errChannelConnectionTaken naming the binding, the connection and
+// the config that has the connection, and how to fix it.
+func channelConnectionTaken(taken *store.ChannelConnectionTakenError) APIError {
+	failure := errChannelConnectionTaken
+	failure.Message = fmt.Sprintf("connector binding %q names connection %q (%s), and agent config %q (%s) "+
+		"already answers its messages: one agent answers a channel connection. Remove the binding from %q, "+
+		"or bind this agent to another connection",
+		taken.Binding, taken.ConnectionID, taken.ConnectorID, taken.OwnerName, taken.OwnerID, taken.OwnerName)
+	return failure
+}
+
 // storeFailure answers err from storing an agent config, a skill, a router config or a
 // voice. A name that another live one of its kind has is taken, a 409 the caller fixes by
 // choosing another name. A record, a connection or a custom connector that is not there, such
 // as one deleted after the request was checked, is the invalid request it has always been
-// answered with. Anything else is the database failing rather than the
+// answered with. A channel connection another live agent config binds is a 409 naming that
+// config. Anything else is the database failing rather than the
 // caller, so err goes back as it is, to be answered as a 500 and recorded with its stack.
 func storeFailure(err error, taken APIError) error {
+	if owned, ok := errors.AsType[*store.ChannelConnectionTakenError](err); ok {
+		return channelConnectionTaken(owned)
+	}
 	switch {
 	case errors.Is(err, store.ErrNameTaken):
 		return taken
@@ -1652,7 +1677,7 @@ type AgentConfigRequest struct {
 	Skills             *[]string                `json:"skills,omitempty" doc:"Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set."`
 	Sts                *string                  `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
 	Stt                *string                  `json:"stt,omitempty" doc:"A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it."`
-	Tags               *map[string]string       `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes."`
+	Tags               *map[string]string       `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds."`
 	Subagent           *string                  `json:"subagent,omitempty" doc:"The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent."`
 	Tts                *string                  `json:"tts,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
