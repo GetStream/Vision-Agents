@@ -399,6 +399,8 @@ func (s *ConsentSuite) atFake(srv *fakeprovider.Server, m core.ResolvedManifest)
 		"revoke":    srv.URL + fakeprovider.PathRevoke,
 		"mcp":       srv.URL + fakeprovider.PathMCP,
 		"resource":  srv.URL + fakeprovider.PathMCP,
+		// No consent calls api_base: only the connection proxy's direct calls go there.
+		"api_base": srv.URL,
 	}
 	endpoints := map[string]string{}
 	for role := range m.Endpoints {
