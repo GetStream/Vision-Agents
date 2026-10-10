@@ -336,13 +336,12 @@ export class Session {
    * `@stream-io/vision-agents/chat` once, so a caller who never touches chat installs nothing
    * and ships nothing. A caller who forgot the import is told which one.
    *
-   * It connects as the user `setUser` named, with the Stream key the client was given, and
-   * every session of this client shares the one connection. A caller already holding a
-   * connected `StreamChat` passes it as `client`, and the channel is opened on that one
-   * instead.
+   * It opens on the `StreamChat` handed over with `client.use`, or else on one connected as
+   * the user `setUser` named, with the Stream key the client was given, which every session
+   * of this client shares.
    */
-  chat(options: { client?: ChatClient } = {}): Promise<SessionChat> {
-    this.chatPeer ??= this.openChat(options.client);
+  chat(): Promise<SessionChat> {
+    this.chatPeer ??= this.openChat();
     return this.chatPeer;
   }
 
@@ -350,8 +349,9 @@ export class Session {
    * The Stream video call the agent is on.
    *
    * The same arrangement as chat: `@stream-io/video-client` is an optional peer dependency,
-   * opted into by importing `@stream-io/vision-agents/video` once. A session held in writing
-   * has no call, and asking for one says so.
+   * opted into by importing `@stream-io/vision-agents/video` once, and the client handed over
+   * with `client.use` is used when there is one. A session held in writing has no call, and
+   * asking for one says so.
    */
   video(): Promise<SessionVideo> {
     this.videoPeer ??= this.openVideo();
@@ -467,7 +467,7 @@ export class Session {
     }
   }
 
-  private async openChat(client?: ChatClient): Promise<SessionChat> {
+  private async openChat(): Promise<SessionChat> {
     const channel = this.created.conversation_id ?? "";
     if (!channel) {
       throw new ConfigurationError(
@@ -479,7 +479,7 @@ export class Session {
     // conversation. Splitting it here keeps that spelling out of the caller's way.
     const [type, ...rest] = channel.split(":");
 
-    const connected = client ?? (await this.client.peers.chat());
+    const connected = await this.client.peers.chat();
     return { client: connected, channel: connected.channel(type ?? "agent", rest.join(":")) };
   }
 

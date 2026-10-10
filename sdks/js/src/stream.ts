@@ -3,6 +3,7 @@ import { ConfigurationError } from "./errors.js";
 
 /** The parts of a `StreamChat` this package touches. */
 export interface ChatClient {
+  readonly userID?: string;
   channel(type: string, id: string): unknown;
   connectUser(user: { id: string }, token: string | (() => Promise<string>)): Promise<unknown>;
   disconnectUser(): Promise<unknown>;
@@ -10,8 +11,15 @@ export interface ChatClient {
 
 /** The parts of a `StreamVideoClient` this package touches. */
 export interface VideoClient {
+  readonly streamClient: { readonly userID?: string };
   call(type: string, id: string): unknown;
   disconnectUser(): Promise<unknown>;
+}
+
+/** Stream clients the app already holds, handed over with `client.use`. */
+export interface StreamClients {
+  chat?: ChatClient;
+  video?: VideoClient;
 }
 
 /** `StreamChat`, typed as far as this package uses it. */
@@ -44,14 +52,17 @@ export function registerVideo(StreamVideoClient: VideoConstructor): void {
 }
 
 /**
- * Stream's own chat and video clients, built from the identity `setUser` gave.
+ * Stream's own chat and video clients: the app's, or else built from the identity `setUser`
+ * gave.
  *
  * One of each per key and user, however many sessions ask: a second connection as the same
  * person is a second socket for nothing, and on a phone the SDKs refuse one outright. Each
- * is handed a token function rather than a token, so it outlives the token it started with.
+ * built one is handed a token function rather than a token, so it outlives the token it
+ * started with.
  */
 export class StreamPeers {
   private readonly backend: Backend;
+  private readonly given: StreamClients = {};
   private readonly chats = new Map<string, Promise<ChatClient>>();
   private readonly videos = new Map<string, Promise<VideoClient>>();
 
@@ -59,8 +70,21 @@ export class StreamPeers {
     this.backend = backend;
   }
 
+  /** Uses the app's own clients from now on, whoever signs in, rather than building others. */
+  use(clients: StreamClients): void {
+    if (clients.chat) {
+      this.given.chat = clients.chat;
+    }
+    if (clients.video) {
+      this.given.video = clients.video;
+    }
+  }
+
   /** The connected `StreamChat` for the current user. */
-  chat(): Promise<ChatClient> {
+  async chat(): Promise<ChatClient> {
+    if (this.given.chat) {
+      return this.sameUser("chat", this.given.chat, this.given.chat.userID);
+    }
     return this.shared(this.chats, async () => {
       const credentials = await this.credentials("chat");
       const StreamChat = installed(registered.chat, "chat", "stream-chat");
@@ -71,7 +95,10 @@ export class StreamPeers {
   }
 
   /** The `StreamVideoClient` for the current user. */
-  video(): Promise<VideoClient> {
+  async video(): Promise<VideoClient> {
+    if (this.given.video) {
+      return this.sameUser("video", this.given.video, this.given.video.streamClient.userID);
+    }
     return this.shared(this.videos, async () => {
       const credentials = await this.credentials("video");
       const StreamVideoClient = installed(registered.video, "video", "@stream-io/video-client");
@@ -83,12 +110,24 @@ export class StreamPeers {
     });
   }
 
-  /** Disconnects every client opened here. */
+  /** Disconnects every client built here. The app's own are left connected. */
   async disconnect(): Promise<void> {
     const opened = [...this.chats.values(), ...this.videos.values()];
     this.chats.clear();
     this.videos.clear();
     await Promise.all(opened.map(async (client) => (await client).disconnectUser()));
+  }
+
+  /** The app's client, unless it is connected as somebody other than the user `setUser` named. */
+  private sameUser<T>(what: string, client: T, connected: string | undefined): T {
+    const user = this.backend.userId;
+    if (connected && user && connected !== user) {
+      throw new ConfigurationError(
+        `the ${what} client is connected as ${connected} but setUser named ${user}: connect it ` +
+          `as the same user, or the conversation is somebody else's`,
+      );
+    }
+    return client;
   }
 
   private async credentials(what: string): Promise<StreamCredentials> {

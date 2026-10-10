@@ -12,7 +12,7 @@ import {
 import { AgentHandle } from "./handle.js";
 import { Memories } from "./memories.js";
 import { Simulations } from "./simulations.js";
-import { StreamPeers } from "./stream.js";
+import { StreamPeers, type StreamClients } from "./stream.js";
 
 /** The schemas from the spec, so callers can name a request or a response they build. */
 export type Schemas = components["schemas"];
@@ -142,8 +142,21 @@ export class Client {
   }
 
   /**
+   * Hands over the app's own `StreamChat` and `StreamVideoClient`, so every session opens on
+   * them rather than on second ones. Connecting them, as the user `setUser` named, stays the
+   * app's job, and `disconnect` leaves them alone.
+   *
+   * ```ts
+   * api.use({ chat: streamChat, video: videoClient });
+   * ```
+   */
+  use(clients: StreamClients): void {
+    this.peers.use(clients);
+  }
+
+  /**
    * Disconnects the Stream chat and video clients `session.chat()` and `session.video()`
-   * opened. Closing a session leaves them connected, since other sessions share them.
+   * built. Closing a session leaves them connected, since other sessions share them.
    */
   disconnect(): Promise<void> {
     return this.peers.disconnect();

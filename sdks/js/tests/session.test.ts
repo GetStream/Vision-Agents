@@ -333,7 +333,7 @@ describe("Session", () => {
     await session.close();
   });
 
-  it("opens the channel on a chat client the caller already holds", async () => {
+  it("opens the channel on the chat client the app handed over, and leaves it connected", async () => {
     router.serve("POST", "/v1/agents/sessions", {
       status: 201,
       body: {
@@ -349,19 +349,89 @@ describe("Session", () => {
     await router.socket();
     const session = await opening;
     let connects = 0;
+    let disconnects = 0;
     const client = {
       channel: (type: string, id: string) => ({ type, id }),
       connectUser: async () => {
         connects++;
       },
-      disconnectUser: async () => undefined,
+      disconnectUser: async () => {
+        disconnects++;
+      },
     };
+    api.use({ chat: client });
 
-    const chat = await session.chat({ client });
+    const chat = await session.chat();
+    await api.disconnect();
 
     assert.equal(chat.client, client);
     assert.deepEqual(chat.channel, { type: "agent", id: "support-1" });
     assert.equal(connects, 0, "no second connection");
+    assert.equal(disconnects, 0, "the app's client is the app's to disconnect");
+    await session.close();
+  });
+
+  it("joins the call on the video client the app handed over", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        call_id: "call-1",
+        call_type: "default",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(api, { call_id: "call-1" });
+    await router.socket();
+    const session = await opening;
+    const client = {
+      streamClient: { userID: "john" },
+      call: (type: string, id: string) => ({ type, id }),
+      disconnectUser: async () => undefined,
+    };
+    api.use({ video: client });
+
+    const video = await session.video();
+
+    assert.equal(video.client, client);
+    assert.deepEqual(video.call, { type: "default", id: "call-1" });
+    await session.close();
+  });
+
+  it("refuses a chat client the app connected as somebody else", async () => {
+    const page = new Client({ url: router.url, customerId: "local", apiKey: "vak_live_x" });
+    await page.setUser({ id: "john" }, "token-for-john");
+    page.use({
+      chat: {
+        userID: "jane",
+        channel: (type: string, id: string) => ({ type, id }),
+        connectUser: async () => undefined,
+        disconnectUser: async () => undefined,
+      },
+    });
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(page, { text: true });
+    await router.socket();
+    const session = await opening;
+
+    await assert.rejects(session.chat(), (error: Error) => {
+      assert.ok(error instanceof ConfigurationError);
+      assert.match(error.message, /connected as jane but setUser named john/);
+      return true;
+    });
     await session.close();
   });
 
