@@ -169,6 +169,8 @@ func (s *Server) receiveProviderAppEvent(w http.ResponseWriter, r *http.Request)
 	connectorID, appID := r.PathValue("connector_id"), r.PathValue("provider_app_id")
 	app, secret, err := ProviderApp(r.Context(), s.store, s.connectorSecrets, connectorID, appID)
 	if errors.Is(err, store.ErrNoConnectorOAuthClient) {
+		s.logger.Info("dropped a provider app's event: no customer holds the provider app with a signing secret",
+			"connector", connectorID, "provider_app", appID)
 		writeError(w, errNoConnectorEvents)
 		return
 	}
@@ -186,11 +188,20 @@ func (s *Server) receiveProviderAppEvent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	manifest := definition.Manifest
-	if manifest.Channel == nil || manifest.Channel.Verifier.Secret != core.SecretProviderApp {
+	if !readsProviderAppEvents(manifest) {
+		s.logger.Info("dropped a provider app's event: the connector has no channel verified with the app's own secret",
+			"connector", connectorID, "provider_app", appID, "customer", app.CustomerID)
 		writeError(w, errNoConnectorEvents)
 		return
 	}
 	s.receiveEvent(w, r, body, manifest, []byte(secret), app)
+}
+
+// readsProviderAppEvents is whether a connector's channel reads the events of a provider app on
+// the app's own route: only a channel verified with the app's own secret does
+// (receiveProviderAppEvent).
+func readsProviderAppEvents(manifest core.Manifest) bool {
+	return manifest.Channel != nil && manifest.Channel.Verifier.Secret == core.SecretProviderApp
 }
 
 // answerProviderAppHandshake is the GET a provider checks a provider app's events URL with
@@ -279,6 +290,7 @@ func readConnectorEvent(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 //	each message the manifest skipped -> a debug line naming the rule
 //	each signal -> the connections of its account -> Resolver.Revoke, with when it ended
 //	the messages -> ChannelBridge.Deliver, with app
+//	  none, none skipped and no signal -> an info line
 //	a provider app's delivery -> eventforward.Forward, queued for the customer's event
 //	  destinations, handled when a signal or an answered message was in it
 //	                                                200, or 500 so the provider retries
@@ -320,6 +332,12 @@ func (s *Server) receiveEvent(w http.ResponseWriter, r *http.Request, body []byt
 	if forwarding {
 		forward = eventforward.ProviderEvent(manifest, r.Header, body)
 		forward.CustomerID = app.CustomerID
+	}
+	// A verified event with no message, no message skipped and no signal, such as a WhatsApp
+	// delivery report, is one the manifest reads nothing from. Answered 200 like any other.
+	if len(event.Messages) == 0 && len(event.Skipped) == 0 && len(event.Signals) == 0 {
+		s.logger.Info("a connector event carried no message", "connector", manifest.ID,
+			"provider_app", app.ProviderAppID, "customer", app.CustomerID)
 	}
 	if len(event.Messages) > 0 {
 		var unanswered func()

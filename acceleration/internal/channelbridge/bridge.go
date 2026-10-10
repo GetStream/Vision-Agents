@@ -449,8 +449,10 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 			return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
 		}
 		if !linked {
-			b.logger.Debug("dropped an inbound message that is not addressed to the connection on a thread nobody linked",
-				"connector", message.ConnectorID, "connection", connection.ID)
+			// waiting is a reply kept for a message that links its thread to take (wait).
+			b.logger.Info("dropped an inbound message that is not addressed to the connection on a thread nobody linked",
+				"connector", message.ConnectorID, "provider_app", app.ProviderAppID, "customer", app.CustomerID,
+				"connection", connection.ID, "config", configs[0].ID, "waiting", !startsThread(read))
 			return store.ChannelThread{}, store.AgentConfig{}, false, nil, nil
 		}
 	}
@@ -474,7 +476,8 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 		return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
 	}
 	if !fresh {
-		b.logger.Debug("dropped a retried inbound message", "connector", message.ConnectorID, "channel", thread.ChannelID)
+		b.logger.Info("dropped a retried inbound message", "connector", message.ConnectorID, "provider_app", app.ProviderAppID,
+			"customer", app.CustomerID, "connection", connection.ID, "config", configs[0].ID, "channel", thread.ChannelID)
 	}
 	// Every reply in a thread comes after the message that started it, so the replies that
 	// waited for that message are all to be answered. A link made by a reply, such as a

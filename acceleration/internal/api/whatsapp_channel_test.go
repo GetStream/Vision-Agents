@@ -51,6 +51,8 @@ type WhatsAppChannelSuite struct {
 	unit       string
 	connection Connection
 	config     store.AgentConfig
+	// logged is what the router logged, at debug and up.
+	logged *lockedLog
 }
 
 func TestWhatsAppChannelSuite(t *testing.T) {
@@ -66,6 +68,8 @@ func (s *WhatsAppChannelSuite) SetupSuite() {
 		Verifiers: map[string]core.Verifier{verifier.Name(): verifier},
 	}
 	s.channelProvider = func() string { return s.meta.server.Listener.Addr().String() }
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
