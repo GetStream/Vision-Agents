@@ -511,7 +511,15 @@ func (s *PluginsSuite) TestARefusedUseOfThePluginAPIWarnsOfNothing() {
 	status, _ = s.serverClient.failure(http.MethodDelete, "/v1/agents/configs/"+agent.Id+"/plugins/carrier-pigeon", nil)
 	s.Equal(http.StatusNotFound, status)
 
+	status, _ = s.serverClient.failure(http.MethodDelete, "/v1/agents/configs/"+agent.Id+"/plugins/google_calendar/client", nil)
+	s.Equal(http.StatusNotFound, status, "a client never set")
+	status, _ = s.serverClient.failure(http.MethodDelete, "/v1/agents/configs/"+agent.Id+"/plugins/carrier-pigeon/client", nil)
+	s.Equal(http.StatusNotFound, status, "an unknown plugin")
+	status, _ = s.serverClient.failure(http.MethodDelete, "/v1/agents/configs/"+agent.Id+"/plugins/slack", nil)
+	s.Equal(http.StatusNotFound, status, "a login nobody made")
+
 	s.Empty(deprecations(s.logged, plugins.PathClientSet, agent.Id))
+	s.Empty(deprecations(s.logged, plugins.PathClientDelete, agent.Id))
 	s.Empty(deprecations(s.logged, plugins.PathDisconnect, agent.Id))
 }
 

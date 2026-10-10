@@ -262,8 +262,6 @@ func (s *Server) deletePluginClient(ctx context.Context, request *deletePluginCl
 	if _, err := s.configs.AgentConfig(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownConfig
 	}
-	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathClientDelete,
-		"customer", customerID, "config", request.Id, "plugin", request.PluginId, "via", plugins.Via(request.PluginId))
 	err := s.store.DeletePluginClient(ctx, customerID, request.Id, request.PluginId)
 	if errors.Is(err, store.ErrUnknownPluginClient) {
 		return nil, notFound("no client is set for this plugin")
@@ -271,6 +269,8 @@ func (s *Server) deletePluginClient(ctx context.Context, request *deletePluginCl
 	if err != nil {
 		return nil, err
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathClientDelete,
+		"customer", customerID, "config", request.Id, "plugin", request.PluginId, "via", plugins.Via(request.PluginId))
 	name := request.PluginId
 	if plugin, known := plugins.Lookup(request.PluginId); known {
 		name = plugin.Name
@@ -354,13 +354,13 @@ func (s *Server) disconnectPlugin(ctx context.Context, request *disconnectPlugin
 	if _, ok := plugins.Lookup(string(request.PluginId)); !ok && !slices.ContainsFunc(config.MCPServers, named) {
 		return nil, errUnknownPlugin
 	}
-	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathDisconnect,
-		"customer", customerID, "config", config.ID, "plugin", string(request.PluginId), "via", plugins.Via(string(request.PluginId)))
 	// A user plugin has no login of the app's to drop, only its name and its client.
 	user := userOnly(config, string(request.PluginId))
 	if err := s.store.DeletePluginConnection(ctx, customerID, request.Id, string(request.PluginId)); err != nil && !user {
 		return nil, errUnknownPlugin
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathDisconnect,
+		"customer", customerID, "config", config.ID, "plugin", string(request.PluginId), "via", plugins.Via(string(request.PluginId)))
 	unnamed := func(entry store.PluginEntry) bool { return entry.Name == string(request.PluginId) }
 	config.Plugins = slices.DeleteFunc(config.Plugins, unnamed)
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
