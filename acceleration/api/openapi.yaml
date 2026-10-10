@@ -165,10 +165,14 @@ components:
         name:
           type: string
         plugin_events:
+          deprecated: true
+          description: 'Deprecated: use the events of a fixed binding under connectors.'
           items:
             $ref: '#/components/schemas/PluginEvent'
           type: array
         plugins:
+          deprecated: true
+          description: 'Deprecated: use connectors, a binding to a connector.'
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
@@ -264,11 +268,15 @@ components:
           minLength: 1
           type: string
         plugin_events:
+          deprecated: true
+          description: 'Deprecated: use the events of a fixed binding under connectors.'
           items:
             $ref: '#/components/schemas/PluginEvent'
           maxItems: 32
           type: array
         plugins:
+          deprecated: true
+          description: 'Deprecated: use connectors, a binding to a connector.'
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
@@ -356,13 +364,15 @@ components:
           description: What the config is called, which is unique among the customer's own.
           type: string
         plugin_events:
-          description: MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+          deprecated: true
+          description: 'Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever''s login it came through.'
           items:
             $ref: '#/components/schemas/PluginEvent'
           maxItems: 32
           type: array
         plugins:
-          description: 'Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear''s read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.'
+          deprecated: true
+          description: 'Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear''s read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.'
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
@@ -6593,13 +6603,15 @@ components:
           description: What the config is called, which is also the directory's name.
           type: string
         plugin_events:
-          description: MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+          deprecated: true
+          description: 'Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.'
           items:
             $ref: '#/components/schemas/PluginEvent'
           maxItems: 32
           type: array
         plugins:
-          description: 'Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.'
+          deprecated: true
+          description: 'Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.'
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
@@ -9119,7 +9131,8 @@ paths:
       summary: What was changed about an agent since its directory was last synced
   /v1/agents/configs/{id}/plugins:
     get:
-      description: The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
+      deprecated: true
+      description: 'Deprecated: use listConnections for the logins, and the config''s connectors for what it binds. The app''s own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user''s logins, made for a plugin or a server with user, are never listed.'
       operationId: listConfigPlugins
       parameters:
         - description: The resource, as returned when it was created.
@@ -9151,7 +9164,10 @@ paths:
       summary: The plugin logins this agent holds
   /v1/agents/configs/{id}/plugins/{plugin_id}:
     delete:
-      description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
+      deprecated: true
+      description: |-
+        Deprecated: use deleteConnection.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: disconnectPlugin
       parameters:
         - description: The resource, as returned when it was created.
@@ -9184,8 +9200,9 @@ paths:
       summary: Drop a plugin login
   /v1/agents/configs/{id}/plugins/{plugin_id}/authorize:
     post:
+      deprecated: true
       description: |-
-        Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+        Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: authorizePlugin
       parameters:
@@ -9228,7 +9245,10 @@ paths:
       summary: Start a plugin login
   /v1/agents/configs/{id}/plugins/{plugin_id}/client:
     delete:
-      description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
+      deprecated: true
+      description: |-
+        Deprecated: use deleteConnectorOAuthClient.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: deletePluginClient
       parameters:
         - description: The resource, as returned when it was created.
@@ -9260,8 +9280,9 @@ paths:
           $ref: '#/components/responses/InternalError'
       summary: Drop the OAuth client an agent logs a plugin in with
     put:
+      deprecated: true
       description: |-
-        The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+        Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: setPluginClient
       parameters:
@@ -11378,7 +11399,8 @@ paths:
       summary: Read-only SSE of durable logs with replay
   /v1/agents/plugins:
     get:
-      description: A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
+      deprecated: true
+      description: 'Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer''s own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.'
       operationId: listPlugins
       parameters:
         - description: Filter by name, category or description.
@@ -11408,7 +11430,8 @@ paths:
       summary: The hosted MCP servers an agent may attach
   /v1/agents/plugins/{plugin_id}/logo:
     get:
-      description: The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+      deprecated: true
+      description: Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
       operationId: getPluginLogo
       parameters:
         - description: A built-in catalog id such as slack or linear.
@@ -11432,7 +11455,8 @@ paths:
       summary: A plugin's logo
   /v1/agents/plugins/callback:
     get:
-      description: The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
+      deprecated: true
+      description: 'Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.'
       operationId: pluginOAuthCallback
       parameters:
         - in: query
@@ -11456,7 +11480,8 @@ paths:
       summary: Finish a plugin login
   /v1/agents/plugins/events/{token}:
     post:
-      description: 'Where a plugin''s MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.'
+      deprecated: true
+      description: 'Deprecated: a connector binding''s events are delivered to receiveConnectionEvent. Where a plugin''s MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.'
       operationId: receivePluginEvent
       parameters:
         - in: path

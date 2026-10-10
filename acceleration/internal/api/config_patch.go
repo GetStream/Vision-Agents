@@ -25,8 +25,8 @@ type AgentConfigPatch struct {
 	Greeting           *Greeting                `json:"greeting,omitempty" doc:"Replaces the greeting whole. An empty text removes it."`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
 	Skills             *[]string                `json:"skills,omitempty"`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty"`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32"`
+	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
+	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" maxItems:"16"`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
@@ -229,5 +229,6 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		Action: store.AuditUpdated, Changes: auditDiff(existing, stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
+	s.warnPluginsSaved(config)
 	return &agentConfigResponse{Body: stored}, nil
 }

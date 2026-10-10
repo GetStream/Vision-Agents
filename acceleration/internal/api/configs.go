@@ -120,6 +120,7 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		Action: store.AuditCreated, Changes: auditDiff(nil, stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
+	s.warnPluginsSaved(config)
 	return &createAgentConfigResponse{Body: stored}, nil
 }
 
@@ -213,6 +214,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		Action: store.AuditUpdated, Changes: auditDiff(agentConfigOf(existing), stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
+	s.warnPluginsSaved(config)
 	return &updateAgentConfigResponse{Body: stored}, nil
 }
 
@@ -884,6 +886,17 @@ func sandboxOptionsOf(config sandbox.Config) *SandboxOptions {
 		MemoryGb:  &config.MemoryGB,
 		DiskGb:    &config.DiskGB,
 	}
+}
+
+// warnPluginsSaved logs a config stored with plugins or plugin_events, which connectors
+// replace, so the configs still on them can be counted before the fields go.
+func (s *Server) warnPluginsSaved(config store.AgentConfig) {
+	if len(config.Plugins) == 0 && len(config.PluginEvents) == 0 {
+		return
+	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathConfigSave,
+		"customer", config.CustomerID, "config", config.ID,
+		"plugin", store.PluginNames(config.Plugins), "plugin_events", len(config.PluginEvents))
 }
 
 // pluginEventsComplaint reports what is wrong with the events a config subscribes to, if
@@ -1623,8 +1636,8 @@ type AgentConfigRequest struct {
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
 	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty" doc:"Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
+	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
+	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused."`
 	Channels           *AgentChannels           `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels."`
@@ -1658,8 +1671,8 @@ type AgentConfig struct {
 	Mode               AgentMode                `json:"mode"`
 	Name               string                   `json:"name"`
 	Tools              *AgentTools              `json:"tools,omitempty"`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty"`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty"`
+	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
+	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty"`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The bindings exactly as they were written. Absent when there are none."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`

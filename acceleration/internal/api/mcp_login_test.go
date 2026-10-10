@@ -26,6 +26,9 @@ const (
 // authorization server.
 type MCPLoginSuite struct {
 	RouterSuite
+
+	// logged is what the router logged, for the tests of the deprecation it warns of.
+	logged *lockedLog
 }
 
 func TestMCPLoginSuite(t *testing.T) {
@@ -63,6 +66,8 @@ func (s *MCPLoginSuite) SetupSuite() {
 	})
 	s.pluginMCP = httptest.NewTLSServer(mux)
 	s.T().Cleanup(s.pluginMCP.Close)
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -172,6 +177,29 @@ func (s *MCPLoginSuite) TestTheAppsLoginToAServerNamedByURLCanBeDropped() {
 
 	s.Equal(http.StatusNoContent, status)
 	s.Equal([]PluginConnection{{PluginId: "crm", Name: "crm", Status: PluginConnectionStatusNotConnected}}, s.logins(created.Id))
+}
+
+func (s *MCPLoginSuite) TestTheAppsLoginWarnsOfTheDeprecationWhereItStartsAndFinishes() {
+	created := s.create([]map[string]any{{"name": "crm", "url": crmURL}})
+
+	authorize := s.authorize(created.Id, "crm")
+	s.Equal(http.StatusFound, s.callback(authorize.Query().Get("state")))
+
+	started := deprecations(s.logged, plugins.PathLogin, created.Id)
+	s.Require().Len(started, 1)
+	s.Contains(started[0], "customer="+s.customerID()+" config="+created.Id+" plugin=crm")
+	s.Len(deprecations(s.logged, plugins.PathCallback, created.Id), 1)
+	s.NotContains(s.logged.String(), "crm-token")
+	s.Equal([]PluginConnection{{PluginId: "crm", Name: "crm", Status: PluginConnectionStatusConnected}}, s.logins(created.Id))
+}
+
+func (s *MCPLoginSuite) TestALoginThatIsRefusedWarnsOfNothing() {
+	created := s.create([]map[string]any{{"name": "plain", "url": plainURL}})
+
+	status, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/configs/"+created.Id+"/plugins/plain/authorize", nil)
+
+	s.Equal(http.StatusNotFound, status)
+	s.Empty(deprecations(s.logged, plugins.PathLogin, created.Id))
 }
 
 func (s *MCPLoginSuite) TestAServerEachUserLogsIntoIsNotConnectedForTheApp() {

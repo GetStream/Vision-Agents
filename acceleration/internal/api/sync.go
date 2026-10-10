@@ -38,8 +38,8 @@ type SyncAgentRequest struct {
 	Subagent      *string                    `json:"subagent,omitempty" doc:"Only a voice agent names one: a text agent runs everything on its llm."`
 	Search        *string                    `json:"search,omitempty"`
 	Greeting      *Greeting                  `json:"greeting,omitempty"`
-	Plugins       *[]PluginEntry             `json:"plugins,omitempty" doc:"Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it."`
-	PluginEvents  *[]PluginEvent             `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives."`
+	Plugins       *[]PluginEntry             `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it."`
+	PluginEvents  *[]PluginEvent             `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives."`
 	McpServers    *[]McpServer               `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login."`
 	Channels      *AgentChannels             `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat, each a number the app connected."`
 	Connectors    *[]AgentConnectorBinding   `json:"connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
@@ -328,6 +328,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		Action: store.AuditSynced, Changes: synced,
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
+	s.warnPluginsSaved(config)
 	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config), Warnings: warnings}}, nil
 }
 
