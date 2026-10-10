@@ -21,7 +21,7 @@ final readonly class InboundMessage
      * @param string $agentId who to answer as, which names the channel replies are written into
      * @param string $configId the stored agent config the router matched, if it matched one
      * @param string $sessionId the running session it was written to; nothing has answered it yet
-     * @param string $commandId the durable command it was sent as, passed back when answering
+     * @param string $requestId the request it was sent as, passed back when answering
      * @param array<string, string> $custom
      */
     public function __construct(
@@ -36,7 +36,7 @@ final readonly class InboundMessage
         public array $custom = [],
         public ?DateTimeImmutable $at = null,
         public string $sessionId = '',
-        public string $commandId = '',
+        public string $requestId = '',
     ) {
     }
 
@@ -58,7 +58,7 @@ final readonly class InboundMessage
             custom: Json::stringMap($frame, 'custom'),
             at: Json::parseDate(Json::string($frame, 'at')),
             sessionId: Json::string($frame, 'session_id'),
-            commandId: Json::string($frame, 'command_id'),
+            requestId: Json::string($frame, 'request_id'),
         );
     }
 

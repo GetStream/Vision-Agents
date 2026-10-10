@@ -8,13 +8,14 @@ namespace GetStream\VisionAgents\Generated;
 
 use GetStream\VisionAgents\Json;
 
-final readonly class AttachedNumber
+/**
+ * How an agent is offered its plugin, MCP server and connector tools.
+ */
+final readonly class AgentTools
 {
     public function __construct(
-        public string $routeId,
-        // Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip....
-        public string $sipUri,
-        public string $trunkId,
+        // Offer each tool by the first line of its description, with its arguments' descriptions left out, and have t...
+        public ?bool $progressive = null,
     ) {
     }
 
@@ -24,9 +25,7 @@ final readonly class AttachedNumber
     public static function fromArray(array $data): self
     {
         return new self(
-            routeId: Json::string($data, 'route_id'),
-            sipUri: Json::string($data, 'sip_uri'),
-            trunkId: Json::string($data, 'trunk_id'),
+            progressive: array_key_exists('progressive', $data) && $data['progressive'] !== null ? Json::bool($data, 'progressive') : null,
         );
     }
 
@@ -38,9 +37,9 @@ final readonly class AttachedNumber
     public function toArray(): array
     {
         $out = [];
-        $out['route_id'] = $this->routeId;
-        $out['sip_uri'] = $this->sipUri;
-        $out['trunk_id'] = $this->trunkId;
+        if ($this->progressive !== null) {
+            $out['progressive'] = $this->progressive;
+        }
         return $out;
     }
 }

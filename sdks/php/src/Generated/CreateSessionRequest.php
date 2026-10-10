@@ -17,9 +17,6 @@ final readonly class CreateSessionRequest
         public ?string $agentId = null,
         // Murmur while a participant is still talking, the way a person does.
         public ?bool $backchannel = null,
-        // The call to join. Required unless the session is text.
-        public ?string $callId = null,
-        public ?string $callType = null,
         // An agent config to start from. Everything else in this request overrides what the config says, so a caller...
         public ?string $configId = null,
         // The connection to use for each of the agent config's connector bindings chosen per session (connection.type...
@@ -27,24 +24,20 @@ final readonly class CreateSessionRequest
         public ?array $connectorBindings = null,
         // Older history was omitted from the model context.
         public ?bool $contextTruncated = null,
-        // Stream Chat CID to resume; returned for persistent text sessions.
-        public ?string $conversationId = null,
         // Anything the caller wants to remember about the session, handed back untouched and never read by the router...
         /** @var array<string, mixed>|null */
         public ?array $custom = null,
         // A longer note about the conversation, searched alongside the title.
         public ?string $description = null,
-        // Said on joining without going through the model. Empty means the agent waits to be spoken to.
-        public ?string $greeting = null,
+        // What the agent opens the call with, over what the config says.
+        public ?Greeting $greeting = null,
         // The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlive...
         /** @var list<HistoryMessage>|null */
         public ?array $history = null,
-        // The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody...
+        // The id to hold the session by, so a caller can know it before the session exists. It may be any string of u...
         public ?string $id = null,
         // Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream C...
         public ?bool $incognito = null,
-        // The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403,...
-        public ?string $instructions = null,
         // Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cann...
         /** @var list<string>|null */
         public ?array $keyterms = null,
@@ -65,15 +58,15 @@ final readonly class CreateSessionRequest
         public ?string $projectId = null,
         // Omit it and the config decides, or search-fast when there is no config.
         public ?string $search = null,
-        // A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, s...
+        // Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, w...
+        public ?bool $startVoice = null,
+        // A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and s...
         public ?string $sts = null,
         // Omit it and the config decides, or en-low-latency when there is no config.
         public ?string $stt = null,
-        // Cost labels, carried onto every request the session makes.
+        // Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both...
         /** @var array<string, string>|null */
         public ?array $tags = null,
-        // Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no...
-        public ?bool $text = null,
         // What to call the conversation, for a list a person reads, until the router names a persistent one for what...
         public ?string $title = null,
         // How long the model waits for a tool result. Zero is the default.
@@ -100,19 +93,15 @@ final readonly class CreateSessionRequest
             agent: array_key_exists('agent', $data) && $data['agent'] !== null ? Json::string($data, 'agent') : null,
             agentId: array_key_exists('agent_id', $data) && $data['agent_id'] !== null ? Json::string($data, 'agent_id') : null,
             backchannel: array_key_exists('backchannel', $data) && $data['backchannel'] !== null ? Json::bool($data, 'backchannel') : null,
-            callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
-            callType: array_key_exists('call_type', $data) && $data['call_type'] !== null ? Json::string($data, 'call_type') : null,
             configId: array_key_exists('config_id', $data) && $data['config_id'] !== null ? Json::string($data, 'config_id') : null,
             connectorBindings: array_key_exists('connector_bindings', $data) && $data['connector_bindings'] !== null ? array_map(SessionConnectorBinding::fromArray(...), Json::objects($data, 'connector_bindings')) : null,
             contextTruncated: array_key_exists('context_truncated', $data) && $data['context_truncated'] !== null ? Json::bool($data, 'context_truncated') : null,
-            conversationId: array_key_exists('conversation_id', $data) && $data['conversation_id'] !== null ? Json::string($data, 'conversation_id') : null,
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
-            greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Json::string($data, 'greeting') : null,
+            greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             history: array_key_exists('history', $data) && $data['history'] !== null ? array_map(HistoryMessage::fromArray(...), Json::objects($data, 'history')) : null,
             id: array_key_exists('id', $data) && $data['id'] !== null ? Json::string($data, 'id') : null,
             incognito: array_key_exists('incognito', $data) && $data['incognito'] !== null ? Json::bool($data, 'incognito') : null,
-            instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
             keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             languages: array_key_exists('languages', $data) && $data['languages'] !== null ? Json::strings($data, 'languages') : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
@@ -124,10 +113,10 @@ final readonly class CreateSessionRequest
             phone: array_key_exists('phone', $data) && $data['phone'] !== null ? SessionPhone::fromArray(Json::object($data, 'phone')) : null,
             projectId: array_key_exists('project_id', $data) && $data['project_id'] !== null ? Json::string($data, 'project_id') : null,
             search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
+            startVoice: array_key_exists('start_voice', $data) && $data['start_voice'] !== null ? Json::bool($data, 'start_voice') : null,
             sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
             stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
-            text: array_key_exists('text', $data) && $data['text'] !== null ? Json::bool($data, 'text') : null,
             title: array_key_exists('title', $data) && $data['title'] !== null ? Json::string($data, 'title') : null,
             toolTimeoutMs: array_key_exists('tool_timeout_ms', $data) && $data['tool_timeout_ms'] !== null ? Json::int($data, 'tool_timeout_ms') : null,
             tools: array_key_exists('tools', $data) && $data['tools'] !== null ? array_map(SessionTool::fromArray(...), Json::objects($data, 'tools')) : null,
@@ -156,12 +145,6 @@ final readonly class CreateSessionRequest
         if ($this->backchannel !== null) {
             $out['backchannel'] = $this->backchannel;
         }
-        if ($this->callId !== null) {
-            $out['call_id'] = $this->callId;
-        }
-        if ($this->callType !== null) {
-            $out['call_type'] = $this->callType;
-        }
         if ($this->configId !== null) {
             $out['config_id'] = $this->configId;
         }
@@ -171,9 +154,6 @@ final readonly class CreateSessionRequest
         if ($this->contextTruncated !== null) {
             $out['context_truncated'] = $this->contextTruncated;
         }
-        if ($this->conversationId !== null) {
-            $out['conversation_id'] = $this->conversationId;
-        }
         if ($this->custom !== null) {
             $out['custom'] = Json::objectValue($this->custom);
         }
@@ -181,7 +161,7 @@ final readonly class CreateSessionRequest
             $out['description'] = $this->description;
         }
         if ($this->greeting !== null) {
-            $out['greeting'] = $this->greeting;
+            $out['greeting'] = $this->greeting->toArray();
         }
         if ($this->history !== null) {
             $out['history'] = array_map(static fn (HistoryMessage $each): array => $each->toArray(), $this->history);
@@ -191,9 +171,6 @@ final readonly class CreateSessionRequest
         }
         if ($this->incognito !== null) {
             $out['incognito'] = $this->incognito;
-        }
-        if ($this->instructions !== null) {
-            $out['instructions'] = $this->instructions;
         }
         if ($this->keyterms !== null) {
             $out['keyterms'] = $this->keyterms;
@@ -228,6 +205,9 @@ final readonly class CreateSessionRequest
         if ($this->search !== null) {
             $out['search'] = $this->search;
         }
+        if ($this->startVoice !== null) {
+            $out['start_voice'] = $this->startVoice;
+        }
         if ($this->sts !== null) {
             $out['sts'] = $this->sts;
         }
@@ -236,9 +216,6 @@ final readonly class CreateSessionRequest
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
-        }
-        if ($this->text !== null) {
-            $out['text'] = $this->text;
         }
         if ($this->title !== null) {
             $out['title'] = $this->title;

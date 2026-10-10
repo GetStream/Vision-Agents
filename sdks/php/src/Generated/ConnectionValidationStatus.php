@@ -9,9 +9,10 @@ namespace GetStream\VisionAgents\Generated;
 /**
  * connected: the credential works and the tools were listed. pending: no credentials yet.
  * needs_reauthorization: the provider no longer takes the credential, so only a reconnect
- * helps. needs_scopes: the tools were listed, and the grant lacks scopes they need;
- * missing_scopes names them, and a consent that asks for them helps. failed: the provider
- * could not be reached or listed nothing usable; error says why.
+ * helps, or, with code connector_credential_rejected, new credentials. needs_scopes: the tools
+ * were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent
+ * that asks for them helps. failed: the provider could not be reached or listed nothing
+ * usable; error says why.
  */
 enum ConnectionValidationStatus: string
 {

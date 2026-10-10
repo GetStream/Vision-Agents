@@ -16,8 +16,6 @@ final readonly class AgentConfig
         public AgentMode|string $mode,
         public string $name,
         public \DateTimeImmutable $updatedAt,
-        /** @var list<mixed>|null */
-        public ?array $agentPlugins = null,
         public ?AgentChannels $channels = null,
         // The bindings exactly as they were written. Absent when there are none.
         /** @var list<AgentConnectorBinding>|null */
@@ -25,7 +23,7 @@ final readonly class AgentConfig
         public ?AgentDispatch $dispatch = null,
         // Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each se...
         public ?bool $episodeCards = null,
-        public ?string $greeting = null,
+        public ?Greeting $greeting = null,
         public ?string $guardrail = null,
         public Harness|string|null $harness = null,
         public ?string $instructions = null,
@@ -37,25 +35,23 @@ final readonly class AgentConfig
         public ?array $mcpServers = null,
         /** @var list<PluginEvent>|null */
         public ?array $pluginEvents = null,
-        // Whether tools from plugins, MCP servers and connectors are offered by a summary, the first call to each ret...
-        public ?bool $progressiveTools = null,
+        /** @var list<mixed>|null */
+        public ?array $plugins = null,
         public Sandbox|string|null $sandbox = null,
         public ?SandboxOptions $sandboxOptions = null,
         public ?string $search = null,
         /** @var list<string>|null */
         public ?array $skills = null,
-        public ?float $speed = null,
         // A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes t...
         public ?string $sts = null,
         public ?string $stt = null,
+        public ?string $subagent = null,
         // Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
         public ?string $syncHash = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
-        public ?string $thinkingLlm = null,
+        public ?AgentTools $tools = null,
         public ?string $tts = null,
-        /** @var list<mixed>|null */
-        public ?array $userPlugins = null,
         public ?SessionVideo $video = null,
         /** @var list<string>|null */
         public ?array $visibleTools = null,
@@ -74,12 +70,11 @@ final readonly class AgentConfig
             mode: Json::enum($data, 'mode', AgentMode::class),
             name: Json::string($data, 'name'),
             updatedAt: Json::date($data, 'updated_at'),
-            agentPlugins: array_key_exists('agent_plugins', $data) && $data['agent_plugins'] !== null ? Json::list($data, 'agent_plugins') : null,
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
             episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::bool($data, 'episode_cards') : null,
-            greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Json::string($data, 'greeting') : null,
+            greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
             harness: array_key_exists('harness', $data) && $data['harness'] !== null ? Json::enum($data, 'harness', Harness::class) : null,
             instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
@@ -88,19 +83,18 @@ final readonly class AgentConfig
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
             mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? array_map(McpServer::fromArray(...), Json::objects($data, 'mcp_servers')) : null,
             pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
-            progressiveTools: array_key_exists('progressive_tools', $data) && $data['progressive_tools'] !== null ? Json::bool($data, 'progressive_tools') : null,
+            plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
             sandboxOptions: array_key_exists('sandbox_options', $data) && $data['sandbox_options'] !== null ? SandboxOptions::fromArray(Json::object($data, 'sandbox_options')) : null,
             search: array_key_exists('search', $data) && $data['search'] !== null ? Json::string($data, 'search') : null,
             skills: array_key_exists('skills', $data) && $data['skills'] !== null ? Json::strings($data, 'skills') : null,
-            speed: array_key_exists('speed', $data) && $data['speed'] !== null ? Json::float($data, 'speed') : null,
             sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
             stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
+            subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
             syncHash: array_key_exists('sync_hash', $data) && $data['sync_hash'] !== null ? Json::string($data, 'sync_hash') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
-            thinkingLlm: array_key_exists('thinking_llm', $data) && $data['thinking_llm'] !== null ? Json::string($data, 'thinking_llm') : null,
+            tools: array_key_exists('tools', $data) && $data['tools'] !== null ? AgentTools::fromArray(Json::object($data, 'tools')) : null,
             tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
-            userPlugins: array_key_exists('user_plugins', $data) && $data['user_plugins'] !== null ? Json::list($data, 'user_plugins') : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             visibleTools: array_key_exists('visible_tools', $data) && $data['visible_tools'] !== null ? Json::strings($data, 'visible_tools') : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
@@ -120,9 +114,6 @@ final readonly class AgentConfig
         $out['mode'] = Json::enumValue($this->mode);
         $out['name'] = $this->name;
         $out['updated_at'] = Json::dateValue($this->updatedAt);
-        if ($this->agentPlugins !== null) {
-            $out['agent_plugins'] = $this->agentPlugins;
-        }
         if ($this->channels !== null) {
             $out['channels'] = $this->channels->toArray();
         }
@@ -136,7 +127,7 @@ final readonly class AgentConfig
             $out['episode_cards'] = $this->episodeCards;
         }
         if ($this->greeting !== null) {
-            $out['greeting'] = $this->greeting;
+            $out['greeting'] = $this->greeting->toArray();
         }
         if ($this->guardrail !== null) {
             $out['guardrail'] = $this->guardrail;
@@ -162,8 +153,8 @@ final readonly class AgentConfig
         if ($this->pluginEvents !== null) {
             $out['plugin_events'] = array_map(static fn (PluginEvent $each): array => $each->toArray(), $this->pluginEvents);
         }
-        if ($this->progressiveTools !== null) {
-            $out['progressive_tools'] = $this->progressiveTools;
+        if ($this->plugins !== null) {
+            $out['plugins'] = $this->plugins;
         }
         if ($this->sandbox !== null) {
             $out['sandbox'] = Json::enumValue($this->sandbox);
@@ -177,14 +168,14 @@ final readonly class AgentConfig
         if ($this->skills !== null) {
             $out['skills'] = $this->skills;
         }
-        if ($this->speed !== null) {
-            $out['speed'] = $this->speed;
-        }
         if ($this->sts !== null) {
             $out['sts'] = $this->sts;
         }
         if ($this->stt !== null) {
             $out['stt'] = $this->stt;
+        }
+        if ($this->subagent !== null) {
+            $out['subagent'] = $this->subagent;
         }
         if ($this->syncHash !== null) {
             $out['sync_hash'] = $this->syncHash;
@@ -192,14 +183,11 @@ final readonly class AgentConfig
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
         }
-        if ($this->thinkingLlm !== null) {
-            $out['thinking_llm'] = $this->thinkingLlm;
+        if ($this->tools !== null) {
+            $out['tools'] = $this->tools->toArray();
         }
         if ($this->tts !== null) {
             $out['tts'] = $this->tts;
-        }
-        if ($this->userPlugins !== null) {
-            $out['user_plugins'] = $this->userPlugins;
         }
         if ($this->video !== null) {
             $out['video'] = $this->video->toArray();

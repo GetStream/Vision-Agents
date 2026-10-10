@@ -12,7 +12,7 @@ final readonly class Session
 {
     public function __construct(
         public string $agentId,
-        // Empty for a text session, which joins no call.
+        // The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in...
         public string $callId,
         public string $callType,
         public \DateTimeImmutable $createdAt,
@@ -28,7 +28,7 @@ final readonly class Session
         public ?string $configId = null,
         // Older history was omitted from the model context.
         public ?bool $contextTruncated = null,
-        // Stream Chat CID to resume; returned for persistent text sessions.
+        // The Stream Chat channel the conversation is kept in, typed and spoken. Absent for an incognito session.
         public ?string $conversationId = null,
         /** @var array<string, mixed>|null */
         public ?array $custom = null,
@@ -45,17 +45,25 @@ final readonly class Session
         public SessionMode|string|null $mode = null,
         public ?ModelOverwrites $modelOverwrites = null,
         public ?string $projectId = null,
+        // Why the review scored the conversation as it did. Read by a backend only.
+        public ?string $reviewNotes = null,
+        // How well the agent handled the conversation, from 1 to 5, written a few seconds after it ended. Read by a b...
+        public ?int $reviewScore = null,
         // The provider and model holding a native conversation, once routing has picked one.
         public ?string $sts = null,
         // The provider and model transcribing, once somebody has been heard.
         public ?string $stt = null,
+        // The provider and model delegated work runs on.
+        public ?string $subagent = null,
+        // What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has...
+        public ?string $summary = null,
         // The conversation is held in writing rather than on a call.
         public ?bool $text = null,
-        // The provider and model delegated work runs on.
-        public ?string $thinkingLlm = null,
         public ?string $title = null,
         // The provider and model speaking.
         public ?string $tts = null,
+        // What the conversation spent over every model it called, typed and spoken, once it has ended. Read by a back...
+        public ?CallUsage $usage = null,
         public ?SessionVideo $video = null,
         // The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
         public ?string $voice = null,
@@ -91,12 +99,16 @@ final readonly class Session
             mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', SessionMode::class) : null,
             modelOverwrites: array_key_exists('model_overwrites', $data) && $data['model_overwrites'] !== null ? ModelOverwrites::fromArray(Json::object($data, 'model_overwrites')) : null,
             projectId: array_key_exists('project_id', $data) && $data['project_id'] !== null ? Json::string($data, 'project_id') : null,
+            reviewNotes: array_key_exists('review_notes', $data) && $data['review_notes'] !== null ? Json::string($data, 'review_notes') : null,
+            reviewScore: array_key_exists('review_score', $data) && $data['review_score'] !== null ? Json::int($data, 'review_score') : null,
             sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
             stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
+            subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
+            summary: array_key_exists('summary', $data) && $data['summary'] !== null ? Json::string($data, 'summary') : null,
             text: array_key_exists('text', $data) && $data['text'] !== null ? Json::bool($data, 'text') : null,
-            thinkingLlm: array_key_exists('thinking_llm', $data) && $data['thinking_llm'] !== null ? Json::string($data, 'thinking_llm') : null,
             title: array_key_exists('title', $data) && $data['title'] !== null ? Json::string($data, 'title') : null,
             tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
+            usage: array_key_exists('usage', $data) && $data['usage'] !== null ? CallUsage::fromArray(Json::object($data, 'usage')) : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
         );
@@ -163,23 +175,35 @@ final readonly class Session
         if ($this->projectId !== null) {
             $out['project_id'] = $this->projectId;
         }
+        if ($this->reviewNotes !== null) {
+            $out['review_notes'] = $this->reviewNotes;
+        }
+        if ($this->reviewScore !== null) {
+            $out['review_score'] = $this->reviewScore;
+        }
         if ($this->sts !== null) {
             $out['sts'] = $this->sts;
         }
         if ($this->stt !== null) {
             $out['stt'] = $this->stt;
         }
+        if ($this->subagent !== null) {
+            $out['subagent'] = $this->subagent;
+        }
+        if ($this->summary !== null) {
+            $out['summary'] = $this->summary;
+        }
         if ($this->text !== null) {
             $out['text'] = $this->text;
-        }
-        if ($this->thinkingLlm !== null) {
-            $out['thinking_llm'] = $this->thinkingLlm;
         }
         if ($this->title !== null) {
             $out['title'] = $this->title;
         }
         if ($this->tts !== null) {
             $out['tts'] = $this->tts;
+        }
+        if ($this->usage !== null) {
+            $out['usage'] = $this->usage->toArray();
         }
         if ($this->video !== null) {
             $out['video'] = $this->video->toArray();

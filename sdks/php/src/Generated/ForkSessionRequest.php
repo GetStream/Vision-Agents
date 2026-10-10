@@ -17,16 +17,12 @@ final readonly class ForkSessionRequest
 {
     public function __construct(
         public ?string $agent = null,
-        // The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this i...
-        public ?string $callId = null,
         public ?string $configId = null,
         /** @var array<string, mixed>|null */
         public ?array $custom = null,
         public ?string $description = null,
         // Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
         public ?bool $incognito = null,
-        // Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession.
-        public ?string $instructions = null,
         // Carry the parent's history into the fork, so the new conversation continues from what was already said. Fal...
         public ?bool $messages = null,
         public ?ModelOverwrites $modelOverwrites = null,
@@ -44,12 +40,10 @@ final readonly class ForkSessionRequest
     {
         return new self(
             agent: array_key_exists('agent', $data) && $data['agent'] !== null ? Json::string($data, 'agent') : null,
-            callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
             configId: array_key_exists('config_id', $data) && $data['config_id'] !== null ? Json::string($data, 'config_id') : null,
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             incognito: array_key_exists('incognito', $data) && $data['incognito'] !== null ? Json::bool($data, 'incognito') : null,
-            instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
             messages: array_key_exists('messages', $data) && $data['messages'] !== null ? Json::bool($data, 'messages') : null,
             modelOverwrites: array_key_exists('model_overwrites', $data) && $data['model_overwrites'] !== null ? ModelOverwrites::fromArray(Json::object($data, 'model_overwrites')) : null,
             projectId: array_key_exists('project_id', $data) && $data['project_id'] !== null ? Json::string($data, 'project_id') : null,
@@ -69,9 +63,6 @@ final readonly class ForkSessionRequest
         if ($this->agent !== null) {
             $out['agent'] = $this->agent;
         }
-        if ($this->callId !== null) {
-            $out['call_id'] = $this->callId;
-        }
         if ($this->configId !== null) {
             $out['config_id'] = $this->configId;
         }
@@ -83,9 +74,6 @@ final readonly class ForkSessionRequest
         }
         if ($this->incognito !== null) {
             $out['incognito'] = $this->incognito;
-        }
-        if ($this->instructions !== null) {
-            $out['instructions'] = $this->instructions;
         }
         if ($this->messages !== null) {
             $out['messages'] = $this->messages;
