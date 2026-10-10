@@ -788,6 +788,27 @@ func (e CreateOptOutRequestSource) Valid() bool {
 	}
 }
 
+// Defines values for CustomModelRequestTrainsOnData.
+const (
+	CustomModelRequestTrainsOnDataNo      CustomModelRequestTrainsOnData = "no"
+	CustomModelRequestTrainsOnDataUnknown CustomModelRequestTrainsOnData = "unknown"
+	CustomModelRequestTrainsOnDataYes     CustomModelRequestTrainsOnData = "yes"
+)
+
+// Valid indicates whether the value is a known member of the CustomModelRequestTrainsOnData enum.
+func (e CustomModelRequestTrainsOnData) Valid() bool {
+	switch e {
+	case CustomModelRequestTrainsOnDataNo:
+		return true
+	case CustomModelRequestTrainsOnDataUnknown:
+		return true
+	case CustomModelRequestTrainsOnDataYes:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DataChangeOp.
 const (
 	Delete DataChangeOp = "delete"
@@ -2823,12 +2844,6 @@ type AppSettings struct {
 type AttachNumberRequest struct {
 	// AllowedIps The vendor's signalling addresses, as IPs or CIDR blocks.
 	AllowedIps *[]string `json:"allowed_ips,omitempty"`
-
-	// CallId The call every caller joins. Omit to give each caller their own call, named after the number they rang.
-	CallId *string `json:"call_id,omitempty"`
-
-	// CallType The Stream call type. Omit for "agent".
-	CallType *string `json:"call_type,omitempty"`
 }
 
 // AttachedNumber defines model for AttachedNumber.
@@ -3513,10 +3528,10 @@ type ClassifyUsage struct {
 // CommandReceipt defines model for CommandReceipt.
 type CommandReceipt struct {
 	AssistantMessageId string `json:"assistant_message_id"`
-	CommandId          string `json:"command_id"`
 
 	// Duplicate True when this command already exists and no new inference was started.
-	Duplicate bool `json:"duplicate"`
+	Duplicate bool   `json:"duplicate"`
+	RequestId string `json:"request_id"`
 
 	// State Latest locally recorded response state; an interrupted command is never automatically rerun.
 	State         string `json:"state"`
@@ -4153,9 +4168,10 @@ type CreateOptOutRequestSource string
 
 // CreateResponseRequest defines model for CreateResponseRequest.
 type CreateResponseRequest struct {
-	// CommandId Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
-	CommandId *string        `json:"command_id,omitempty"`
-	Images    *[]ImageSource `json:"images,omitempty"`
+	Images *[]ImageSource `json:"images,omitempty"`
+
+	// RequestId Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
+	RequestId *string `json:"request_id,omitempty"`
 
 	// Text What to answer, as though it had been said.
 	Text string `json:"text"`
@@ -4175,10 +4191,6 @@ type CreateSessionRequest struct {
 	// Backchannel Murmur while a participant is still talking, the way a person does.
 	Backchannel *bool `json:"backchannel,omitempty"`
 
-	// CallId The call to join. Required unless the session is text.
-	CallId   *string `json:"call_id,omitempty"`
-	CallType *string `json:"call_type,omitempty"`
-
 	// ConfigId An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
 	ConfigId *string `json:"config_id,omitempty"`
 
@@ -4187,9 +4199,6 @@ type CreateSessionRequest struct {
 
 	// ContextTruncated Older history was omitted from the model context.
 	ContextTruncated *bool `json:"context_truncated,omitempty"`
-
-	// ConversationId Stream Chat CID to resume; returned for persistent text sessions.
-	ConversationId *string `json:"conversation_id,omitempty"`
 
 	// Custom Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
 	Custom *map[string]interface{} `json:"custom,omitempty"`
@@ -4200,17 +4209,14 @@ type CreateSessionRequest struct {
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
 
-	// History The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
+	// History The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
 	History *[]HistoryMessage `json:"history,omitempty"`
 
-	// Id The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
+	// Id The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that does not start support- or thread- and that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7.
 	Id *string `json:"id,omitempty"`
 
 	// Incognito Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
 	Incognito *bool `json:"incognito,omitempty"`
-
-	// Instructions The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to decide.
-	Instructions *string `json:"instructions,omitempty"`
 
 	// Keyterms Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
 	Keyterms *[]string `json:"keyterms,omitempty"`
@@ -4244,17 +4250,17 @@ type CreateSessionRequest struct {
 	// Search Omit it and the config decides, or search-fast when there is no config.
 	Search *string `json:"search,omitempty"`
 
-	// Sts A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
+	// StartVoice Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+	StartVoice *bool `json:"start_voice,omitempty"`
+
+	// Sts A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
 	Sts *string `json:"sts,omitempty"`
 
 	// Stt Omit it and the config decides, or en-low-latency when there is no config.
 	Stt *string `json:"stt,omitempty"`
 
-	// Tags Cost labels, carried onto every request the session makes.
+	// Tags Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
 	Tags *map[string]string `json:"tags,omitempty"`
-
-	// Text Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
-	Text *bool `json:"text,omitempty"`
 
 	// Title What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
 	Title *string `json:"title,omitempty"`
@@ -4323,6 +4329,83 @@ type CustomConnectorRequest struct {
 	// Scopes The scopes a consent asks for, each an RFC 6749 scope token.
 	Scopes *[]string `json:"scopes,omitempty"`
 }
+
+// CustomModel defines model for CustomModel.
+type CustomModel struct {
+	BaseUrl       string    `json:"base_url"`
+	ContextWindow int64     `json:"context_window"`
+	CreatedAt     time.Time `json:"created_at"`
+
+	// HasApiKey Whether a key is stored. The key itself is never returned.
+	HasApiKey              bool     `json:"has_api_key"`
+	Id                     string   `json:"id"`
+	InputModalities        []string `json:"input_modalities"`
+	Model                  string   `json:"model"`
+	Name                   string   `json:"name"`
+	PerMillionInputTokens  float64  `json:"per_million_input_tokens"`
+	PerMillionOutputTokens float64  `json:"per_million_output_tokens"`
+	Retention              *string  `json:"retention,omitempty"`
+
+	// Target What a router config or session names the model by.
+	//
+	// Example: custom/support-qwen
+	Target       string    `json:"target"`
+	TrainsOnData *string   `json:"trains_on_data,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// CustomModelPage defines model for CustomModelPage.
+type CustomModelPage struct {
+	HasMore bool          `json:"has_more"`
+	Items   []CustomModel `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// CustomModelRequest defines model for CustomModelRequest.
+type CustomModelRequest struct {
+	// ApiKey Sent as a bearer token. Stored sealed and never returned. Left out of an update keeps the one stored; empty removes it.
+	ApiKey *string `json:"api_key,omitempty"`
+
+	// BaseUrl The endpoint root, up to and including /v1, that chat completions are posted under.
+	//
+	// Example: https://model-abc123.api.baseten.co/environments/production/sync/v1
+	BaseUrl string `json:"base_url"`
+
+	// ContextWindow Tokens the model accepts, so the router can refuse a conversation that would not fit. Omitted is unknown.
+	ContextWindow *int64 `json:"context_window,omitempty"`
+
+	// InputModalities Input kinds beyond text the model accepts, e.g. image.
+	InputModalities *[]string `json:"input_modalities,omitempty"`
+
+	// Model The id the endpoint serves the weights under.
+	//
+	// Example: Qwen/Qwen3.8-27B
+	Model string `json:"model"`
+
+	// Name What a config names the model by, as `custom/<name>`. Unique among the customer's models.
+	//
+	// Example: support-qwen
+	Name string `json:"name"`
+
+	// PerMillionInputTokens What the host bills per million input tokens in USD, so usage can say what a conversation cost. Omitted is free.
+	PerMillionInputTokens *float64 `json:"per_million_input_tokens,omitempty"`
+
+	// PerMillionOutputTokens What the host bills per million output tokens in USD. Omitted is free.
+	PerMillionOutputTokens *float64 `json:"per_million_output_tokens,omitempty"`
+
+	// Retention How long the host keeps what it is sent: none, or a duration such as 30d or 24h.
+	//
+	// Example: none
+	Retention *string `json:"retention,omitempty"`
+
+	// TrainsOnData Whether the host trains on what it is sent. Declared with retention, or a session with a data policy is never routed here.
+	TrainsOnData *CustomModelRequestTrainsOnData `json:"trains_on_data,omitempty"`
+}
+
+// CustomModelRequestTrainsOnData Whether the host trains on what it is sent. Declared with retention, or a session with a data policy is never routed here.
+type CustomModelRequestTrainsOnData string
 
 // DataChange One thing that happened to one row of the calling app's data.
 type DataChange struct {
@@ -4427,19 +4510,13 @@ type ErrorType string
 
 // ForkSessionRequest Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
 type ForkSessionRequest struct {
-	Agent *string `json:"agent,omitempty"`
-
-	// CallId The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not.
-	CallId      *string                 `json:"call_id,omitempty"`
+	Agent       *string                 `json:"agent,omitempty"`
 	ConfigId    *string                 `json:"config_id,omitempty"`
 	Custom      *map[string]interface{} `json:"custom,omitempty"`
 	Description *string                 `json:"description,omitempty"`
 
 	// Incognito Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
 	Incognito *bool `json:"incognito,omitempty"`
-
-	// Instructions Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession.
-	Instructions *string `json:"instructions,omitempty"`
 
 	// Messages Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
 	Messages *bool `json:"messages,omitempty"`
@@ -4720,11 +4797,6 @@ type InputParts struct {
 
 	// Video Frames of a video, from the call's camera or an attached clip.
 	Video int64 `json:"video"`
-}
-
-// InstructionsRequest defines model for InstructionsRequest.
-type InstructionsRequest struct {
-	Instructions string `json:"instructions"`
 }
 
 // InvocationArgument One argument a connector tool call was asked with: its name, its JSON type and, for a string or an array, its length, so an empty string shows as length 0. Never its value.
@@ -5174,12 +5246,6 @@ type PhoneVendor struct {
 
 // PlaceCallRequest defines model for PlaceCallRequest.
 type PlaceCallRequest struct {
-	// CallId The Stream call the answered leg joins, and so the one the agent has to be in. Omit to have one named after this call, since two calls from the same number are two conversations.
-	CallId *string `json:"call_id,omitempty"`
-
-	// CallType The Stream call type. Omit for "agent".
-	CallType *string `json:"call_type,omitempty"`
-
 	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it.
 	Custom *map[string]string `json:"custom,omitempty"`
 
@@ -5193,16 +5259,18 @@ type PlaceCallRequest struct {
 	InitialDigits *string `json:"initial_digits,omitempty"`
 
 	// RingTimeoutSeconds How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than ringing for its own default.
-	RingTimeoutSeconds *int               `json:"ring_timeout_seconds,omitempty"`
-	Tags               *map[string]string `json:"tags,omitempty"`
-	To                 string             `json:"to"`
+	RingTimeoutSeconds *int `json:"ring_timeout_seconds,omitempty"`
+
+	// SessionId The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice.
+	SessionId *string            `json:"session_id,omitempty"`
+	Tags      *map[string]string `json:"tags,omitempty"`
+	To        string             `json:"to"`
 }
 
 // PlacedCall defines model for PlacedCall.
 type PlacedCall struct {
-	// CallId The Stream call the answered leg is routed into. An agent that is not in it hears nothing when the person picks up.
-	CallId   *string `json:"call_id,omitempty"`
-	CallType *string `json:"call_type,omitempty"`
+	// SessionId The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up.
+	SessionId *string `json:"session_id,omitempty"`
 
 	// Status The vendor's own word for where the call is, e.g. "queued".
 	Status string `json:"status"`
@@ -5537,8 +5605,8 @@ type RespondRequest struct {
 	// ClientId The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
 	ClientId *string `json:"client_id,omitempty"`
 
-	// CommandId Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
-	CommandId *string `json:"command_id,omitempty"`
+	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry with the same id and text does not restart inference.
+	RequestId *string `json:"request_id,omitempty"`
 	Text      string  `json:"text"`
 }
 
@@ -5770,7 +5838,7 @@ type Session struct {
 	Agent   *string `json:"agent,omitempty"`
 	AgentId string  `json:"agent_id"`
 
-	// CallId Empty for a text session, which joins no call.
+	// CallId The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
 	CallId   string `json:"call_id"`
 	CallType string `json:"call_type"`
 
@@ -5783,7 +5851,7 @@ type Session struct {
 	// ContextTruncated Older history was omitted from the model context.
 	ContextTruncated *bool `json:"context_truncated,omitempty"`
 
-	// ConversationId Stream Chat CID to resume; returned for persistent text sessions.
+	// ConversationId The Stream Chat channel the conversation is kept in, typed and spoken. Absent for an incognito session.
 	ConversationId *string                 `json:"conversation_id,omitempty"`
 	CreatedAt      time.Time               `json:"created_at"`
 	Custom         *map[string]interface{} `json:"custom,omitempty"`
@@ -5814,6 +5882,12 @@ type Session struct {
 	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
 	ProjectId       *string          `json:"project_id,omitempty"`
 
+	// ReviewNotes Why the review scored the conversation as it did. Read by a backend only.
+	ReviewNotes *string `json:"review_notes,omitempty"`
+
+	// ReviewScore How well the agent handled the conversation, from 1 to 5, written a few seconds after it ended. Read by a backend only.
+	ReviewScore *int64 `json:"review_score,omitempty"`
+
 	// State Whether the agent is still in the call.
 	State SessionState `json:"state"`
 
@@ -5826,12 +5900,18 @@ type Session struct {
 	// Subagent The provider and model delegated work runs on.
 	Subagent *string `json:"subagent,omitempty"`
 
+	// Summary What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only.
+	Summary *string `json:"summary,omitempty"`
+
 	// Text The conversation is held in writing rather than on a call.
 	Text  *bool   `json:"text,omitempty"`
 	Title *string `json:"title,omitempty"`
 
 	// Tts The provider and model speaking.
-	Tts    *string       `json:"tts,omitempty"`
+	Tts *string `json:"tts,omitempty"`
+
+	// Usage What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
+	Usage  *CallUsage    `json:"usage,omitempty"`
 	UserId string        `json:"user_id"`
 	Video  *SessionVideo `json:"video,omitempty"`
 
@@ -5933,9 +6013,10 @@ type SessionQuery struct {
 
 // SessionRespondCommand defines model for SessionRespondCommand.
 type SessionRespondCommand struct {
-	// CommandId Required for personal persistent text conversations; reuse on retries. Text only when present.
-	CommandId *string                   `json:"command_id,omitempty"`
-	Images    *[]ImageSource            `json:"images,omitempty"`
+	Images *[]ImageSource `json:"images,omitempty"`
+
+	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present.
+	RequestId *string                   `json:"request_id,omitempty"`
 	Text      string                    `json:"text"`
 	Type      SessionRespondCommandType `json:"type"`
 }
@@ -6908,7 +6989,7 @@ type TimelineEntry struct {
 // ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result.
 type ToolApprovalCommand struct {
 	Allowed   bool   `json:"allowed"`
-	CommandId string `json:"command_id"`
+	RequestId string `json:"request_id"`
 
 	// Summary Shown on the declined call, such as "Location not shared".
 	Summary    *string                 `json:"summary,omitempty"`
@@ -6922,9 +7003,9 @@ type ToolApprovalCommandType string
 
 // ToolResultCommand defines model for ToolResultCommand.
 type ToolResultCommand struct {
-	CommandId  *string               `json:"command_id,omitempty"`
 	Error      *string               `json:"error,omitempty"`
 	Output     *MessageContent       `json:"output,omitempty"`
+	RequestId  *string               `json:"request_id,omitempty"`
 	ToolCallId string                `json:"tool_call_id"`
 	TurnId     *string               `json:"turn_id,omitempty"`
 	Type       ToolResultCommandType `json:"type"`
@@ -7032,15 +7113,12 @@ type TranscriptionRequest struct {
 
 // TransferCallRequest defines model for TransferCallRequest.
 type TransferCallRequest struct {
-	// CallId The Stream call the caller and the agent are already on.
-	CallId string `json:"call_id"`
-
-	// CallType The Stream call type. Omit for "agent".
-	CallType *string `json:"call_type,omitempty"`
-
 	// From The customer's number the human is dialled from, which is what they see.
-	From string             `json:"from"`
-	Tags *map[string]string `json:"tags,omitempty"`
+	From string `json:"from"`
+
+	// SessionId The session whose call the caller and the agent are on. The human is brought into it.
+	SessionId string             `json:"session_id"`
+	Tags      *map[string]string `json:"tags,omitempty"`
 
 	// To The human being brought onto the call.
 	To string `json:"to"`
@@ -7131,9 +7209,6 @@ type UpdateSessionRequest struct {
 	// Custom Replaces the caller's labels whole. An empty object clears them.
 	Custom      *map[string]interface{} `json:"custom,omitempty"`
 	Description *string                 `json:"description,omitempty"`
-
-	// Instructions What the agent is told to be, from the next turn.
-	Instructions *string `json:"instructions,omitempty"`
 
 	// Llm The conversation model, a provider/model or a capability shortcut.
 	Llm             *string `json:"llm,omitempty"`
@@ -7686,6 +7761,15 @@ type StreamAgentLogsParams struct {
 // StreamAgentLogsParamsSeverity defines parameters for StreamAgentLogs.
 type StreamAgentLogsParamsSeverity string
 
+// ListCustomModelsParams defines parameters for ListCustomModels.
+type ListCustomModelsParams struct {
+	// Limit Up to 200. Omitted is 25.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // ListPluginsParams defines parameters for ListPlugins.
 type ListPluginsParams struct {
 	// Q Filter by name, category or description.
@@ -7988,6 +8072,12 @@ type IngestKnowledgeJSONRequestBody = IngestKnowledgeRequest
 // AddKnowledgeUrlJSONRequestBody defines body for AddKnowledgeUrl for application/json ContentType.
 type AddKnowledgeUrlJSONRequestBody = KnowledgeUrlRequest
 
+// CreateCustomModelJSONRequestBody defines body for CreateCustomModel for application/json ContentType.
+type CreateCustomModelJSONRequestBody = CustomModelRequest
+
+// UpdateCustomModelJSONRequestBody defines body for UpdateCustomModel for application/json ContentType.
+type UpdateCustomModelJSONRequestBody = CustomModelRequest
+
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
 
@@ -7999,9 +8089,6 @@ type UpdateSessionJSONRequestBody = UpdateSessionRequest
 
 // ForkSessionJSONRequestBody defines body for ForkSession for application/json ContentType.
 type ForkSessionJSONRequestBody = ForkSessionRequest
-
-// SetSessionInstructionsJSONRequestBody defines body for SetSessionInstructions for application/json ContentType.
-type SetSessionInstructionsJSONRequestBody = InstructionsRequest
 
 // RespondSessionJSONRequestBody defines body for RespondSession for application/json ContentType.
 type RespondSessionJSONRequestBody = RespondRequest
@@ -9230,8 +9317,8 @@ type ClientInterface interface {
 	// Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
 	// A command still running is reported as it stands; the session holding it is where it can be stopped.
 	//
-	// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
-	GetConversationCommand(ctx context.Context, cid string, commandId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with GET /v1/agents/conversations/{cid}/commands/{request_id} (the `GetConversationCommand` operationId).
+	GetConversationCommand(ctx context.Context, cid string, requestId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConversationMessages Read a persistent text conversation
 	//
@@ -9407,6 +9494,68 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/logs/{id} (the `GetAgentLog` operationId).
 	GetAgentLog(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListCustomModels The language models the calling customer serves themselves
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/models (the `ListCustomModels` operationId).
+	ListCustomModels(ctx context.Context, params *ListCustomModelsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCustomModelWithBody Add a model of the customer's own
+	//
+	// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+	CreateCustomModelWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCustomModel Add a model of the customer's own
+	//
+	// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+	CreateCustomModel(ctx context.Context, body CreateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteCustomModel Delete a model
+	//
+	// Sessions that name it are refused from then on.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/models/{id} (the `DeleteCustomModel` operationId).
+	DeleteCustomModel(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCustomModel One of the customer's models
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/models/{id} (the `GetCustomModel` operationId).
+	GetCustomModel(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateCustomModelWithBody Replace a model
+	//
+	// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+	UpdateCustomModelWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateCustomModel Replace a model
+	//
+	// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+	UpdateCustomModel(ctx context.Context, id string, body UpdateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListPlugins The hosted MCP servers an agent may attach
 	//
 	// A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
@@ -9501,19 +9650,20 @@ type ClientInterface interface {
 	// GetSession One session
 	//
 	// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+	// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 	GetSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateSessionWithBody Change a session
 	//
-	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
-	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
-	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -9522,13 +9672,13 @@ type ClientInterface interface {
 
 	// UpdateSession Change a session
 	//
-	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
-	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
-	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -9537,10 +9687,10 @@ type ClientInterface interface {
 
 	// GetSessionCommand What is known about one durable command
 	//
-	// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+	// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same request id rather than inventing another one.
 	//
-	// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
-	GetSessionCommand(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with GET /v1/agents/sessions/{id}/commands/{request_id} (the `GetSessionCommand` operationId).
+	GetSessionCommand(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InterruptSessionCommand Stop one named command, and nothing else
 	//
@@ -9548,8 +9698,8 @@ type ClientInterface interface {
 	// A command accepted but not yet generating is prevented from starting. A command already completed, failed, cancelled or interrupted returns what it ended as. An unknown command is a 404, the same answer as a conversation the caller does not own.
 	// Interrupting model work claims nothing about a tool whose external side effect already happened.
 	//
-	// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
-	InterruptSessionCommand(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/agents/sessions/{id}/commands/{request_id}/interrupt (the `InterruptSessionCommand` operationId).
+	InterruptSessionCommand(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ForkSessionWithBody Continue a conversation as a new one
 	//
@@ -9570,24 +9720,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
 	ForkSession(ctx context.Context, id string, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SetSessionInstructionsWithBody Change what the agent is told to be
-	//
-	// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-	SetSessionInstructionsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SetSessionInstructions Change what the agent is told to be
-	//
-	// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-	SetSessionInstructions(ctx context.Context, id string, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InterruptSession Abandon the reply being spoken
 	//
@@ -9732,6 +9864,22 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 	ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StopSessionVoice Stop voice on a session
+	//
+	// The agent finishes what it is saying, leaves the call and carries the conversation on in writing, with everything said on the call. Stopping voice on a session held in writing changes nothing. Stopping the session is what ends it.
+	//
+	// Corresponds with DELETE /v1/agents/sessions/{id}/voice (the `StopSessionVoice` operationId).
+	StopSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartSessionVoice Start voice on a session
+	//
+	// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+	//
+	// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+	StartSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSimulationRuns What the simulations have come to, newest first
 	//
@@ -12554,9 +12702,9 @@ func (c *Client) SetConnectorProviderApp(ctx context.Context, id string, body Se
 // Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
 // A command still running is reported as it stands; the session holding it is where it can be stopped.
 //
-// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
-func (c *Client) GetConversationCommand(ctx context.Context, cid string, commandId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetConversationCommandRequest(c.Server, cid, commandId, params)
+// Corresponds with GET /v1/agents/conversations/{cid}/commands/{request_id} (the `GetConversationCommand` operationId).
+func (c *Client) GetConversationCommand(ctx context.Context, cid string, requestId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConversationCommandRequest(c.Server, cid, requestId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -12951,6 +13099,138 @@ func (c *Client) GetAgentLog(ctx context.Context, id string, reqEditors ...Reque
 	return c.Client.Do(req)
 }
 
+// ListCustomModels The language models the calling customer serves themselves
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/models (the `ListCustomModels` operationId).
+func (c *Client) ListCustomModels(ctx context.Context, params *ListCustomModelsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCustomModelsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCustomModelWithBody Add a model of the customer's own
+//
+// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+func (c *Client) CreateCustomModelWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCustomModelRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCustomModel Add a model of the customer's own
+//
+// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+func (c *Client) CreateCustomModel(ctx context.Context, body CreateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCustomModelRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteCustomModel Delete a model
+//
+// Sessions that name it are refused from then on.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/models/{id} (the `DeleteCustomModel` operationId).
+func (c *Client) DeleteCustomModel(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteCustomModelRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCustomModel One of the customer's models
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/models/{id} (the `GetCustomModel` operationId).
+func (c *Client) GetCustomModel(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCustomModelRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateCustomModelWithBody Replace a model
+//
+// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+func (c *Client) UpdateCustomModelWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCustomModelRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateCustomModel Replace a model
+//
+// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+func (c *Client) UpdateCustomModel(ctx context.Context, id string, body UpdateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCustomModelRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListPlugins The hosted MCP servers an agent may attach
 //
 // A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
@@ -13135,6 +13415,7 @@ func (c *Client) DeleteSession(ctx context.Context, id string, reqEditors ...Req
 // GetSession One session
 //
 // Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
 //
 // Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 func (c *Client) GetSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -13151,13 +13432,13 @@ func (c *Client) GetSession(ctx context.Context, id string, reqEditors ...Reques
 
 // UpdateSessionWithBody Change a session
 //
-// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
-// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
-// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes any type of body and a specified content type.
 //
@@ -13176,13 +13457,13 @@ func (c *Client) UpdateSessionWithBody(ctx context.Context, id string, contentTy
 
 // UpdateSession Change a session
 //
-// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
-// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
-// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -13201,11 +13482,11 @@ func (c *Client) UpdateSession(ctx context.Context, id string, body UpdateSessio
 
 // GetSessionCommand What is known about one durable command
 //
-// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same request id rather than inventing another one.
 //
-// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
-func (c *Client) GetSessionCommand(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSessionCommandRequest(c.Server, id, commandId)
+// Corresponds with GET /v1/agents/sessions/{id}/commands/{request_id} (the `GetSessionCommand` operationId).
+func (c *Client) GetSessionCommand(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSessionCommandRequest(c.Server, id, requestId)
 	if err != nil {
 		return nil, err
 	}
@@ -13222,9 +13503,9 @@ func (c *Client) GetSessionCommand(ctx context.Context, id string, commandId str
 // A command accepted but not yet generating is prevented from starting. A command already completed, failed, cancelled or interrupted returns what it ended as. An unknown command is a 404, the same answer as a conversation the caller does not own.
 // Interrupting model work claims nothing about a tool whose external side effect already happened.
 //
-// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
-func (c *Client) InterruptSessionCommand(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewInterruptSessionCommandRequest(c.Server, id, commandId)
+// Corresponds with POST /v1/agents/sessions/{id}/commands/{request_id}/interrupt (the `InterruptSessionCommand` operationId).
+func (c *Client) InterruptSessionCommand(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInterruptSessionCommandRequest(c.Server, id, requestId)
 	if err != nil {
 		return nil, err
 	}
@@ -13265,44 +13546,6 @@ func (c *Client) ForkSessionWithBody(ctx context.Context, id string, contentType
 // Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
 func (c *Client) ForkSession(ctx context.Context, id string, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewForkSessionRequest(c.Server, id, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// SetSessionInstructionsWithBody Change what the agent is told to be
-//
-// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-func (c *Client) SetSessionInstructionsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetSessionInstructionsRequestWithBody(c.Server, id, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// SetSessionInstructions Change what the agent is told to be
-//
-// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-func (c *Client) SetSessionInstructions(ctx context.Context, id string, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetSessionInstructionsRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -13607,6 +13850,42 @@ func (c *Client) StopSession(ctx context.Context, id string, reqEditors ...Reque
 // Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 func (c *Client) ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSessionToolsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StopSessionVoice Stop voice on a session
+//
+// The agent finishes what it is saying, leaves the call and carries the conversation on in writing, with everything said on the call. Stopping voice on a session held in writing changes nothing. Stopping the session is what ends it.
+//
+// Corresponds with DELETE /v1/agents/sessions/{id}/voice (the `StopSessionVoice` operationId).
+func (c *Client) StopSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStopSessionVoiceRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartSessionVoice Start voice on a session
+//
+// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+//
+// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+func (c *Client) StartSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartSessionVoiceRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -19153,7 +19432,7 @@ func NewSetConnectorProviderAppRequestWithBody(server string, id string, content
 }
 
 // NewGetConversationCommandRequest constructs an http.Request for the GetConversationCommand method
-func NewGetConversationCommandRequest(server string, cid string, commandId string, params *GetConversationCommandParams) (*http.Request, error) {
+func NewGetConversationCommandRequest(server string, cid string, requestId string, params *GetConversationCommandParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -19165,7 +19444,7 @@ func NewGetConversationCommandRequest(server string, cid string, commandId strin
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "command_id", commandId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -20152,6 +20431,227 @@ func NewGetAgentLogRequest(server string, id string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListCustomModelsRequest constructs an http.Request for the ListCustomModels method
+func NewListCustomModelsRequest(server string, params *ListCustomModelsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/models")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateCustomModelRequest calls the generic CreateCustomModel builder with application/json body
+func NewCreateCustomModelRequest(server string, body CreateCustomModelJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateCustomModelRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateCustomModelRequestWithBody constructs an http.Request for the CreateCustomModel method, with any body, and a specified content type
+func NewCreateCustomModelRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/models")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteCustomModelRequest constructs an http.Request for the DeleteCustomModel method
+func NewDeleteCustomModelRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/models/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetCustomModelRequest constructs an http.Request for the GetCustomModel method
+func NewGetCustomModelRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/models/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateCustomModelRequest calls the generic UpdateCustomModel builder with application/json body
+func NewUpdateCustomModelRequest(server string, id string, body UpdateCustomModelJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateCustomModelRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateCustomModelRequestWithBody constructs an http.Request for the UpdateCustomModel method, with any body, and a specified content type
+func NewUpdateCustomModelRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/models/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListPluginsRequest constructs an http.Request for the ListPlugins method
 func NewListPluginsRequest(server string, params *ListPluginsParams) (*http.Request, error) {
 	var err error
@@ -20548,7 +21048,7 @@ func NewUpdateSessionRequestWithBody(server string, id string, contentType strin
 }
 
 // NewGetSessionCommandRequest constructs an http.Request for the GetSessionCommand method
-func NewGetSessionCommandRequest(server string, id string, commandId string) (*http.Request, error) {
+func NewGetSessionCommandRequest(server string, id string, requestId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -20560,7 +21060,7 @@ func NewGetSessionCommandRequest(server string, id string, commandId string) (*h
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "command_id", commandId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -20589,7 +21089,7 @@ func NewGetSessionCommandRequest(server string, id string, commandId string) (*h
 }
 
 // NewInterruptSessionCommandRequest constructs an http.Request for the InterruptSessionCommand method
-func NewInterruptSessionCommandRequest(server string, id string, commandId string) (*http.Request, error) {
+func NewInterruptSessionCommandRequest(server string, id string, requestId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -20601,7 +21101,7 @@ func NewInterruptSessionCommandRequest(server string, id string, commandId strin
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "command_id", commandId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -20667,53 +21167,6 @@ func NewForkSessionRequestWithBody(server string, id string, contentType string,
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewSetSessionInstructionsRequest calls the generic SetSessionInstructions builder with application/json body
-func NewSetSessionInstructionsRequest(server string, id string, body SetSessionInstructionsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewSetSessionInstructionsRequestWithBody(server, id, "application/json", bodyReader)
-}
-
-// NewSetSessionInstructionsRequestWithBody constructs an http.Request for the SetSessionInstructions method, with any body, and a specified content type
-func NewSetSessionInstructionsRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/instructions", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -21245,6 +21698,74 @@ func NewListSessionToolsRequest(server string, id string) (*http.Request, error)
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStopSessionVoiceRequest constructs an http.Request for the StopSessionVoice method
+func NewStopSessionVoiceRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/voice", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStartSessionVoiceRequest constructs an http.Request for the StartSessionVoice method
+func NewStartSessionVoiceRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/voice", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -26567,8 +27088,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
-	GetConversationCommandWithResponse(ctx context.Context, cid string, commandId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error)
+	// Corresponds with GET /v1/agents/conversations/{cid}/commands/{request_id} (the `GetConversationCommand` operationId).
+	GetConversationCommandWithResponse(ctx context.Context, cid string, requestId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error)
 
 	// GetConversationMessagesWithResponse Read a persistent text conversation
 	//
@@ -26770,6 +27291,74 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/logs/{id} (the `GetAgentLog` operationId).
 	GetAgentLogWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentLogResponse, error)
 
+	// ListCustomModelsWithResponse The language models the calling customer serves themselves
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/models (the `ListCustomModels` operationId).
+	ListCustomModelsWithResponse(ctx context.Context, params *ListCustomModelsParams, reqEditors ...RequestEditorFn) (*ListCustomModelsResponse, error)
+
+	// CreateCustomModelWithBodyWithResponse Add a model of the customer's own
+	//
+	// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+	CreateCustomModelWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCustomModelResponse, error)
+
+	// CreateCustomModelWithResponse Add a model of the customer's own
+	//
+	// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+	CreateCustomModelWithResponse(ctx context.Context, body CreateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCustomModelResponse, error)
+
+	// DeleteCustomModelWithResponse Delete a model
+	//
+	// Sessions that name it are refused from then on.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/models/{id} (the `DeleteCustomModel` operationId).
+	DeleteCustomModelWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteCustomModelResponse, error)
+
+	// GetCustomModelWithResponse One of the customer's models
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/models/{id} (the `GetCustomModel` operationId).
+	GetCustomModelWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCustomModelResponse, error)
+
+	// UpdateCustomModelWithBodyWithResponse Replace a model
+	//
+	// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+	UpdateCustomModelWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCustomModelResponse, error)
+
+	// UpdateCustomModelWithResponse Replace a model
+	//
+	// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+	UpdateCustomModelWithResponse(ctx context.Context, id string, body UpdateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCustomModelResponse, error)
+
 	// ListPluginsWithResponse The hosted MCP servers an agent may attach
 	//
 	// A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
@@ -26874,6 +27463,7 @@ type ClientWithResponsesInterface interface {
 	// GetSessionWithResponse One session
 	//
 	// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+	// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -26882,13 +27472,13 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateSessionWithBodyWithResponse Change a session
 	//
-	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
-	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
-	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -26897,13 +27487,13 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateSessionWithResponse Change a session
 	//
-	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
-	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
-	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -26912,12 +27502,12 @@ type ClientWithResponsesInterface interface {
 
 	// GetSessionCommandWithResponse What is known about one durable command
 	//
-	// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+	// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same request id rather than inventing another one.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
-	GetSessionCommandWithResponse(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error)
+	// Corresponds with GET /v1/agents/sessions/{id}/commands/{request_id} (the `GetSessionCommand` operationId).
+	GetSessionCommandWithResponse(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error)
 
 	// InterruptSessionCommandWithResponse Stop one named command, and nothing else
 	//
@@ -26927,8 +27517,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
-	InterruptSessionCommandWithResponse(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error)
+	// Corresponds with POST /v1/agents/sessions/{id}/commands/{request_id}/interrupt (the `InterruptSessionCommand` operationId).
+	InterruptSessionCommandWithResponse(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error)
 
 	// ForkSessionWithBodyWithResponse Continue a conversation as a new one
 	//
@@ -26949,24 +27539,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
 	ForkSessionWithResponse(ctx context.Context, id string, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error)
-
-	// SetSessionInstructionsWithBodyWithResponse Change what the agent is told to be
-	//
-	// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-	SetSessionInstructionsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error)
-
-	// SetSessionInstructionsWithResponse Change what the agent is told to be
-	//
-	// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-	SetSessionInstructionsWithResponse(ctx context.Context, id string, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error)
 
 	// InterruptSessionWithResponse Abandon the reply being spoken
 	//
@@ -27123,6 +27695,26 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 	ListSessionToolsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListSessionToolsResponse, error)
+
+	// StopSessionVoiceWithResponse Stop voice on a session
+	//
+	// The agent finishes what it is saying, leaves the call and carries the conversation on in writing, with everything said on the call. Stopping voice on a session held in writing changes nothing. Stopping the session is what ends it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/sessions/{id}/voice (the `StopSessionVoice` operationId).
+	StopSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopSessionVoiceResponse, error)
+
+	// StartSessionVoiceWithResponse Start voice on a session
+	//
+	// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+	//
+	// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+	StartSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error)
 
 	// ListSimulationRunsWithResponse What the simulations have come to, newest first
 	//
@@ -34680,6 +35272,393 @@ func (r GetAgentLogResponse) ContentType() string {
 	return ""
 }
 
+type ListCustomModelsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CustomModelPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCustomModelsResponse) GetJSON200() *CustomModelPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListCustomModelsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListCustomModelsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListCustomModelsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListCustomModelsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCustomModelsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCustomModelsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCustomModelsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCustomModelsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateCustomModelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *CustomModel
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *ErrorResponse
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateCustomModelResponse) GetJSON201() *CustomModel {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateCustomModelResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateCustomModelResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateCustomModelResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateCustomModelResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateCustomModelResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r CreateCustomModelResponse) GetJSON501() *ErrorResponse {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateCustomModelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateCustomModelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateCustomModelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateCustomModelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteCustomModelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteCustomModelResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteCustomModelResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteCustomModelResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteCustomModelResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteCustomModelResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteCustomModelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteCustomModelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteCustomModelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteCustomModelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCustomModelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CustomModel
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCustomModelResponse) GetJSON200() *CustomModel {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetCustomModelResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetCustomModelResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetCustomModelResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetCustomModelResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetCustomModelResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCustomModelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCustomModelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCustomModelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCustomModelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateCustomModelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CustomModel
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON200() *CustomModel {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON501() *ErrorResponse {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateCustomModelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateCustomModelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateCustomModelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateCustomModelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListPluginsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -35453,75 +36432,6 @@ func (r ForkSessionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ForkSessionResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type SetSessionInstructionsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r SetSessionInstructionsResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r SetSessionInstructionsResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r SetSessionInstructionsResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r SetSessionInstructionsResponse) GetJSON404() *NotFound {
-	return r.JSON404
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r SetSessionInstructionsResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetBody returns the raw response body bytes
-func (r SetSessionInstructionsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r SetSessionInstructionsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r SetSessionInstructionsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r SetSessionInstructionsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -36323,6 +37233,144 @@ func (r ListSessionToolsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListSessionToolsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StopSessionVoiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StopSessionVoiceResponse) GetJSON200() *Session {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r StopSessionVoiceResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StopSessionVoiceResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StopSessionVoiceResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StopSessionVoiceResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r StopSessionVoiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StopSessionVoiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StopSessionVoiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StopSessionVoiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StartSessionVoiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON200() *Session {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r StartSessionVoiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StartSessionVoiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StartSessionVoiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StartSessionVoiceResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -44924,9 +45972,9 @@ func (c *ClientWithResponses) SetConnectorProviderAppWithResponse(ctx context.Co
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
-func (c *ClientWithResponses) GetConversationCommandWithResponse(ctx context.Context, cid string, commandId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error) {
-	rsp, err := c.GetConversationCommand(ctx, cid, commandId, params, reqEditors...)
+// Corresponds with GET /v1/agents/conversations/{cid}/commands/{request_id} (the `GetConversationCommand` operationId).
+func (c *ClientWithResponses) GetConversationCommandWithResponse(ctx context.Context, cid string, requestId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error) {
+	rsp, err := c.GetConversationCommand(ctx, cid, requestId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -45259,6 +46307,116 @@ func (c *ClientWithResponses) GetAgentLogWithResponse(ctx context.Context, id st
 	return ParseGetAgentLogResponse(rsp)
 }
 
+// ListCustomModelsWithResponse The language models the calling customer serves themselves
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/models (the `ListCustomModels` operationId).
+func (c *ClientWithResponses) ListCustomModelsWithResponse(ctx context.Context, params *ListCustomModelsParams, reqEditors ...RequestEditorFn) (*ListCustomModelsResponse, error) {
+	rsp, err := c.ListCustomModels(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCustomModelsResponse(rsp)
+}
+
+// CreateCustomModelWithBodyWithResponse Add a model of the customer's own
+//
+// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+func (c *ClientWithResponses) CreateCustomModelWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCustomModelResponse, error) {
+	rsp, err := c.CreateCustomModelWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCustomModelResponse(rsp)
+}
+
+// CreateCustomModelWithResponse Add a model of the customer's own
+//
+// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+func (c *ClientWithResponses) CreateCustomModelWithResponse(ctx context.Context, body CreateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCustomModelResponse, error) {
+	rsp, err := c.CreateCustomModel(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCustomModelResponse(rsp)
+}
+
+// DeleteCustomModelWithResponse Delete a model
+//
+// Sessions that name it are refused from then on.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/models/{id} (the `DeleteCustomModel` operationId).
+func (c *ClientWithResponses) DeleteCustomModelWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteCustomModelResponse, error) {
+	rsp, err := c.DeleteCustomModel(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteCustomModelResponse(rsp)
+}
+
+// GetCustomModelWithResponse One of the customer's models
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/models/{id} (the `GetCustomModel` operationId).
+func (c *ClientWithResponses) GetCustomModelWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCustomModelResponse, error) {
+	rsp, err := c.GetCustomModel(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCustomModelResponse(rsp)
+}
+
+// UpdateCustomModelWithBodyWithResponse Replace a model
+//
+// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+func (c *ClientWithResponses) UpdateCustomModelWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCustomModelResponse, error) {
+	rsp, err := c.UpdateCustomModelWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateCustomModelResponse(rsp)
+}
+
+// UpdateCustomModelWithResponse Replace a model
+//
+// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+func (c *ClientWithResponses) UpdateCustomModelWithResponse(ctx context.Context, id string, body UpdateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCustomModelResponse, error) {
+	rsp, err := c.UpdateCustomModel(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateCustomModelResponse(rsp)
+}
+
 // ListPluginsWithResponse The hosted MCP servers an agent may attach
 //
 // A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
@@ -45417,6 +46575,7 @@ func (c *ClientWithResponses) DeleteSessionWithResponse(ctx context.Context, id 
 // GetSessionWithResponse One session
 //
 // Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -45431,13 +46590,13 @@ func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, id str
 
 // UpdateSessionWithBodyWithResponse Change a session
 //
-// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
-// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
-// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -45452,13 +46611,13 @@ func (c *ClientWithResponses) UpdateSessionWithBodyWithResponse(ctx context.Cont
 
 // UpdateSessionWithResponse Change a session
 //
-// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
-// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
-// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -45473,13 +46632,13 @@ func (c *ClientWithResponses) UpdateSessionWithResponse(ctx context.Context, id 
 
 // GetSessionCommandWithResponse What is known about one durable command
 //
-// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same request id rather than inventing another one.
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
-func (c *ClientWithResponses) GetSessionCommandWithResponse(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error) {
-	rsp, err := c.GetSessionCommand(ctx, id, commandId, reqEditors...)
+// Corresponds with GET /v1/agents/sessions/{id}/commands/{request_id} (the `GetSessionCommand` operationId).
+func (c *ClientWithResponses) GetSessionCommandWithResponse(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error) {
+	rsp, err := c.GetSessionCommand(ctx, id, requestId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -45494,9 +46653,9 @@ func (c *ClientWithResponses) GetSessionCommandWithResponse(ctx context.Context,
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
-func (c *ClientWithResponses) InterruptSessionCommandWithResponse(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error) {
-	rsp, err := c.InterruptSessionCommand(ctx, id, commandId, reqEditors...)
+// Corresponds with POST /v1/agents/sessions/{id}/commands/{request_id}/interrupt (the `InterruptSessionCommand` operationId).
+func (c *ClientWithResponses) InterruptSessionCommandWithResponse(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error) {
+	rsp, err := c.InterruptSessionCommand(ctx, id, requestId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -45533,36 +46692,6 @@ func (c *ClientWithResponses) ForkSessionWithResponse(ctx context.Context, id st
 		return nil, err
 	}
 	return ParseForkSessionResponse(rsp)
-}
-
-// SetSessionInstructionsWithBodyWithResponse Change what the agent is told to be
-//
-// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-func (c *ClientWithResponses) SetSessionInstructionsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error) {
-	rsp, err := c.SetSessionInstructionsWithBody(ctx, id, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetSessionInstructionsResponse(rsp)
-}
-
-// SetSessionInstructionsWithResponse Change what the agent is told to be
-//
-// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-func (c *ClientWithResponses) SetSessionInstructionsWithResponse(ctx context.Context, id string, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error) {
-	rsp, err := c.SetSessionInstructions(ctx, id, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetSessionInstructionsResponse(rsp)
 }
 
 // InterruptSessionWithResponse Abandon the reply being spoken
@@ -45815,6 +46944,38 @@ func (c *ClientWithResponses) ListSessionToolsWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseListSessionToolsResponse(rsp)
+}
+
+// StopSessionVoiceWithResponse Stop voice on a session
+//
+// The agent finishes what it is saying, leaves the call and carries the conversation on in writing, with everything said on the call. Stopping voice on a session held in writing changes nothing. Stopping the session is what ends it.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/sessions/{id}/voice (the `StopSessionVoice` operationId).
+func (c *ClientWithResponses) StopSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopSessionVoiceResponse, error) {
+	rsp, err := c.StopSessionVoice(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStopSessionVoiceResponse(rsp)
+}
+
+// StartSessionVoiceWithResponse Start voice on a session
+//
+// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+//
+// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+func (c *ClientWithResponses) StartSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error) {
+	rsp, err := c.StartSessionVoice(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartSessionVoiceResponse(rsp)
 }
 
 // ListSimulationRunsWithResponse What the simulations have come to, newest first
@@ -53000,6 +54161,321 @@ func ParseGetAgentLogResponse(rsp *http.Response) (*GetAgentLogResponse, error) 
 	return response, nil
 }
 
+// ParseListCustomModelsResponse parses an HTTP response from a ListCustomModelsWithResponse call
+func ParseListCustomModelsResponse(rsp *http.Response) (*ListCustomModelsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCustomModelsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CustomModelPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateCustomModelResponse parses an HTTP response from a CreateCustomModelWithResponse call
+func ParseCreateCustomModelResponse(rsp *http.Response) (*CreateCustomModelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateCustomModelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest CustomModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteCustomModelResponse parses an HTTP response from a DeleteCustomModelWithResponse call
+func ParseDeleteCustomModelResponse(rsp *http.Response) (*DeleteCustomModelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteCustomModelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCustomModelResponse parses an HTTP response from a GetCustomModelWithResponse call
+func ParseGetCustomModelResponse(rsp *http.Response) (*GetCustomModelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCustomModelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CustomModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateCustomModelResponse parses an HTTP response from a UpdateCustomModelWithResponse call
+func ParseUpdateCustomModelResponse(rsp *http.Response) (*UpdateCustomModelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateCustomModelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CustomModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListPluginsResponse parses an HTTP response from a ListPluginsWithResponse call
 func ParseListPluginsResponse(rsp *http.Response) (*ListPluginsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -53579,63 +55055,6 @@ func ParseForkSessionResponse(rsp *http.Response) (*ForkSessionResponse, error) 
 			return nil, err
 		}
 		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseSetSessionInstructionsResponse parses an HTTP response from a SetSessionInstructionsWithResponse call
-func ParseSetSessionInstructionsResponse(rsp *http.Response) (*SetSessionInstructionsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &SetSessionInstructionsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest BadRequest
@@ -54293,6 +55712,114 @@ func ParseListSessionToolsResponse(rsp *http.Response) (*ListSessionToolsRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest OfferedTools
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStopSessionVoiceResponse parses an HTTP response from a StopSessionVoiceWithResponse call
+func ParseStopSessionVoiceResponse(rsp *http.Response) (*StopSessionVoiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StopSessionVoiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Session
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStartSessionVoiceResponse parses an HTTP response from a StartSessionVoiceWithResponse call
+func ParseStartSessionVoiceResponse(rsp *http.Response) (*StartSessionVoiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StartSessionVoiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Session
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

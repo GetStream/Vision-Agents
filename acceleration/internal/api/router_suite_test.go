@@ -1220,8 +1220,9 @@ func (s *RouterSuite) await(connection *websocket.Conn, wanted string) map[strin
 // createSession opens a session the router must accept.
 func (c *testClient) createSession(request CreateSessionRequest) Session {
 	var created Session
-	c.suite.Require().Equal(http.StatusCreated,
-		c.do(http.MethodPost, "/v1/agents/sessions", request, &created))
+	status, payload := c.call(http.MethodPost, "/v1/agents/sessions", request)
+	c.suite.Require().Equal(http.StatusCreated, status, string(payload))
+	c.suite.Require().NoError(json.Unmarshal(payload, &created))
 	return created
 }
 
@@ -1334,6 +1335,16 @@ func (d testData) createAgentConfig() AgentConfig {
 	return created
 }
 
+// instructedAgent is the id of an agent config of the suite's app told instructions.
+func (d testData) instructedAgent(instructions string) *string {
+	var created AgentConfig
+	d.suite.Require().Equal(http.StatusCreated, d.suite.serverClient.do(
+		http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+			Name: "agent-" + d.suite.utils.uuid(), Instructions: &instructions,
+		}, &created))
+	return &created.Id
+}
+
 // createUser is a client signed in as a new end user of the suite's app.
 func (d testData) createUser() *testClient {
 	return d.signedInAs(d.suite.utils.uuid())
@@ -1380,8 +1391,8 @@ func pointerTo[T any](value T) *T { return &value }
 
 // textSession asks for a conversation in writing, which needs no call.
 func textSession(id *string) CreateSessionRequest {
-	target, text := "en-low-latency", true
-	return CreateSessionRequest{Id: id, Text: &text, Llm: &target}
+	target := "en-low-latency"
+	return CreateSessionRequest{Id: id, Llm: &target}
 }
 
 // inProject lists the sessions in one project, which is how a test sharing a fixture's app

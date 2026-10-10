@@ -2,12 +2,17 @@ package target
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestLoadPackContract(t *testing.T) {
@@ -90,6 +95,57 @@ func findTestRoot(t *testing.T) string {
 			t.Fatal("scenarios not found")
 		}
 		dir = parent
+	}
+}
+
+func TestAccelerationHoldsTheCallBySessionOnThePacksAgent(t *testing.T) {
+	var mu sync.Mutex
+	got := map[string]map[string]any{}
+	upgrader := websocket.Upgrader{}
+	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/events") {
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err == nil {
+				_, _, _ = conn.ReadMessage()
+				_ = conn.Close()
+			}
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		got[r.Method+" "+r.URL.Path] = body
+		mu.Unlock()
+		if r.URL.Path == "/v1/agents/sessions" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": fmt.Sprint(body["id"])})
+		}
+	}))
+	defer router.Close()
+
+	accel := &Acceleration{URL: router.URL, Pack: "restaurant", Instructions: "be brief", Tools: []AccelTool{{Name: "book"}}}
+	stop, err := accel.Prepare(context.Background())
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	defer stop()
+	end, err := accel.StartCall(context.Background(), "vb-restaurant-1-abc", "default")
+	if err != nil {
+		t.Fatalf("start call: %v", err)
+	}
+	end()
+
+	mu.Lock()
+	defer mu.Unlock()
+	synced := got["POST /v1/agents/sync"]
+	if synced["name"] != "voicebench-restaurant" || synced["instructions"] != "be brief" {
+		t.Fatalf("synced %v", synced)
+	}
+	created := got["POST /v1/agents/sessions"]
+	if created["id"] != "vb-restaurant-1-abc" || created["agent"] != "voicebench-restaurant" || created["start_voice"] != true {
+		t.Fatalf("created %v", created)
+	}
+	if _, ok := got["DELETE /v1/agents/sessions/vb-restaurant-1-abc"]; !ok {
+		t.Fatalf("the session was not closed: %v", got)
 	}
 }
 

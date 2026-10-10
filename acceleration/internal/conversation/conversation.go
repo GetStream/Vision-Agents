@@ -53,7 +53,7 @@ type Message struct {
 	// AnswerStart is a Unicode code-point offset separating public progress from the answer.
 	TextLayout     int        `json:"text_layout,omitempty"`
 	AnswerStart    int        `json:"answer_start,omitempty"`
-	CommandID      string     `json:"command_id,omitempty"`
+	CommandID      string     `json:"request_id,omitempty"`
 	TurnID         string     `json:"turn_id,omitempty"`
 	ID             string     `json:"id"`
 	QuestionID     string     `json:"question_id,omitempty"`
@@ -105,7 +105,7 @@ type Updated struct {
 
 // CommandReceipt identifies one durable submission and its two Chat messages.
 type CommandReceipt struct {
-	CommandID          string `json:"command_id"`
+	CommandID          string `json:"request_id"`
 	UserMessageID      string `json:"user_message_id"`
 	AssistantMessageID string `json:"assistant_message_id"`
 	State              string `json:"state"`
@@ -215,7 +215,30 @@ type indication struct {
 	state   string
 }
 
-var validID = regexp.MustCompile(`^support-[a-f0-9-]{36}$`)
+// sessionID is what a session's id may be: its channel and its call are named after it, and
+// this is what a Stream channel id and a call id both take.
+var sessionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// SessionID is id as a session holds it, and whether a session can have it. A UUID is held in
+// one spelling, so the same one always names the same channel and call. An id starting
+// support- or thread- would name a channel that is not a session's.
+func SessionID(id string) (string, bool) {
+	if parsed, err := uuid.Parse(id); err == nil {
+		return parsed.String(), true
+	}
+	return id, sessionID.MatchString(id) && !strings.HasPrefix(id, "support-") && !strings.HasPrefix(id, ThreadChannelPrefix)
+}
+
+// validID is whether id is a session command channel's id: the session's own id, or
+// support-<uuid> for one opened before channels were named after their session.
+func validID(id string) bool {
+	held, ok := SessionID(id)
+	return (ok && held == id) || legacyID.MatchString(id)
+}
+
+// legacyID is a session command channel opened before channels were named after their
+// session, which its id alone says is one.
+var legacyID = regexp.MustCompile(`^support-[a-f0-9-]{36}$`)
 
 // ThreadChannelPrefix starts the id of a thread channel: the agent channel the channel bridge
 // (internal/channelbridge) writes one external thread into, such as a Slack thread. A
@@ -224,9 +247,14 @@ var validID = regexp.MustCompile(`^support-[a-f0-9-]{36}$`)
 // message there wakes the session.
 const ThreadChannelPrefix = "thread-"
 
-// conversationID is every channel a persistent conversation can be held on: a session
-// command channel, or a thread channel.
-var conversationID = regexp.MustCompile(`^(support|thread)-[a-f0-9-]{36}$`)
+// threadID is a thread channel's id.
+var threadID = regexp.MustCompile(`^thread-[a-f0-9-]{36}$`)
+
+// conversationID is whether id is a channel a persistent conversation can be held on: a
+// session command channel, or a thread channel.
+func conversationID(id string) bool {
+	return validID(id) || threadID.MatchString(id)
+}
 
 // threadOpen is the context key RouterOpensThread keeps its channel under.
 type threadOpen struct{}
@@ -264,11 +292,11 @@ func Openable(ctx context.Context, cid string) bool {
 	if cid != "agent:"+id {
 		return false
 	}
-	if validID.MatchString(id) {
+	if validID(id) {
 		return true
 	}
 	vouched, _ := ctx.Value(threadOpen{}).(string)
-	return vouched == cid && strings.HasPrefix(id, ThreadChannelPrefix) && conversationID.MatchString(id)
+	return vouched == cid && threadID.MatchString(id)
 }
 
 // FinishedReply is an agent's reply in a thread channel, once its final text is stored in
@@ -298,8 +326,15 @@ func (s *Service) OnFinishedReply(fn func(FinishedReply)) {
 
 // SessionCommandChannel reserves the persistent conversation namespace for the
 // session command path. Webhook delivery cannot opt it into a second trigger path.
-func SessionCommandChannel(channelType, id string) bool {
-	return channelType == "agent" && validID.MatchString(id)
+//
+// A channel named after its session has an id an agent's own channel can have too, such as a
+// call's transcript under a session id, so it is told apart by the trigger it was created
+// with (custom is the channel's).
+func SessionCommandChannel(channelType, id string, custom map[string]any) bool {
+	if channelType != "agent" {
+		return false
+	}
+	return legacyID.MatchString(id) || custom[TriggerField] == SessionCommandTrigger
 }
 
 const TriggerField = "support_trigger"
@@ -380,6 +415,20 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 // in that app. One that already exists is kept wherever it was written, which the
 // conversation says: a session resuming it acts there too.
 func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+	fresh := cid == ""
+	if fresh {
+		cid = "agent:support-" + uuid.NewString()
+	}
+	return s.open(ctx, app, customer, agentID, cid, fresh, caller, voiceAgent, custom, scopes...)
+}
+
+// CreateInApp opens a new conversation on the channel cid, as OpenInApp opens one it names no
+// channel for: a session's own conversation, named after the session.
+func (s *Service) CreateInApp(ctx context.Context, app int64, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+	return s.open(ctx, app, customer, agentID, cid, true, caller, voiceAgent, custom, scopes...)
+}
+
+func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid string, fresh bool, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
 	if voiceAgent != "" && !validAuthorID.MatchString(voiceAgent) {
 		return nil, nil, false, stack.Wrap(errors.New("invalid voice transcript author"))
 	}
@@ -393,10 +442,6 @@ func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, c
 	var scope memory.Scope
 	if len(scopes) > 0 {
 		scope = scopes[0]
-	}
-	fresh := cid == ""
-	if fresh {
-		cid = "agent:support-" + uuid.NewString()
 	}
 	id := strings.TrimPrefix(cid, "agent:")
 	if !Openable(ctx, cid) {
@@ -568,7 +613,7 @@ func (s *Service) Describe(ctx context.Context, customer, cid, title, descriptio
 	id := strings.TrimPrefix(cid, "agent:")
 	// A thread channel is named too: Describe is told only the channel of a conversation a
 	// session holds (internal/session), which OpenInApp already let through (Openable).
-	if cid != "agent:"+id || !conversationID.MatchString(id) {
+	if cid != "agent:"+id || !conversationID(id) {
 		return stack.Wrap(errors.New("invalid conversation channel"))
 	}
 	set := map[string]any{}
@@ -626,7 +671,7 @@ func ownedBy(custom map[string]any, customer, agentID, caller string) error {
 // session left to reach reconciles the same command id instead of reopening one to ask.
 func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, caller, commandID string) (CommandReceipt, error) {
 	id := strings.TrimPrefix(cid, "agent:")
-	if cid != "agent:"+id || !validID.MatchString(id) || !validCommandID.MatchString(commandID) {
+	if cid != "agent:"+id || !validID(id) || !validCommandID.MatchString(commandID) {
 		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	s.mu.Lock()

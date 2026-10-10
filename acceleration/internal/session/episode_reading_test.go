@@ -814,19 +814,6 @@ func (s *EpisodeReadingSuite) TestWithTheCardsOffAVoiceSessionIsAsBefore() {
 	s.Empty(namingAny(offRequests, sms.Episode.ThreadChannel, sms.Contact.ConversationID, sms.Episode.CardMessageID, "/video/call/"+"agent/"+call))
 }
 
-// A persistent voice conversation is still refused, whatever the config says of the cards: a
-// voice session reads the cards, not a conversation.
-func (s *EpisodeReadingSuite) TestAPersistentVoiceConversationIsStillRefused() {
-	for _, cards := range []bool{false, true} {
-		_, err := s.manager.Create(s.ctx, Spec{
-			CustomerID: s.customerID, ConfigID: s.configID, EpisodeCards: cards, CallID: "call-" + uuid.NewString(),
-			PersistConversation: true, LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency",
-		})
-		s.Require().Error(err)
-		s.Contains(err.Error(), "persistent conversations require text mode")
-	}
-}
-
 // Another person's cards are never read: another number of the same agent, the same number
 // under another agent of the customer, and the same number of another customer.
 func (s *EpisodeReadingSuite) TestAnotherPersonsCardsAreNeverRead() {

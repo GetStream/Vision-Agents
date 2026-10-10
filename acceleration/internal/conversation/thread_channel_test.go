@@ -59,7 +59,8 @@ func (s *ThreadChannelSuite) SetupTest() {
 }
 
 func (s *ThreadChannelSuite) TestAThreadChannelIsNoSessionCommandChannel() {
-	s.False(conversation.SessionCommandChannel("agent", s.channel), "the message hook must still see a person's message in it")
+	s.False(conversation.SessionCommandChannel("agent", s.channel, map[string]any{conversation.CustomerField: "customer"}),
+		"the message hook must still see a person's message in it")
 }
 
 // The person's message the session is about to be told is not history yet, and once it is

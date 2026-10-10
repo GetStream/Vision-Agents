@@ -113,7 +113,7 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 func addressed(event messageEvent) bool {
 	// This namespace belongs to durable session commands, even on older channels
 	// without trigger metadata or when a client omits/forges the source marker.
-	if conversation.SessionCommandChannel(event.ChannelType, event.ChannelID) {
+	if conversation.SessionCommandChannel(event.ChannelType, event.ChannelID, event.ChannelCustom) {
 		return false
 	}
 	if event.ChannelType != chatlog.ChannelType || event.ChannelID == "" {

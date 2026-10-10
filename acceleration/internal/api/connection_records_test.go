@@ -347,7 +347,7 @@ func (s *ConnectionRecordsSuite) config(connector string, owner *testClient, lis
 
 // session is a text session of config choosing connection for crm.
 func (s *ConnectionRecordsSuite) session(config, connection string) CreateSessionRequest {
-	return CreateSessionRequest{ConfigId: &config, Text: pointerTo(true),
+	return CreateSessionRequest{ConfigId: &config,
 		ConnectorBindings: &[]SessionConnectorBinding{{Name: "crm", ConnectionId: connection}}}
 }
 
@@ -355,7 +355,7 @@ func (s *ConnectionRecordsSuite) session(config, connection string) CreateSessio
 // waits for the tool to run.
 func (s *ConnectionRecordsSuite) toolRanOn(as *testClient, events *websocket.Conn, id string) {
 	s.Require().Equal(http.StatusOK, as.do(http.MethodPost, "/v1/agents/sessions/"+id+"/respond",
-		RespondRequest{Text: "ask the crm", CommandId: pointerTo(s.utils.uuid())}, nil))
+		RespondRequest{Text: "ask the crm", RequestId: pointerTo(s.utils.uuid())}, nil))
 	ran := s.await(events, "tool_ran")
 	s.Require().Equal(connectorEchoText, ran["result"])
 }

@@ -91,7 +91,7 @@ func (s *SessionConnectorsSuite) toolStartedOn(policy map[string]any) map[string
 	opened := s.client.createSession(s.session(s.config(binding), map[string]string{"crm": mine}))
 	events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
 	s.Require().Equal(http.StatusOK, s.serverClient.actingFor(s.client).do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
-		RespondRequest{Text: "ask the crm", CommandId: pointerTo(s.utils.uuid())}, nil))
+		RespondRequest{Text: "ask the crm", RequestId: pointerTo(s.utils.uuid())}, nil))
 	return s.await(events, "tool_started")
 }
 
@@ -210,7 +210,7 @@ func (s *SessionConnectorsSuite) TestAStoppedChatReopensWithTheCallersConnection
 	s.client.stopSession(opened.Id)
 
 	status, failure := s.serverClient.actingFor(s.client).failure(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
-		RespondRequest{Text: "ask the crm", CommandId: pointerTo(s.utils.uuid())})
+		RespondRequest{Text: "ask the crm", RequestId: pointerTo(s.utils.uuid())})
 
 	s.Equal(http.StatusOK, status, failure)
 	s.JSONEq(`[{"name": "crm", "connection_id": "`+mine+`"}]`, s.storedSelections(opened.Id))
@@ -230,7 +230,7 @@ func (s *SessionConnectorsSuite) TestAStoppedChatWhoseConfigDroppedTheBindingIsS
 		map[string]any{"connectors": []map[string]any{}}, nil))
 
 	status, failure := s.serverClient.actingFor(s.client).failure(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
-		RespondRequest{Text: "ask the crm", CommandId: pointerTo(s.utils.uuid())})
+		RespondRequest{Text: "ask the crm", RequestId: pointerTo(s.utils.uuid())})
 
 	s.Require().Equal(http.StatusOK, status, failure)
 	dropped := s.await(s.client.opens("/v1/agents/sessions/"+opened.Id+"/events"), "connector_unavailable")
@@ -390,7 +390,7 @@ func (s *SessionConnectorsSuite) session(config string, chosen map[string]string
 	for alias, id := range chosen {
 		selections = append(selections, SessionConnectorBinding{Name: alias, ConnectionId: id})
 	}
-	return CreateSessionRequest{ConfigId: &config, Text: pointerTo(true), ConnectorBindings: &selections}
+	return CreateSessionRequest{ConfigId: &config, ConnectorBindings: &selections}
 }
 
 // toolRanOn is the tool_ran frame on events of the first turn as asks the session for. A
@@ -398,7 +398,7 @@ func (s *SessionConnectorsSuite) session(config string, chosen map[string]string
 // command, as a personal one must be.
 func (s *SessionConnectorsSuite) toolRanOn(as *testClient, events *websocket.Conn, id string) map[string]any {
 	s.Require().Equal(http.StatusOK, as.do(http.MethodPost, "/v1/agents/sessions/"+id+"/respond",
-		RespondRequest{Text: "ask the crm", CommandId: pointerTo(s.utils.uuid())}, nil))
+		RespondRequest{Text: "ask the crm", RequestId: pointerTo(s.utils.uuid())}, nil))
 	return s.await(events, "tool_ran")
 }
 

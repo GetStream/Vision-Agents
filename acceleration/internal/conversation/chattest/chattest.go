@@ -263,6 +263,13 @@ func (s *Server) Rules() []string {
 	return slices.Sorted(maps.Keys(s.db.rules))
 }
 
+// Rule is the body a SIP routing rule was created with, nil once it is deleted.
+func (s *Server) Rule(id string) map[string]any {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return s.db.rules[id]
+}
+
 // Hold keeps the next request whose path ends in suffix waiting, before it is served, until
 // release is called: a Stream Chat call that takes as long as the test needs. waiting is
 // closed once that request waits. Every other request is answered as before. The request is

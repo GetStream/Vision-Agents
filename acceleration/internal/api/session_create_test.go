@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 type SessionCreateSuite struct {
@@ -48,10 +49,73 @@ func (s *SessionCreateSuite) TestASessionWithoutAnIdIsGivenAUUIDv7() {
 	s.Equal(uuid.Version(7), parsed.Version())
 }
 
-func (s *SessionCreateSuite) TestAnIdThatIsNotAUUIDIsRefused() {
-	id := "my-session"
+func (s *SessionCreateSuite) TestASessionIsHeldByAStringIdOfTheCallersOwn() {
+	id := "order_4471-" + s.utils.uuid()[24:]
 
-	s.Equal(http.StatusBadRequest, s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(&id), nil))
+	created := s.client.createSession(textSession(&id))
+
+	s.Equal(id, created.Id)
+	s.Equal("agent:"+id, value(created.ConversationId), "its channel is named after it")
+	s.Equal(id, s.client.getSession(id).Id)
+}
+
+func (s *SessionCreateSuite) TestAnIdASessionCannotHaveIsRefused() {
+	for _, id := range []string{
+		"has a space",
+		"agent:nested",
+		strings.Repeat("a", 65),
+		"thread-" + s.utils.uuid(),
+		"support-" + s.utils.uuid(),
+	} {
+		s.Equal(http.StatusBadRequest, s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(&id), nil), id)
+	}
+}
+
+func (s *SessionCreateSuite) TestAnEndedSessionTellsTheBackendWhatItSpentAndWhatWasMadeOfIt() {
+	opened := s.serverClient.createSession(textSession(nil))
+	s.spent(opened, 900, 2500)
+	s.serverClient.stopSession(opened.Id)
+
+	var read Session
+	s.Require().Eventually(func() bool {
+		read = s.serverClient.getSession(opened.Id)
+		return read.Usage != nil
+	}, settleFor, 20*time.Millisecond, "the usage of an ended session is never told")
+	s.Equal(int64(900), read.Usage.InputTokens)
+	s.Equal(int64(2500), read.Usage.CostMicros)
+	s.Equal(int64(1), read.Usage.Requests)
+
+	score := 4
+	s.Require().NoError(s.store.ReviewCall(context.Background(), s.customerID(), opened.Id, "Asked about order 4471.", &score, "Answered it."))
+	read = s.serverClient.getSession(opened.Id)
+	s.Equal("Asked about order 4471.", value(read.Summary))
+	s.Equal(4, value(read.ReviewScore))
+	s.Equal("Answered it.", value(read.ReviewNotes))
+}
+
+func (s *SessionCreateSuite) TestAUsersEndedSessionTellsOnlyTheBackendWhatItSpent() {
+	opened := s.client.createSession(textSession(nil))
+	s.spent(opened, 900, 2500)
+	s.client.stopSession(opened.Id)
+
+	s.Require().Eventually(func() bool {
+		var read Session
+		return s.client.do(http.MethodGet, "/v1/agents/sessions/"+opened.Id, nil, &read) == http.StatusOK &&
+			read.State == Ended
+	}, settleFor, 20*time.Millisecond, "an ended session is still read")
+	s.Nil(s.client.getSession(opened.Id).Usage, "what a conversation cost is the backend's to tell")
+	s.Require().Eventually(func() bool {
+		return s.serverClient.getSession(opened.Id).Usage != nil
+	}, settleFor, 20*time.Millisecond, "the backend is never told what a user's conversation spent")
+}
+
+// spent records a model request made for a session's agent, as its turns would.
+func (s *SessionCreateSuite) spent(opened Session, inputTokens, costMicros int64) {
+	s.Require().NoError(s.store.RecordRequest(context.Background(), &store.Request{
+		CustomerID: s.customerID(), AgentID: opened.AgentId,
+		Modality: "llm", Provider: "stub", Model: "stub-llm",
+		StartedAt: time.Now().UTC(), InputTokens: inputTokens, CostMicros: costMicros, Success: true,
+	}))
 }
 
 func (s *SessionCreateSuite) TestAnIdAnotherSessionHasIsRefused() {
@@ -204,6 +268,19 @@ func (s *SessionCreateSuite) TestARecordedSessionRecordsItsOwnTurnsAndNotTheHist
 	s.Equal([]string{"And order 4472?"}, said)
 }
 
+func (s *SessionCreateSuite) TestASessionOnAModelOfTheCustomersOwnIsAnsweredByIt() {
+	name := "own-" + s.utils.uuid()
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/models", map[string]any{
+		"name": name, "base_url": "https://8.8.8.8/v1", "model": "acme/tuned-27b", "api_key": "sk-own",
+	}, nil))
+	request := textSession(nil)
+	request.Llm = pointerTo("custom/" + name)
+
+	opened := s.serverClient.createSession(request)
+
+	s.Equal("https://8.8.8.8/v1 acme/tuned-27b sk-own", s.answerTo(opened.Id, "Hello?"))
+}
+
 func (s *SessionCreateSuite) TestARoleOutsideUserAndAssistantIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions", map[string]any{
 		"text": true, "incognito": true, "llm": "recites/recites-model",
@@ -263,17 +340,6 @@ func (s *SessionCreateSuite) TestAnAuthorNameLongerThanALabelIsRefused() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "history[0].name")
-}
-
-func (s *SessionCreateSuite) TestHistoryCannotBeHandedToAConversationThatKeepsItsOwn() {
-	request := historySession(false)
-	request.ConversationId = pointerTo("agent:" + s.utils.uuid())
-	request.History = &[]HistoryMessage{{Role: HistoryRoleUser, Text: "hello"}}
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions", request)
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "conversation_id")
 }
 
 // An assistant line is the agent having said it, which only the backend can vouch for.

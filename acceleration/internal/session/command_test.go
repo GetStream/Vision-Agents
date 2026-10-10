@@ -415,17 +415,58 @@ func (s *SessionSuite) TestConcurrentStopsAndSubmissionsKeepEachCommandSeparate(
 	s.Equal(second.AssistantMessageID, live.AssistantMessageID)
 }
 
-func (s *SessionSuite) TestPersistentConversationsStillRequireTextMode() {
+func (s *SessionSuite) TestStartingVoiceJoinsTheCallNamedAfterTheSessionWithItsHistory() {
 	s.manages()
-	_, err := s.manager.Create(s.ctx, Spec{
-		CallID:              "call-1",
-		CustomerID:          "acme",
-		PersistConversation: true,
-		LLMTarget:           "en-low-latency",
-		STTTarget:           "en-low-latency",
-		TTSTarget:           "en-low-latency",
-	})
-	s.ErrorContains(err, "persistent conversations require text mode")
+	recalled := []llm.Message{
+		{Role: llm.User, Content: "Where is order 4471?"},
+		{Role: llm.Assistant, Content: "It ships on Friday."},
+	}
+	created := s.writes(Spec{Recall: &Recall{Messages: recalled}})
+
+	s.Require().NoError(created.StartVoice(s.ctx))
+
+	s.True(created.Voicing())
+	s.Equal(created.ID(), created.Spec().CallID)
+	s.Equal("agent", created.Spec().CallType)
+	s.Require().Len(s.edges, 1, "the call is joined once voice starts")
+	s.Equal(recalled, created.current().History())
+}
+
+func (s *SessionSuite) TestStoppingVoiceLeavesTheCallAndCarriesOnInWriting() {
+	s.manages()
+	recalled := []llm.Message{
+		{Role: llm.User, Content: "Where is order 4471?"},
+		{Role: llm.Assistant, Content: "It ships on Friday."},
+	}
+	created := s.writes(Spec{Recall: &Recall{Messages: recalled}})
+	s.Require().NoError(created.StartVoice(s.ctx))
+
+	s.Require().NoError(created.StopVoice(s.ctx))
+
+	s.False(created.Voicing())
+	s.Empty(created.Spec().CallID)
+	s.True(s.edges[0].gone(), "the agent left the call")
+	s.Equal(recalled, created.current().History())
+	s.Equal(Live, created.State())
+}
+
+func (s *SessionSuite) TestStartingVoiceTwiceJoinsTheCallOnce() {
+	s.manages()
+	created := s.writes(Spec{})
+
+	s.Require().NoError(created.StartVoice(s.ctx))
+	s.Require().NoError(created.StartVoice(s.ctx))
+
+	s.Len(s.edges, 1)
+}
+
+func (s *SessionSuite) TestAnEndedSessionCannotStartVoice() {
+	s.manages()
+	created := s.writes(Spec{})
+	created.Close()
+
+	s.Error(created.StartVoice(s.ctx))
+	s.Empty(s.edges)
 }
 
 func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndRejectsRemovedMemberCommands() {
@@ -476,7 +517,7 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	_, detachBob := bob.Watch()
 	defer detachBob()
 	s.Equal("bob", bob.Spec().Caller.UserID)
-	restored := bob.voiceAgent.History()
+	restored := bob.current().History()
 	s.Require().Len(restored, 3)
 	s.Equal(llm.System, restored[0].Role)
 	s.Contains(restored[0].Content, "conversational attribution")
@@ -554,5 +595,5 @@ func (s *SessionSuite) TestAVoiceSessionRestoresChatHistoryWithoutPersisting() {
 	s.Equal([]llm.Message{
 		{Role: llm.User, Content: "The project name is Nimbus"},
 		{Role: llm.Assistant, Content: "Hello."},
-	}, voice.voiceAgent.History())
+	}, voice.current().History())
 }

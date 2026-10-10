@@ -107,6 +107,16 @@ func (s *SpecSuite) TestAVoiceSessionIsKeyedUnderTheAgentIDItNamesBeforeNormaliz
 	s.Equal(paddedKeyed, padded.AgentID)
 }
 
+// TestAVoiceSessionNamingNoCallJoinsTheAgentCallOfItsOwnID: the call is agent:<session id>.
+func (s *SpecSuite) TestAVoiceSessionNamingNoCallJoinsTheAgentCallOfItsOwnID() {
+	spec := Spec{CustomerID: "acme"}
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal("agent", spec.CallType)
+	s.Equal(spec.ID, spec.CallID)
+}
+
 // TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed: Normalize gives it a new id.
 func (s *SpecSuite) TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed() {
 	spec := Spec{CustomerID: "acme", Text: true}

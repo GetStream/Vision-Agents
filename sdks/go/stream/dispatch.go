@@ -54,6 +54,9 @@ type InboundCall struct {
 	// joins anything else hears silence.
 	CallID   string
 	CallType string
+	// SessionID is the session to open for the call, with voice: the call is named for it.
+	// Empty for a number attached before calls were, which has to be attached again.
+	SessionID string
 	// CalledNumber is the number that was rung, which is how a worker serving several
 	// numbers knows which line this is.
 	CalledNumber string
@@ -87,9 +90,9 @@ type InboundMessage struct {
 	// leaves text to dispatch. Nothing has answered it: create a response on this session
 	// to have the model do so.
 	SessionID string
-	// CommandID is the durable command the message was sent as. Pass it, with Text, when
-	// creating that response so the reply lands on the command it answers.
-	CommandID string
+	// RequestID is the request the message was sent as. Pass it, with Text, when creating
+	// that response so the reply lands on the request it answers.
+	RequestID string
 	// Custom is whatever the channel was created with, carried through unread the way a
 	// call's is. It is where a worker finds what the conversation is for and the router
 	// has no opinion about: the organization to scope memory to, the locale to answer in,
@@ -649,6 +652,7 @@ func callOf(frame Frame) InboundCall {
 	return InboundCall{
 		CallID:       frame.String("call_id"),
 		CallType:     callType,
+		SessionID:    frame.String("session_id"),
 		CalledNumber: frame.String("called_number"),
 		CallerNumber: frame.String("caller_number"),
 		Custom:       custom,
@@ -673,7 +677,7 @@ func messageOf(frame Frame) InboundMessage {
 		AgentID:     agentID,
 		ConfigID:    frame.String("config_id"),
 		SessionID:   frame.String("session_id"),
-		CommandID:   frame.String("command_id"),
+		RequestID:   frame.String("request_id"),
 		Custom:      customOf(frame, "custom"),
 		Text:        frame.String("text"),
 		MessageID:   frame.String("message_id"),

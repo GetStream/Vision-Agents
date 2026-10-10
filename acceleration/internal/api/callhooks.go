@@ -115,7 +115,17 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	// arrives here too, and there is nothing to answer on those.
 	// And only a number attached in the app the hook came from: a call of the same name in
 	// another app rings somebody else's phone.
-	number, err := s.store.NumberByCallInApp(r.Context(), origin.scope(), callType, callID)
+	// A number attached today names each caller's call for the session answering it and
+	// puts itself on the call; one attached before that names a call of its own.
+	custom := customOf(event.Call.Custom)
+	rung, fresh := custom[phone.NumberKey]
+	var number store.PhoneNumber
+	var err error
+	if fresh {
+		number, err = s.store.NumberRungInApp(r.Context(), origin.scope(), rung)
+	} else {
+		number, err = s.store.NumberByCallInApp(r.Context(), origin.scope(), callType, callID)
+	}
 	if err == nil && !origin.deployment && number.CustomerID != origin.customer {
 		err = store.ErrAmbiguousHook
 	}
@@ -138,8 +148,11 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 		CallType:     callType,
 		CalledNumber: number.E164,
 		CallerNumber: callerOf(event),
-		Custom:       customOf(event.Call.Custom),
+		Custom:       custom,
 		At:           time.Now().UTC(),
+	}
+	if fresh {
+		call.SessionID = callID
 	}
 
 	worker, err := s.dispatch.Assign(number.CustomerID, call)

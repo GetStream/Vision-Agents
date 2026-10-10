@@ -63,7 +63,7 @@ func documentHandWritten(api huma.API) {
 			"the same session. While that step-up is open, calls refused for the same access send " +
 			"no second event.\n" +
 			"Persistent text sessions also emit `conversation_updated` with conversation_id and a " +
-			"complete message snapshot: id, command_id, question_id, role, text, state, " +
+			"complete message snapshot: id, request_id, question_id, role, text, state, " +
 			"response_started_at, state_started_at, finished_at, duration_ms, saved, " +
 			"persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, " +
 			"title, status, phase, summary, immutable started_at, execution_started_at, finished_at " +
@@ -80,16 +80,16 @@ func documentHandWritten(api huma.API) {
 			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and " +
 			"pre_speech when the tool's connector binding sets one in its policy; " +
 			"tool_ran also includes tool_call_id.\n" +
-			"A respond command carrying command_id emits command_accepted with a nested command " +
-			"receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal " +
+			"A respond command carrying request_id emits command_accepted with a nested command " +
+			"receipt (request_id, user_message_id, assistant_message_id, state, duplicate). Personal " +
 			"persistent text sessions require this ID. A retry with the same text returns the " +
 			"existing IDs without invoking the model again; reuse with different text emits an " +
 			"error. Commands with IDs currently accept text only. After restart an interrupted " +
 			"command is reported, not rerun.\n" +
-			"An `interrupt` command carrying `command_id` stops that command and emits " +
+			"An `interrupt` command carrying `request_id` stops that command and emits " +
 			"`command_stopped` with its terminal receipt. A stop arriving after its command finished " +
 			"replays that command's receipt and leaves the command running now alone; an unknown " +
-			"command is reported as an error. Without `command_id` the frame stops whichever reply " +
+			"command is reported as an error. Without `request_id` the frame stops whichever reply " +
 			"is current, which is what a caller with no command to name means by it.\n" +
 			"A `decision` frame is one judgement the conversation made, carrying the same fields as " +
 			"a CallEvent. Together they are why the call went the way it did, and they are also " +
@@ -105,15 +105,14 @@ func documentHandWritten(api huma.API) {
 			"uncertain writes. Ordinary status watchers should leave this disabled. Persistent text " +
 			"command recovery is unchanged.\n" +
 			"The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, " +
-			"`interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the " +
-			"session. `instructions` is server-side only: from an end user's device it changes " +
-			"nothing and is answered with an `error` frame, `context` `command`, as `updateSession` " +
-			"refuses it. A `tool_call` is the only frame that must be answered: everything else is a " +
-			"report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; " +
+			"`interrupt` (optionally naming a `request_id`) or `close` to act on the session. A " +
+			"session's instructions are its agent config's, so there is no command to change them. " +
+			"A `tool_call` is the only frame that must be answered: everything else is a " +
+			"report. Tool calls made by durable personal commands carry `request_id` and `turn_id`; " +
 			"their result must repeat both values so a result cannot be adopted by another command " +
 			"or turn.\n" +
 			"A call to a tool declared with an `approval` waits for a person. The client reports " +
-			"their answer with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, " +
+			"their answer with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, " +
 			"and optionally a `summary` shown when they declined), before it answers the call with " +
 			"`tool_result`.\n" +
 			"`tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. " +
@@ -149,7 +148,7 @@ func documentHandWritten(api huma.API) {
 			"optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes " +
 			"one up for the records. A `text` session is refused, because the socket carries audio. " +
 			"A field that `createSession` refuses from an end user's device is refused here too: " +
-			"`history` and `instructions` are server-side only.\n" +
+			"`history` is server-side only.\n" +
 			"The server answers `session`, with the `Session` and the `sample_rate` in use. Then " +
 			"binary frames are PCM16 mono at that rate in both directions: the caller's audio in, " +
 			"and the agent's speech out at the pace it would be heard on a call. A `cleared` frame " +
@@ -248,9 +247,9 @@ func documentHandWritten(api huma.API) {
 			"Work goes to whichever of a customer's workers is holding the least of what it said it " +
 			"can hold, so a worker that never reports `done` is one the router cannot tell is busy.\n" +
 			"A `message` written to a running session whose agent sets `dispatch.text` carries that " +
-			"`session_id`, and a `command_id` when it was sent as a durable command. The model has " +
+			"`session_id`, and a `request_id` when it was sent as a durable command. The model has " +
 			"not answered it: the worker does, by creating a response on that session with a " +
-			"server-side credential and the same `command_id` and text.\n" +
+			"server-side credential and the same `request_id` and text.\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device. This is the clearest case of why: a worker is offered other people's " +
 			"callers, so anything that can open this socket can answer for the whole app. The auth " +

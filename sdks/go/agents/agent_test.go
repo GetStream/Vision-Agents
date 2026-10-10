@@ -255,7 +255,6 @@ func TestASessionCanChangeWhatTheAgentWasConfiguredWith(t *testing.T) {
 	}
 
 	session, err := agent.Sessions.Create(t.Context(), SessionOptions{
-		Instructions: "You are Jean, and brief.",
 		CostTracking: map[string]string{"tier": "pro"},
 		Title:        "Order 1042",
 	})
@@ -267,9 +266,6 @@ func TestASessionCanChangeWhatTheAgentWasConfiguredWith(t *testing.T) {
 	router.mu.Lock()
 	defer router.mu.Unlock()
 	opened := router.opened[0]
-	if opened.Instructions == nil || *opened.Instructions != "You are Jean, and brief." {
-		t.Errorf("the session was opened with instructions %v", opened.Instructions)
-	}
 	if opened.Tags == nil || (*opened.Tags)["team"] != "support" || (*opened.Tags)["tier"] != "pro" {
 		t.Errorf("the session was labelled %v", opened.Tags)
 	}

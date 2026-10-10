@@ -254,7 +254,7 @@ func (s *CallsSuite) TestACallsCostIsSplitByWhereItCameFrom() {
 
 func (s *CallsSuite) TestAConversationRecordsWhatItsPromptsWereMadeOf() {
 	request := textSession(nil)
-	request.Llm, request.Instructions = pointerTo("counted/counted-model"), pointerTo("Answer about "+s.utils.uuid())
+	request.Llm, request.ConfigId = pointerTo("counted/counted-model"), s.data.instructedAgent("Answer about "+s.utils.uuid())
 	opened := s.serverClient.createSession(request)
 	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
 		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "How many tokens is this?"}, nil))

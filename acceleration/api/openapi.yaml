@@ -480,7 +480,7 @@ components:
           description: A call to one of the customer's numbers is handed to a dispatch worker. Every inbound call already is, since a number is not tied to an agent config.
         text:
           $ref: '#/components/schemas/DispatchSetting'
-          description: An end user's message is handed to a dispatch worker, with the session it was written to, instead of being answered by the model. The worker answers by creating a response on that session with a server-side credential, passing the message's command_id when it has one; that is the only text the model answers.
+          description: An end user's message is handed to a dispatch worker, with the session it was written to, instead of being answered by the model. The worker answers by creating a response on that session with a server-side credential, passing the message's request_id when it has one; that is the only text the model answers.
       type: object
     AgentLog:
       properties:
@@ -685,12 +685,6 @@ components:
           items:
             type: string
           type: array
-        call_id:
-          description: The call every caller joins. Omit to give each caller their own call, named after the number they rang.
-          type: string
-        call_type:
-          description: The Stream call type. Omit for "agent".
-          type: string
       type: object
     AttachedNumber:
       properties:
@@ -1730,11 +1724,11 @@ components:
       properties:
         assistant_message_id:
           type: string
-        command_id:
-          type: string
         duplicate:
           description: True when this command already exists and no new inference was started.
           type: boolean
+        request_id:
+          type: string
         state:
           description: Latest locally recorded response state; an interrupted command is never automatically rerun.
           type: string
@@ -1742,7 +1736,7 @@ components:
           type: string
       required:
         - assistant_message_id
-        - command_id
+        - request_id
         - duplicate
         - state
         - user_message_id
@@ -2796,14 +2790,14 @@ components:
       type: object
     CreateResponseRequest:
       properties:
-        command_id:
-          description: Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
-          pattern: ^[A-Za-z0-9_-]{1,128}$
-          type: string
         images:
           items:
             $ref: '#/components/schemas/ImageSource'
           type: array
+        request_id:
+          description: Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
+          pattern: ^[A-Za-z0-9_-]{1,128}$
+          type: string
         text:
           description: What to answer, as though it had been said.
           type: string
@@ -2828,12 +2822,6 @@ components:
           default: false
           description: Murmur while a participant is still talking, the way a person does.
           type: boolean
-        call_id:
-          description: The call to join. Required unless the session is text.
-          type: string
-        call_type:
-          default: default
-          type: string
         config_id:
           description: An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
           type: string
@@ -2846,9 +2834,6 @@ components:
         context_truncated:
           description: Older history was omitted from the model context.
           type: boolean
-        conversation_id:
-          description: Stream Chat CID to resume; returned for persistent text sessions.
-          type: string
         custom:
           additionalProperties: {}
           description: Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
@@ -2860,21 +2845,18 @@ components:
           $ref: '#/components/schemas/Greeting'
           description: What the agent opens the call with, over what the config says.
         history:
-          description: 'The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread''s messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation''s history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent''s mouth.'
+          description: 'The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread''s messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation''s history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent''s mouth.'
           items:
             $ref: '#/components/schemas/HistoryMessage'
           maxItems: 100
           type: array
         id:
-          description: The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
+          description: The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that does not start support- or thread- and that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7.
           type: string
         incognito:
           default: false
           description: 'Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.'
           type: boolean
-        instructions:
-          description: 'The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend''s to decide.'
-          type: string
         keyterms:
           description: Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
           items:
@@ -2910,8 +2892,12 @@ components:
         search:
           description: Omit it and the config decides, or search-fast when there is no config.
           type: string
+        start_voice:
+          default: false
+          description: 'Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.'
+          type: boolean
         sts:
-          description: 'A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.'
+          description: 'A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.'
           type: string
         stt:
           description: Omit it and the config decides, or en-low-latency when there is no config.
@@ -2919,12 +2905,8 @@ components:
         tags:
           additionalProperties:
             type: string
-          description: Cost labels, carried onto every request the session makes.
+          description: Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
           type: object
-        text:
-          default: false
-          description: 'Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session''s socket.'
-          type: boolean
         title:
           description: 'What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.'
           type: string
@@ -3028,6 +3010,132 @@ components:
         - name
         - endpoint
         - schemes
+      type: object
+    CustomModel:
+      properties:
+        base_url:
+          type: string
+        context_window:
+          format: int64
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        has_api_key:
+          description: Whether a key is stored. The key itself is never returned.
+          type: boolean
+        id:
+          type: string
+        input_modalities:
+          items:
+            type: string
+          type: array
+        model:
+          type: string
+        name:
+          type: string
+        per_million_input_tokens:
+          format: double
+          type: number
+        per_million_output_tokens:
+          format: double
+          type: number
+        retention:
+          type: string
+        target:
+          description: What a router config or session names the model by.
+          example: custom/support-qwen
+          type: string
+        trains_on_data:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - name
+        - target
+        - base_url
+        - model
+        - has_api_key
+        - context_window
+        - input_modalities
+        - per_million_input_tokens
+        - per_million_output_tokens
+        - created_at
+        - updated_at
+      type: object
+    CustomModelPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/CustomModel'
+          type: array
+        next_cursor:
+          description: Pass as `cursor` for the next page. Absent on the last one.
+          type: string
+      required:
+        - has_more
+        - items
+      type: object
+    CustomModelRequest:
+      properties:
+        api_key:
+          description: Sent as a bearer token. Stored sealed and never returned. Left out of an update keeps the one stored; empty removes it.
+          type: string
+          writeOnly: true
+        base_url:
+          description: The endpoint root, up to and including /v1, that chat completions are posted under.
+          example: https://model-abc123.api.baseten.co/environments/production/sync/v1
+          minLength: 1
+          type: string
+        context_window:
+          description: Tokens the model accepts, so the router can refuse a conversation that would not fit. Omitted is unknown.
+          format: int64
+          minimum: 0
+          type: integer
+        input_modalities:
+          description: Input kinds beyond text the model accepts, e.g. image.
+          items:
+            type: string
+          type: array
+        model:
+          description: The id the endpoint serves the weights under.
+          example: Qwen/Qwen3.8-27B
+          minLength: 1
+          type: string
+        name:
+          description: What a config names the model by, as `custom/<name>`. Unique among the customer's models.
+          example: support-qwen
+          pattern: ^[a-z0-9][a-z0-9._-]{0,63}$
+          type: string
+        per_million_input_tokens:
+          description: What the host bills per million input tokens in USD, so usage can say what a conversation cost. Omitted is free.
+          format: double
+          minimum: 0
+          type: number
+        per_million_output_tokens:
+          description: What the host bills per million output tokens in USD. Omitted is free.
+          format: double
+          minimum: 0
+          type: number
+        retention:
+          description: 'How long the host keeps what it is sent: none, or a duration such as 30d or 24h.'
+          example: none
+          type: string
+        trains_on_data:
+          description: Whether the host trains on what it is sent. Declared with retention, or a session with a data policy is never routed here.
+          enum:
+            - "yes"
+            - "no"
+            - unknown
+          type: string
+      required:
+        - name
+        - base_url
+        - model
       type: object
     DataChange:
       description: One thing that happened to one row of the calling app's data.
@@ -3201,9 +3309,6 @@ components:
       properties:
         agent:
           type: string
-        call_id:
-          description: The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not.
-          type: string
         config_id:
           type: string
         custom:
@@ -3214,9 +3319,6 @@ components:
         incognito:
           description: Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
           type: boolean
-        instructions:
-          description: 'Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession.'
-          type: string
         messages:
           default: true
           description: Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
@@ -3614,13 +3716,6 @@ components:
         - tool_definitions
         - tool_use
         - video
-      type: object
-    InstructionsRequest:
-      properties:
-        instructions:
-          type: string
-      required:
-        - instructions
       type: object
     InvocationArgument:
       description: 'One argument a connector tool call was asked with: its name, its JSON type and, for a string or an array, its length, so an empty string shows as length 0. Never its value.'
@@ -4345,12 +4440,6 @@ components:
       type: object
     PlaceCallRequest:
       properties:
-        call_id:
-          description: The Stream call the answered leg joins, and so the one the agent has to be in. Omit to have one named after this call, since two calls from the same number are two conversations.
-          type: string
-        call_type:
-          description: The Stream call type. Omit for "agent".
-          type: string
         custom:
           additionalProperties:
             type: string
@@ -4370,6 +4459,9 @@ components:
         ring_timeout_seconds:
           description: How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than ringing for its own default.
           type: integer
+        session_id:
+          description: 'The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice.'
+          type: string
         tags:
           additionalProperties:
             type: string
@@ -4382,10 +4474,8 @@ components:
       type: object
     PlacedCall:
       properties:
-        call_id:
-          description: The Stream call the answered leg is routed into. An agent that is not in it hears nothing when the person picks up.
-          type: string
-        call_type:
+        session_id:
+          description: 'The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up.'
           type: string
         status:
           description: The vendor's own word for where the call is, e.g. "queued".
@@ -4847,8 +4937,8 @@ components:
           description: The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
           pattern: ^[A-Za-z0-9_.:-]{1,128}$
           type: string
-        command_id:
-          description: Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
+        request_id:
+          description: Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry with the same id and text does not restart inference.
           pattern: ^[A-Za-z0-9_-]{1,128}$
           type: string
         text:
@@ -5189,7 +5279,7 @@ components:
         agent_id:
           type: string
         call_id:
-          description: Empty for a text session, which joins no call.
+          description: The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
           type: string
         call_type:
           type: string
@@ -5204,7 +5294,7 @@ components:
           description: Older history was omitted from the model context.
           type: boolean
         conversation_id:
-          description: Stream Chat CID to resume; returned for persistent text sessions.
+          description: The Stream Chat channel the conversation is kept in, typed and spoken. Absent for an incognito session.
           type: string
         created_at:
           format: date-time
@@ -5239,6 +5329,13 @@ components:
           $ref: '#/components/schemas/ModelOverwrites'
         project_id:
           type: string
+        review_notes:
+          description: Why the review scored the conversation as it did. Read by a backend only.
+          type: string
+        review_score:
+          description: How well the agent handled the conversation, from 1 to 5, written a few seconds after it ended. Read by a backend only.
+          format: int64
+          type: integer
         state:
           $ref: '#/components/schemas/SessionState'
         sts:
@@ -5250,6 +5347,9 @@ components:
         subagent:
           description: The provider and model delegated work runs on.
           type: string
+        summary:
+          description: What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only.
+          type: string
         text:
           description: The conversation is held in writing rather than on a call.
           type: boolean
@@ -5258,6 +5358,9 @@ components:
         tts:
           description: The provider and model speaking.
           type: string
+        usage:
+          $ref: '#/components/schemas/CallUsage'
+          description: What the conversation spent over every model it called, typed and spoken, once it has ended. Read by a backend only.
         user_id:
           type: string
         video:
@@ -5410,14 +5513,14 @@ components:
       type: object
     SessionRespondCommand:
       properties:
-        command_id:
-          description: Required for personal persistent text conversations; reuse on retries. Text only when present.
-          pattern: ^[A-Za-z0-9_-]{1,128}$
-          type: string
         images:
           items:
             $ref: '#/components/schemas/ImageSource'
           type: array
+        request_id:
+          description: Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present.
+          pattern: ^[A-Za-z0-9_-]{1,128}$
+          type: string
         text:
           type: string
         type:
@@ -6906,7 +7009,7 @@ components:
       properties:
         allowed:
           type: boolean
-        command_id:
+        request_id:
           type: string
         summary:
           description: Shown on the declined call, such as "Location not shared".
@@ -6922,19 +7025,19 @@ components:
           type: string
       required:
         - allowed
-        - command_id
+        - request_id
         - tool_call_id
         - turn_id
         - type
       type: object
     ToolResultCommand:
       properties:
-        command_id:
-          type: string
         error:
           type: string
         output:
           $ref: '#/components/schemas/MessageContent'
+        request_id:
+          type: string
         tool_call_id:
           type: string
         turn_id:
@@ -7103,14 +7206,11 @@ components:
       type: object
     TransferCallRequest:
       properties:
-        call_id:
-          description: The Stream call the caller and the agent are already on.
-          type: string
-        call_type:
-          description: The Stream call type. Omit for "agent".
-          type: string
         from:
           description: The customer's number the human is dialled from, which is what they see.
+          type: string
+        session_id:
+          description: The session whose call the caller and the agent are on. The human is brought into it.
           type: string
         tags:
           additionalProperties:
@@ -7120,8 +7220,8 @@ components:
           description: The human being brought onto the call.
           type: string
       required:
-        - call_id
         - from
+        - session_id
         - to
       type: object
     TtsOptions:
@@ -7261,9 +7361,6 @@ components:
           description: Replaces the caller's labels whole. An empty object clears them.
           type: object
         description:
-          type: string
-        instructions:
-          description: What the agent is told to be, from the next turn.
           type: string
         llm:
           description: The conversation model, a provider/model or a capability shortcut.
@@ -10666,7 +10763,7 @@ paths:
           $ref: '#/components/responses/InternalError'
       security: []
       summary: Bind a consent to this browser
-  /v1/agents/conversations/{cid}/commands/{command_id}:
+  /v1/agents/conversations/{cid}/commands/{request_id}:
     get:
       description: |-
         Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
@@ -10678,12 +10775,12 @@ paths:
           required: true
           schema:
             type: string
-        - description: The client's own command id, as sent when the command was submitted.
+        - description: The request id the question was sent with.
           in: path
-          name: command_id
+          name: request_id
           required: true
           schema:
-            description: The client's own command id, as sent when the command was submitted.
+            description: The request id the question was sent with.
             type: string
         - explode: false
           in: query
@@ -11328,6 +11425,188 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
           description: Log storage is unavailable.
       summary: Read-only SSE of durable logs with replay
+  /v1/agents/models:
+    get:
+      description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
+      operationId: listCustomModels
+      parameters:
+        - description: Up to 200. Omitted is 25.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 25.
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The `next_cursor` of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The `next_cursor` of the previous page. Omitted is the first page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomModelPage'
+          description: The customer's models, newest first
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: The language models the calling customer serves themselves
+    post:
+      description: |-
+        A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: createCustomModel
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomModelRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomModel'
+          description: The model was stored
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Not Implemented
+      summary: Add a model of the customer's own
+  /v1/agents/models/{id}:
+    delete:
+      description: |-
+        Sessions that name it are refused from then on.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteCustomModel
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+      responses:
+        "204":
+          description: The model is gone
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Delete a model
+    get:
+      description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
+      operationId: getCustomModel
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomModel'
+          description: The model
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: One of the customer's models
+    put:
+      description: |-
+        Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: updateCustomModel
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomModelRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomModel'
+          description: The model as it now is
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Not Implemented
+      summary: Replace a model
   /v1/agents/plugins:
     get:
       description: A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
@@ -11497,7 +11776,9 @@ paths:
       summary: Delete a session
       x-client-accessible: true
     get:
-      description: 'Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.'
+      description: |-
+        Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+        A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
       operationId: getSession
       parameters:
         - description: The session, as returned when it was created.
@@ -11528,13 +11809,13 @@ paths:
       x-client-accessible: true
     patch:
       description: |-
-        Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+        Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 
-        An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+        An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 
-        A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+        A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 
-        Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+        Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
       operationId: updateSession
       parameters:
         - description: The session, as returned when it was created.
@@ -11569,9 +11850,9 @@ paths:
           $ref: '#/components/responses/InternalError'
       summary: Change a session
       x-client-accessible: true
-  /v1/agents/sessions/{id}/commands/{command_id}:
+  /v1/agents/sessions/{id}/commands/{request_id}:
     get:
-      description: Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+      description: Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same request id rather than inventing another one.
       operationId: getSessionCommand
       parameters:
         - description: The session, as returned when it was created.
@@ -11581,12 +11862,12 @@ paths:
           schema:
             description: The session, as returned when it was created.
             type: string
-        - description: The client's own command id, as sent when the command was submitted.
+        - description: The request id the question was sent with.
           in: path
-          name: command_id
+          name: request_id
           required: true
           schema:
-            description: The client's own command id, as sent when the command was submitted.
+            description: The request id the question was sent with.
             type: string
       responses:
         "200":
@@ -11604,7 +11885,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: What is known about one durable command
-  /v1/agents/sessions/{id}/commands/{command_id}/interrupt:
+  /v1/agents/sessions/{id}/commands/{request_id}/interrupt:
     post:
       description: |-
         Abandons the reply that command is generating. Unlike interrupting the session, a stop that arrives after its command finished replays that command's terminal receipt and leaves the command running now alone, so a delayed stop for one question can never take the answer to the next one.
@@ -11619,12 +11900,12 @@ paths:
           schema:
             description: The session, as returned when it was created.
             type: string
-        - description: The client's own command id, as sent when the command was submitted.
+        - description: The request id the question was sent with.
           in: path
-          name: command_id
+          name: request_id
           required: true
           schema:
-            description: The client's own command id, as sent when the command was submitted.
+            description: The request id the question was sent with.
             type: string
       responses:
         "200":
@@ -11646,7 +11927,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: The stop was accepted but its durable outcome is unknown. The command is not reported stopped; retry the same command id.
+          description: The stop was accepted but its durable outcome is unknown. The command is not reported stopped; retry the same request id.
       summary: Stop one named command, and nothing else
   /v1/agents/sessions/{id}/events:
     get:
@@ -11655,14 +11936,14 @@ paths:
         The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
         `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider rejected the token or key a bearer or api_key connection holds; only new credentials fix it, so no login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
         `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
-        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id.
-        A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
-        An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `command_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
+        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id.
+        A respond command carrying request_id emits command_accepted with a nested command receipt (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
+        An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `request_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
         A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
         Two frames are only sent when asked for, because they are far more frequent than the rest and most consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives rather than a settled turn. `decisions=false` drops `decision`.
         `replay_pending_tools=true` opts a durable tool host into replay of external tool calls still awaiting results in a live voice session. Completed, cancelled and timed-out requests are excluded at snapshot time. Replays retain their tool and turn IDs and may duplicate live delivery; the host must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers should leave this disabled. Persistent text command recovery is unchanged.
-        The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the session. `instructions` is server-side only: from an end user's device it changes nothing and is answered with an `error` frame, `context` `command`, as `updateSession` refuses it. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
-        A call to a tool declared with an `approval` waits for a person. The client reports their answer with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary` shown when they declined), before it answers the call with `tool_result`.
+        The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are its agent config's, so there is no command to change them. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
+        A call to a tool declared with an `approval` waits for a person. The client reports their answer with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary` shown when they declined), before it answers the call with `tool_result`.
         `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.
         `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation receives the question and later the findings, without raw images. Video capture uses task-correlated `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically to conversational turns.
       operationId: watchSession
@@ -11744,38 +12025,6 @@ paths:
           $ref: '#/components/responses/InternalError'
       summary: Continue a conversation as a new one
       x-client-accessible: true
-  /v1/agents/sessions/{id}/instructions:
-    put:
-      description: 'Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.'
-      operationId: setSessionInstructions
-      parameters:
-        - description: The session, as returned when it was created.
-          in: path
-          name: id
-          required: true
-          schema:
-            description: The session, as returned when it was created.
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/InstructionsRequest'
-        required: true
-      responses:
-        "204":
-          description: The next turn will use them
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "403":
-          $ref: '#/components/responses/Forbidden'
-        "404":
-          $ref: '#/components/responses/NotFound'
-        "500":
-          $ref: '#/components/responses/InternalError'
-      summary: Change what the agent is told to be
   /v1/agents/sessions/{id}/interrupt:
     post:
       description: What a caller outside the call has instead of a voice. A murmur is not interrupted, because it was meant to overlap with whoever is talking.
@@ -11871,7 +12120,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: The command ID was already accepted with different content
+          description: The request id was already accepted with different content
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Answer a piece of text through the model, as though it had been said
@@ -11961,7 +12210,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: The command ID was already accepted with different content
+          description: The request id was already accepted with different content
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Ask the agent something and get a handle on the answer
@@ -12184,6 +12433,66 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: List the tools a session's model is offered
+  /v1/agents/sessions/{id}/voice:
+    delete:
+      description: The agent finishes what it is saying, leaves the call and carries the conversation on in writing, with everything said on the call. Stopping voice on a session held in writing changes nothing. Stopping the session is what ends it.
+      operationId: stopSessionVoice
+      parameters:
+        - description: The session, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The session, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+          description: The agent has left the call
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Stop voice on a session
+      x-client-accessible: true
+    post:
+      description: |-
+        The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+
+        Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+      operationId: startSessionVoice
+      parameters:
+        - description: The session, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The session, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+          description: The agent is on the call
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Start voice on a session
+      x-client-accessible: true
   /v1/agents/sessions/query:
     post:
       description: |-
@@ -12660,7 +12969,7 @@ paths:
     get:
       description: |-
         A WebSocket, which OpenAPI cannot describe past the upgrade. Text frames are JSON objects carrying a `type`.
-        The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` and `instructions` are server-side only.
+        The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` is server-side only.
         The server answers `session`, with the `Session` and the `sample_rate` in use. Then binary frames are PCM16 mono at that rate in both directions: the caller's audio in, and the agent's speech out at the pace it would be heard on a call. A `cleared` frame says speech already sent was thrown away because the caller cut in. Tool calls and every other event go over the session's events socket, as they do for a call.
         A refused start is an `error` frame with `error`, the message, and the socket closes. An `error` frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type` that `createSession` answers the same field with.
         The session lasts as long as the socket. Closing the socket, or sending `stop`, ends the conversation. A conversation that ends closes the socket.
@@ -13426,7 +13735,7 @@ paths:
         A WebSocket, which OpenAPI cannot describe past the upgrade. The worker connects here and waits, rather than being called, because the agent runs in the customer's own process and this service cannot reach into it.
         The socket opens with a `ready` frame naming the worker, and a `call` or `message` frame arrives for each piece of work handed to it, each carrying the `work_id` that names it. The worker answers `done` with that `work_id`, and an `error` when it could not be done, which is what frees its room for the next piece. It also sends `load` so an operator can see what each worker is under, and `ping` to time the round trip itself.
         Work goes to whichever of a customer's workers is holding the least of what it said it can hold, so a worker that never reports `done` is one the router cannot tell is busy.
-        A `message` written to a running session whose agent sets `dispatch.text` carries that `session_id`, and a `command_id` when it was sent as a durable command. The model has not answered it: the worker does, by creating a response on that session with a server-side credential and the same `command_id` and text.
+        A `message` written to a running session whose agent sets `dispatch.text` carries that `session_id`, and a `request_id` when it was sent as a durable command. The model has not answered it: the worker does, by creating a response on that session with a server-side credential and the same `request_id` and text.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. This is the clearest case of why: a worker is offered other people's callers, so anything that can open this socket can answer for the whole app. The auth type has no query parameter, so a browser cannot open one at all.
       operationId: dispatchCalls
       parameters:

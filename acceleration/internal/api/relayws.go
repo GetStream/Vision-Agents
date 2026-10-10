@@ -102,12 +102,14 @@ func (s *Server) newRelayed(ctx context.Context, bus *relay.Bus) (*relayed, erro
 	return state, nil
 }
 
-// watchRemoteSession serves a watcher whose session is running on another node.
+// watchRemoteSession serves a watcher whose session is running on another node, reporting
+// whether it answered the request. It answers nothing when no node let this caller watch, so
+// the caller can be answered as for a session nobody is running.
 //
 // Who may watch is decided by the node holding the session rather than here: it has the
 // session's own spec, where this node has at best a row written behind it. A node is not
 // trusted to have checked, so the caller is named on the bus and checked there.
-func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id string, owner session.Owner) {
+func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id string, owner session.Owner) bool {
 	state := s.relayed
 	watcher := uuid.NewString()
 	socket := &remoteSocket{
@@ -140,7 +142,7 @@ func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id s
 	}); err != nil {
 		s.logger.Error("could not ask for a session held elsewhere", "session", id, "error", err)
 		writeError(w, unavailable("the session could not be reached"))
-		return
+		return true
 	}
 
 	select {
@@ -150,17 +152,16 @@ func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id s
 		// No node has it, or the node that has it will not let this caller watch. Both
 		// are answered the way a session that never existed is answered: a refusal would
 		// confirm the id is real.
-		writeError(w, errUnknownSession)
-		return
+		return false
 	case <-r.Context().Done():
-		return
+		return true
 	}
 
 	connection, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		s.logger.Debug("could not upgrade a relayed session socket", "error", err)
 		state.detach(context.WithoutCancel(r.Context()), watcher, id)
-		return
+		return true
 	}
 	defer connection.Close()
 	defer state.detach(context.WithoutCancel(r.Context()), watcher, id)
@@ -172,6 +173,7 @@ func (s *Server) watchRemoteSession(w http.ResponseWriter, r *http.Request, id s
 		s.readRelayedCommands(connection, state, watcher, id)
 	}()
 	s.writeRelayedEvents(connection, state, socket, watcher, id, watching(r), gone)
+	return true
 }
 
 // writeRelayedEvents writes what arrives on the bus out to the caller, and keeps both the

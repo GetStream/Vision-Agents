@@ -4,10 +4,10 @@
 //	phone search -country US -state CO -type local -feature hd_voice
 //	phone search -vendor twilio -country US -area 512
 //	phone buy -vendor twilio -number +15125551234 -tag project=support
-//	phone attach -number +15125551234 -call support-line
+//	phone attach -number +15125551234
 //	phone dial -from +15125551234 -to +15550001111
-//	phone dial -from +15125551234 -to +15550001111 -call-id support-line -ring-timeout 20s -digits ww1234#
-//	phone transfer -from +15125551234 -to +15550002222 -call support-line
+//	phone dial -from +15125551234 -to +15550001111 -ring-timeout 20s -digits ww1234#
+//	phone transfer -from +15125551234 -to +15550002222 -session <session id>
 //	phone press -vendor telnyx -call-id v3:abc -digits 1
 //	phone list
 //	phone hooks
@@ -305,8 +305,6 @@ func attach(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("attach", flag.ExitOnError)
 	number := flags.String("number", "", "number to point at an agent")
 	customer := flags.String("customer", "demo", "customer that holds the number")
-	call := flags.String("call", "", "call every caller joins, empty gives each their own")
-	callType := flags.String("call-type", "", "stream call type, empty means default")
 	allowed := flags.String("allowed-ips", "", "comma separated vendor signalling IPs or CIDRs")
 	if err := flags.Parse(arguments); err != nil {
 		return err
@@ -324,8 +322,6 @@ func attach(ctx context.Context, arguments []string) error {
 	attached, err := service.Attach(ctx, phone.Attachment{
 		CustomerID: *customer,
 		E164:       *number,
-		CallID:     *call,
-		CallType:   *callType,
 		AllowedIPs: split(*allowed),
 	})
 	if err != nil {
@@ -340,8 +336,7 @@ func dial(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("dial", flag.ExitOnError)
 	from := flags.String("from", "", "one of your numbers, which is what they see")
 	to := flags.String("to", "", "who to call")
-	call := flags.String("call-id", "", "stream call the answered leg joins, empty names a fresh one")
-	callType := flags.String("call-type", "", "stream call type, empty means default")
+	sessionID := flags.String("session", "", "session the answered leg joins, empty chooses one")
 	ring := flags.Duration("ring-timeout", 0, "how long to ring before giving up, e.g. 20s")
 	digits := flags.String("digits", "", "digits to press when they answer, e.g. ww1234#")
 	customer := flags.String("customer", "demo", "customer the call is billed to")
@@ -366,8 +361,7 @@ func dial(ctx context.Context, arguments []string) error {
 		Owner:         routing.Owner{CustomerID: *customer, Tags: tags.Tags},
 		From:          *from,
 		To:            *to,
-		CallID:        *call,
-		CallType:      *callType,
+		SessionID:     *sessionID,
 		RingTimeout:   *ring,
 		InitialDigits: *digits,
 		Custom:        custom.Tags,
@@ -379,7 +373,7 @@ func dial(ctx context.Context, arguments []string) error {
 	fmt.Printf("calling %s, vendor call %s (%s)\n", *to, placed.VendorCallID, placed.Status)
 	// Nothing is heard on the other end until an agent is in this call, so it is the part
 	// of the answer worth acting on.
-	fmt.Printf("join %s call %s to be there when they answer\n", placed.CallType, placed.CallID)
+	fmt.Printf("open session %s with voice to be there when they answer\n", placed.SessionID)
 	return nil
 }
 
@@ -387,8 +381,7 @@ func transfer(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("transfer", flag.ExitOnError)
 	from := flags.String("from", "", "one of your numbers, which is what the human sees")
 	to := flags.String("to", "", "the human to bring onto the call")
-	call := flags.String("call", "", "the stream call the caller and agent are already on")
-	callType := flags.String("call-type", "", "stream call type, empty means default")
+	sessionID := flags.String("session", "", "the session the caller and agent are already on")
 	customer := flags.String("customer", "demo", "customer the call is billed to")
 	var tags routing.TagsFlag
 	flags.Var(&tags, "tag", "cost label as key=value, repeat for several")
@@ -398,8 +391,8 @@ func transfer(ctx context.Context, arguments []string) error {
 	if *from == "" || *to == "" {
 		return errors.New("a from and a to are required")
 	}
-	if *call == "" {
-		return errors.New("the call to transfer into is required")
+	if *sessionID == "" {
+		return errors.New("the session to transfer into is required")
 	}
 
 	service, cleanup, err := build(ctx)
@@ -412,15 +405,15 @@ func transfer(ctx context.Context, arguments []string) error {
 		Owner:    routing.Owner{CustomerID: *customer, Tags: tags.Tags},
 		From:     *from,
 		To:       *to,
-		CallID:   *call,
-		CallType: *callType,
+		CallID:   *sessionID,
+		CallType: "agent",
 	})
 	if err != nil {
 		return err
 	}
 
 	fmt.Printf("bringing %s onto %s, vendor call %s (%s)\n",
-		*to, *call, placed.VendorCallID, placed.Status)
+		*to, *sessionID, placed.VendorCallID, placed.Status)
 	return nil
 }
 

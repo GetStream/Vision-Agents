@@ -287,8 +287,8 @@ func TestACallThatWasAnsweredIsReportedFinished(t *testing.T) {
 	// that never reported would shrink by one call every time it answered one.
 	router := newPool(t, func(connection *websocket.Conn) {
 		_ = connection.WriteJSON(Frame{
-			"type": "call", "work_id": "work-1", "call_id": "call-1", "call_type": "default",
-			"called_number": "+13035550100", "caller_number": "+13035550111",
+			"type": "call", "work_id": "work-1", "call_id": "session-1", "call_type": "agent",
+			"session_id": "session-1", "called_number": "+13035550100", "caller_number": "+13035550111",
 			"custom": map[string]any{"campaign": "spring"},
 		})
 	})
@@ -319,6 +319,9 @@ func TestACallThatWasAnsweredIsReportedFinished(t *testing.T) {
 	}
 	if answered.Custom["campaign"] != "spring" {
 		t.Errorf("what was on the call did not come through: %v", answered.Custom)
+	}
+	if answered.SessionID != "session-1" {
+		t.Errorf("the session to open is %q", answered.SessionID)
 	}
 }
 

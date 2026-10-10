@@ -922,30 +922,6 @@ func (a *Agent) Interrupt() {
 	a.interrupt(participant)
 }
 
-// SetInstructions changes what the agent is told to be from the next turn on. The reply
-// being spoken keeps the prompt it was started with, because rewriting it mid-sentence
-// would have the agent change character in the middle of a thought.
-func (a *Agent) SetInstructions(text string) {
-	a.mu.Lock()
-	a.prompt = text
-	instructions := a.instructions()
-	if a.native() {
-		instructions = a.nativeInstructions(a.harness != nil)
-	}
-	model := a.sts
-	a.mu.Unlock()
-
-	// A native model holds the prompt itself, so it is told. One that took its
-	// instructions only when the session opened refuses, and the refusal is reported
-	// rather than swallowed: a caller who changed the prompt and heard nothing of it would
-	// believe the agent had changed.
-	if model != nil {
-		if err := model.SetInstructions(instructions); err != nil {
-			a.fail(err, "sts")
-		}
-	}
-}
-
 // Events carries what happened in the conversation. It is closed by Close.
 func (a *Agent) Events() <-chan Event { return a.emitter.Events() }
 
