@@ -1161,6 +1161,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// App mode's counterpart of warnWithoutMessageHook: the Stream apps provider apps are
+	// pinned to, read once, within the one attempt's time the deployment's own check gets.
+	go func() {
+		attempt, cancel := context.WithTimeout(ctx, learnTimeout)
+		defer cancel()
+		server.WarnWithoutMessageHooks(attempt)
+	}()
 
 	address := settings.Addr
 

@@ -385,6 +385,8 @@ func TestProviderAppMessageHookOffSuite(t *testing.T) {
 }
 
 func (s *ProviderAppMessageHookOffSuite) SetupSuite() {
+	// Without the key connectors seal under too, as cmd/router builds it with connectors off.
+	s.connectorsOff = true
 	s.start(false, providerAppPublicURL)
 }
 
