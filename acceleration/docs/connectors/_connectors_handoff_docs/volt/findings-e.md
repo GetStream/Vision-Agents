@@ -1,0 +1,8 @@
+# volt PR #998 (phase E) findings
+## Round 1 (head 1a6eca5299) — NO-GO; full text volt/reviewer-e-1.md; mutation script volt/rve-mut.py
+R1.1 [Should fix] dialogs/connection-create-dialog.tsx:62-64,106-122, widgets/connection-create-button.tsx:54 — a connection created before its token was refused is never deleted: Cancel leaves it Pending (reproduced live); retry after changing connector, scheme or owner creates a second connection and orphans the first; retry after changing label or inputs reuses the old one and silently drops the edit. Fix: delete the kept connection on dismiss and whenever the retry does not reuse it; include label and inputs in the reuse check or create a new connection; tests for both.
+R1.2 [Should fix] tests/unit/agents/connection-create.test.tsx, agent-connectors.test.tsx — 13 surviving mutations: R1,R2 retry reuse ignores owner/scheme change; R3 popup not closed when create fails; R4 F48 typed names shown while tools load; R5 empty checkbox group when the connection lists no tools; R6 inputs carry over to the next connector; R7 connectors with no supported scheme offered; R8 input enum check; R9 empty inputs sent; R12 button shows on a connector with no supported scheme; R15 OAuth default scheme; R16 dialog closes when consent starts; R20 navigation after a consent started from a connector's page. One test per rule.
+## Out of scope (tickets)
+- [Question] closing the OAuth popup without consent leaves the new connection Pending, no toast (dialog already closed). -> ticket (with phase A nit: closed popup not detected).
+- [Nit] connection-create-dialog.tsx:153 second component in the file (code-style.md:5).
+- [Nit] connector-dialog.tsx:29 137-char docstring line.

@@ -1,0 +1,8 @@
+# Wave 7 brief (AI-1046 + AI-1047: connectors API gaps found by the volt Connectors UI), read after waves/3d-brief.md
+- Tickets: Linear AI-1046 (DELETE an app's custom connector + return its endpoint), AI-1047 (read-only redirect_uri on oauth2_code connectors). One PR for both: they touch the same files (internal/api/connectors.go, spec, clients), and splitting them would only add conflicts.
+- Base: origin/accelerate (fetch at start; 26051062 or newer). Newest migration on base: 20261014120000. Slot 20261015120000 only if a migration is unavoidable; expand-only.
+- First production caller: the volt dashboard's Connectors page (volt PR #996: Library > Connectors). The router side is the API; the caller lands in volt. Say so in the PR body.
+- Local E2E router (container vision-agents-router-1, DB model_router) is OFF LIMITS: it serves the live dashboard E2E. Never restart it or write to model_router. Use your own test DB.
+- Known base failures (do not diagnose): CI js/mypy/python-unit red since colleague commit 9f629685 (greeting/speed renames) — not ours; go: TestAgentSuite/TestASecondVoiceAtTheSameMicrophoneIsNotTakenForTheCaller flaky; integration-only: TestConnectorsSuite built-in list race (AI-1040), TestConnectionEventsSuite flaky, TestTurnRecordingSuite, TestSIPTrunksSuite, TestDataMoveSuite, TestKnowledgeUrlsSuite (order-dependent). gofmt flags streams_test.go:382 on base.
+- Never print secrets. No Slack posts. Never touch staging.
+- Commits end with «Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>»; PR body ends with «🤖 Generated with [Claude Code](https://claude.com/claude-code)»; PR title «AI-1046, AI-1047: …». Branch connectors/<slug>.

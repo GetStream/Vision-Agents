@@ -1,0 +1,13 @@
+# PR #874 w8-val findings
+## Round 1 (reviewer a86d2deee45a1d0d0, head 76df7777): NO-GO
+R1.1 [Should fix] connection_tools.go:210-321, authorizations.go:737 — new credentials (PUT) or a finished consent leave the old last_validation (probe: 400 validate → PUT new token → GET status=connected last_validation=needs_reauthorization). Fix: store `revision` on the row and hide/drop a row older than the connection's credential revision (so an in-flight old validate cannot re-write a stale result after a clear); tests for both paths.
+R1.2 [Should fix, security] connection_tools.go:341-349 — provider error text stored unredacted and unbounded (go-sdk copies JSON-RPC error body for non-transient non-2xx, streamable.go:2591-2596, up to 4 MiB sources/mcp/source.go:55). Probe: echoing server put the token into DB and list (3 MiB). Field doc «never holds a credential» is false. Fix: before storing, strip the resolved credential value (and bearer/api_key value) from the text, cap to a fixed size (e.g. 1 KiB, cite the reason) without splitting UTF-8; test with an echoing server.
+R1.3 [Should fix] connection_tools.go:394 — revision guard on the new move untested: mutation Mm (Invalidate with a fresh Resolve instead of the validate's own credential) survives. Fix: add the reviewer's probe as a test (hold initialize, PUT new token, answer 400 → new token not moved). Template mut/zz_reviewer_probe_test.go.txt.
+Nits → tickets: store/connectors.go:744 empty-field check untested (Mo); GET shows code "400" that the POST validate answer never contained.
+## Round 1 fixer (head 8a23540e, was 76df7777): R1.1 fixed, R1.2 fixed, R1.3 fixed. Details: fixer-1.md
+## Round 2 (delta ab8fa856869a07ca5, head 8a23540e): NO-GO
+R1.1, R1.2 (own Resolve), R1.3 fixed; rollback v0.6.33 on migrated DB OK.
+R2.1 [Should fix, security] storedError strips only the validate's own Resolve credential; the MCP transport re-resolves per request (core/transport.go:186-189, :241 on 401 renew). Probe: token A, hold initialize, PUT token B, next request carries B, server echoes B with 501 → row stores B in plaintext (rowRev=2 connRev=3, hidden from GET but outside pgsealed). Fix (orchestrator choice: simplest safe): after the check, re-read the connection's credential revision; if it moved, store NO provider text (status/code/revision only). Test = reviewer probe (pr-w8-val/rv2probe/).
+R2.2 [Should fix] mutation Y1 (strip only Authorization) survives: api_key header path untested. Fix: test with a connector whose api_key goes in a named header, echoed by the server.
+Nits → ticket: PHP-style "\/" escaping and line-split tokens not stripped (other encodings).
+## Round 2 fixer (head 55459aa1, was 8a23540e): R2.1 fixed, R2.2 fixed. Details: fixer-2.md

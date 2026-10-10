@@ -1,0 +1,1 @@
+VERDICT: GO. 1f015f7404 (test-only, +25): reset-to-q mutation killed by 'keeps a keystroke typed right after the search went into the URL'; R20 still killed; lint 0; unit 236 files / 2770 tests pass. Worktree removed.

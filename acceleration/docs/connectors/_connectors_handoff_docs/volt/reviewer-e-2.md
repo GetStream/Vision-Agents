@@ -1,0 +1,6 @@
+VERDICT: GO (PR #998, 9441e26fd4 vs round 1 1a6eca5299)
+R1.1 fixed: dismiss deletes the kept connection; a retry that changes owner, scheme, label or inputs deletes it and creates anew; consent and stored paths clear the ref. Mutated: N1 no delete on dismiss, N2 no delete on changed retry, N3 label/inputs not in reuse check, N4 consent keeps ref, N5 success keeps ref: all KILLED. N6 (dismiss keeps ref) survives: the dialog unmounts, equivalent.
+R1.2 fixed: R1-R9, R12, R15, R20 KILLED (one named test each, log rve2-mutations.log). R16 SURVIVES and is equivalent: vendor/design-system/dashboard/index.js:1992-2001 FormDialog calls onDismiss (= setOpen(false)) when onSubmit resolves, and onConsent returns right after; made.current is already cleared so no delete.
+creatableSchemes now follows CREATABLE_SCHEMES order; callers: connections.ts:212 (includes), connector-detail-page.tsx:91 (length), dialog :189 (scheme list/default, intended) and :222 (length). No other caller.
+Checks: lint 0, knip 0, build 0, unit 236 files/2706 tests pass, tsc -p tsconfig.app.json: per-file error counts identical to base (no errors in touched files).
+New findings: none. UNVERIFIED: tsc base compared with the stored base run (rve.tsc.base.sorted), not re-run; CI (gh pr checks) not checked. Worktree removed.

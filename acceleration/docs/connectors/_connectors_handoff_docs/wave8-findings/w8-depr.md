@@ -1,0 +1,9 @@
+# PR #872 w8-depr findings
+## Round 1 (reviewer ae25c1bc879549a5b, head 9767e556): NO-GO
+R1.1 [Should fix] internal/api/plugins.go:298,:416; internal/session/plugin_tools.go:110,:435 — WARN cannot tell plugin use from mcp_servers use (mcp_login_test.go:190 expects plugin=crm for an mcp_servers entry; plugin_tools_test.go:483 plugin="[notes diary]" for mcp_servers-only spec). Fix: `via=plugins|mcp_servers` on login/callback/user-login lines (callback derives from plugins.Lookup(conn.PluginID)); session_tools lists `plugin=[…] mcp_server=[…]` separately; update both tests + mutation each.
+R1.2 [Should fix] internal/api/configs.go:893-899 — warnPluginsSaved counts len(Plugins)/len(PluginEvents) only; a migrated config (AI-994 entry beside a binding, dropped by Spec.withoutBoundPlugins) logs like real use. Fix: `unbound=<n>` (same rule as withoutBoundPlugins) or skip when n=0; ConfigsSuite-style test with connectors on + mutation.
+R1.3 [orchestrator ruling on reviewer Question] setPluginClient, disconnectPlugin, listConfigPlugins log nothing → add the same deprecation WARN (path=client_set|client_delete|disconnect|list_config) so phase 2 sees every plugin API caller; test + mutation.
+Nits → tickets: sdks/go/agents/config.go:64 plugin_events-only agent.yaml not covered (router refuses it anyway, sync.go:203); pluginevents.go:370 warn before name/event-id check counts 400s and claimed retries — move after ClaimPluginEvent.
+## Round 2 (delta, same reviewer, head 2339f851): NO-GO
+R1.1, R1.2 fixed; R1.3 partly.
+R2.1 [Should fix] internal/api/plugins.go:265 — client_delete WARN fires before DeletePluginClient's 404 (plugins.go:267-269); unknown id would log via=mcp_servers. Fix: log after the checks; add refused delete + unknown id to TestARefusedUseOfThePluginAPIWarnsOfNothing; check the other 3 paths.
