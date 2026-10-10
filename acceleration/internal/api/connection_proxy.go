@@ -59,6 +59,9 @@ var hopHeaders = []string{"Connection", "Proxy-Connection", "Keep-Alive", "Proxy
 
 var forwardingHeaders = []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto"}
 
+// proxyCallWindow is the window ProxyCallsPerMinute is counted over.
+const proxyCallWindow = time.Minute
+
 // proxyConnection forwards a direct call to the provider of a connection: the request as it
 // came, under the manifest's api_base, with the connection's credential in place of the
 // router's, and the provider's answer as it came. The connection's client does the rest
@@ -117,6 +120,15 @@ func (s *Server) proxyConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeError(w, invalidRequest("the body could not be read"))
+		return
+	}
+	// All customers share the router's egress: one customer's calls to a connector are capped
+	// so they cannot spend a provider's limit for everyone (AI-958).
+	calls := core.CallsKey(connection.CustomerID, connection.ConnectorID)
+	if wait := s.connectorLimiter.Take(ctx, calls, s.proxyCallsPerMinute, proxyCallWindow); wait > 0 {
+		w.Header().Set("Retry-After", waitSeconds(wait))
+		writeError(w, rateLimited(fmt.Sprintf("this app's direct calls to %s are over %d a minute: retry after %ss",
+			connection.ConnectorID, s.proxyCallsPerMinute, waitSeconds(wait))))
 		return
 	}
 
@@ -178,14 +190,25 @@ func proxiedPath(r *http.Request) string {
 // the router's own parameters. path is kept as escaped, and follows base's own path after a
 // slash, so it cannot name another host or a userinfo: «//evil.example» is a path on base's host.
 // A dot segment, written or escaped, is refused: it removes part of the path where it is
-// resolved (RFC 3986 sections 3.3 and 5.2.4), so it could leave base.
+// resolved (RFC 3986 sections 3.3 and 5.2.4), so it could leave base. So is a segment holding
+// an escaped slash (%2F) or a backslash (%5C, or a raw one): the path is sent
+// escaped, and a provider that decodes it before it resolves dot segments would read
+// a/%2e%2e%2fx as a/../x (AI-958). The WHATWG URL parser ends a segment of an https URL at a
+// backslash as at a slash («invalid-reverse-solidus», and takes %2e as a dot,
+// https://url.spec.whatwg.org/#path-state, opened 2026-10-09).
 //
 // Example: base https://slack.com/api and path chat.postMessage is
-// https://slack.com/api/chat.postMessage; path ../oauth.v2.access is refused.
+// https://slack.com/api/chat.postMessage; paths ../oauth.v2.access, a%2F..%2Fx and a%5Cb are
+// refused.
 func proxyTarget(base, path, query string) (*url.URL, error) {
 	for segment := range strings.SplitSeq(path, "/") {
-		if decoded, _ := url.PathUnescape(segment); decoded == "." || decoded == ".." {
+		// A segment that does not unescape is refused by url.Parse below.
+		decoded, _ := url.PathUnescape(segment)
+		if decoded == "." || decoded == ".." {
 			return nil, fmt.Errorf("the path %q has a dot segment, which would leave the connector's API", path)
+		}
+		if strings.ContainsAny(decoded, `/\`) {
+			return nil, fmt.Errorf("the path %q has an escaped slash or a backslash, which a provider could read as a separator", path)
 		}
 	}
 	// base is a rendered endpoint: an https URL with no query or fragment (core.Manifest.render).

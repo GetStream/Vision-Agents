@@ -108,3 +108,30 @@ func (s *RateLimitKeySuite) TestAColonInAnAccountIdCannotMakeTwoKeysOne() {
 	s.NotEqual(m.RateLimitKey("a", core.Connection{ID: "c1", AccountID: "b:chat:user:account:c"}),
 		m.RateLimitKey("a:chat:user:account:b", core.Connection{ID: "c1", AccountID: "c"}))
 }
+
+// CallsKeySuite is which direct calls share one cap: the customer's to one connector (AI-958).
+type CallsKeySuite struct {
+	suite.Suite
+}
+
+func TestCallsKeySuite(t *testing.T) {
+	suite.Run(t, new(CallsKeySuite))
+}
+
+func (s *CallsKeySuite) TestAnotherCustomerOrConnectorHasAKeyOfItsOwn() {
+	key := core.CallsKey("customer-1", "slack_bot")
+
+	s.Equal(key, core.CallsKey("customer-1", "slack_bot"))
+	s.NotEqual(key, core.CallsKey("customer-2", "slack_bot"))
+	s.NotEqual(key, core.CallsKey("customer-1", "custom_crm"))
+}
+
+// TestAColonInAnIdCannotMakeTwoKeysOne: the ids are escaped before they are joined.
+func (s *CallsKeySuite) TestAColonInAnIdCannotMakeTwoKeysOne() {
+	s.NotEqual(core.CallsKey("a:b", "c"), core.CallsKey("a", "b:c"))
+}
+
+// TestNoCountIsABlock: the counts and the 429 blocks live under different prefixes.
+func (s *CallsKeySuite) TestNoCountIsABlock() {
+	s.NotEqual(core.CallsKey("customer-1", "chat"), manifest(core.RateLimitPerApp).RateLimitKey("customer-1", member("c1", "T1", "U1")))
+}
