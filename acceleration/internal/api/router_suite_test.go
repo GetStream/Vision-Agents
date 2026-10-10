@@ -152,6 +152,8 @@ type RouterSuite struct {
 	// denied are the app ids the suite refuses registration to.
 	denied []string
 	server *httptest.Server
+	// router is the suite's router itself, for what cmd/router calls on it besides serving.
+	router *Server
 	app    testApp
 
 	// streams, modalities and conversations are what the suite's router was built from,
@@ -515,6 +517,7 @@ func (s *RouterSuite) SetupSuite() {
 	listener.Start()
 	public.PublicURL = listener.URL
 	s.server = listener
+	s.router = server
 	s.T().Cleanup(s.server.Close)
 }
 
