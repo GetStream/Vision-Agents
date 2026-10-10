@@ -5,6 +5,9 @@ description: How to add an MCP plugin (a hosted MCP server like Sentry, Slack or
 
 # MCP plugins
 
+> Plugins are deprecated: connectors replace them. For new work read the `connectors` skill
+> (connect a connector to an agent) or the `add-connector` skill (add a provider).
+
 A plugin is a hosted MCP server from the router's built-in catalog. An agent names it in
 `agent.yaml`; the router logs in with OAuth, stores the token, opens the MCP session when a
 conversation starts and offers the server's tools to the model. Nothing in the agent's own

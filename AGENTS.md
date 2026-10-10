@@ -119,6 +119,12 @@ To run Voicebench (`benchmark/`) locally or read why a run failed, read the `voi
 (`.claude/skills/voicebench/SKILL.md`) first: the keys and services a run needs, which command
 answers which question, and how to read the report.
 
+## Connectors
+
+To give an agent a provider's tools (GitHub, Linear, the Slack bot), read the `connectors`
+skill (`.claude/skills/connectors/SKILL.md`). To add a provider to the catalog, read
+`add-connector`. Plugins are deprecated.
+
 ## Testing
 
 For Go tests, read the `go-testing` skill (`.claude/skills/go-testing/SKILL.md`) first: testify
