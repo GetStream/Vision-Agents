@@ -368,6 +368,9 @@ func cmdDigest(ctx context.Context, root string, args []string) error {
 		}
 		runs = append(runs, report.LabeledRun{Label: label, Summary: sum})
 	}
+	if len(runs) == 0 {
+		return fmt.Errorf("digest: need at least one run of calls beside the speech-to-text bench")
+	}
 	runs = report.MergeRuns(runs)
 	digest := report.BuildDigest(runs)
 	digest.STT = stt
