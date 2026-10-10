@@ -95,7 +95,7 @@ extension AgentEvent {
             id: self["id"].stringValue,
             name: self["name"].stringValue,
             arguments: self["arguments"].stringValue,
-            commandID: self["command_id"].stringValue,
+            requestID: self["request_id"].stringValue,
             turnID: self["turn_id"].stringValue)
     }
 
@@ -105,8 +105,8 @@ extension AgentEvent {
         public let name: String
         /// The arguments as the model wrote them, which is a JSON object encoded as a string.
         public let arguments: String
-        /// The durable command and turn that asked, which its result must name again.
-        public var commandID = ""
+        /// The request and turn that asked, which its result must name again.
+        public var requestID = ""
         public var turnID = ""
 
         /// The arguments decoded, or an empty dictionary if the model wrote something else.

@@ -233,14 +233,67 @@ extension Components {
                 case nextCursor = "next_cursor"
             }
         }
+        /// What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
+        ///
+        /// - Remark: Generated from `#/components/schemas/CallUsage`.
+        internal struct CallUsage: Codable, Hashable, Sendable {
+            /// The part of those prompts a provider served from its own cache.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CallUsage/cached_input_tokens`.
+            internal var cachedInputTokens: Swift.Int64
+            /// Millionths of a dollar, priced from the providers' configured rates.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CallUsage/cost_micros`.
+            internal var costMicros: Swift.Int64
+            /// Every prompt the models read, the cached part included.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CallUsage/input_tokens`.
+            internal var inputTokens: Swift.Int64
+            /// Everything the models generated, reasoning included.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CallUsage/output_tokens`.
+            internal var outputTokens: Swift.Int64
+            /// How many calls to a model it took, transcription and speech included.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CallUsage/requests`.
+            internal var requests: Swift.Int64
+            /// Creates a new `CallUsage`.
+            ///
+            /// - Parameters:
+            ///   - cachedInputTokens: The part of those prompts a provider served from its own cache.
+            ///   - costMicros: Millionths of a dollar, priced from the providers' configured rates.
+            ///   - inputTokens: Every prompt the models read, the cached part included.
+            ///   - outputTokens: Everything the models generated, reasoning included.
+            ///   - requests: How many calls to a model it took, transcription and speech included.
+            internal init(
+                cachedInputTokens: Swift.Int64,
+                costMicros: Swift.Int64,
+                inputTokens: Swift.Int64,
+                outputTokens: Swift.Int64,
+                requests: Swift.Int64
+            ) {
+                self.cachedInputTokens = cachedInputTokens
+                self.costMicros = costMicros
+                self.inputTokens = inputTokens
+                self.outputTokens = outputTokens
+                self.requests = requests
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case cachedInputTokens = "cached_input_tokens"
+                case costMicros = "cost_micros"
+                case inputTokens = "input_tokens"
+                case outputTokens = "output_tokens"
+                case requests
+            }
+        }
         /// - Remark: Generated from `#/components/schemas/CreateResponseRequest`.
         internal struct CreateResponseRequest: Codable, Hashable, Sendable {
-            /// Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
-            ///
-            /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/command_id`.
-            internal var commandId: Swift.String?
             /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/images`.
             internal var images: [Components.Schemas.ImageSource]?
+            /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/request_id`.
+            internal var requestId: Swift.String?
             /// What to answer, as though it had been said.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/text`.
@@ -252,24 +305,24 @@ extension Components {
             /// Creates a new `CreateResponseRequest`.
             ///
             /// - Parameters:
-            ///   - commandId: Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
             ///   - images:
+            ///   - requestId: Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
             ///   - text: What to answer, as though it had been said.
             ///   - videos: Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
             internal init(
-                commandId: Swift.String? = nil,
                 images: [Components.Schemas.ImageSource]? = nil,
+                requestId: Swift.String? = nil,
                 text: Swift.String,
                 videos: [Components.Schemas.VideoSource]? = nil
             ) {
-                self.commandId = commandId
                 self.images = images
+                self.requestId = requestId
                 self.text = text
                 self.videos = videos
             }
             internal enum CodingKeys: String, CodingKey {
-                case commandId = "command_id"
                 case images
+                case requestId = "request_id"
                 case text
                 case videos
             }
@@ -288,17 +341,11 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/backchannel`.
             internal var backchannel: Swift.Bool?
-            /// The call to join. Required unless the session is text.
-            ///
-            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/call_id`.
-            internal var callId: Swift.String?
-            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/call_type`.
-            internal var callType: Swift.String?
             /// An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/config_id`.
             internal var configId: Swift.String?
-            /// The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
+            /// The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A session binding given none here uses the caller's own connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/connector_bindings`.
             internal var connectorBindings: [Components.Schemas.SessionConnectorBinding]?
@@ -306,10 +353,6 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/context_truncated`.
             internal var contextTruncated: Swift.Bool?
-            /// Stream Chat CID to resume; returned for persistent text sessions.
-            ///
-            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/conversation_id`.
-            internal var conversationId: Swift.String?
             /// Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/custom`.
@@ -340,11 +383,11 @@ extension Components {
             internal var description: Swift.String?
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/greeting`.
             internal var greeting: Components.Schemas.Greeting?
-            /// The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
+            /// The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/history`.
             internal var history: [Components.Schemas.HistoryMessage]?
-            /// The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
+            /// The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that does not start support- or thread- and that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/id`.
             internal var id: Swift.String?
@@ -352,10 +395,6 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/incognito`.
             internal var incognito: Swift.Bool?
-            /// The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to decide.
-            ///
-            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/instructions`.
-            internal var instructions: Swift.String?
             /// Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/keyterms`.
@@ -392,7 +431,11 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/search`.
             internal var search: Swift.String?
-            /// A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
+            /// Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/start_voice`.
+            internal var startVoice: Swift.Bool?
+            /// A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/sts`.
             internal var sts: Swift.String?
@@ -400,7 +443,7 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/stt`.
             internal var stt: Swift.String?
-            /// Cost labels, carried onto every request the session makes.
+            /// Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/tags`.
             internal struct TagsPayload: Codable, Hashable, Sendable {
@@ -420,14 +463,10 @@ extension Components {
                     try encoder.encodeAdditionalProperties(additionalProperties)
                 }
             }
-            /// Cost labels, carried onto every request the session makes.
+            /// Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/tags`.
             internal var tags: Components.Schemas.CreateSessionRequest.TagsPayload?
-            /// Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
-            ///
-            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/text`.
-            internal var text: Swift.Bool?
             /// What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/title`.
@@ -460,19 +499,15 @@ extension Components {
             ///   - agent: The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree.
             ///   - agentId: Keys transcripts and statistics. Empty means the call id.
             ///   - backchannel: Murmur while a participant is still talking, the way a person does.
-            ///   - callId: The call to join. Required unless the session is text.
-            ///   - callType:
             ///   - configId: An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
-            ///   - connectorBindings: The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
+            ///   - connectorBindings: The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A session binding given none here uses the caller's own connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
             ///   - contextTruncated: Older history was omitted from the model context.
-            ///   - conversationId: Stream Chat CID to resume; returned for persistent text sessions.
             ///   - custom: Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
             ///   - description: A longer note about the conversation, searched alongside the title.
             ///   - greeting:
-            ///   - history: The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
-            ///   - id: The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
+            ///   - history: The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
+            ///   - id: The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that does not start support- or thread- and that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7.
             ///   - incognito: Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
-            ///   - instructions: The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to decide.
             ///   - keyterms: Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
             ///   - languages: Language hints, which narrow the candidates in every modality.
             ///   - llm: A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured.
@@ -484,10 +519,10 @@ extension Components {
             ///   - phone:
             ///   - projectId: What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
             ///   - search: Omit it and the config decides, or search-fast when there is no config.
-            ///   - sts: A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
+            ///   - startVoice: Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+            ///   - sts: A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
             ///   - stt: Omit it and the config decides, or en-low-latency when there is no config.
-            ///   - tags: Cost labels, carried onto every request the session makes.
-            ///   - text: Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
+            ///   - tags: Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
             ///   - title: What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
             ///   - toolTimeoutMs: How long the model waits for a tool result. Zero is the default.
             ///   - tools:
@@ -500,19 +535,15 @@ extension Components {
                 agent: Swift.String? = nil,
                 agentId: Swift.String? = nil,
                 backchannel: Swift.Bool? = nil,
-                callId: Swift.String? = nil,
-                callType: Swift.String? = nil,
                 configId: Swift.String? = nil,
                 connectorBindings: [Components.Schemas.SessionConnectorBinding]? = nil,
                 contextTruncated: Swift.Bool? = nil,
-                conversationId: Swift.String? = nil,
                 custom: Components.Schemas.CreateSessionRequest.CustomPayload? = nil,
                 description: Swift.String? = nil,
                 greeting: Components.Schemas.Greeting? = nil,
                 history: [Components.Schemas.HistoryMessage]? = nil,
                 id: Swift.String? = nil,
                 incognito: Swift.Bool? = nil,
-                instructions: Swift.String? = nil,
                 keyterms: [Swift.String]? = nil,
                 languages: [Swift.String]? = nil,
                 llm: Swift.String? = nil,
@@ -524,10 +555,10 @@ extension Components {
                 phone: Components.Schemas.SessionPhone? = nil,
                 projectId: Swift.String? = nil,
                 search: Swift.String? = nil,
+                startVoice: Swift.Bool? = nil,
                 sts: Swift.String? = nil,
                 stt: Swift.String? = nil,
                 tags: Components.Schemas.CreateSessionRequest.TagsPayload? = nil,
-                text: Swift.Bool? = nil,
                 title: Swift.String? = nil,
                 toolTimeoutMs: Swift.Int? = nil,
                 tools: [Components.Schemas.SessionTool]? = nil,
@@ -540,19 +571,15 @@ extension Components {
                 self.agent = agent
                 self.agentId = agentId
                 self.backchannel = backchannel
-                self.callId = callId
-                self.callType = callType
                 self.configId = configId
                 self.connectorBindings = connectorBindings
                 self.contextTruncated = contextTruncated
-                self.conversationId = conversationId
                 self.custom = custom
                 self.description = description
                 self.greeting = greeting
                 self.history = history
                 self.id = id
                 self.incognito = incognito
-                self.instructions = instructions
                 self.keyterms = keyterms
                 self.languages = languages
                 self.llm = llm
@@ -564,10 +591,10 @@ extension Components {
                 self.phone = phone
                 self.projectId = projectId
                 self.search = search
+                self.startVoice = startVoice
                 self.sts = sts
                 self.stt = stt
                 self.tags = tags
-                self.text = text
                 self.title = title
                 self.toolTimeoutMs = toolTimeoutMs
                 self.tools = tools
@@ -581,19 +608,15 @@ extension Components {
                 case agent
                 case agentId = "agent_id"
                 case backchannel
-                case callId = "call_id"
-                case callType = "call_type"
                 case configId = "config_id"
                 case connectorBindings = "connector_bindings"
                 case contextTruncated = "context_truncated"
-                case conversationId = "conversation_id"
                 case custom
                 case description
                 case greeting
                 case history
                 case id
                 case incognito
-                case instructions
                 case keyterms
                 case languages
                 case llm
@@ -605,10 +628,10 @@ extension Components {
                 case phone
                 case projectId = "project_id"
                 case search
+                case startVoice = "start_voice"
                 case sts
                 case stt
                 case tags
-                case text
                 case title
                 case toolTimeoutMs = "tool_timeout_ms"
                 case tools
@@ -683,7 +706,7 @@ extension Components {
         }
         /// - Remark: Generated from `#/components/schemas/ErrorDetail`.
         internal struct ErrorDetail: Codable, Hashable, Sendable {
-            /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+            /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
             ///
             /// - Remark: Generated from `#/components/schemas/ErrorDetail/code`.
             internal var code: Swift.String
@@ -700,7 +723,7 @@ extension Components {
             /// Creates a new `ErrorDetail`.
             ///
             /// - Parameters:
-            ///   - code: What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+            ///   - code: What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
             ///   - docUrl: Where the code is explained.
             ///   - message: What went wrong, for a person to read. Its wording may change; branch on code.
             ///   - _type:
@@ -763,10 +786,6 @@ extension Components {
         internal struct ForkSessionRequest: Codable, Hashable, Sendable {
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/agent`.
             internal var agent: Swift.String?
-            /// The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not.
-            ///
-            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/call_id`.
-            internal var callId: Swift.String?
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/config_id`.
             internal var configId: Swift.String?
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/custom`.
@@ -795,10 +814,6 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/incognito`.
             internal var incognito: Swift.Bool?
-            /// Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession.
-            ///
-            /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/instructions`.
-            internal var instructions: Swift.String?
             /// Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
             ///
             /// - Remark: Generated from `#/components/schemas/ForkSessionRequest/messages`.
@@ -817,12 +832,10 @@ extension Components {
             ///
             /// - Parameters:
             ///   - agent:
-            ///   - callId: The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not.
             ///   - configId:
             ///   - custom:
             ///   - description:
             ///   - incognito: Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
-            ///   - instructions: Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession.
             ///   - messages: Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
             ///   - modelOverwrites:
             ///   - projectId:
@@ -830,12 +843,10 @@ extension Components {
             ///   - title:
             internal init(
                 agent: Swift.String? = nil,
-                callId: Swift.String? = nil,
                 configId: Swift.String? = nil,
                 custom: Components.Schemas.ForkSessionRequest.CustomPayload? = nil,
                 description: Swift.String? = nil,
                 incognito: Swift.Bool? = nil,
-                instructions: Swift.String? = nil,
                 messages: Swift.Bool? = nil,
                 modelOverwrites: Components.Schemas.ModelOverwrites? = nil,
                 projectId: Swift.String? = nil,
@@ -843,12 +854,10 @@ extension Components {
                 title: Swift.String? = nil
             ) {
                 self.agent = agent
-                self.callId = callId
                 self.configId = configId
                 self.custom = custom
                 self.description = description
                 self.incognito = incognito
-                self.instructions = instructions
                 self.messages = messages
                 self.modelOverwrites = modelOverwrites
                 self.projectId = projectId
@@ -857,12 +866,10 @@ extension Components {
             }
             internal enum CodingKeys: String, CodingKey {
                 case agent
-                case callId = "call_id"
                 case configId = "config_id"
                 case custom
                 case description
                 case incognito
-                case instructions
                 case messages
                 case modelOverwrites = "model_overwrites"
                 case projectId = "project_id"
@@ -1375,7 +1382,7 @@ extension Components {
             internal var agent: Swift.String?
             /// - Remark: Generated from `#/components/schemas/Session/agent_id`.
             internal var agentId: Swift.String
-            /// Empty for a text session, which joins no call.
+            /// The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
             ///
             /// - Remark: Generated from `#/components/schemas/Session/call_id`.
             internal var callId: Swift.String
@@ -1393,7 +1400,7 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Session/context_truncated`.
             internal var contextTruncated: Swift.Bool?
-            /// Stream Chat CID to resume; returned for persistent text sessions.
+            /// The Stream Chat channel the conversation is kept in, typed and spoken. Absent for an incognito session.
             ///
             /// - Remark: Generated from `#/components/schemas/Session/conversation_id`.
             internal var conversationId: Swift.String?
@@ -1449,6 +1456,14 @@ extension Components {
             internal var modelOverwrites: Components.Schemas.ModelOverwrites?
             /// - Remark: Generated from `#/components/schemas/Session/project_id`.
             internal var projectId: Swift.String?
+            /// Why the review scored the conversation as it did. Read by a backend only.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/review_notes`.
+            internal var reviewNotes: Swift.String?
+            /// How well the agent handled the conversation, from 1 to 5, written a few seconds after it ended. Read by a backend only.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/review_score`.
+            internal var reviewScore: Swift.Int64?
             /// - Remark: Generated from `#/components/schemas/Session/state`.
             internal var state: Components.Schemas.SessionState
             /// The provider and model holding a native conversation, once routing has picked one.
@@ -1463,6 +1478,10 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Session/subagent`.
             internal var subagent: Swift.String?
+            /// What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/summary`.
+            internal var summary: Swift.String?
             /// The conversation is held in writing rather than on a call.
             ///
             /// - Remark: Generated from `#/components/schemas/Session/text`.
@@ -1473,6 +1492,8 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Session/tts`.
             internal var tts: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/Session/usage`.
+            internal var usage: Components.Schemas.CallUsage?
             /// - Remark: Generated from `#/components/schemas/Session/user_id`.
             internal var userId: Swift.String
             /// - Remark: Generated from `#/components/schemas/Session/video`.
@@ -1486,12 +1507,12 @@ extension Components {
             /// - Parameters:
             ///   - agent: The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against.
             ///   - agentId:
-            ///   - callId: Empty for a text session, which joins no call.
+            ///   - callId: The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
             ///   - callType:
             ///   - closedAt: When the session ended. Absent while it is still running.
             ///   - configId: The agent config the session ran under, empty for one that spelled itself out.
             ///   - contextTruncated: Older history was omitted from the model context.
-            ///   - conversationId: Stream Chat CID to resume; returned for persistent text sessions.
+            ///   - conversationId: The Stream Chat channel the conversation is kept in, typed and spoken. Absent for an incognito session.
             ///   - createdAt:
             ///   - custom:
             ///   - description:
@@ -1505,13 +1526,17 @@ extension Components {
             ///   - mode:
             ///   - modelOverwrites:
             ///   - projectId:
+            ///   - reviewNotes: Why the review scored the conversation as it did. Read by a backend only.
+            ///   - reviewScore: How well the agent handled the conversation, from 1 to 5, written a few seconds after it ended. Read by a backend only.
             ///   - state:
             ///   - sts: The provider and model holding a native conversation, once routing has picked one.
             ///   - stt: The provider and model transcribing, once somebody has been heard.
             ///   - subagent: The provider and model delegated work runs on.
+            ///   - summary: What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only.
             ///   - text: The conversation is held in writing rather than on a call.
             ///   - title:
             ///   - tts: The provider and model speaking.
+            ///   - usage:
             ///   - userId:
             ///   - video:
             ///   - voice: The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
@@ -1537,13 +1562,17 @@ extension Components {
                 mode: Components.Schemas.SessionMode? = nil,
                 modelOverwrites: Components.Schemas.ModelOverwrites? = nil,
                 projectId: Swift.String? = nil,
+                reviewNotes: Swift.String? = nil,
+                reviewScore: Swift.Int64? = nil,
                 state: Components.Schemas.SessionState,
                 sts: Swift.String? = nil,
                 stt: Swift.String? = nil,
                 subagent: Swift.String? = nil,
+                summary: Swift.String? = nil,
                 text: Swift.Bool? = nil,
                 title: Swift.String? = nil,
                 tts: Swift.String? = nil,
+                usage: Components.Schemas.CallUsage? = nil,
                 userId: Swift.String,
                 video: Components.Schemas.SessionVideo? = nil,
                 voice: Swift.String? = nil
@@ -1569,13 +1598,17 @@ extension Components {
                 self.mode = mode
                 self.modelOverwrites = modelOverwrites
                 self.projectId = projectId
+                self.reviewNotes = reviewNotes
+                self.reviewScore = reviewScore
                 self.state = state
                 self.sts = sts
                 self.stt = stt
                 self.subagent = subagent
+                self.summary = summary
                 self.text = text
                 self.title = title
                 self.tts = tts
+                self.usage = usage
                 self.userId = userId
                 self.video = video
                 self.voice = voice
@@ -1602,13 +1635,17 @@ extension Components {
                 case mode
                 case modelOverwrites = "model_overwrites"
                 case projectId = "project_id"
+                case reviewNotes = "review_notes"
+                case reviewScore = "review_score"
                 case state
                 case sts
                 case stt
                 case subagent
+                case summary
                 case text
                 case title
                 case tts
+                case usage
                 case userId = "user_id"
                 case video
                 case voice
@@ -2338,10 +2375,6 @@ extension Components {
             internal var custom: Components.Schemas.UpdateSessionRequest.CustomPayload?
             /// - Remark: Generated from `#/components/schemas/UpdateSessionRequest/description`.
             internal var description: Swift.String?
-            /// What the agent is told to be, from the next turn.
-            ///
-            /// - Remark: Generated from `#/components/schemas/UpdateSessionRequest/instructions`.
-            internal var instructions: Swift.String?
             /// The conversation model, a provider/model or a capability shortcut.
             ///
             /// - Remark: Generated from `#/components/schemas/UpdateSessionRequest/llm`.
@@ -2387,7 +2420,6 @@ extension Components {
             /// - Parameters:
             ///   - custom: Replaces the caller's labels whole. An empty object clears them.
             ///   - description:
-            ///   - instructions: What the agent is told to be, from the next turn.
             ///   - llm: The conversation model, a provider/model or a capability shortcut.
             ///   - maxOutputTokens:
             ///   - sts: A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
@@ -2401,7 +2433,6 @@ extension Components {
             internal init(
                 custom: Components.Schemas.UpdateSessionRequest.CustomPayload? = nil,
                 description: Swift.String? = nil,
-                instructions: Swift.String? = nil,
                 llm: Swift.String? = nil,
                 maxOutputTokens: Swift.Int? = nil,
                 sts: Swift.String? = nil,
@@ -2415,7 +2446,6 @@ extension Components {
             ) {
                 self.custom = custom
                 self.description = description
-                self.instructions = instructions
                 self.llm = llm
                 self.maxOutputTokens = maxOutputTokens
                 self.sts = sts
@@ -2430,7 +2460,6 @@ extension Components {
             internal enum CodingKeys: String, CodingKey {
                 case custom
                 case description
-                case instructions
                 case llm
                 case maxOutputTokens = "max_output_tokens"
                 case sts

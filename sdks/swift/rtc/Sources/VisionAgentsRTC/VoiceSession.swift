@@ -13,7 +13,7 @@ public struct CallCredentials: Sendable, Hashable {
     public let token: String
     public let userID: String
     public let userName: String
-    /// The Stream call to join, which is not the id the router holds the session by.
+    /// The Stream call to join, `agent:<session id>`.
     public let callID: String
     public let callType: String
 
@@ -45,9 +45,9 @@ public typealias CallCredentialsProvider = @Sendable (_ sessionID: String) async
 ///
 /// Three things happen, in this order, and the order matters:
 ///
-/// 1. The router starts a session, which is what puts the agent on the call.
-/// 2. The app's backend mints a token for joining that call, which names the Stream call to
-///    join. That is not the id the router holds the session by.
+/// 1. The router starts a session with voice on, which puts the agent on the session's own
+///    call, `agent:<session id>`.
+/// 2. The app's backend mints a token for joining that call.
 /// 3. Stream's Video SDK joins it, and audio starts flowing.
 ///
 /// The transcript comes over the session socket rather than out of the call, so what is said
@@ -78,17 +78,14 @@ public final class VoiceSession {
     /// else started. Leaving closes only a session this device owns.
     private let createdLocally: Bool
 
-    /// Starts an agent on a new call and prepares to join it.
-    ///
-    /// The call id is generated here unless one is given, so that the common case -- a person
-    /// tapping "talk to the agent" -- needs no id from anywhere.
+    /// Starts an agent on the new session's own call, `agent:<session id>`, and prepares to
+    /// join it.
     public static func start(
         agents: VisionAgents,
         agent: String? = nil,
-        callID: String = UUID().uuidString,
         tools: [AgentTool] = []
     ) async throws -> VoiceSession {
-        let session = try await agents.voice(callID: callID, agent: agent, tools: tools)
+        let session = try await agents.voice(agent: agent, tools: tools)
         return VoiceSession(agents: agents, session: session, createdLocally: true)
     }
 
