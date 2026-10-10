@@ -180,11 +180,14 @@ done
 
 runs=()
 for summary in "$out"/*/summary.json; do
-  [[ -e "$summary" ]] && runs+=("$(dirname "$summary")")
+  [[ -e "$summary" && "$(dirname "$summary")" != "$out/stt" ]] && runs+=("$(dirname "$summary")")
 done
 if [[ ${#runs[@]} -eq 0 ]]; then
   echo "no run finished, nothing to post"
   exit 1
+fi
+if [[ -f "$out/stt/summary.json" ]]; then
+  runs+=("$out/stt")
 fi
 
 post=(--slack)
