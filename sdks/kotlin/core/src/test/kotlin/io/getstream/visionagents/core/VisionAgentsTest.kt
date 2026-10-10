@@ -20,9 +20,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
 /** A session as the router answers one: every required field and a handful of the optional ones. */
-private fun sessionJson(id: String = "s1", state: String = "live", text: Boolean = true, modality: String = "text") =
-    """{"id":"$id","call_id":"","call_type":"default","user_id":"u1","agent_id":"a1","state":"$state",""" +
-        """"modality":"$modality","created_at":"2026-09-24T04:03:19.979138Z","text":$text,"agent":"docs",""" +
+private fun sessionJson(id: String = "s1", state: String = "live", callId: String = "", modality: String = "text") =
+    """{"id":"$id","call_id":"$callId","call_type":"agent","user_id":"u1","agent_id":"a1","state":"$state",""" +
+        """"modality":"$modality","created_at":"2026-09-24T04:03:19.979138Z","text":${callId.isEmpty()},"agent":"docs",""" +
         """"title":"Billing","project_id":"Health","custom":{"tenant":"acme"},"closed_at":"2026-09-24T04:03:20Z",""" +
         """"some_field_added_later":1}"""
 
@@ -127,24 +127,25 @@ class VisionAgentsTest {
 
         val session = agents.agent("docs").sessions.create(
             SessionOptions(
-                id = "0199a5c4-7f1e-7c3a-9d2b-5e8f0a1b2c3d",
+                id = "order-1042",
                 title = "Billing",
                 projectId = "Health",
                 incognito = false,
                 custom = buildJsonObject { put("tenant", "acme") },
                 modelOverwrites = ModelOverwrites(thinking = ModelOverwrites.Thinking.High, temperature = 0.0),
+                greeting = Greeting("Hello.", Greeting.Mode.Variation),
             ),
         )
 
         val body = Json.parseToJsonElement(router.requests.single().body).jsonObject
         assertEquals(
-            setOf("id", "text", "agent", "title", "project_id", "incognito", "custom", "model_overwrites"),
+            setOf("id", "agent", "title", "project_id", "incognito", "custom", "model_overwrites", "greeting"),
             body.keys,
         )
-        assertEquals(JsonPrimitive("0199a5c4-7f1e-7c3a-9d2b-5e8f0a1b2c3d"), body["id"])
-        assertEquals(JsonPrimitive(true), body["text"])
+        assertEquals(JsonPrimitive("order-1042"), body["id"])
         assertEquals(JsonPrimitive("docs"), body["agent"])
         assertEquals("""{"temperature":0.0,"thinking":"high"}""", body["model_overwrites"].toString())
+        assertEquals("""{"text":"Hello.","mode":"variation"}""", body["greeting"].toString())
         assertEquals("s1", session.id)
         assertEquals("Billing", session.title)
         assertEquals("Health", session.projectId)
@@ -163,13 +164,30 @@ class VisionAgentsTest {
     }
 
     @Test
-    fun `a voice session names its call and is not a text one`() = runTest {
-        router.answer = { Reply(201, sessionJson(text = false)) }
+    fun `a voice session asks to start voice and is on its own call`() = runTest {
+        router.answer = { Reply(201, sessionJson(callId = "s1")) }
 
-        agents.sessions.create(SessionOptions(configId = "cfg-1"), callId = "call-1")
+        val session = agents.sessions.create(SessionOptions(configId = "cfg-1", startVoice = true))
 
         val body = Json.parseToJsonElement(router.requests.single().body).jsonObject
-        assertEquals(setOf("call_id", "config_id"), body.keys)
+        assertEquals(setOf("config_id", "start_voice"), body.keys)
+        assertEquals(JsonPrimitive(true), body["start_voice"])
+        assertEquals("s1", session.callId)
+    }
+
+    @Test
+    fun `starting and stopping voice moves a session onto its call and off it`() = runTest {
+        router.answer = { Reply(200, sessionJson(callId = if (it.method == "POST") "s1" else "")) }
+
+        val started = agents.sessions.startVoice("s1")
+        val stopped = agents.sessions.stopVoice("s1")
+
+        assertEquals(
+            listOf("POST /v1/agents/sessions/s1/voice", "DELETE /v1/agents/sessions/s1/voice"),
+            router.requests.map { "${it.method} ${it.path}" },
+        )
+        assertEquals("s1", started.callId)
+        assertEquals("", stopped.callId)
     }
 
     @Test
