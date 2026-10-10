@@ -4829,7 +4829,7 @@ export type components = {
             readonly connector_id: string;
             /** Format: date-time */
             readonly created_at: string;
-            /** @description The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a user's erasure, and a connection whose scheme does not name its tokens. */
+            /** @description The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a user's erasure, a connector's delete, and a connection whose scheme does not name its tokens. A connection delete's row names the tokens it ended. */
             readonly credential?: components["schemas"]["ConnectorAuditCredential"];
             readonly id: string;
             /**
