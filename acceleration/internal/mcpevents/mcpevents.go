@@ -331,11 +331,11 @@ func (s *Service) attempt(sub store.ConnectionEventSubscription) {
 		}
 		return
 	}
-	_, _, declared, err := s.declaration(ctx, connection, sub)
+	_, held, declared, err := s.declaration(ctx, connection, sub)
 	if err != nil {
 		s.logger.Warn("could not read an MCP event subscription's config", "subscription", sub.ID, "error", err)
 		return
-	} else if !declared {
+	} else if !declared || replaced(sub, held) {
 		s.unsubscribe(ctx, connection, sub)
 		s.drop(ctx, sub, "no binding declares it any more, or its owner's subscription is active")
 		return
@@ -508,16 +508,15 @@ func (s *Service) eventSource(ctx context.Context, connection store.ConnectorCon
 }
 
 // declaration is the binding of a live config that owns the subscription's event on its
-// connection (owners), the subscription its events are taken as (held), and whether the
-// subscription still carries them: not when no live config declares the event any more.
+// connection (owners), the subscription its events are taken as (held: the owner's own), and
+// whether a live config declares the event at all.
 //
 // Ownership moves without a validate: the owner is deleted, tagged a test copy, or an older
 // config starts declaring the event. Then the subscription the server delivers to is not the
-// owner's, and it carries the owner's events, taken as the owner's subscription, which it adds
-// for the worker to ask for at its next look, until that one is active; then it is not
-// declared, and goes. So no event is lost while a live config declares it. A subscription of a
-// test copy, or of a second binding or config the owner's subscription is active beside, goes
-// the same way.
+// owner's. It carries the owner's events, taken as the owner's subscription, which it adds and
+// wakes the worker for, and goes once that one is active (attempt, Receive). So no event is lost
+// while a live config declares it. A subscription of a test copy, or of a second binding or
+// config beside the owner's, goes the same way.
 func (s *Service) declaration(ctx context.Context, connection store.ConnectorConnection, sub store.ConnectionEventSubscription) (owned, store.ConnectionEventSubscription, bool, error) {
 	configs, err := s.store.AgentConfigsBindingConnection(ctx, sub.CustomerID, sub.ConnectionID)
 	if err != nil {
@@ -532,19 +531,23 @@ func (s *Service) declaration(ctx context.Context, connection store.ConnectorCon
 	}
 	held, err := s.store.ConnectionEventSubscriptionOf(ctx, sub.ConnectionID, owner.config.ID, owner.binding, sub.Key)
 	if errors.Is(err, store.ErrNoConnectionEventSubscription) {
-		// Due at once (add), so the worker asks for it at its next look, within a lease.
+		// Due at once (add), and the worker woken, as Reconcile wakes it.
 		if err := s.add(ctx, connection, owner.config.ID, owner.binding, owner.event); err != nil {
 			return owned{}, store.ConnectionEventSubscription{}, false, err
 		}
+		s.wake()
 		held, err = s.store.ConnectionEventSubscriptionOf(ctx, sub.ConnectionID, owner.config.ID, owner.binding, sub.Key)
 	}
 	if err != nil {
 		return owned{}, store.ConnectionEventSubscription{}, false, err
 	}
-	if held.Status == store.ConnectionEventActive {
-		return owned{}, store.ConnectionEventSubscription{}, false, nil
-	}
 	return owner, held, true, nil
+}
+
+// replaced reports whether sub carries the events of an owner whose own subscription, held,
+// is active, so it goes.
+func replaced(sub, held store.ConnectionEventSubscription) bool {
+	return held.ID != sub.ID && held.Status == store.ConnectionEventActive
 }
 
 // owned is the binding of a live config that an event on a connection is subscribed for.
@@ -653,6 +656,13 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 			s.wake()
 		}
 		return Reply{Status: http.StatusGone, Body: failure("the agent no longer subscribes to this event")}
+	}
+	if replaced(sub, held) {
+		// It goes, but still carries this delivery: the server may have sent it before the
+		// owner's subscription was active, to this one alone.
+		if err := s.store.DueConnectionEventSubscription(ctx, sub.ID, time.Now()); err == nil {
+			s.wake()
+		}
 	}
 	// Claimed as the owner's subscription, so the same event delivered again to the owner's,
 	// once it is active, opens no second conversation.
