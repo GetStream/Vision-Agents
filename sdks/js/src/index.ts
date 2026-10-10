@@ -92,6 +92,7 @@ export { Tools, render, type ParameterSchema, type Tool } from "./tools.js";
 
 export {
   Session,
+  Voice,
   eventOf,
   type ForkOptions,
   type Participant,

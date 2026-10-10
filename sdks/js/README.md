@@ -87,16 +87,19 @@ heard it.
 ```ts
 const support = api.agent("support");
 const session = await support.sessions.create({ agent_id: "ana-support" });
-// Keep session.conversationId. It is the channel, and the way back to what was said.
+// Keep session.id. It is the way back to what was said.
 await session.responses.create("Where is my order?");
 
 // Later: ana's conversations still running, without paging through every one that ended.
 const live = await support.sessions.query({ agentId: "ana-support", state: "live" });
+
+// Carry one on, running or ended, by the id of the session it was held in.
+const again = await support.sessions.resume(session.id);
 ```
 
-The channel is the backend's to name: a first open takes no `conversation_id`, and every
-later one takes the one the first was given. Come back as the same `agent_id` too; the
-backend checks a conversation is reopened by whoever held it.
+The channel is the backend's to name, so a conversation is carried on by its session id
+rather than by its channel. A session id may also be one the caller picks, up to 64 of
+`A-Za-z0-9_-`, passed as `id` when it is created.
 
 `session.close()` stops a conversation and keeps everything it recorded and remembered, so
 a conversation in writing is usually left running. `session.delete()`, or
@@ -129,9 +132,12 @@ for await (const event of session.events()) {
 }
 ```
 
-`join` creates a Stream call and has the backend join it. `chat` holds the same
-conversation in writing instead — the same instructions, the same skills, the same
-knowledge, with nothing transcribed and nothing spoken.
+`join` opens a session with voice on, and the backend joins the session's own call,
+`agent:<session id>`. `chat` holds the same conversation in writing instead — the same
+instructions, the same skills, the same knowledge, with nothing transcribed and nothing
+spoken. `session.voice.stop()` carries a conversation on in writing and
+`session.voice.start()` puts the agent back on the call. Instructions reach the backend
+with `agent.sync()`: a session runs on the stored config's.
 
 The model asks for a tool over the session socket, this process runs it, and the answer
 goes back the same way. A tool that throws is reported to the model, because the model is
@@ -177,7 +183,7 @@ an agent that is already running is answered by the router from that session, be
 agent is the one that knows what has been said. `sessionFor` keeps one conversation per
 channel for the same reason. The exception is an agent whose agent.yaml says
 `dispatch: {text: enabled}`: what its end users write comes here with the `sessionId` it was
-written to and a `commandId`, unanswered, and `dispatch.answer(message)` has the model answer
+written to and a `requestId`, unanswered, and `dispatch.answer(message)` has the model answer
 it, with this worker's credential acting for the user who wrote it.
 
 A worker can also host tools for every session opened under an agent id, including one a
@@ -203,13 +209,15 @@ const session = await agent.startCall("+15551234567", "+15557654321");
 ```
 
 The agent is told it is navigating, so recordings are let finish and menus are answered
-rather than talked over.
+rather than talked over. Every caller to an attached number gets a session of their own:
+`agent.answer(call)` joins the one the router names, and `agent.waitForCall(number)` waits
+for the next one without a worker of your own.
 
 ## An agent written down as a directory
 
 ```
 agents/jean/
-  agent.yaml            required: the name and what it runs on (llm, stt, tts, speed, harness, tags, ...)
+  agent.yaml            required: the name and what it runs on (llm, stt, tts, greeting, harness, tags, ...)
   instructions.md
   guardrail.md
   skills/think.md
