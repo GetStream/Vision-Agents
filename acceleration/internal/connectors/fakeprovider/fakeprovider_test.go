@@ -362,6 +362,16 @@ func (s *FakeProviderSuite) TestRateLimitedAnswers429WithRetryAfter() {
 	s.Equal("30", response.Header.Get("Retry-After"))
 }
 
+func (s *FakeProviderSuite) TestAnswerMCPAnswersEveryMCPRequestWithItsStatusUntilReset() {
+	srv := fakeprovider.New(s.T())
+	first := s.connect(srv, nil)
+	srv.AnswerMCP(http.StatusBadRequest)
+	s.Equal(http.StatusBadRequest, s.call(srv, first["access_token"].(string)).StatusCode)
+	s.Equal(http.StatusBadRequest, s.call(srv, "not-a-token-it-issued").StatusCode, "whatever token it carries")
+	srv.AnswerMCP(0)
+	s.Equal(http.StatusOK, s.call(srv, first["access_token"].(string)).StatusCode)
+}
+
 func (s *FakeProviderSuite) TestRateLimitedRefusesARefreshWith429AndSpendsNothing() {
 	srv := fakeprovider.New(s.T())
 	first := s.connect(srv, nil)
