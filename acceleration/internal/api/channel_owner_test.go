@@ -33,7 +33,8 @@ func (s *SlackChannelSuite) TestATestCopyOfTheAgentLeavesItAnswering() {
 	s.Require().True(found)
 	custom, _ := data["custom"].(map[string]any)
 	s.Equal(s.config.ID, custom[ConfigField], "the live config answers, not its test copy")
-	s.NotContains(s.logged.String(), "more than one agent config binds the connection", "a test copy is no second config")
+	// The suite's log holds every test's lines, so the warning is looked for on this connection.
+	s.NotContains(s.logged.String(), "connection="+s.bot.ConnectionID+" config=", "a test copy is no second config")
 }
 
 // TestATestCopyAloneOnTheBotAnswersNothing: a test copy never answers a channel message, even
