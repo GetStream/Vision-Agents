@@ -315,6 +315,9 @@ type Agent struct {
 	// listeners holds one transcription session per participant, because a speech-to-text
 	// stream is bound to a single speaker.
 	listeners map[string]*sttrouter.Session
+	// learnedTerms are names the caller said and the agent has said back, which the
+	// transcriber is told to expect for the rest of the call (keyterms.go).
+	learnedTerms []string
 	// voices is the diarised label of the first voice heard on each participant's track,
 	// which is taken to be the caller's. A later turn in a different voice is somebody
 	// else at the same microphone: the track says who joined the call, and it is the
@@ -2107,6 +2110,7 @@ func (a *Agent) finish(response llm.Response) {
 	if currentHarness != nil {
 		currentHarness.Remember(response)
 	}
+	a.learnTerms(said, history)
 
 	// Remembering happens off the turn path: extraction takes longer than a turn and the
 	// next thing the participant says must not wait for it.

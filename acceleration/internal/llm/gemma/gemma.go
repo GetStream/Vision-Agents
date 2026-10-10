@@ -78,7 +78,10 @@ func New(options Options) (*openaicompat.LLM, error) {
 		},
 		// Thinking off still leaves an empty thought channel in some answers.
 		ThoughtChannel: true,
-		Logger:         options.Logger,
+		// The thought channel can take the opening of a tool call with it, and the rest
+		// arrives as text.
+		ToolCallText: true,
+		Logger:       options.Logger,
 	})
 }
 
