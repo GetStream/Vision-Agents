@@ -55,6 +55,7 @@ type Connector struct {
 	Client      ConnectorClient  `json:"client"`
 	Setup       *ConnectorSetup  `json:"setup,omitempty" doc:"What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing."`
 	RedirectURI string           `json:"redirect_uri,omitempty" readOnly:"true" format:"uri" doc:"The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then."`
+	Channel     bool             `json:"channel" readOnly:"true" doc:"The connector is an inbound channel: its manifest reads messages a provider delivers to the router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A dashboard warns on it before a delete that would end those replies."`
 	CreatedAt   time.Time        `json:"created_at" readOnly:"true" doc:"When this revision was stored."`
 }
 
@@ -366,7 +367,7 @@ func (s *Server) deleteConnector(ctx context.Context, request *deleteConnectorRe
 		return nil, err
 	}
 	for _, connection := range deleted.Connections {
-		s.connectionDeleted(ctx, customerID, connection)
+		s.connectionDeleted(ctx, customerID, connection, core.CredentialChange{})
 	}
 	return nil, nil
 }
@@ -490,6 +491,7 @@ func connectorOf(definition store.ConnectorDefinition, publicURL string) Connect
 		Category:    definition.Category,
 		Description: definition.Description,
 		Custom:      custom,
+		Channel:     manifest.Channel != nil && !manifest.Channel.Messages.IsZero(),
 		Schemes:     append([]string{}, manifest.Schemes...),
 		Inputs:      inputs,
 		Scopes:      append([]string{}, manifest.Scopes.List...),

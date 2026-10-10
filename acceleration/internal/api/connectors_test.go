@@ -55,6 +55,20 @@ func (s *ConnectorsSuite) TestABuiltInShowsItsSchemesInputsScopesAndClientRegist
 	s.Equal(ConnectorClientAuthMethod("client_secret_post"), slack.Client.AuthMethod)
 }
 
+// TestOnlyAConnectorThatReadsMessagesIsAChannel (AI-1053): the manifest's channel block with
+// messages makes slack_bot one, in a read and in the list; Slack, whose block reads only
+// signals, and a custom MCP connector are not.
+func (s *ConnectorsSuite) TestOnlyAConnectorThatReadsMessagesIsAChannel() {
+	s.True(s.get("slack_bot").Channel)
+	s.False(s.get("slack").Channel)
+	listed := map[string]bool{}
+	for _, item := range s.list("").Items {
+		listed[item.ID] = item.Channel
+	}
+	s.True(listed["slack_bot"])
+	s.False(listed["slack"])
+}
+
 // TestAMovedPluginShowsItsSetupSteps: the steps the plugin catalog shows before a client is
 // pasted in come with its connector (T58), and a connector whose manifest has none shows none.
 func (s *ConnectorsSuite) TestAMovedPluginShowsItsSetupSteps() {
@@ -79,10 +93,12 @@ func (s *ConnectorsSuite) TestWhatTheRouterReadsToConnectIsNeverShown() {
 	s.Require().NoError(json.Unmarshal(raw, &shown))
 	for _, withheld := range []string{
 		"endpoints", "vars", "authorize_params", "token_params", "identity", "capture",
-		"refresh", "rate_limit", "sources", "hooks", "manifest", "channel",
+		"refresh", "rate_limit", "sources", "hooks", "manifest",
 	} {
 		s.NotContains(shown, withheld)
 	}
+	// The manifest's channel block stays withheld; AI-1053 shows only whether there is one.
+	s.IsType(false, shown["channel"])
 	client, ok := shown["client"].(map[string]any)
 	s.Require().True(ok, string(raw))
 	s.NotContains(client, "env")
@@ -104,7 +120,7 @@ func (s *ConnectorsSuite) TestACustomConnectorsEndpointIsNeverShown() {
 
 // TestABuiltInReadsAsBeforeOnARouterWithoutAPublicURL is the control for AI-1046 and AI-1047:
 // the keys a built-in is answered with are the ones accelerate at 26051062 answered with,
-// probed there with this suite (pr-w7/author-1.md). Without ROUTER_PUBLIC_URL there is no
+// probed there with this suite (pr-w7/author-1.md), plus channel (AI-1053). Without ROUTER_PUBLIC_URL there is no
 // redirect URI.
 func (s *ConnectorsSuite) TestABuiltInReadsAsBeforeOnARouterWithoutAPublicURL() {
 	for _, id := range []string{"slack", "linear", "telnyx"} {
@@ -112,7 +128,7 @@ func (s *ConnectorsSuite) TestABuiltInReadsAsBeforeOnARouterWithoutAPublicURL() 
 		s.Require().Equal(http.StatusOK, status)
 		var shown map[string]any
 		s.Require().NoError(json.Unmarshal(raw, &shown))
-		s.Equal([]string{"category", "client", "created_at", "custom", "description", "duration", "id", "inputs",
+		s.Equal([]string{"category", "channel", "client", "created_at", "custom", "description", "duration", "id", "inputs",
 			"name", "revision", "schemes", "scopes"}, slices.Sorted(maps.Keys(shown)), id)
 	}
 }
