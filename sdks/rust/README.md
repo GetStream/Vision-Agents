@@ -40,7 +40,8 @@ let agent = Agent::named("john")
     .memory_filter([("customer", "acme")])
     .tools(tools);
 
-let session = agent.join("").await?; // an empty id names a new call
+agent.sync().await?; // the instructions reach the backend with the stored config
+let session = agent.join().await?;
 println!("{}", agent.monitor_url(&session)?);
 
 while let Some(event) = session.next_event().await {
@@ -49,8 +50,11 @@ while let Some(event) = session.next_event().await {
 ```
 
 `Agent::new("support")` runs from a stored config instead, and anything set in code wins over
-it for these sessions only. `join` creates the Stream call and returns once the backend is in
-it. `chat` holds the same conversation in writing, with nothing transcribed or spoken.
+it for these sessions only. `join` opens a session with voice on, and the backend joins the
+session's own call, `agent:<session id>`; it returns once the backend is in it. `chat` holds
+the same conversation in writing, with nothing transcribed or spoken. `session.stop_voice()`
+carries a conversation on in writing and `session.start_voice()` puts the agent back on the
+call. `agent.resume(id)` carries on a conversation held in writing by its session's id.
 
 Tool calls are answered by the session itself, whether or not anything is reading events: the
 model is mid-sentence waiting. A tool that returns `Err` is reported to the model.
@@ -59,7 +63,7 @@ A session closes when it is dropped. To close it at a point you choose and wait 
 scope it:
 
 ```rust
-agent.join("my-call").await?.within(async |session| {
+agent.join().await?.within(async |session| {
     session.responses.create("greet the caller").await?;
     session.wait().await;
     Ok(())
@@ -151,7 +155,7 @@ if it failed. `get_or_create_agent` keeps one session per channel, because the s
 answered the last message is the one that knows what was said.
 
 An agent whose `agent.yaml` says `dispatch: {text: enabled}` hands what end users write to the
-worker with the running session's `session_id` and its `command_id`. `answer` has the model
+worker with the running session's `session_id` and its `request_id`. `answer` has the model
 answer it on that session, with the worker's own credential acting for the user who wrote it.
 `get_or_create_agent` refuses such a message.
 
@@ -174,7 +178,9 @@ dispatch.run().await?;
 A worker that only hosts tools needs no handler. If the router refuses the tools, `run`
 returns `Error::Failed` naming the agent and the reason.
 
-Placing a call outward:
+Every caller to an attached number gets a session of their own: the `call` handed to a worker
+carries its `session_id`, and `answer` joins that session with voice on. `wait_for_call(number)`
+attaches the number and answers the next caller itself. Placing a call outward:
 
 ```rust
 let session = agent.outbound_call("+15551234567", "+15557654321").await?;
@@ -202,8 +208,8 @@ agent.knowledge()?.add_url("https://example.com/pricing", "Pricing", "", Some(24
 
 `sync` stores the directory as a config in one request, and `.agent_sync` records its
 fingerprint, so syncing on every startup sends nothing when nothing changed. A key
-`agent.yaml` does not know is refused; besides the models it takes `speed`, `harness`,
-`thinking_llm`, `sandbox` and `dispatch`. With a `simulations/` directory the config's
+`agent.yaml` does not know is refused; besides the models it takes `harness`, `subagent`,
+`greeting` (`{text, mode}`), `plugins`, `sandbox` and `dispatch`. With a `simulations/` directory the config's
 simulations become exactly what it declares, and an empty one deletes them; without one they
 are left alone. `Agent::new("jean")` finds `agents/jean` or `examples/*/jean` from the
 working directory up and syncs it before the first session.
@@ -288,7 +294,7 @@ api.agent("support").sessions.update(&session_id, &types::UpdateSessionRequest {
 }).await?;
 ```
 
-Title, description, custom, instructions, models and voice, in one call. It applies from the
+Title, description, custom, models and voice, in one call. It applies from the
 next turn; a field left `None` is left as it is.
 
 ## Simulations

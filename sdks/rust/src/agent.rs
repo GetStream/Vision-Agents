@@ -6,14 +6,14 @@ use serde_json::{Map, Value};
 use tokio::sync::Mutex;
 
 use crate::client::Client;
-use crate::dispatch::{InboundCall, InboundMessage};
+use crate::dispatch::{Dispatch, InboundCall, InboundMessage};
 use crate::error::{Error, Result};
 use crate::folder::{self, Folder};
 use crate::harness::Harness;
 use crate::knowledge::Knowledge;
 use crate::operations::ListAgentConfigsQuery;
 use crate::session::{Session, WatchOptions};
-use crate::stream::{Call, DEFAULT_CALL_TYPE, StreamApp};
+use crate::stream::StreamApp;
 use crate::tools::Tools;
 use crate::types;
 
@@ -33,7 +33,7 @@ pub const USER_KEY: &str = "user_id";
 /// let agent = Agent::new("simple_voice_ai")
 ///     .cost_tracking([("env", "production")])
 ///     .memory_filter([("user_id", "123")]);
-/// let session = agent.join("my-call").await?;
+/// let session = agent.join().await?;
 /// session.wait().await;
 /// # Ok(())
 /// # }
@@ -102,7 +102,8 @@ impl Agent {
         }
     }
 
-    /// The system prompt.
+    /// The system prompt. It reaches the backend with [`Agent::sync`]: a session runs on the
+    /// stored config's.
     pub fn instructions(mut self, instructions: impl Into<String>) -> Self {
         self.instructions = instructions.into();
         self
@@ -184,7 +185,7 @@ impl Agent {
         self
     }
 
-    /// Creates the Stream calls the backend joins. Built from the environment when needed.
+    /// Signs the links to a session's call. Built from the environment when needed.
     pub fn stream(self, stream: StreamApp) -> Self {
         let _ = self.stream.set(stream);
         self
@@ -223,35 +224,34 @@ impl Agent {
         Ok(Knowledge::new(self.router()?.clone(), config.clone()))
     }
 
-    /// Has the backend join a call and hold a conversation on it.
+    /// Holds a conversation on the session's own call, `agent:<session id>`.
     ///
-    /// The call is created first; an empty id names a new one. It returns once the backend
-    /// is in the call, so an agent that has joined is already listening.
-    pub async fn join(&self, call: impl Into<Call>) -> Result<Session> {
-        let created = self
-            .stream_app()?
-            .create_call(&call.into(), &self.user_id)
-            .await?;
-        self.open(types::CreateSessionRequest {
-            call_id: Some(created.id),
-            call_type: Some(created.kind),
-            ..Default::default()
-        })
-        .await
+    /// It returns once the backend is in the call, so an agent that has joined is already
+    /// listening.
+    pub async fn join(&self) -> Result<Session> {
+        self.join_with(types::CreateSessionRequest::default()).await
+    }
+
+    /// [`Agent::join`], with whatever else the session is opened with. What is set in
+    /// `request` wins over what the agent would have said.
+    pub async fn join_with(&self, mut request: types::CreateSessionRequest) -> Result<Session> {
+        request.start_voice = Some(true);
+        self.open(request).await
     }
 
     /// A link a person can open to join this session's call from a browser and hear it.
+    /// The session needs voice started.
     pub fn monitor_url(&self, session: &Session) -> Result<String> {
-        let call = Call {
-            id: session.created.call_id.clone(),
-            kind: if session.created.call_type.is_empty() {
-                DEFAULT_CALL_TYPE.into()
-            } else {
-                session.created.call_type.clone()
-            },
-        };
-        self.stream_app()?
-            .monitor_url(&call, &format!("monitor-{}", session.id()), "Monitor")
+        if !session.voice_started() {
+            return Err(Error::configuration(
+                "a conversation held in writing has no call to watch",
+            ));
+        }
+        self.stream_app()?.monitor_url(
+            &session.call(),
+            &format!("monitor-{}", session.id()),
+            "Monitor",
+        )
     }
 
     /// Holds the conversation in writing rather than on a call.
@@ -259,20 +259,33 @@ impl Agent {
         self.chat_with(types::CreateSessionRequest::default()).await
     }
 
-    /// [`Agent::chat`], with whatever else the session is opened with: a conversation id to
-    /// continue, a title, `incognito` and the rest. What is set in
-    /// `request` wins over what the agent would have said.
+    /// [`Agent::chat`], with whatever else the session is opened with: a title, `incognito`
+    /// and the rest. What is set in `request` wins over what the agent would have said.
     pub async fn chat_with(&self, mut request: types::CreateSessionRequest) -> Result<Session> {
-        request.text = Some(true);
+        request.start_voice = None;
         self.open(request).await
     }
 
-    /// Answers a call that arrived on the dispatch socket. The caller is already in the
-    /// call, so nothing is created; the number they reached is what the agent acts from.
+    /// Carries on a conversation held in writing, by the id of the session it was held in.
+    /// One that ended is reopened with what was said in it.
+    pub async fn resume(&self, id: &str) -> Result<Session> {
+        let client = self.router()?;
+        let got = client.get_session(id).await?;
+        Session::watching(client, got, self.tools.clone(), self.watch).await
+    }
+
+    /// Answers a call that arrived on the dispatch socket, on the call the router routed the
+    /// caller into, which is named for the session opened here. The number they reached is
+    /// what the agent acts from.
     pub async fn answer(&self, call: &InboundCall) -> Result<Session> {
+        if call.session_id.is_empty() {
+            return Err(Error::configuration(
+                "the call names no session; attach its number again",
+            ));
+        }
         self.open(types::CreateSessionRequest {
-            call_id: Some(call.call_id.clone()),
-            call_type: Some(call.call_type.clone()),
+            id: Some(call.session_id.clone()),
+            start_voice: Some(true),
             phone: (!call.called_number.is_empty()).then(|| types::SessionPhone {
                 number: call.called_number.clone(),
                 ..Default::default()
@@ -282,11 +295,10 @@ impl Agent {
         .await
     }
 
-    /// Answers a message written to an agent that is not running, in the channel it came
-    /// from, so whoever wrote it is already reading the answer as it is generated.
+    /// Answers a message written to an agent that is not running, in the channel its agent
+    /// id names, so whoever wrote it is already reading the answer as it is generated.
     pub async fn reply(&self, message: &InboundMessage) -> Result<Session> {
         self.chat_with(types::CreateSessionRequest {
-            conversation_id: Some(format!("{}:{}", message.channel_type, message.channel_id)),
             agent_id: (!message.agent_id.is_empty()).then(|| message.agent_id.clone()),
             ..Default::default()
         })
@@ -303,26 +315,26 @@ impl Agent {
                 "a call needs a number to ring from and one to ring",
             ));
         }
-        let call = self
-            .stream_app()?
-            .create_call(&Call::default(), &self.user_id)
-            .await?;
-        // Placing the call makes its own routing rule pinned to this call, so the answered
-        // leg arrives in the call this agent is about to join.
+        // Placing the call makes its own routing rule pinned to the call of the session it
+        // names, so the answered leg arrives in the call this agent is about to join.
         let placed = self
             .router()?
             .place_phone_call(&types::PlaceCallRequest {
                 from: from.into(),
                 to: to.into(),
-                call_id: Some(call.id.clone()),
-                call_type: Some(call.kind.clone()),
                 tags: self.cost_tracking.clone(),
                 ..Default::default()
             })
             .await?;
+        let Some(session_id) = placed.session_id else {
+            return Err(Error::Failed {
+                operation: "placing the call".into(),
+                message: "the router placed the call for no session".into(),
+            });
+        };
         self.open(types::CreateSessionRequest {
-            call_id: Some(call.id),
-            call_type: Some(call.kind),
+            id: Some(session_id),
+            start_voice: Some(true),
             navigating: Some(true),
             phone: Some(types::SessionPhone {
                 number: from.into(),
@@ -336,33 +348,52 @@ impl Agent {
 
     /// Answers the next call to `number`, returning once somebody has rung and said
     /// something. For more than one call at a time, use [`crate::Dispatch`].
+    ///
+    /// The number is attached, so every caller lands in a call of their own, and this waits
+    /// for the router to hand the next one over.
     pub async fn wait_for_call(&self, number: &str) -> Result<Session> {
         if number.is_empty() {
             return Err(Error::configuration("there is no number to answer on"));
         }
-        let call = self
-            .stream_app()?
-            .create_call(&Call::default(), &self.user_id)
+        let client = self.router()?;
+        client
+            .attach_phone_number(number, Some(&types::AttachNumberRequest::default()))
             .await?;
-        let attach = types::AttachNumberRequest {
-            call_id: Some(call.id.clone()),
-            call_type: Some(call.kind.clone()),
-            ..Default::default()
+
+        let dispatch = Dispatch::with_capacity(client.clone(), 1);
+        let (arrived, mut calls) = tokio::sync::mpsc::channel::<InboundCall>(1);
+        let wanted = number.to_string();
+        dispatch.wait_for_call(move |call| {
+            let (arrived, wanted) = (arrived.clone(), wanted.clone());
+            async move {
+                if call.called_number != wanted {
+                    return Err(Error::configuration(format!(
+                        "this agent is waiting on {wanted}, not {}",
+                        call.called_number
+                    )));
+                }
+                arrived
+                    .try_send(call)
+                    .map_err(|_| Error::configuration("this agent is already answering a call"))
+            }
+        });
+        let mut running = {
+            let dispatch = dispatch.clone();
+            tokio::spawn(async move { dispatch.run().await })
         };
-        self.router()?
-            .attach_phone_number(number, Some(&attach))
-            .await?;
-        let session = self
-            .open(types::CreateSessionRequest {
-                call_id: Some(call.id),
-                call_type: Some(call.kind),
-                phone: Some(types::SessionPhone {
-                    number: number.into(),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            })
-            .await?;
+        let call = tokio::select! {
+            Some(call) = calls.recv() => call,
+            ended = &mut running => {
+                return Err(match ended {
+                    Ok(Err(error)) => error,
+                    _ => Error::Closed("dispatch, before anybody rang,".into()),
+                });
+            }
+        };
+        dispatch.stop();
+        let _ = running.await;
+
+        let session = self.answer(&call).await?;
         if session.wait_for_event("heard").await.is_some() {
             return Ok(session);
         }
@@ -396,7 +427,6 @@ impl Agent {
             user_name: Some(self.name.clone()),
             agent_id: Some(self.user_id.clone()),
             agent: self.config.clone(),
-            instructions: (!self.instructions.is_empty()).then(|| self.instructions.clone()),
             tags: self.cost_tracking.clone(),
             memory: memory_of(&self.memory_filter),
             ..self.pipeline.clone()
@@ -602,14 +632,13 @@ impl Agent {
             tts: text(&settings.tts),
             sts: settings.sts.clone(),
             voice: text(&settings.voice),
-            speed: (settings.speed != 0.0).then_some(settings.speed),
             llm: text(&settings.llm),
             harness: harness.or(settings.harness),
-            thinking_llm: subagent.or_else(|| text(&settings.thinking_llm)),
+            subagent: subagent.or_else(|| text(&settings.subagent)),
             search: text(&settings.search),
-            greeting: text(&settings.greeting),
+            greeting: settings.greeting.clone(),
             sandbox: sandbox.or(settings.sandbox),
-            agent_plugins: (!settings.plugins.is_empty()).then(|| {
+            plugins: (!settings.plugins.is_empty()).then(|| {
                 settings
                     .plugins
                     .iter()
@@ -656,7 +685,7 @@ impl Agent {
             instructions: text(&self.instructions),
             guardrail: text(&self.guardrail),
             harness,
-            thinking_llm: subagent,
+            subagent,
             sandbox,
             tags: self.cost_tracking.clone(),
             skills: (!skills.is_empty())

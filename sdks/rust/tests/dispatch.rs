@@ -166,7 +166,7 @@ async fn a_worker_answers_calls_and_tells_the_router_how_each_went() {
         .send(json!({"type": "ready", "worker_id": "w-1"}))
         .await;
     socket
-        .send(json!({"type": "call", "work_id": "work-1", "call_id": "c1", "called_number": "+15550100", "custom": {"tier": "gold", "seats": 3}}))
+        .send(json!({"type": "call", "work_id": "work-1", "call_id": "c1", "session_id": "c1", "called_number": "+15550100", "custom": {"tier": "gold", "seats": 3}}))
         .await;
     assert_eq!(
         socket.expect("done").await,
@@ -182,6 +182,7 @@ async fn a_worker_answers_calls_and_tells_the_router_how_each_went() {
 
     let first = calls.recv().await.unwrap();
     assert_eq!(first.call_type, "default");
+    assert_eq!(first.session_id, "c1");
     assert_eq!(first.called_number, "+15550100");
     assert_eq!(first.custom["tier"], "gold");
     assert_eq!(first.custom["seats"], "3");
@@ -314,7 +315,6 @@ async fn the_second_message_on_a_channel_goes_to_the_session_that_answered_the_f
         .collect();
     assert_eq!(asked, ["hello", "again"]);
     let sent = server.request(Method::POST, "/v1/agents/sessions").body;
-    assert_eq!(sent["conversation_id"], "agent:c1");
     assert_eq!(sent["agent_id"], "support-bot");
 
     dispatch.stop();
@@ -376,7 +376,7 @@ async fn a_message_left_to_dispatch_is_answered_on_its_session_for_whoever_wrote
     let mut socket = server.accept().await;
     assert_eq!(socket.query, "capacity=4&active=0&handles=message");
     socket
-        .send(json!({"type": "message", "work_id": "work-1", "session_id": "s1", "command_id": "cmd-1",
+        .send(json!({"type": "message", "work_id": "work-1", "session_id": "s1", "request_id": "req-1",
                      "agent_id": "support", "user_id": "ada", "text": "where is my order?"}))
         .await;
     assert_eq!(
@@ -386,13 +386,13 @@ async fn a_message_left_to_dispatch_is_answered_on_its_session_for_whoever_wrote
 
     let message = messages.recv().await.unwrap();
     assert_eq!(
-        (message.session_id.as_str(), message.command_id.as_str()),
-        ("s1", "cmd-1")
+        (message.session_id.as_str(), message.request_id.as_str()),
+        ("s1", "req-1")
     );
     let sent = server.request(Method::POST, "/v1/agents/sessions/s1/responses");
     assert_eq!(
         sent.body,
-        json!({"text": "where is my order?", "command_id": "cmd-1"})
+        json!({"text": "where is my order?", "request_id": "req-1"})
     );
     assert_eq!(sent.header("x-stream-user-id"), "ada");
     assert_eq!(sent.header("stream-auth-type"), "server");
