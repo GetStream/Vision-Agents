@@ -34,7 +34,7 @@ func (s *DispatchTextSuite) TestWhatAnEndUserWritesIsHandedToTheWorkerWithItsSes
 	defer release()
 	opened, command := s.openedByEndUser(), s.utils.uuid()
 
-	s.writes(opened.Id, frame{"type": "respond", "command_id": command, "text": "Where is my order?"})
+	s.writes(opened.Id, frame{"type": "respond", "request_id": command, "text": "Where is my order?"})
 
 	handed := s.handed(worker)
 	s.Equal(opened.Id, handed.SessionID, "the worker answers on the session it was written to")
@@ -48,7 +48,7 @@ func (s *DispatchTextSuite) TestTheModelAnswersOnlyOnceTheServerAsksItTo() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 4})
 	defer release()
 	opened, command := s.openedByEndUser(), s.utils.uuid()
-	s.writes(opened.Id, frame{"type": "respond", "command_id": command, "text": "Where is my order?"})
+	s.writes(opened.Id, frame{"type": "respond", "request_id": command, "text": "Where is my order?"})
 	handed := s.handed(worker)
 
 	s.Never(func() bool {
@@ -58,7 +58,7 @@ func (s *DispatchTextSuite) TestTheModelAnswersOnlyOnceTheServerAsksItTo() {
 	var answering AgentResponse
 	s.Require().Equal(http.StatusAccepted, s.serverClient.actingFor(s.client).do(
 		http.MethodPost, "/v1/agents/sessions/"+handed.SessionID+"/responses",
-		CreateResponseRequest{CommandId: &handed.CommandID, Text: handed.Text}, &answering))
+		CreateResponseRequest{RequestId: &handed.CommandID, Text: handed.Text}, &answering))
 	s.NotEmpty(answering.Id, "the server's response is the turn that answers the command")
 	s.Require().Eventually(func() bool {
 		return s.receipt(opened.Id, command).State == "completed"
@@ -68,7 +68,7 @@ func (s *DispatchTextSuite) TestTheModelAnswersOnlyOnceTheServerAsksItTo() {
 func (s *DispatchTextSuite) TestAMessageNoWorkerCanTakeIsWithdrawn() {
 	opened, command := s.openedByEndUser(), s.utils.uuid()
 
-	s.writes(opened.Id, frame{"type": "respond", "command_id": command, "text": "Where is my order?"})
+	s.writes(opened.Id, frame{"type": "respond", "request_id": command, "text": "Where is my order?"})
 
 	s.Require().Eventually(func() bool {
 		var receipt CommandReceipt
@@ -86,7 +86,7 @@ func (s *DispatchTextSuite) TestWhatTheServerWritesIsAnsweredByTheModel() {
 
 	s.Require().Equal(http.StatusOK, s.serverClient.actingFor(s.client).do(http.MethodPost,
 		"/v1/agents/sessions/"+opened.Id+"/respond",
-		RespondRequest{CommandId: &command, Text: "Where is my order?"}, nil))
+		RespondRequest{RequestId: &command, Text: "Where is my order?"}, nil))
 
 	s.Require().Eventually(func() bool {
 		return s.receipt(opened.Id, command).State == "completed"
@@ -121,7 +121,7 @@ func (s *DispatchTextSuite) openedByEndUser() Session {
 		Mode: store.AgentModeText, LLM: "en-low-latency", DispatchText: true,
 	}
 	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
-	return s.client.createSession(CreateSessionRequest{Agent: &config.Name, Text: pointerTo(true)})
+	return s.client.createSession(CreateSessionRequest{Agent: &config.Name})
 }
 
 // writes sends a frame over the end user's own socket, which is how a device writes to a

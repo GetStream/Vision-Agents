@@ -788,6 +788,27 @@ func (e CreateOptOutRequestSource) Valid() bool {
 	}
 }
 
+// Defines values for CustomModelRequestTrainsOnData.
+const (
+	CustomModelRequestTrainsOnDataNo      CustomModelRequestTrainsOnData = "no"
+	CustomModelRequestTrainsOnDataUnknown CustomModelRequestTrainsOnData = "unknown"
+	CustomModelRequestTrainsOnDataYes     CustomModelRequestTrainsOnData = "yes"
+)
+
+// Valid indicates whether the value is a known member of the CustomModelRequestTrainsOnData enum.
+func (e CustomModelRequestTrainsOnData) Valid() bool {
+	switch e {
+	case CustomModelRequestTrainsOnDataNo:
+		return true
+	case CustomModelRequestTrainsOnDataUnknown:
+		return true
+	case CustomModelRequestTrainsOnDataYes:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DataChangeOp.
 const (
 	Delete DataChangeOp = "delete"
@@ -983,6 +1004,24 @@ func (e Granularity) Valid() bool {
 	}
 }
 
+// Defines values for GreetingMode.
+const (
+	Exact     GreetingMode = "exact"
+	Variation GreetingMode = "variation"
+)
+
+// Valid indicates whether the value is a known member of the GreetingMode enum.
+func (e GreetingMode) Valid() bool {
+	switch e {
+	case Exact:
+		return true
+	case Variation:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Harness.
 const (
 	Default Harness = "default"
@@ -1133,6 +1172,36 @@ func (e ImageSourceDetail) Valid() bool {
 	}
 }
 
+// Defines values for InvocationArgumentType.
+const (
+	Array   InvocationArgumentType = "array"
+	Boolean InvocationArgumentType = "boolean"
+	Null    InvocationArgumentType = "null"
+	Number  InvocationArgumentType = "number"
+	Object  InvocationArgumentType = "object"
+	String  InvocationArgumentType = "string"
+)
+
+// Valid indicates whether the value is a known member of the InvocationArgumentType enum.
+func (e InvocationArgumentType) Valid() bool {
+	switch e {
+	case Array:
+		return true
+	case Boolean:
+		return true
+	case Null:
+		return true
+	case Number:
+		return true
+	case Object:
+		return true
+	case String:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InvocationErrorType.
 const (
 	ClientTimeout  InvocationErrorType = "client_timeout"
@@ -1246,26 +1315,26 @@ func (e LlmOptionsVerbosity) Valid() bool {
 
 // Defines values for Modality.
 const (
-	ModalityImage     Modality = "image"
-	ModalityKnowledge Modality = "knowledge"
-	ModalityLcm       Modality = "lcm"
-	ModalityLlm       Modality = "llm"
-	ModalityMemory    Modality = "memory"
-	ModalityPhone     Modality = "phone"
-	ModalitySearch    Modality = "search"
-	ModalitySts       Modality = "sts"
-	ModalityStt       Modality = "stt"
-	ModalityTts       Modality = "tts"
+	ModalityDecisionModel Modality = "decision_model"
+	ModalityImage         Modality = "image"
+	ModalityKnowledge     Modality = "knowledge"
+	ModalityLlm           Modality = "llm"
+	ModalityMemory        Modality = "memory"
+	ModalityPhone         Modality = "phone"
+	ModalitySearch        Modality = "search"
+	ModalitySts           Modality = "sts"
+	ModalityStt           Modality = "stt"
+	ModalityTts           Modality = "tts"
 )
 
 // Valid indicates whether the value is a known member of the Modality enum.
 func (e Modality) Valid() bool {
 	switch e {
+	case ModalityDecisionModel:
+		return true
 	case ModalityImage:
 		return true
 	case ModalityKnowledge:
-		return true
-	case ModalityLcm:
 		return true
 	case ModalityLlm:
 		return true
@@ -2420,8 +2489,6 @@ type AgentChannels struct {
 
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
-	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
-
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -2433,9 +2500,11 @@ type AgentConfig struct {
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
 	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
-	EpisodeCards *bool   `json:"episode_cards,omitempty"`
-	Greeting     *string `json:"greeting,omitempty"`
-	Guardrail    *string `json:"guardrail,omitempty"`
+	EpisodeCards *bool `json:"episode_cards,omitempty"`
+
+	// Greeting What the agent says as it joins, before anyone speaks.
+	Greeting  *Greeting `json:"greeting,omitempty"`
+	Guardrail *string   `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 	Harness            *Harness     `json:"harness,omitempty"`
@@ -2447,12 +2516,16 @@ type AgentConfig struct {
 	McpServers         *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
-	Mode         AgentMode      `json:"mode"`
-	Name         string         `json:"name"`
+	Mode AgentMode `json:"mode"`
+	Name string    `json:"name"`
+
+	// PluginEvents Deprecated: use the events of a fixed binding under connectors.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
-	// ProgressiveTools Whether tools from plugins, MCP servers and connectors are offered by a summary, the first call to each returning its full description instead of running it.
-	ProgressiveTools *bool `json:"progressive_tools,omitempty"`
+	// Plugins Deprecated: use connectors, a binding to a connector.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2461,28 +2534,27 @@ type AgentConfig struct {
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 	Skills         *[]string       `json:"skills,omitempty"`
-	Speed          *float64        `json:"speed,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
-	Sts *string `json:"sts,omitempty"`
-	Stt *string `json:"stt,omitempty"`
+	Sts      *string `json:"sts,omitempty"`
+	Stt      *string `json:"stt,omitempty"`
+	Subagent *string `json:"subagent,omitempty"`
 
 	// SyncHash Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
-	SyncHash     *string            `json:"sync_hash,omitempty"`
-	Tags         *map[string]string `json:"tags,omitempty"`
-	ThinkingLlm  *string            `json:"thinking_llm,omitempty"`
-	Tts          *string            `json:"tts,omitempty"`
-	UpdatedAt    time.Time          `json:"updated_at"`
-	UserPlugins  *[]PluginEntry     `json:"user_plugins,omitempty"`
-	Video        *SessionVideo      `json:"video,omitempty"`
-	VisibleTools *[]string          `json:"visible_tools,omitempty"`
-	Voice        *string            `json:"voice,omitempty"`
+	SyncHash *string            `json:"sync_hash,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
+
+	// Tools How an agent is offered its plugin, MCP server and connector tools.
+	Tools        *AgentTools   `json:"tools,omitempty"`
+	Tts          *string       `json:"tts,omitempty"`
+	UpdatedAt    time.Time     `json:"updated_at"`
+	Video        *SessionVideo `json:"video,omitempty"`
+	VisibleTools *[]string     `json:"visible_tools,omitempty"`
+	Voice        *string       `json:"voice,omitempty"`
 }
 
 // AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
 type AgentConfigPatch struct {
-	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
-
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -2492,7 +2564,9 @@ type AgentConfigPatch struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch     *AgentDispatch `json:"dispatch,omitempty"`
 	EpisodeCards *bool          `json:"episode_cards,omitempty"`
-	Greeting     *string        `json:"greeting,omitempty"`
+
+	// Greeting What the agent says as it joins, before anyone speaks.
+	Greeting *Greeting `json:"greeting,omitempty"`
 
 	// Guardrail A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.
 	Guardrail *string `json:"guardrail,omitempty"`
@@ -2509,9 +2583,15 @@ type AgentConfigPatch struct {
 	Mode *AgentMode `json:"mode,omitempty"`
 
 	// Name What the config is called, which is unique among the customer's own.
-	Name             *string        `json:"name,omitempty"`
-	PluginEvents     *[]PluginEvent `json:"plugin_events,omitempty"`
-	ProgressiveTools *bool          `json:"progressive_tools,omitempty"`
+	Name *string `json:"name,omitempty"`
+
+	// PluginEvents Deprecated: use the events of a fixed binding under connectors.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+
+	// Plugins Deprecated: use connectors, a binding to a connector.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2520,18 +2600,17 @@ type AgentConfigPatch struct {
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 	Skills         *[]string       `json:"skills,omitempty"`
+	Sts            *string         `json:"sts,omitempty"`
+	Stt            *string         `json:"stt,omitempty"`
 
-	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
-	Speed *float64           `json:"speed,omitempty"`
-	Sts   *string            `json:"sts,omitempty"`
-	Stt   *string            `json:"stt,omitempty"`
-	Tags  *map[string]string `json:"tags,omitempty"`
+	// Subagent Only a voice agent names one. Switching an agent to text drops it.
+	Subagent *string            `json:"subagent,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
 
-	// ThinkingLlm Only a voice agent names one. Switching an agent to text drops it.
-	ThinkingLlm *string        `json:"thinking_llm,omitempty"`
-	Tts         *string        `json:"tts,omitempty"`
-	UserPlugins *[]PluginEntry `json:"user_plugins,omitempty"`
-	Video       *SessionVideo  `json:"video,omitempty"`
+	// Tools How an agent is offered its plugin, MCP server and connector tools.
+	Tools *AgentTools   `json:"tools,omitempty"`
+	Tts   *string       `json:"tts,omitempty"`
+	Video *SessionVideo `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -2540,9 +2619,6 @@ type AgentConfigPatch struct {
 
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
-	// AgentPlugins Hosted MCP servers this agent may reach with the app's own login, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for.
-	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
-
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -2553,10 +2629,12 @@ type AgentConfigRequest struct {
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
 	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
-	EpisodeCards *bool   `json:"episode_cards,omitempty"`
-	Greeting     *string `json:"greeting,omitempty"`
+	EpisodeCards *bool `json:"episode_cards,omitempty"`
 
-	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
+	// Greeting What the agent says as it joins, before anyone speaks.
+	Greeting *Greeting `json:"greeting,omitempty"`
+
+	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
@@ -2581,11 +2659,13 @@ type AgentConfigRequest struct {
 	// Name What the config is called, which is unique among the customer's own.
 	Name string `json:"name"`
 
-	// PluginEvents MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+	// PluginEvents Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
-	// ProgressiveTools Whether the agent is offered its plugin, MCP server and connector tools by the first line of each one's description, with its arguments' descriptions left out, and the first call to a tool returns its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
-	ProgressiveTools *bool `json:"progressive_tools,omitempty"`
+	// Plugins Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2599,27 +2679,22 @@ type AgentConfigRequest struct {
 	// Skills Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set.
 	Skills *[]string `json:"skills,omitempty"`
 
-	// Speed Rate of delivery, 1 being the voice's own. Zero or absent leaves it there. A config that names one is only routed to voices that can be sped up, and one outside that voice's own range is refused.
-	//
-	// Example: 0.9
-	Speed *float64 `json:"speed,omitempty"`
-
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts *string `json:"sts,omitempty"`
 
 	// Stt A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it.
 	Stt *string `json:"stt,omitempty"`
 
-	// Tags Cost labels, carried onto every request a session using it makes.
+	// Subagent The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent.
+	Subagent *string `json:"subagent,omitempty"`
+
+	// Tags Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds.
 	Tags *map[string]string `json:"tags,omitempty"`
 
-	// ThinkingLlm The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default thinking model.
-	ThinkingLlm *string `json:"thinking_llm,omitempty"`
-	Tts         *string `json:"tts,omitempty"`
-
-	// UserPlugins Hosted MCP servers each end user connects with their own account, named from the built-in catalog like agent_plugins. The agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
-	UserPlugins *[]PluginEntry `json:"user_plugins,omitempty"`
-	Video       *SessionVideo  `json:"video,omitempty"`
+	// Tools How an agent is offered its plugin, MCP server and connector tools.
+	Tools *AgentTools   `json:"tools,omitempty"`
+	Tts   *string       `json:"tts,omitempty"`
+	Video *SessionVideo `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -2660,11 +2735,11 @@ type AgentConnectorSelection struct {
 	// ConnectionId Required for fixed, and refused for session.
 	ConnectionId *string `json:"connection_id,omitempty"`
 
-	// Type fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own.
+	// Type fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
 	Type AgentConnectorSelectionType `json:"type"`
 }
 
-// AgentConnectorSelectionType fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own.
+// AgentConnectorSelectionType fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
 type AgentConnectorSelectionType string
 
 // AgentDispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
@@ -2767,6 +2842,12 @@ type AgentResponsePage struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
+// AgentTools How an agent is offered its plugin, MCP server and connector tools.
+type AgentTools struct {
+	// Progressive Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
+	Progressive *bool `json:"progressive,omitempty"`
+}
+
 // AppSettings What the router does for the calling app. It never carries a secret.
 type AppSettings struct {
 	// Stream Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need.
@@ -2777,12 +2858,6 @@ type AppSettings struct {
 type AttachNumberRequest struct {
 	// AllowedIps The vendor's signalling addresses, as IPs or CIDR blocks.
 	AllowedIps *[]string `json:"allowed_ips,omitempty"`
-
-	// CallId The call every caller joins. Omit to give each caller their own call, named after the number they rang.
-	CallId *string `json:"call_id,omitempty"`
-
-	// CallType The Stream call type. Omit for "agent".
-	CallType *string `json:"call_type,omitempty"`
 }
 
 // AttachedNumber defines model for AttachedNumber.
@@ -3132,16 +3207,16 @@ type Call struct {
 	// SttUsed The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over.
 	SttUsed *string `json:"stt_used,omitempty"`
 
+	// Subagent The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too.
+	Subagent *string `json:"subagent,omitempty"`
+
+	// SubagentUsed The provider/model delegated work ran on. Empty when nothing was handed over, or when the subagent was never reached.
+	SubagentUsed *string `json:"subagent_used,omitempty"`
+
 	// Summary What a model made of the call, written once it was over.
-	Summary *string            `json:"summary,omitempty"`
-	Tags    *map[string]string `json:"tags,omitempty"`
-
-	// ThinkingLlm The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too.
-	ThinkingLlm *string `json:"thinking_llm,omitempty"`
-
-	// ThinkingLlmUsed The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached.
-	ThinkingLlmUsed *string `json:"thinking_llm_used,omitempty"`
-	ToNumber        *string `json:"to_number,omitempty"`
+	Summary  *string            `json:"summary,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
+	ToNumber *string            `json:"to_number,omitempty"`
 
 	// Tts The voice target, on the same terms as stt.
 	Tts *string `json:"tts,omitempty"`
@@ -3467,10 +3542,10 @@ type ClassifyUsage struct {
 // CommandReceipt defines model for CommandReceipt.
 type CommandReceipt struct {
 	AssistantMessageId string `json:"assistant_message_id"`
-	CommandId          string `json:"command_id"`
 
 	// Duplicate True when this command already exists and no new inference was started.
-	Duplicate bool `json:"duplicate"`
+	Duplicate bool   `json:"duplicate"`
+	RequestId string `json:"request_id"`
 
 	// State Latest locally recorded response state; an interrupted command is never automatically rerun.
 	State         string `json:"state"`
@@ -3504,17 +3579,20 @@ type Connection struct {
 	AccountId *string `json:"account_id,omitempty"`
 
 	// AuthScheme How the connection authenticates, one of its connector's schemes.
-	AuthScheme  string     `json:"auth_scheme"`
-	ConnectorId string     `json:"connector_id"`
-	CreatedAt   *time.Time `json:"created_at,omitempty"`
+	AuthScheme string `json:"auth_scheme"`
+
+	// Client Which OAuth client a connection's grant was issued to, so a client the router registered on the fly (RFC 7591) can be found at the provider. Its secret is never shown.
+	Client      *ConnectionClient `json:"client,omitempty"`
+	ConnectorId string            `json:"connector_id"`
+	CreatedAt   *time.Time        `json:"created_at,omitempty"`
 
 	// DefinitionBrokenReason Why the connector marked definition_revision broken. Present only when definition_status is broken.
 	DefinitionBrokenReason *string `json:"definition_broken_reason,omitempty"`
 
-	// DefinitionRevision The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there; until then it keeps this one.
+	// DefinitionRevision The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again (PUT .../credentials) moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one.
 	DefinitionRevision *int64 `json:"definition_revision,omitempty"`
 
-	// DefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until a consent connects it again, on the latest revision.
+	// DefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again.
 	DefinitionStatus ConnectionDefinitionStatus `json:"definition_status"`
 
 	// ExpiresAt When the current credential expires. Absent when there is none or it does not.
@@ -3525,6 +3603,9 @@ type Connection struct {
 	// Inputs What the connection was created with, the connector's defaults filled in.
 	Inputs map[string]string `json:"inputs"`
 	Label  *string           `json:"label,omitempty"`
+
+	// LastValidation What a connection's last validate found, kept so it is still shown after the validate's answer is gone. A validate whose provider refused a bearer or api_key credential with any 4xx but 429 also moves the connection to needs_reauthorization.
+	LastValidation *ConnectionLastValidation `json:"last_validation,omitempty"`
 
 	// Metadata What the provider said about the account when it was connected, such as a workspace id. Empty until then.
 	Metadata *map[string]string `json:"metadata,omitempty"`
@@ -3543,6 +3624,15 @@ type Connection struct {
 	UsedBy *[]ConnectionUse `json:"used_by,omitempty"`
 }
 
+// ConnectionClient Which OAuth client a connection's grant was issued to, so a client the router registered on the fly (RFC 7591) can be found at the provider. Its secret is never shown.
+type ConnectionClient struct {
+	// ClientId The client identifier, which is not a secret (RFC 6749 section 2.2). For dcr, the one the provider issued when the router registered at the consent.
+	ClientId string `json:"client_id"`
+
+	// Registration operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+	Registration ConnectorClientRegistrationMethod `json:"registration"`
+}
+
 // ConnectionCredentials Credentials for a connection, under the revision the caller last read. An unknown field is refused rather than ignored.
 type ConnectionCredentials struct {
 	// ExpectedRevision The connection's revision as last read. A connection that has moved past it is refused with a 409, so two writers never replace each other's credentials unseen.
@@ -3552,11 +3642,14 @@ type ConnectionCredentials struct {
 	Values *map[string]string `json:"values,omitempty"`
 }
 
-// ConnectionDefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until a consent connects it again, on the latest revision.
+// ConnectionDefinitionStatus current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again.
 type ConnectionDefinitionStatus string
 
-// ConnectionInvocation One connector tool call a session ran through the connection: the binding, the tool, how long it took and how it failed. What the call was asked and answered is never kept.
+// ConnectionInvocation One connector tool call a session ran through the connection: the binding, the tool, the shape of its arguments, how long it took and how it failed. No value the call was asked, and nothing it answered, is kept.
 type ConnectionInvocation struct {
+	// Arguments The shape of what the call was asked, sorted by name. Absent for a call asked with no arguments, for an incognito session's call, for arguments that were not a JSON object, and for a call recorded before the router kept it.
+	Arguments *[]InvocationArgument `json:"arguments,omitempty"`
+
 	// Binding The alias the config binds the connector under.
 	Binding string `json:"binding"`
 
@@ -3589,6 +3682,21 @@ type ConnectionInvocationPage struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
+// ConnectionLastValidation What a connection's last validate found, kept so it is still shown after the validate's answer is gone. A validate whose provider refused a bearer or api_key credential with any 4xx but 429 also moves the connection to needs_reauthorization.
+type ConnectionLastValidation struct {
+	// CheckedAt When the validate ran.
+	CheckedAt time.Time `json:"checked_at"`
+
+	// Code The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+	Code *string `json:"code,omitempty"`
+
+	// Error Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote.
+	Error *string `json:"error,omitempty"`
+
+	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+	Status ConnectionValidationStatus `json:"status"`
+}
+
 // ConnectionOwner Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
 type ConnectionOwner struct {
 	// Type app is the app's own account, user one user's.
@@ -3612,7 +3720,7 @@ type ConnectionPage struct {
 
 // ConnectionRequest A connection to create, pending until an account is connected. An unknown field is refused rather than ignored.
 type ConnectionRequest struct {
-	// AuthScheme One of the connector's schemes. Omitted is its only one; a connector with several needs it named.
+	// AuthScheme One of the connector's schemes. Omitted is its only one, or else its only one that is not a static token or key (bearer, api_key), such as oauth2_code for github; a connector with several others needs it named.
 	AuthScheme *string `json:"auth_scheme,omitempty"`
 
 	// ConnectorId A built-in, such as slack, or one of the app's own.
@@ -3686,7 +3794,7 @@ type ConnectionValidation struct {
 	// CheckedAt When the tools were listed. Absent until a validate listed them.
 	CheckedAt *time.Time `json:"checked_at,omitempty"`
 
-	// Code What a program branches on when the status is not connected: connector_scope_required with needs_scopes. More may be added.
+	// Code What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added.
 	Code         *string `json:"code,omitempty"`
 	ConnectionId string  `json:"connection_id"`
 
@@ -3696,7 +3804,7 @@ type ConnectionValidation struct {
 	// MissingScopes With needs_scopes: the scopes the checked tools need that the grant lacks, sorted.
 	MissingScopes *[]string `json:"missing_scopes,omitempty"`
 
-	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
 	Status ConnectionValidationStatus `json:"status"`
 
 	// ToolsDigest The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them.
@@ -3709,12 +3817,15 @@ type ConnectionValidationRequest struct {
 	Tools *[]string `json:"tools,omitempty"`
 }
 
-// ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+// ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
 type ConnectionValidationStatus string
 
 // Connector A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
 type Connector struct {
 	Category *string `json:"category,omitempty"`
+
+	// Channel The connector is an inbound channel: its manifest reads messages a provider delivers to the router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A dashboard warns on it before a delete that would end those replies.
+	Channel *bool `json:"channel,omitempty"`
 
 	// Client How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
 	Client ConnectorClient `json:"client"`
@@ -3733,6 +3844,9 @@ type Connector struct {
 	Inputs *[]ConnectorInput `json:"inputs"`
 	Name   string            `json:"name"`
 
+	// RedirectUri The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then.
+	RedirectUri *string `json:"redirect_uri,omitempty"`
+
 	// Revision The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
 	Revision *int64 `json:"revision,omitempty"`
 
@@ -3749,12 +3863,12 @@ type Connector struct {
 // ConnectorAuditAction grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection.
 type ConnectorAuditAction string
 
-// ConnectorAuditCredential The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
+// ConnectorAuditCredential The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
 type ConnectorAuditCredential struct {
 	// AccessExpiresAt When the access token expires. Absent when the provider did not say.
 	AccessExpiresAt *time.Time `json:"access_expires_at,omitempty"`
 
-	// AccessFingerprint The access token the grant left, by fingerprint.
+	// AccessFingerprint The access token the grant left, by fingerprint. On grant_revoked, the one that ended.
 	AccessFingerprint *string `json:"access_fingerprint,omitempty"`
 
 	// PreviousAccessFingerprint The access token before it, by fingerprint. Absent for a first grant.
@@ -3766,7 +3880,7 @@ type ConnectorAuditCredential struct {
 	// RefreshExpiresAt When the refresh token expires, by the connector's refresh_ttl. Absent when it does not say.
 	RefreshExpiresAt *time.Time `json:"refresh_expires_at,omitempty"`
 
-	// RefreshFingerprint The refresh token the grant left, by fingerprint. Absent when there is none.
+	// RefreshFingerprint The refresh token the grant left, by fingerprint. On grant_revoked, the one that ended. Absent when there is none.
 	RefreshFingerprint *string `json:"refresh_fingerprint,omitempty"`
 
 	// Rotated The refresh token the connection already had was replaced, as a provider that rotates refresh tokens does on every refresh.
@@ -3786,7 +3900,7 @@ type ConnectorAuditEvent struct {
 	ConnectorId  string    `json:"connector_id"`
 	CreatedAt    time.Time `json:"created_at"`
 
-	// Credential The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
+	// Credential The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
 	Credential *ConnectorAuditCredential `json:"credential,omitempty"`
 	Id         string                    `json:"id"`
 
@@ -3874,7 +3988,7 @@ type ConnectorEventDestination struct {
 	ConnectorId *string    `json:"connector_id,omitempty"`
 	CreatedAt   *time.Time `json:"created_at,omitempty"`
 
-	// Forward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+	// Forward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there. A Slack reply that does not mention the bot, in a thread the agent is not in yet, is unhandled when it arrives. If the mention that starts the thread arrives within 10 minutes, as when Slack retries the mention, the agent answers the reply too. The forward is not taken back, and no event says that the agent answered it.
 	Forward ConnectorEventForward `json:"forward"`
 	Id      *string               `json:"id,omitempty"`
 
@@ -3897,7 +4011,7 @@ type ConnectorEventDestinationPage struct {
 
 // ConnectorEventDestinationRequest An event destination to create. An unknown field is refused rather than ignored.
 type ConnectorEventDestinationRequest struct {
-	// Forward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+	// Forward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there. A Slack reply that does not mention the bot, in a thread the agent is not in yet, is unhandled when it arrives. If the mention that starts the thread arrives within 10 minutes, as when Slack retries the mention, the agent answers the reply too. The forward is not taken back, and no event says that the agent answered it.
 	Forward ConnectorEventForward `json:"forward"`
 
 	// Url A public https URL. One that is or resolves to a private, loopback or link-local address is refused.
@@ -3913,7 +4027,7 @@ type ConnectorEventDestinationSecret struct {
 	Secret string `json:"secret"`
 }
 
-// ConnectorEventForward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+// ConnectorEventForward Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there. A Slack reply that does not mention the bot, in a thread the agent is not in yet, is unhandled when it arrives. If the mention that starts the thread arrives within 10 minutes, as when Slack retries the mention, the agent answers the reply too. The forward is not taken back, and no event says that the agent answered it.
 type ConnectorEventForward string
 
 // ConnectorInput defines model for ConnectorInput.
@@ -4092,9 +4206,10 @@ type CreateOptOutRequestSource string
 
 // CreateResponseRequest defines model for CreateResponseRequest.
 type CreateResponseRequest struct {
-	// CommandId Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
-	CommandId *string        `json:"command_id,omitempty"`
-	Images    *[]ImageSource `json:"images,omitempty"`
+	Images *[]ImageSource `json:"images,omitempty"`
+
+	// RequestId Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
+	RequestId *string `json:"request_id,omitempty"`
 
 	// Text What to answer, as though it had been said.
 	Text string `json:"text"`
@@ -4114,21 +4229,14 @@ type CreateSessionRequest struct {
 	// Backchannel Murmur while a participant is still talking, the way a person does.
 	Backchannel *bool `json:"backchannel,omitempty"`
 
-	// CallId The call to join. Required unless the session is text.
-	CallId   *string `json:"call_id,omitempty"`
-	CallType *string `json:"call_type,omitempty"`
-
 	// ConfigId An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
 	ConfigId *string `json:"config_id,omitempty"`
 
-	// ConnectorBindings The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
+	// ConnectorBindings The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A session binding given none here uses the caller's own connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
 	ConnectorBindings *[]SessionConnectorBinding `json:"connector_bindings,omitempty"`
 
 	// ContextTruncated Older history was omitted from the model context.
 	ContextTruncated *bool `json:"context_truncated,omitempty"`
-
-	// ConversationId Stream Chat CID to resume; returned for persistent text sessions.
-	ConversationId *string `json:"conversation_id,omitempty"`
 
 	// Custom Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
 	Custom *map[string]interface{} `json:"custom,omitempty"`
@@ -4136,20 +4244,17 @@ type CreateSessionRequest struct {
 	// Description A longer note about the conversation, searched alongside the title.
 	Description *string `json:"description,omitempty"`
 
-	// Greeting Said on joining without going through the model. Empty means the agent waits to be spoken to.
-	Greeting *string `json:"greeting,omitempty"`
+	// Greeting What the agent says as it joins, before anyone speaks.
+	Greeting *Greeting `json:"greeting,omitempty"`
 
-	// History The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
+	// History The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
 	History *[]HistoryMessage `json:"history,omitempty"`
 
-	// Id The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
+	// Id The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that does not start support- or thread- and that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7.
 	Id *string `json:"id,omitempty"`
 
 	// Incognito Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
 	Incognito *bool `json:"incognito,omitempty"`
-
-	// Instructions The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to decide.
-	Instructions *string `json:"instructions,omitempty"`
 
 	// Keyterms Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
 	Keyterms *[]string `json:"keyterms,omitempty"`
@@ -4183,17 +4288,17 @@ type CreateSessionRequest struct {
 	// Search Omit it and the config decides, or search-fast when there is no config.
 	Search *string `json:"search,omitempty"`
 
-	// Sts A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
+	// StartVoice Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+	StartVoice *bool `json:"start_voice,omitempty"`
+
+	// Sts A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
 	Sts *string `json:"sts,omitempty"`
 
 	// Stt Omit it and the config decides, or en-low-latency when there is no config.
 	Stt *string `json:"stt,omitempty"`
 
-	// Tags Cost labels, carried onto every request the session makes.
+	// Tags Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
 	Tags *map[string]string `json:"tags,omitempty"`
-
-	// Text Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
-	Text *bool `json:"text,omitempty"`
 
 	// Title What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
 	Title *string `json:"title,omitempty"`
@@ -4262,6 +4367,83 @@ type CustomConnectorRequest struct {
 	// Scopes The scopes a consent asks for, each an RFC 6749 scope token.
 	Scopes *[]string `json:"scopes,omitempty"`
 }
+
+// CustomModel defines model for CustomModel.
+type CustomModel struct {
+	BaseUrl       string    `json:"base_url"`
+	ContextWindow int64     `json:"context_window"`
+	CreatedAt     time.Time `json:"created_at"`
+
+	// HasApiKey Whether a key is stored. The key itself is never returned.
+	HasApiKey              bool     `json:"has_api_key"`
+	Id                     string   `json:"id"`
+	InputModalities        []string `json:"input_modalities"`
+	Model                  string   `json:"model"`
+	Name                   string   `json:"name"`
+	PerMillionInputTokens  float64  `json:"per_million_input_tokens"`
+	PerMillionOutputTokens float64  `json:"per_million_output_tokens"`
+	Retention              *string  `json:"retention,omitempty"`
+
+	// Target What a router config or session names the model by.
+	//
+	// Example: custom/support-qwen
+	Target       string    `json:"target"`
+	TrainsOnData *string   `json:"trains_on_data,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// CustomModelPage defines model for CustomModelPage.
+type CustomModelPage struct {
+	HasMore bool          `json:"has_more"`
+	Items   []CustomModel `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// CustomModelRequest defines model for CustomModelRequest.
+type CustomModelRequest struct {
+	// ApiKey Sent as a bearer token. Stored sealed and never returned. Left out of an update keeps the one stored; empty removes it.
+	ApiKey *string `json:"api_key,omitempty"`
+
+	// BaseUrl The endpoint root, up to and including /v1, that chat completions are posted under.
+	//
+	// Example: https://model-abc123.api.baseten.co/environments/production/sync/v1
+	BaseUrl string `json:"base_url"`
+
+	// ContextWindow Tokens the model accepts, so the router can refuse a conversation that would not fit. Omitted is unknown.
+	ContextWindow *int64 `json:"context_window,omitempty"`
+
+	// InputModalities Input kinds beyond text the model accepts, e.g. image.
+	InputModalities *[]string `json:"input_modalities,omitempty"`
+
+	// Model The id the endpoint serves the weights under.
+	//
+	// Example: Qwen/Qwen3.8-27B
+	Model string `json:"model"`
+
+	// Name What a config names the model by, as `custom/<name>`. Unique among the customer's models.
+	//
+	// Example: support-qwen
+	Name string `json:"name"`
+
+	// PerMillionInputTokens What the host bills per million input tokens in USD, so usage can say what a conversation cost. Omitted is free.
+	PerMillionInputTokens *float64 `json:"per_million_input_tokens,omitempty"`
+
+	// PerMillionOutputTokens What the host bills per million output tokens in USD. Omitted is free.
+	PerMillionOutputTokens *float64 `json:"per_million_output_tokens,omitempty"`
+
+	// Retention How long the host keeps what it is sent: none, or a duration such as 30d or 24h.
+	//
+	// Example: none
+	Retention *string `json:"retention,omitempty"`
+
+	// TrainsOnData Whether the host trains on what it is sent. Declared with retention, or a session with a data policy is never routed here.
+	TrainsOnData *CustomModelRequestTrainsOnData `json:"trains_on_data,omitempty"`
+}
+
+// CustomModelRequestTrainsOnData Whether the host trains on what it is sent. Declared with retention, or a session with a data policy is never routed here.
+type CustomModelRequestTrainsOnData string
 
 // DataChange One thing that happened to one row of the calling app's data.
 type DataChange struct {
@@ -4343,7 +4525,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -4366,19 +4548,13 @@ type ErrorType string
 
 // ForkSessionRequest Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
 type ForkSessionRequest struct {
-	Agent *string `json:"agent,omitempty"`
-
-	// CallId The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not.
-	CallId      *string                 `json:"call_id,omitempty"`
+	Agent       *string                 `json:"agent,omitempty"`
 	ConfigId    *string                 `json:"config_id,omitempty"`
 	Custom      *map[string]interface{} `json:"custom,omitempty"`
 	Description *string                 `json:"description,omitempty"`
 
 	// Incognito Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
 	Incognito *bool `json:"incognito,omitempty"`
-
-	// Instructions Server-side only: a device sending it is refused with a 403, as it is on createSession and updateSession.
-	Instructions *string `json:"instructions,omitempty"`
 
 	// Messages Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
 	Messages *bool `json:"messages,omitempty"`
@@ -4412,6 +4588,18 @@ type GeneratedImageMediaType string
 
 // Granularity defines model for Granularity.
 type Granularity string
+
+// Greeting What the agent says as it joins, before anyone speaks.
+type Greeting struct {
+	// Mode exact says the text word for word. variation has the model say its own variation of it on every call, so callers do not hear the same opening each time. A speech-to-speech model cannot say exact words, so it always says its own rendering of the text.
+	Mode *GreetingMode `json:"mode,omitempty"`
+
+	// Text What the agent says on joining. Empty means the agent waits to be spoken to.
+	Text string `json:"text"`
+}
+
+// GreetingMode exact says the text word for word. variation has the model say its own variation of it on every call, so callers do not hear the same opening each time. A speech-to-speech model cannot say exact words, so it always says its own rendering of the text.
+type GreetingMode string
 
 // GuestUser defines model for GuestUser.
 type GuestUser struct {
@@ -4649,10 +4837,20 @@ type InputParts struct {
 	Video int64 `json:"video"`
 }
 
-// InstructionsRequest defines model for InstructionsRequest.
-type InstructionsRequest struct {
-	Instructions string `json:"instructions"`
+// InvocationArgument One argument a connector tool call was asked with: its name, its JSON type and, for a string or an array, its length, so an empty string shows as length 0. Never its value.
+type InvocationArgument struct {
+	// Length A string's characters (Unicode code points) or an array's elements, or for (undeclared) the number of undeclared arguments. Absent for any other type.
+	Length *int64 `json:"length,omitempty"`
+
+	// Name The argument's name, when the tool's input schema declares it under properties. The arguments it does not declare, whose names a model may choose, are one entry named (undeclared): type object, length their count.
+	Name string `json:"name"`
+
+	// Type The argument's JSON type.
+	Type InvocationArgumentType `json:"type"`
 }
+
+// InvocationArgumentType The argument's JSON type.
+type InvocationArgumentType string
 
 // InvocationErrorType customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
 type InvocationErrorType string
@@ -4854,7 +5052,7 @@ type McpServer struct {
 	// Url Its Streamable HTTP endpoint, over https.
 	Url string `json:"url"`
 
-	// User Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for user_plugins, rather than the app once, from the dashboard. Only a server that needs a login may set it.
+	// User Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
 	User *bool `json:"user,omitempty"`
 }
 
@@ -4882,7 +5080,7 @@ type MessageContent0 = string
 // MessageContent1 defines model for MessageContent.1.
 type MessageContent1 = []ContentPart
 
-// Modality What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// Modality What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 type Modality string
 
 // ModelCallTiming defines model for ModelCallTiming.
@@ -5086,12 +5284,6 @@ type PhoneVendor struct {
 
 // PlaceCallRequest defines model for PlaceCallRequest.
 type PlaceCallRequest struct {
-	// CallId The Stream call the answered leg joins, and so the one the agent has to be in. Omit to have one named after this call, since two calls from the same number are two conversations.
-	CallId *string `json:"call_id,omitempty"`
-
-	// CallType The Stream call type. Omit for "agent".
-	CallType *string `json:"call_type,omitempty"`
-
 	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it.
 	Custom *map[string]string `json:"custom,omitempty"`
 
@@ -5105,16 +5297,18 @@ type PlaceCallRequest struct {
 	InitialDigits *string `json:"initial_digits,omitempty"`
 
 	// RingTimeoutSeconds How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than ringing for its own default.
-	RingTimeoutSeconds *int               `json:"ring_timeout_seconds,omitempty"`
-	Tags               *map[string]string `json:"tags,omitempty"`
-	To                 string             `json:"to"`
+	RingTimeoutSeconds *int `json:"ring_timeout_seconds,omitempty"`
+
+	// SessionId The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice.
+	SessionId *string            `json:"session_id,omitempty"`
+	Tags      *map[string]string `json:"tags,omitempty"`
+	To        string             `json:"to"`
 }
 
 // PlacedCall defines model for PlacedCall.
 type PlacedCall struct {
-	// CallId The Stream call the answered leg is routed into. An agent that is not in it hears nothing when the person picks up.
-	CallId   *string `json:"call_id,omitempty"`
-	CallType *string `json:"call_type,omitempty"`
+	// SessionId The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up.
+	SessionId *string `json:"session_id,omitempty"`
 
 	// Status The vendor's own word for where the call is, e.g. "queued".
 	Status string `json:"status"`
@@ -5195,7 +5389,7 @@ type PluginConnection struct {
 	// Status The app's login. Always not_connected for a plugin with user, which the app does not log into.
 	Status PluginConnectionStatus `json:"status"`
 
-	// User True when the config names the plugin under user_plugins only: each end user connects their own account in the conversation.
+	// User True when the config names the plugin with user: each end user connects their own account in the conversation.
 	User *bool `json:"user,omitempty"`
 }
 
@@ -5221,7 +5415,7 @@ type PluginEvent struct {
 	// Instructions What the agent does with the event when it arrives, added to its instructions for that conversation.
 	Instructions *string `json:"instructions,omitempty"`
 
-	// Plugin A catalog plugin the config names under agent_plugins or user_plugins.
+	// Plugin A catalog plugin the config names under plugins.
 	Plugin string `json:"plugin"`
 }
 
@@ -5250,6 +5444,9 @@ type PluginWithOptions struct {
 
 	// Toolsets Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
 	Toolsets *[]string `json:"toolsets,omitempty"`
+
+	// User Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
+	User *bool `json:"user,omitempty"`
 }
 
 // Policy What an organization or an app decided about spend, data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off.
@@ -5265,7 +5462,7 @@ type Policy struct {
 	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
 
-	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
+	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
 
 	// RequireOwnStreamApp Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
@@ -5446,8 +5643,8 @@ type RespondRequest struct {
 	// ClientId The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
 	ClientId *string `json:"client_id,omitempty"`
 
-	// CommandId Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
-	CommandId *string `json:"command_id,omitempty"`
+	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry with the same id and text does not restart inference.
+	RequestId *string `json:"request_id,omitempty"`
 	Text      string  `json:"text"`
 }
 
@@ -5679,7 +5876,7 @@ type Session struct {
 	Agent   *string `json:"agent,omitempty"`
 	AgentId string  `json:"agent_id"`
 
-	// CallId Empty for a text session, which joins no call.
+	// CallId The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
 	CallId   string `json:"call_id"`
 	CallType string `json:"call_type"`
 
@@ -5692,7 +5889,7 @@ type Session struct {
 	// ContextTruncated Older history was omitted from the model context.
 	ContextTruncated *bool `json:"context_truncated,omitempty"`
 
-	// ConversationId Stream Chat CID to resume; returned for persistent text sessions.
+	// ConversationId The Stream Chat channel the conversation is kept in, typed and spoken. Absent for an incognito session.
 	ConversationId *string                 `json:"conversation_id,omitempty"`
 	CreatedAt      time.Time               `json:"created_at"`
 	Custom         *map[string]interface{} `json:"custom,omitempty"`
@@ -5723,6 +5920,12 @@ type Session struct {
 	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
 	ProjectId       *string          `json:"project_id,omitempty"`
 
+	// ReviewNotes Why the review scored the conversation as it did. Read by a backend only.
+	ReviewNotes *string `json:"review_notes,omitempty"`
+
+	// ReviewScore How well the agent handled the conversation, from 1 to 5, written a few seconds after it ended. Read by a backend only.
+	ReviewScore *int64 `json:"review_score,omitempty"`
+
 	// State Whether the agent is still in the call.
 	State SessionState `json:"state"`
 
@@ -5732,15 +5935,21 @@ type Session struct {
 	// Stt The provider and model transcribing, once somebody has been heard.
 	Stt *string `json:"stt,omitempty"`
 
-	// Text The conversation is held in writing rather than on a call.
-	Text *bool `json:"text,omitempty"`
+	// Subagent The provider and model delegated work runs on.
+	Subagent *string `json:"subagent,omitempty"`
 
-	// ThinkingLlm The provider and model delegated work runs on.
-	ThinkingLlm *string `json:"thinking_llm,omitempty"`
-	Title       *string `json:"title,omitempty"`
+	// Summary What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only.
+	Summary *string `json:"summary,omitempty"`
+
+	// Text The conversation is held in writing rather than on a call.
+	Text  *bool   `json:"text,omitempty"`
+	Title *string `json:"title,omitempty"`
 
 	// Tts The provider and model speaking.
-	Tts    *string       `json:"tts,omitempty"`
+	Tts *string `json:"tts,omitempty"`
+
+	// Usage What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
+	Usage  *CallUsage    `json:"usage,omitempty"`
 	UserId string        `json:"user_id"`
 	Video  *SessionVideo `json:"video,omitempty"`
 
@@ -5842,9 +6051,10 @@ type SessionQuery struct {
 
 // SessionRespondCommand defines model for SessionRespondCommand.
 type SessionRespondCommand struct {
-	// CommandId Required for personal persistent text conversations; reuse on retries. Text only when present.
-	CommandId *string                   `json:"command_id,omitempty"`
-	Images    *[]ImageSource            `json:"images,omitempty"`
+	Images *[]ImageSource `json:"images,omitempty"`
+
+	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present.
+	RequestId *string                   `json:"request_id,omitempty"`
 	Text      string                    `json:"text"`
 	Type      SessionRespondCommandType `json:"type"`
 }
@@ -5951,7 +6161,7 @@ type SetPluginClientRequest struct {
 	// ClientSecret The client secret the provider issued. Left out for a public client.
 	ClientSecret *string `json:"client_secret,omitempty"`
 
-	// User Also name the plugin under the config's user_plugins, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it under agent_plugins.
+	// User Also name the plugin under the config's plugins with user, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it as the app's.
 	User *bool `json:"user,omitempty"`
 }
 
@@ -6302,6 +6512,32 @@ type StatsBucket struct {
 	Uptime *float64 `json:"uptime,omitempty"`
 }
 
+// StoredConnectorOAuthClient The OAuth client and provider app the router keeps for the app and one connector. It says whether each secret is stored, and never carries one.
+type StoredConnectorOAuthClient struct {
+	// AuthMethod How the app's own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.
+	AuthMethod *ConnectorOAuthClientAuthMethod `json:"auth_method,omitempty"`
+
+	// ClientId Empty for a provider app without an OAuth client, such as a Linq account.
+	ClientId    string    `json:"client_id"`
+	ConnectorId string    `json:"connector_id"`
+	CreatedAt   time.Time `json:"created_at"`
+
+	// HasClientSecret A client secret is stored, sealed. False for a public client.
+	HasClientSecret bool `json:"has_client_secret"`
+
+	// HasSigningSecret A signing secret for the provider app's events is stored, sealed.
+	HasSigningSecret bool `json:"has_signing_secret"`
+
+	// ProviderAppId The provider's id for the app the client belongs to. Absent when there is none.
+	ProviderAppId *string `json:"provider_app_id,omitempty"`
+
+	// Registration operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
+	Registration ConnectorClientRegistrationMethod `json:"registration"`
+
+	// UpdatedAt When the client, its secrets or its method last changed.
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // StreamAppState Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
 type StreamAppState string
 
@@ -6561,9 +6797,6 @@ type SttOptions struct {
 
 // SyncAgentRequest An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 type SyncAgentRequest struct {
-	// AgentPlugins Plugins the agent reaches with the app's own login: a catalog id, or an object naming it with how it is reached.
-	AgentPlugins *[]PluginEntry `json:"agent_plugins,omitempty"`
-
 	// BaseChange The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
 	BaseChange *string `json:"base_change,omitempty"`
 
@@ -6578,7 +6811,9 @@ type SyncAgentRequest struct {
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
-	Greeting *string        `json:"greeting,omitempty"`
+
+	// Greeting What the agent says as it joins, before anyone speaks.
+	Greeting *Greeting `json:"greeting,omitempty"`
 
 	// Guardrail The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`
@@ -6605,11 +6840,13 @@ type SyncAgentRequest struct {
 	// Name What the config is called, which is also the directory's name.
 	Name string `json:"name"`
 
-	// PluginEvents MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+	// PluginEvents Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
-	// ProgressiveTools Whether plugin, MCP server and connector tools are offered by a summary, the first call to each returning its full description and input schema instead of running it.
-	ProgressiveTools *bool `json:"progressive_tools,omitempty"`
+	// Plugins Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -6622,22 +6859,19 @@ type SyncAgentRequest struct {
 	Simulations *[]SimulationDeclaration `json:"simulations,omitempty"`
 	Skills      *[]SkillRequest          `json:"skills,omitempty"`
 
-	// Speed The voice's rate of delivery, 1 being its own. Zero leaves it there.
-	Speed *float64 `json:"speed,omitempty"`
-
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
-	Sts  *string            `json:"sts,omitempty"`
-	Stt  *string            `json:"stt,omitempty"`
-	Tags *map[string]string `json:"tags,omitempty"`
+	Sts *string `json:"sts,omitempty"`
+	Stt *string `json:"stt,omitempty"`
 
-	// ThinkingLlm Only a voice agent names one: a text agent runs everything on its llm.
-	ThinkingLlm *string `json:"thinking_llm,omitempty"`
-	Tts         *string `json:"tts,omitempty"`
+	// Subagent Only a voice agent names one: a text agent runs everything on its llm.
+	Subagent *string            `json:"subagent,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
 
-	// UserPlugins Plugins each end user connects with their own account, from the conversation, the first time the agent needs one. Each is named like agent_plugins.
-	UserPlugins *[]PluginEntry `json:"user_plugins,omitempty"`
-	Video       *SessionVideo  `json:"video,omitempty"`
-	Voice       *string        `json:"voice,omitempty"`
+	// Tools How an agent is offered its plugin, MCP server and connector tools.
+	Tools *AgentTools   `json:"tools,omitempty"`
+	Tts   *string       `json:"tts,omitempty"`
+	Video *SessionVideo `json:"video,omitempty"`
+	Voice *string       `json:"voice,omitempty"`
 }
 
 // SyncAgentResult defines model for SyncAgentResult.
@@ -6795,7 +7029,7 @@ type TimelineEntry struct {
 // ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result.
 type ToolApprovalCommand struct {
 	Allowed   bool   `json:"allowed"`
-	CommandId string `json:"command_id"`
+	RequestId string `json:"request_id"`
 
 	// Summary Shown on the declined call, such as "Location not shared".
 	Summary    *string                 `json:"summary,omitempty"`
@@ -6809,9 +7043,9 @@ type ToolApprovalCommandType string
 
 // ToolResultCommand defines model for ToolResultCommand.
 type ToolResultCommand struct {
-	CommandId  *string               `json:"command_id,omitempty"`
 	Error      *string               `json:"error,omitempty"`
 	Output     *MessageContent       `json:"output,omitempty"`
+	RequestId  *string               `json:"request_id,omitempty"`
 	ToolCallId string                `json:"tool_call_id"`
 	TurnId     *string               `json:"turn_id,omitempty"`
 	Type       ToolResultCommandType `json:"type"`
@@ -6919,15 +7153,12 @@ type TranscriptionRequest struct {
 
 // TransferCallRequest defines model for TransferCallRequest.
 type TransferCallRequest struct {
-	// CallId The Stream call the caller and the agent are already on.
-	CallId string `json:"call_id"`
-
-	// CallType The Stream call type. Omit for "agent".
-	CallType *string `json:"call_type,omitempty"`
-
 	// From The customer's number the human is dialled from, which is what they see.
-	From string             `json:"from"`
-	Tags *map[string]string `json:"tags,omitempty"`
+	From string `json:"from"`
+
+	// SessionId The session whose call the caller and the agent are on. The human is brought into it.
+	SessionId string             `json:"session_id"`
+	Tags      *map[string]string `json:"tags,omitempty"`
 
 	// To The human being brought onto the call.
 	To string `json:"to"`
@@ -7018,9 +7249,6 @@ type UpdateSessionRequest struct {
 	// Custom Replaces the caller's labels whole. An empty object clears them.
 	Custom      *map[string]interface{} `json:"custom,omitempty"`
 	Description *string                 `json:"description,omitempty"`
-
-	// Instructions What the agent is told to be, from the next turn.
-	Instructions *string `json:"instructions,omitempty"`
 
 	// Llm The conversation model, a provider/model or a capability shortcut.
 	Llm             *string `json:"llm,omitempty"`
@@ -7499,6 +7727,12 @@ type FinishConnectorConsentParams struct {
 	Error *string `form:"error,omitempty" json:"error,omitempty"`
 }
 
+// DeleteConnectorParams defines parameters for DeleteConnector.
+type DeleteConnectorParams struct {
+	// Force Delete it even while connections or agent config bindings use it. Its connections are deleted with it, and the bindings are left in place, naming a connector that no longer exists.
+	Force *bool `form:"force,omitempty" json:"force,omitempty"`
+}
+
 // ListConnectorEventDestinationsParams defines parameters for ListConnectorEventDestinations.
 type ListConnectorEventDestinationsParams struct {
 	// Limit Up to 200. Omitted is 25.
@@ -7572,6 +7806,15 @@ type StreamAgentLogsParams struct {
 
 // StreamAgentLogsParamsSeverity defines parameters for StreamAgentLogs.
 type StreamAgentLogsParamsSeverity string
+
+// ListCustomModelsParams defines parameters for ListCustomModels.
+type ListCustomModelsParams struct {
+	// Limit Up to 200. Omitted is 25.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
 
 // ListPluginsParams defines parameters for ListPlugins.
 type ListPluginsParams struct {
@@ -7837,9 +8080,13 @@ type PatchAgentConfigJSONRequestBody = AgentConfigPatch
 type UpdateAgentConfigJSONRequestBody = AgentConfigRequest
 
 // AuthorizePluginJSONRequestBody defines body for AuthorizePlugin for application/json ContentType.
+//
+// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type AuthorizePluginJSONRequestBody = AuthorizePluginRequest
 
 // SetPluginClientJSONRequestBody defines body for SetPluginClient for application/json ContentType.
+//
+// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type SetPluginClientJSONRequestBody = SetPluginClientRequest
 
 // CreateConnectionJSONRequestBody defines body for CreateConnection for application/json ContentType.
@@ -7875,6 +8122,12 @@ type IngestKnowledgeJSONRequestBody = IngestKnowledgeRequest
 // AddKnowledgeUrlJSONRequestBody defines body for AddKnowledgeUrl for application/json ContentType.
 type AddKnowledgeUrlJSONRequestBody = KnowledgeUrlRequest
 
+// CreateCustomModelJSONRequestBody defines body for CreateCustomModel for application/json ContentType.
+type CreateCustomModelJSONRequestBody = CustomModelRequest
+
+// UpdateCustomModelJSONRequestBody defines body for UpdateCustomModel for application/json ContentType.
+type UpdateCustomModelJSONRequestBody = CustomModelRequest
+
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
 
@@ -7886,9 +8139,6 @@ type UpdateSessionJSONRequestBody = UpdateSessionRequest
 
 // ForkSessionJSONRequestBody defines body for ForkSession for application/json ContentType.
 type ForkSessionJSONRequestBody = ForkSessionRequest
-
-// SetSessionInstructionsJSONRequestBody defines body for SetSessionInstructions for application/json ContentType.
-type SetSessionInstructionsJSONRequestBody = InstructionsRequest
 
 // RespondSessionJSONRequestBody defines body for RespondSession for application/json ContentType.
 type RespondSessionJSONRequestBody = RespondRequest
@@ -8672,63 +8922,79 @@ type ClientInterface interface {
 
 	// ListConfigPlugins The plugin logins this agent holds
 	//
-	// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+	// Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
 	//
 	// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DisconnectPlugin Drop a plugin login
 	//
+	// Deprecated: use deleteConnection.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	DisconnectPlugin(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizePluginWithBody Start a plugin login
 	//
-	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+	// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	AuthorizePluginWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizePlugin Start a plugin login
 	//
-	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+	// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	AuthorizePlugin(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeletePluginClient Drop the OAuth client an agent logs a plugin in with
 	//
+	// Deprecated: use deleteConnectorOAuthClient.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	DeletePluginClient(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetPluginClientWithBody Set the OAuth client an agent logs a plugin in with
 	//
-	// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+	// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetPluginClientWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetPluginClient Set the OAuth client an agent logs a plugin in with
 	//
-	// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+	// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetPluginClient(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnections List connections
@@ -8793,6 +9059,8 @@ type ClientInterface interface {
 	//
 	// Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 	//
+	// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -8803,6 +9071,8 @@ type ClientInterface interface {
 	// PutConnectionCredentials Set a connection's credentials
 	//
 	// Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
+	//
+	// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -8822,7 +9092,7 @@ type ClientInterface interface {
 
 	// ProxyConnectionDelete Call a connection's provider directly (DELETE)
 	//
-	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -8831,7 +9101,7 @@ type ClientInterface interface {
 
 	// ProxyConnectionGet Call a connection's provider directly (GET)
 	//
-	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -8840,7 +9110,7 @@ type ClientInterface interface {
 
 	// ProxyConnectionPatchWithBody Call a connection's provider directly (PATCH)
 	//
-	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -8851,7 +9121,7 @@ type ClientInterface interface {
 
 	// ProxyConnectionPostWithBody Call a connection's provider directly (POST)
 	//
-	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -8862,7 +9132,7 @@ type ClientInterface interface {
 
 	// ProxyConnectionPutWithBody Call a connection's provider directly (PUT)
 	//
-	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -8979,6 +9249,15 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
 	HandOffConnectorLaunch(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DeleteConnector Delete a custom connector
+	//
+	// Deletes one of the app's own connectors, every revision of it, with the app's OAuth client for it. A built-in cannot be deleted and is not found. A connector a live connection was made from, or an agent config binds, is refused with a 409 naming them, unless force is set: then its connections are deleted as a forced connection delete deletes one, credentials dropped at once, and the bindings are left in place. The same id may be created again, from revision 1.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/connectors/{id} (the `DeleteConnector` operationId).
+	DeleteConnector(ctx context.Context, id string, params *DeleteConnectorParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetConnector Read a connector
 	//
 	// A built-in or one of the app's own, at its newest revision. Another app's custom connector is not found.
@@ -9046,9 +9325,20 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/agents/connectors/{id}/oauth-client (the `DeleteConnectorOAuthClient` operationId).
 	DeleteConnectorOAuthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetConnectorOAuthClient Read the OAuth client the router keeps for the app and a connector
+	//
+	// Says which OAuth client and provider app the app's connections to the connector use: the app's own, the one the router created for it, or this deployment's own app recorded for it. It says whether a client secret and a signing secret are stored, and never returns either. Not found when there is none: the connector then uses this deployment's client, or registers one per consent.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/connectors/{id}/oauth-client (the `GetConnectorOAuthClient` operationId).
+	GetConnectorOAuthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// SetConnectorOAuthClientWithBody Set the app's own OAuth client for a connector
 	//
 	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
+	//
+	// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -9060,6 +9350,8 @@ type ClientInterface interface {
 	// SetConnectorOAuthClient Set the app's own OAuth client for a connector
 	//
 	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
+	//
+	// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -9108,8 +9400,8 @@ type ClientInterface interface {
 	// Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
 	// A command still running is reported as it stands; the session holding it is where it can be stopped.
 	//
-	// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
-	GetConversationCommand(ctx context.Context, cid string, commandId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with GET /v1/agents/conversations/{cid}/commands/{request_id} (the `GetConversationCommand` operationId).
+	GetConversationCommand(ctx context.Context, cid string, requestId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConversationMessages Read a persistent text conversation
 	//
@@ -9285,32 +9577,102 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/logs/{id} (the `GetAgentLog` operationId).
 	GetAgentLog(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListCustomModels The language models the calling customer serves themselves
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/models (the `ListCustomModels` operationId).
+	ListCustomModels(ctx context.Context, params *ListCustomModelsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCustomModelWithBody Add a model of the customer's own
+	//
+	// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+	CreateCustomModelWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCustomModel Add a model of the customer's own
+	//
+	// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+	CreateCustomModel(ctx context.Context, body CreateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteCustomModel Delete a model
+	//
+	// Sessions that name it are refused from then on.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/models/{id} (the `DeleteCustomModel` operationId).
+	DeleteCustomModel(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCustomModel One of the customer's models
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/models/{id} (the `GetCustomModel` operationId).
+	GetCustomModel(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateCustomModelWithBody Replace a model
+	//
+	// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+	UpdateCustomModelWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateCustomModel Replace a model
+	//
+	// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+	UpdateCustomModel(ctx context.Context, id string, body UpdateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListPlugins The hosted MCP servers an agent may attach
 	//
-	// A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
+	// Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
 	//
 	// Corresponds with GET /v1/agents/plugins (the `ListPlugins` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ListPlugins(ctx context.Context, params *ListPluginsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PluginOAuthCallback Finish a plugin login
 	//
-	// The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
+	// Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
 	//
 	// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginOAuthCallback(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReceivePluginEvent Receive a plugin's MCP event
 	//
-	// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+	// Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
 	//
 	// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ReceivePluginEvent(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetPluginLogo A plugin's logo
 	//
-	// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+	// Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
 	//
 	// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateSessionWithBody Join a call as a voice agent
@@ -9379,19 +9741,20 @@ type ClientInterface interface {
 	// GetSession One session
 	//
 	// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+	// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 	GetSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateSessionWithBody Change a session
 	//
-	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
-	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
-	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -9400,13 +9763,13 @@ type ClientInterface interface {
 
 	// UpdateSession Change a session
 	//
-	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
-	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
-	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -9415,10 +9778,10 @@ type ClientInterface interface {
 
 	// GetSessionCommand What is known about one durable command
 	//
-	// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+	// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same request id rather than inventing another one.
 	//
-	// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
-	GetSessionCommand(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with GET /v1/agents/sessions/{id}/commands/{request_id} (the `GetSessionCommand` operationId).
+	GetSessionCommand(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InterruptSessionCommand Stop one named command, and nothing else
 	//
@@ -9426,8 +9789,8 @@ type ClientInterface interface {
 	// A command accepted but not yet generating is prevented from starting. A command already completed, failed, cancelled or interrupted returns what it ended as. An unknown command is a 404, the same answer as a conversation the caller does not own.
 	// Interrupting model work claims nothing about a tool whose external side effect already happened.
 	//
-	// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
-	InterruptSessionCommand(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/agents/sessions/{id}/commands/{request_id}/interrupt (the `InterruptSessionCommand` operationId).
+	InterruptSessionCommand(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ForkSessionWithBody Continue a conversation as a new one
 	//
@@ -9448,24 +9811,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
 	ForkSession(ctx context.Context, id string, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SetSessionInstructionsWithBody Change what the agent is told to be
-	//
-	// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-	SetSessionInstructionsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SetSessionInstructions Change what the agent is told to be
-	//
-	// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-	SetSessionInstructions(ctx context.Context, id string, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InterruptSession Abandon the reply being spoken
 	//
@@ -9610,6 +9955,22 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 	ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StopSessionVoice Stop voice on a session
+	//
+	// The agent finishes what it is saying, leaves the call and carries the conversation on in writing, with everything said on the call. Stopping voice on a session held in writing changes nothing. Stopping the session is what ends it.
+	//
+	// Corresponds with DELETE /v1/agents/sessions/{id}/voice (the `StopSessionVoice` operationId).
+	StopSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartSessionVoice Start voice on a session
+	//
+	// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+	//
+	// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+	StartSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSimulationRuns What the simulations have come to, newest first
 	//
@@ -9973,7 +10334,7 @@ type ClientInterface interface {
 
 	// ClassifyWithBody Ask a classifier typed questions about a piece of text
 	//
-	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+	// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 	// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 	// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 	//
@@ -9984,7 +10345,7 @@ type ClientInterface interface {
 
 	// Classify Ask a classifier typed questions about a piece of text
 	//
-	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+	// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 	// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 	// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 	//
@@ -11527,9 +11888,10 @@ func (c *Client) GetAgentChanges(ctx context.Context, id string, reqEditors ...R
 
 // ListConfigPlugins The plugin logins this agent holds
 //
-// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+// Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
 //
 // Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListConfigPluginsRequest(c.Server, id)
 	if err != nil {
@@ -11544,9 +11906,11 @@ func (c *Client) ListConfigPlugins(ctx context.Context, id string, reqEditors ..
 
 // DisconnectPlugin Drop a plugin login
 //
+// Deprecated: use deleteConnection.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) DisconnectPlugin(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDisconnectPluginRequest(c.Server, id, pluginId)
 	if err != nil {
@@ -11561,12 +11925,13 @@ func (c *Client) DisconnectPlugin(ctx context.Context, id string, pluginId strin
 
 // AuthorizePluginWithBody Start a plugin login
 //
-// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) AuthorizePluginWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizePluginRequestWithBody(c.Server, id, pluginId, contentType, body)
 	if err != nil {
@@ -11581,12 +11946,13 @@ func (c *Client) AuthorizePluginWithBody(ctx context.Context, id string, pluginI
 
 // AuthorizePlugin Start a plugin login
 //
-// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) AuthorizePlugin(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizePluginRequest(c.Server, id, pluginId, body)
 	if err != nil {
@@ -11601,9 +11967,11 @@ func (c *Client) AuthorizePlugin(ctx context.Context, id string, pluginId string
 
 // DeletePluginClient Drop the OAuth client an agent logs a plugin in with
 //
+// Deprecated: use deleteConnectorOAuthClient.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) DeletePluginClient(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeletePluginClientRequest(c.Server, id, pluginId)
 	if err != nil {
@@ -11618,12 +11986,13 @@ func (c *Client) DeletePluginClient(ctx context.Context, id string, pluginId str
 
 // SetPluginClientWithBody Set the OAuth client an agent logs a plugin in with
 //
-// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) SetPluginClientWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetPluginClientRequestWithBody(c.Server, id, pluginId, contentType, body)
 	if err != nil {
@@ -11638,12 +12007,13 @@ func (c *Client) SetPluginClientWithBody(ctx context.Context, id string, pluginI
 
 // SetPluginClient Set the OAuth client an agent logs a plugin in with
 //
-// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) SetPluginClient(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetPluginClientRequest(c.Server, id, pluginId, body)
 	if err != nil {
@@ -11778,6 +12148,8 @@ func (c *Client) CreateAuthorization(ctx context.Context, id string, reqEditors 
 //
 // Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 //
+// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -11798,6 +12170,8 @@ func (c *Client) PutConnectionCredentialsWithBody(ctx context.Context, id string
 // PutConnectionCredentials Set a connection's credentials
 //
 // Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
+//
+// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -11837,7 +12211,7 @@ func (c *Client) ListConnectionInvocations(ctx context.Context, id string, param
 
 // ProxyConnectionDelete Call a connection's provider directly (DELETE)
 //
-// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -11856,7 +12230,7 @@ func (c *Client) ProxyConnectionDelete(ctx context.Context, id string, path stri
 
 // ProxyConnectionGet Call a connection's provider directly (GET)
 //
-// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -11875,7 +12249,7 @@ func (c *Client) ProxyConnectionGet(ctx context.Context, id string, path string,
 
 // ProxyConnectionPatchWithBody Call a connection's provider directly (PATCH)
 //
-// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -11896,7 +12270,7 @@ func (c *Client) ProxyConnectionPatchWithBody(ctx context.Context, id string, pa
 
 // ProxyConnectionPostWithBody Call a connection's provider directly (POST)
 //
-// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -11917,7 +12291,7 @@ func (c *Client) ProxyConnectionPostWithBody(ctx context.Context, id string, pat
 
 // ProxyConnectionPutWithBody Call a connection's provider directly (PUT)
 //
-// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -12164,6 +12538,25 @@ func (c *Client) HandOffConnectorLaunch(ctx context.Context, id string, reqEdito
 	return c.Client.Do(req)
 }
 
+// DeleteConnector Delete a custom connector
+//
+// Deletes one of the app's own connectors, every revision of it, with the app's OAuth client for it. A built-in cannot be deleted and is not found. A connector a live connection was made from, or an agent config binds, is refused with a 409 naming them, unless force is set: then its connections are deleted as a forced connection delete deletes one, credentials dropped at once, and the bindings are left in place. The same id may be created again, from revision 1.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/connectors/{id} (the `DeleteConnector` operationId).
+func (c *Client) DeleteConnector(ctx context.Context, id string, params *DeleteConnectorParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteConnectorRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetConnector Read a connector
 //
 // A built-in or one of the app's own, at its newest revision. Another app's custom connector is not found.
@@ -12301,9 +12694,30 @@ func (c *Client) DeleteConnectorOAuthClient(ctx context.Context, id string, reqE
 	return c.Client.Do(req)
 }
 
+// GetConnectorOAuthClient Read the OAuth client the router keeps for the app and a connector
+//
+// Says which OAuth client and provider app the app's connections to the connector use: the app's own, the one the router created for it, or this deployment's own app recorded for it. It says whether a client secret and a signing secret are stored, and never returns either. Not found when there is none: the connector then uses this deployment's client, or registers one per consent.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/connectors/{id}/oauth-client (the `GetConnectorOAuthClient` operationId).
+func (c *Client) GetConnectorOAuthClient(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectorOAuthClientRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // SetConnectorOAuthClientWithBody Set the app's own OAuth client for a connector
 //
 // Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
+//
+// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -12325,6 +12739,8 @@ func (c *Client) SetConnectorOAuthClientWithBody(ctx context.Context, id string,
 // SetConnectorOAuthClient Set the app's own OAuth client for a connector
 //
 // Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
+//
+// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -12413,9 +12829,9 @@ func (c *Client) SetConnectorProviderApp(ctx context.Context, id string, body Se
 // Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
 // A command still running is reported as it stands; the session holding it is where it can be stopped.
 //
-// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
-func (c *Client) GetConversationCommand(ctx context.Context, cid string, commandId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetConversationCommandRequest(c.Server, cid, commandId, params)
+// Corresponds with GET /v1/agents/conversations/{cid}/commands/{request_id} (the `GetConversationCommand` operationId).
+func (c *Client) GetConversationCommand(ctx context.Context, cid string, requestId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConversationCommandRequest(c.Server, cid, requestId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -12810,11 +13226,144 @@ func (c *Client) GetAgentLog(ctx context.Context, id string, reqEditors ...Reque
 	return c.Client.Do(req)
 }
 
+// ListCustomModels The language models the calling customer serves themselves
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/models (the `ListCustomModels` operationId).
+func (c *Client) ListCustomModels(ctx context.Context, params *ListCustomModelsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCustomModelsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCustomModelWithBody Add a model of the customer's own
+//
+// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+func (c *Client) CreateCustomModelWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCustomModelRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCustomModel Add a model of the customer's own
+//
+// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+func (c *Client) CreateCustomModel(ctx context.Context, body CreateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCustomModelRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteCustomModel Delete a model
+//
+// Sessions that name it are refused from then on.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/models/{id} (the `DeleteCustomModel` operationId).
+func (c *Client) DeleteCustomModel(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteCustomModelRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCustomModel One of the customer's models
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/models/{id} (the `GetCustomModel` operationId).
+func (c *Client) GetCustomModel(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCustomModelRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateCustomModelWithBody Replace a model
+//
+// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+func (c *Client) UpdateCustomModelWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCustomModelRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateCustomModel Replace a model
+//
+// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+func (c *Client) UpdateCustomModel(ctx context.Context, id string, body UpdateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCustomModelRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListPlugins The hosted MCP servers an agent may attach
 //
-// A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
+// Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
 //
 // Corresponds with GET /v1/agents/plugins (the `ListPlugins` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) ListPlugins(ctx context.Context, params *ListPluginsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListPluginsRequest(c.Server, params)
 	if err != nil {
@@ -12829,9 +13378,10 @@ func (c *Client) ListPlugins(ctx context.Context, params *ListPluginsParams, req
 
 // PluginOAuthCallback Finish a plugin login
 //
-// The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
+// Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
 //
 // Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) PluginOAuthCallback(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPluginOAuthCallbackRequest(c.Server, params)
 	if err != nil {
@@ -12846,9 +13396,10 @@ func (c *Client) PluginOAuthCallback(ctx context.Context, params *PluginOAuthCal
 
 // ReceivePluginEvent Receive a plugin's MCP event
 //
-// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+// Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
 //
 // Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) ReceivePluginEvent(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReceivePluginEventRequest(c.Server, token)
 	if err != nil {
@@ -12863,9 +13414,10 @@ func (c *Client) ReceivePluginEvent(ctx context.Context, token string, reqEditor
 
 // GetPluginLogo A plugin's logo
 //
-// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+// Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
 //
 // Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPluginLogoRequest(c.Server, pluginId)
 	if err != nil {
@@ -12994,6 +13546,7 @@ func (c *Client) DeleteSession(ctx context.Context, id string, reqEditors ...Req
 // GetSession One session
 //
 // Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
 //
 // Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 func (c *Client) GetSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -13010,13 +13563,13 @@ func (c *Client) GetSession(ctx context.Context, id string, reqEditors ...Reques
 
 // UpdateSessionWithBody Change a session
 //
-// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
-// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
-// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes any type of body and a specified content type.
 //
@@ -13035,13 +13588,13 @@ func (c *Client) UpdateSessionWithBody(ctx context.Context, id string, contentTy
 
 // UpdateSession Change a session
 //
-// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
-// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
-// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -13060,11 +13613,11 @@ func (c *Client) UpdateSession(ctx context.Context, id string, body UpdateSessio
 
 // GetSessionCommand What is known about one durable command
 //
-// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same request id rather than inventing another one.
 //
-// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
-func (c *Client) GetSessionCommand(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSessionCommandRequest(c.Server, id, commandId)
+// Corresponds with GET /v1/agents/sessions/{id}/commands/{request_id} (the `GetSessionCommand` operationId).
+func (c *Client) GetSessionCommand(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSessionCommandRequest(c.Server, id, requestId)
 	if err != nil {
 		return nil, err
 	}
@@ -13081,9 +13634,9 @@ func (c *Client) GetSessionCommand(ctx context.Context, id string, commandId str
 // A command accepted but not yet generating is prevented from starting. A command already completed, failed, cancelled or interrupted returns what it ended as. An unknown command is a 404, the same answer as a conversation the caller does not own.
 // Interrupting model work claims nothing about a tool whose external side effect already happened.
 //
-// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
-func (c *Client) InterruptSessionCommand(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewInterruptSessionCommandRequest(c.Server, id, commandId)
+// Corresponds with POST /v1/agents/sessions/{id}/commands/{request_id}/interrupt (the `InterruptSessionCommand` operationId).
+func (c *Client) InterruptSessionCommand(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInterruptSessionCommandRequest(c.Server, id, requestId)
 	if err != nil {
 		return nil, err
 	}
@@ -13124,44 +13677,6 @@ func (c *Client) ForkSessionWithBody(ctx context.Context, id string, contentType
 // Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
 func (c *Client) ForkSession(ctx context.Context, id string, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewForkSessionRequest(c.Server, id, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// SetSessionInstructionsWithBody Change what the agent is told to be
-//
-// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-func (c *Client) SetSessionInstructionsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetSessionInstructionsRequestWithBody(c.Server, id, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// SetSessionInstructions Change what the agent is told to be
-//
-// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-func (c *Client) SetSessionInstructions(ctx context.Context, id string, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetSessionInstructionsRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -13466,6 +13981,42 @@ func (c *Client) StopSession(ctx context.Context, id string, reqEditors ...Reque
 // Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 func (c *Client) ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSessionToolsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StopSessionVoice Stop voice on a session
+//
+// The agent finishes what it is saying, leaves the call and carries the conversation on in writing, with everything said on the call. Stopping voice on a session held in writing changes nothing. Stopping the session is what ends it.
+//
+// Corresponds with DELETE /v1/agents/sessions/{id}/voice (the `StopSessionVoice` operationId).
+func (c *Client) StopSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStopSessionVoiceRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartSessionVoice Start voice on a session
+//
+// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+//
+// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+func (c *Client) StartSessionVoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartSessionVoiceRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -14238,7 +14789,7 @@ func (c *Client) QueryAudit(ctx context.Context, body QueryAuditJSONRequestBody,
 
 // ClassifyWithBody Ask a classifier typed questions about a piece of text
 //
-// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 // Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 // A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 //
@@ -14259,7 +14810,7 @@ func (c *Client) ClassifyWithBody(ctx context.Context, contentType string, body 
 
 // Classify Ask a classifier typed questions about a piece of text
 //
-// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 // Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 // A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 //
@@ -18579,6 +19130,67 @@ func NewHandOffConnectorLaunchRequest(server string, id string) (*http.Request, 
 	return req, nil
 }
 
+// NewDeleteConnectorRequest constructs an http.Request for the DeleteConnector method
+func NewDeleteConnectorRequest(server string, id string, params *DeleteConnectorParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Force != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "force", *params.Force, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetConnectorRequest constructs an http.Request for the GetConnector method
 func NewGetConnectorRequest(server string, id string) (*http.Request, error) {
 	var err error
@@ -18849,6 +19461,40 @@ func NewDeleteConnectorOAuthClientRequest(server string, id string) (*http.Reque
 	return req, nil
 }
 
+// NewGetConnectorOAuthClientRequest constructs an http.Request for the GetConnectorOAuthClient method
+func NewGetConnectorOAuthClientRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connectors/%s/oauth-client", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewSetConnectorOAuthClientRequest calls the generic SetConnectorOAuthClient builder with application/json body
 func NewSetConnectorOAuthClientRequest(server string, id string, body SetConnectorOAuthClientJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -18978,7 +19624,7 @@ func NewSetConnectorProviderAppRequestWithBody(server string, id string, content
 }
 
 // NewGetConversationCommandRequest constructs an http.Request for the GetConversationCommand method
-func NewGetConversationCommandRequest(server string, cid string, commandId string, params *GetConversationCommandParams) (*http.Request, error) {
+func NewGetConversationCommandRequest(server string, cid string, requestId string, params *GetConversationCommandParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -18990,7 +19636,7 @@ func NewGetConversationCommandRequest(server string, cid string, commandId strin
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "command_id", commandId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -19977,6 +20623,227 @@ func NewGetAgentLogRequest(server string, id string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListCustomModelsRequest constructs an http.Request for the ListCustomModels method
+func NewListCustomModelsRequest(server string, params *ListCustomModelsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/models")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateCustomModelRequest calls the generic CreateCustomModel builder with application/json body
+func NewCreateCustomModelRequest(server string, body CreateCustomModelJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateCustomModelRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateCustomModelRequestWithBody constructs an http.Request for the CreateCustomModel method, with any body, and a specified content type
+func NewCreateCustomModelRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/models")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteCustomModelRequest constructs an http.Request for the DeleteCustomModel method
+func NewDeleteCustomModelRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/models/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetCustomModelRequest constructs an http.Request for the GetCustomModel method
+func NewGetCustomModelRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/models/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateCustomModelRequest calls the generic UpdateCustomModel builder with application/json body
+func NewUpdateCustomModelRequest(server string, id string, body UpdateCustomModelJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateCustomModelRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateCustomModelRequestWithBody constructs an http.Request for the UpdateCustomModel method, with any body, and a specified content type
+func NewUpdateCustomModelRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/models/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListPluginsRequest constructs an http.Request for the ListPlugins method
 func NewListPluginsRequest(server string, params *ListPluginsParams) (*http.Request, error) {
 	var err error
@@ -20373,7 +21240,7 @@ func NewUpdateSessionRequestWithBody(server string, id string, contentType strin
 }
 
 // NewGetSessionCommandRequest constructs an http.Request for the GetSessionCommand method
-func NewGetSessionCommandRequest(server string, id string, commandId string) (*http.Request, error) {
+func NewGetSessionCommandRequest(server string, id string, requestId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -20385,7 +21252,7 @@ func NewGetSessionCommandRequest(server string, id string, commandId string) (*h
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "command_id", commandId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -20414,7 +21281,7 @@ func NewGetSessionCommandRequest(server string, id string, commandId string) (*h
 }
 
 // NewInterruptSessionCommandRequest constructs an http.Request for the InterruptSessionCommand method
-func NewInterruptSessionCommandRequest(server string, id string, commandId string) (*http.Request, error) {
+func NewInterruptSessionCommandRequest(server string, id string, requestId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -20426,7 +21293,7 @@ func NewInterruptSessionCommandRequest(server string, id string, commandId strin
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "command_id", commandId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -20492,53 +21359,6 @@ func NewForkSessionRequestWithBody(server string, id string, contentType string,
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewSetSessionInstructionsRequest calls the generic SetSessionInstructions builder with application/json body
-func NewSetSessionInstructionsRequest(server string, id string, body SetSessionInstructionsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewSetSessionInstructionsRequestWithBody(server, id, "application/json", bodyReader)
-}
-
-// NewSetSessionInstructionsRequestWithBody constructs an http.Request for the SetSessionInstructions method, with any body, and a specified content type
-func NewSetSessionInstructionsRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/instructions", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -21070,6 +21890,74 @@ func NewListSessionToolsRequest(server string, id string) (*http.Request, error)
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStopSessionVoiceRequest constructs an http.Request for the StopSessionVoice method
+func NewStopSessionVoiceRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/voice", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStartSessionVoiceRequest constructs an http.Request for the StartSessionVoice method
+func NewStartSessionVoiceRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/voice", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -25895,69 +26783,85 @@ type ClientWithResponsesInterface interface {
 
 	// ListConfigPluginsWithResponse The plugin logins this agent holds
 	//
-	// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+	// Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ListConfigPluginsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error)
 
 	// DisconnectPluginWithResponse Drop a plugin login
 	//
+	// Deprecated: use deleteConnection.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	DisconnectPluginWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error)
 
 	// AuthorizePluginWithBodyWithResponse Start a plugin login
 	//
-	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+	// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	AuthorizePluginWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
 
 	// AuthorizePluginWithResponse Start a plugin login
 	//
-	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+	// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	AuthorizePluginWithResponse(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
 
 	// DeletePluginClientWithResponse Drop the OAuth client an agent logs a plugin in with
 	//
+	// Deprecated: use deleteConnectorOAuthClient.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	DeletePluginClientWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DeletePluginClientResponse, error)
 
 	// SetPluginClientWithBodyWithResponse Set the OAuth client an agent logs a plugin in with
 	//
-	// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+	// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetPluginClientWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error)
 
 	// SetPluginClientWithResponse Set the OAuth client an agent logs a plugin in with
 	//
-	// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+	// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetPluginClientWithResponse(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error)
 
 	// ListConnectionsWithResponse List connections
@@ -26030,6 +26934,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 	//
+	// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -26040,6 +26946,8 @@ type ClientWithResponsesInterface interface {
 	// PutConnectionCredentialsWithResponse Set a connection's credentials
 	//
 	// Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
+	//
+	// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -26061,7 +26969,7 @@ type ClientWithResponsesInterface interface {
 
 	// ProxyConnectionDeleteWithResponse Call a connection's provider directly (DELETE)
 	//
-	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -26072,7 +26980,7 @@ type ClientWithResponsesInterface interface {
 
 	// ProxyConnectionGetWithResponse Call a connection's provider directly (GET)
 	//
-	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -26083,7 +26991,7 @@ type ClientWithResponsesInterface interface {
 
 	// ProxyConnectionPatchWithBodyWithResponse Call a connection's provider directly (PATCH)
 	//
-	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -26094,7 +27002,7 @@ type ClientWithResponsesInterface interface {
 
 	// ProxyConnectionPostWithBodyWithResponse Call a connection's provider directly (POST)
 	//
-	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -26105,7 +27013,7 @@ type ClientWithResponsesInterface interface {
 
 	// ProxyConnectionPutWithBodyWithResponse Call a connection's provider directly (PUT)
 	//
-	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+	// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -26238,6 +27146,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/connectors/oauth/launch/{id} (the `HandOffConnectorLaunch` operationId).
 	HandOffConnectorLaunchWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*HandOffConnectorLaunchResponse, error)
 
+	// DeleteConnectorWithResponse Delete a custom connector
+	//
+	// Deletes one of the app's own connectors, every revision of it, with the app's OAuth client for it. A built-in cannot be deleted and is not found. A connector a live connection was made from, or an agent config binds, is refused with a 409 naming them, unless force is set: then its connections are deleted as a forced connection delete deletes one, credentials dropped at once, and the bindings are left in place. The same id may be created again, from revision 1.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/connectors/{id} (the `DeleteConnector` operationId).
+	DeleteConnectorWithResponse(ctx context.Context, id string, params *DeleteConnectorParams, reqEditors ...RequestEditorFn) (*DeleteConnectorResponse, error)
+
 	// GetConnectorWithResponse Read a connector
 	//
 	// A built-in or one of the app's own, at its newest revision. Another app's custom connector is not found.
@@ -26315,9 +27234,22 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /v1/agents/connectors/{id}/oauth-client (the `DeleteConnectorOAuthClient` operationId).
 	DeleteConnectorOAuthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteConnectorOAuthClientResponse, error)
 
+	// GetConnectorOAuthClientWithResponse Read the OAuth client the router keeps for the app and a connector
+	//
+	// Says which OAuth client and provider app the app's connections to the connector use: the app's own, the one the router created for it, or this deployment's own app recorded for it. It says whether a client secret and a signing secret are stored, and never returns either. Not found when there is none: the connector then uses this deployment's client, or registers one per consent.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/connectors/{id}/oauth-client (the `GetConnectorOAuthClient` operationId).
+	GetConnectorOAuthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorOAuthClientResponse, error)
+
 	// SetConnectorOAuthClientWithBodyWithResponse Set the app's own OAuth client for a connector
 	//
 	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
+	//
+	// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -26329,6 +27261,8 @@ type ClientWithResponsesInterface interface {
 	// SetConnectorOAuthClientWithResponse Set the app's own OAuth client for a connector
 	//
 	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
+	//
+	// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -26381,8 +27315,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
-	GetConversationCommandWithResponse(ctx context.Context, cid string, commandId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error)
+	// Corresponds with GET /v1/agents/conversations/{cid}/commands/{request_id} (the `GetConversationCommand` operationId).
+	GetConversationCommandWithResponse(ctx context.Context, cid string, requestId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error)
 
 	// GetConversationMessagesWithResponse Read a persistent text conversation
 	//
@@ -26584,40 +27518,116 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/logs/{id} (the `GetAgentLog` operationId).
 	GetAgentLogWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentLogResponse, error)
 
+	// ListCustomModelsWithResponse The language models the calling customer serves themselves
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/models (the `ListCustomModels` operationId).
+	ListCustomModelsWithResponse(ctx context.Context, params *ListCustomModelsParams, reqEditors ...RequestEditorFn) (*ListCustomModelsResponse, error)
+
+	// CreateCustomModelWithBodyWithResponse Add a model of the customer's own
+	//
+	// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+	CreateCustomModelWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCustomModelResponse, error)
+
+	// CreateCustomModelWithResponse Add a model of the customer's own
+	//
+	// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+	CreateCustomModelWithResponse(ctx context.Context, body CreateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCustomModelResponse, error)
+
+	// DeleteCustomModelWithResponse Delete a model
+	//
+	// Sessions that name it are refused from then on.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/models/{id} (the `DeleteCustomModel` operationId).
+	DeleteCustomModelWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteCustomModelResponse, error)
+
+	// GetCustomModelWithResponse One of the customer's models
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/models/{id} (the `GetCustomModel` operationId).
+	GetCustomModelWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCustomModelResponse, error)
+
+	// UpdateCustomModelWithBodyWithResponse Replace a model
+	//
+	// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+	UpdateCustomModelWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCustomModelResponse, error)
+
+	// UpdateCustomModelWithResponse Replace a model
+	//
+	// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+	UpdateCustomModelWithResponse(ctx context.Context, id string, body UpdateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCustomModelResponse, error)
+
 	// ListPluginsWithResponse The hosted MCP servers an agent may attach
 	//
-	// A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
+	// Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/plugins (the `ListPlugins` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ListPluginsWithResponse(ctx context.Context, params *ListPluginsParams, reqEditors ...RequestEditorFn) (*ListPluginsResponse, error)
 
 	// PluginOAuthCallbackWithResponse Finish a plugin login
 	//
-	// The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
+	// Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginOAuthCallbackWithResponse(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*PluginOAuthCallbackResponse, error)
 
 	// ReceivePluginEventWithResponse Receive a plugin's MCP event
 	//
-	// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+	// Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ReceivePluginEventWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceivePluginEventResponse, error)
 
 	// GetPluginLogoWithResponse A plugin's logo
 	//
-	// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+	// Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetPluginLogoWithResponse(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*GetPluginLogoResponse, error)
 
 	// CreateSessionWithBodyWithResponse Join a call as a voice agent
@@ -26688,6 +27698,7 @@ type ClientWithResponsesInterface interface {
 	// GetSessionWithResponse One session
 	//
 	// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+	// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -26696,13 +27707,13 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateSessionWithBodyWithResponse Change a session
 	//
-	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
-	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
-	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -26711,13 +27722,13 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateSessionWithResponse Change a session
 	//
-	// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
-	// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
-	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+	// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -26726,12 +27737,12 @@ type ClientWithResponsesInterface interface {
 
 	// GetSessionCommandWithResponse What is known about one durable command
 	//
-	// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+	// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same request id rather than inventing another one.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
-	GetSessionCommandWithResponse(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error)
+	// Corresponds with GET /v1/agents/sessions/{id}/commands/{request_id} (the `GetSessionCommand` operationId).
+	GetSessionCommandWithResponse(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error)
 
 	// InterruptSessionCommandWithResponse Stop one named command, and nothing else
 	//
@@ -26741,8 +27752,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
-	InterruptSessionCommandWithResponse(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error)
+	// Corresponds with POST /v1/agents/sessions/{id}/commands/{request_id}/interrupt (the `InterruptSessionCommand` operationId).
+	InterruptSessionCommandWithResponse(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error)
 
 	// ForkSessionWithBodyWithResponse Continue a conversation as a new one
 	//
@@ -26763,24 +27774,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
 	ForkSessionWithResponse(ctx context.Context, id string, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error)
-
-	// SetSessionInstructionsWithBodyWithResponse Change what the agent is told to be
-	//
-	// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-	SetSessionInstructionsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error)
-
-	// SetSessionInstructionsWithResponse Change what the agent is told to be
-	//
-	// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-	SetSessionInstructionsWithResponse(ctx context.Context, id string, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error)
 
 	// InterruptSessionWithResponse Abandon the reply being spoken
 	//
@@ -26937,6 +27930,26 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 	ListSessionToolsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListSessionToolsResponse, error)
+
+	// StopSessionVoiceWithResponse Stop voice on a session
+	//
+	// The agent finishes what it is saying, leaves the call and carries the conversation on in writing, with everything said on the call. Stopping voice on a session held in writing changes nothing. Stopping the session is what ends it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/sessions/{id}/voice (the `StopSessionVoice` operationId).
+	StopSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopSessionVoiceResponse, error)
+
+	// StartSessionVoiceWithResponse Start voice on a session
+	//
+	// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+	//
+	// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+	StartSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error)
 
 	// ListSimulationRunsWithResponse What the simulations have come to, newest first
 	//
@@ -27336,7 +28349,7 @@ type ClientWithResponsesInterface interface {
 
 	// ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
 	//
-	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+	// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 	// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 	// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 	//
@@ -27347,7 +28360,7 @@ type ClientWithResponsesInterface interface {
 
 	// ClassifyWithResponse Ask a classifier typed questions about a piece of text
 	//
-	// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+	// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 	// Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 	// A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 	//
@@ -32387,6 +33400,82 @@ func (r HandOffConnectorLaunchResponse) ContentType() string {
 	return ""
 }
 
+type DeleteConnectorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteConnectorResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteConnectorResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteConnectorResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteConnectorResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteConnectorResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteConnectorResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteConnectorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteConnectorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteConnectorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteConnectorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetConnectorResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -32829,6 +33918,82 @@ func (r DeleteConnectorOAuthClientResponse) ContentType() string {
 	return ""
 }
 
+type GetConnectorOAuthClientResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *StoredConnectorOAuthClient
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON200() *StoredConnectorOAuthClient {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetConnectorOAuthClientResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConnectorOAuthClientResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConnectorOAuthClientResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConnectorOAuthClientResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConnectorOAuthClientResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type SetConnectorOAuthClientResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -32848,6 +34013,8 @@ type SetConnectorOAuthClientResponse struct {
 	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32888,6 +34055,11 @@ func (r SetConnectorOAuthClientResponse) GetJSON409() *ErrorResponse {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r SetConnectorOAuthClientResponse) GetJSON500() *InternalError {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SetConnectorOAuthClientResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34418,6 +35590,393 @@ func (r GetAgentLogResponse) ContentType() string {
 	return ""
 }
 
+type ListCustomModelsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CustomModelPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCustomModelsResponse) GetJSON200() *CustomModelPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListCustomModelsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListCustomModelsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListCustomModelsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListCustomModelsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCustomModelsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCustomModelsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCustomModelsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCustomModelsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateCustomModelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *CustomModel
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *ErrorResponse
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateCustomModelResponse) GetJSON201() *CustomModel {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateCustomModelResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateCustomModelResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateCustomModelResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateCustomModelResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateCustomModelResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r CreateCustomModelResponse) GetJSON501() *ErrorResponse {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateCustomModelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateCustomModelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateCustomModelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateCustomModelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteCustomModelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteCustomModelResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteCustomModelResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteCustomModelResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteCustomModelResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteCustomModelResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteCustomModelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteCustomModelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteCustomModelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteCustomModelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCustomModelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CustomModel
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCustomModelResponse) GetJSON200() *CustomModel {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetCustomModelResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetCustomModelResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetCustomModelResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetCustomModelResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetCustomModelResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCustomModelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCustomModelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCustomModelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCustomModelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateCustomModelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CustomModel
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON200() *CustomModel {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r UpdateCustomModelResponse) GetJSON501() *ErrorResponse {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateCustomModelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateCustomModelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateCustomModelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateCustomModelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListPluginsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -35191,75 +36750,6 @@ func (r ForkSessionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ForkSessionResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type SetSessionInstructionsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r SetSessionInstructionsResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r SetSessionInstructionsResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r SetSessionInstructionsResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r SetSessionInstructionsResponse) GetJSON404() *NotFound {
-	return r.JSON404
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r SetSessionInstructionsResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetBody returns the raw response body bytes
-func (r SetSessionInstructionsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r SetSessionInstructionsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r SetSessionInstructionsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r SetSessionInstructionsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -36061,6 +37551,144 @@ func (r ListSessionToolsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListSessionToolsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StopSessionVoiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StopSessionVoiceResponse) GetJSON200() *Session {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r StopSessionVoiceResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StopSessionVoiceResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StopSessionVoiceResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StopSessionVoiceResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r StopSessionVoiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StopSessionVoiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StopSessionVoiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StopSessionVoiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StartSessionVoiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON200() *Session {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StartSessionVoiceResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r StartSessionVoiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StartSessionVoiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StartSessionVoiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StartSessionVoiceResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -43889,11 +45517,13 @@ func (c *ClientWithResponses) GetAgentChangesWithResponse(ctx context.Context, i
 
 // ListConfigPluginsWithResponse The plugin logins this agent holds
 //
-// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for user_plugins or a server with user, are never listed.
+// Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) ListConfigPluginsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error) {
 	rsp, err := c.ListConfigPlugins(ctx, id, reqEditors...)
 	if err != nil {
@@ -43904,11 +45534,14 @@ func (c *ClientWithResponses) ListConfigPluginsWithResponse(ctx context.Context,
 
 // DisconnectPluginWithResponse Drop a plugin login
 //
+// Deprecated: use deleteConnection.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) DisconnectPluginWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error) {
 	rsp, err := c.DisconnectPlugin(ctx, id, pluginId, reqEditors...)
 	if err != nil {
@@ -43919,12 +45552,14 @@ func (c *ClientWithResponses) DisconnectPluginWithResponse(ctx context.Context, 
 
 // AuthorizePluginWithBodyWithResponse Start a plugin login
 //
-// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) AuthorizePluginWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
 	rsp, err := c.AuthorizePluginWithBody(ctx, id, pluginId, contentType, body, reqEditors...)
 	if err != nil {
@@ -43935,12 +45570,13 @@ func (c *ClientWithResponses) AuthorizePluginWithBodyWithResponse(ctx context.Co
 
 // AuthorizePluginWithResponse Start a plugin login
 //
-// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
 	rsp, err := c.AuthorizePlugin(ctx, id, pluginId, body, reqEditors...)
 	if err != nil {
@@ -43951,11 +45587,14 @@ func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, i
 
 // DeletePluginClientWithResponse Drop the OAuth client an agent logs a plugin in with
 //
+// Deprecated: use deleteConnectorOAuthClient.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) DeletePluginClientWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DeletePluginClientResponse, error) {
 	rsp, err := c.DeletePluginClient(ctx, id, pluginId, reqEditors...)
 	if err != nil {
@@ -43966,12 +45605,14 @@ func (c *ClientWithResponses) DeletePluginClientWithResponse(ctx context.Context
 
 // SetPluginClientWithBodyWithResponse Set the OAuth client an agent logs a plugin in with
 //
-// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) SetPluginClientWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error) {
 	rsp, err := c.SetPluginClientWithBody(ctx, id, pluginId, contentType, body, reqEditors...)
 	if err != nil {
@@ -43982,12 +45623,13 @@ func (c *ClientWithResponses) SetPluginClientWithBodyWithResponse(ctx context.Co
 
 // SetPluginClientWithResponse Set the OAuth client an agent logs a plugin in with
 //
-// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) SetPluginClientWithResponse(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error) {
 	rsp, err := c.SetPluginClient(ctx, id, pluginId, body, reqEditors...)
 	if err != nil {
@@ -44102,6 +45744,8 @@ func (c *ClientWithResponses) CreateAuthorizationWithResponse(ctx context.Contex
 //
 // Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
 //
+// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
+//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -44118,6 +45762,8 @@ func (c *ClientWithResponses) PutConnectionCredentialsWithBodyWithResponse(ctx c
 // PutConnectionCredentialsWithResponse Set a connection's credentials
 //
 // Stores the credentials a connection's scheme takes, sealed, and connects it: an API key, a bearer token, an OAuth client for client credentials, an OAuth grant the provider already issued, or nothing for a connector that needs none. expected_revision must be the connection's revision as last read; a connection that moved past it is a 409. The values are never shown again. Who may set them is who may read the connection.
+//
+// A bearer or api_key connection given its token or key again moves to its connector's latest revision, as a consent moves an OAuth one, when that revision takes the connection's scheme and inputs. Otherwise it keeps its own revision, and a 400 says why when that one is marked broken.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -44151,7 +45797,7 @@ func (c *ClientWithResponses) ListConnectionInvocationsWithResponse(ctx context.
 
 // ProxyConnectionDeleteWithResponse Call a connection's provider directly (DELETE)
 //
-// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -44168,7 +45814,7 @@ func (c *ClientWithResponses) ProxyConnectionDeleteWithResponse(ctx context.Cont
 
 // ProxyConnectionGetWithResponse Call a connection's provider directly (GET)
 //
-// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -44185,7 +45831,7 @@ func (c *ClientWithResponses) ProxyConnectionGetWithResponse(ctx context.Context
 
 // ProxyConnectionPatchWithBodyWithResponse Call a connection's provider directly (PATCH)
 //
-// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -44202,7 +45848,7 @@ func (c *ClientWithResponses) ProxyConnectionPatchWithBodyWithResponse(ctx conte
 
 // ProxyConnectionPostWithBodyWithResponse Call a connection's provider directly (POST)
 //
-// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -44219,7 +45865,7 @@ func (c *ClientWithResponses) ProxyConnectionPostWithBodyWithResponse(ctx contex
 
 // ProxyConnectionPutWithBodyWithResponse Call a connection's provider directly (PUT)
 //
-// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. A path with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
+// Forwards the request to the connector's api_base with path appended, and answers with the provider's answer as it came: status, headers and body. The request goes as it came, but for the router's own credentials and caller headers (Authorization, X-Api-Key, Stream-Auth-Type, X-Stream-*, X-Customer-Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the connection's own credential is added instead. On a 401 the credential is renewed and the request sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are, and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent leaves one proxy_call audit row.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -44430,6 +46076,23 @@ func (c *ClientWithResponses) HandOffConnectorLaunchWithResponse(ctx context.Con
 	return ParseHandOffConnectorLaunchResponse(rsp)
 }
 
+// DeleteConnectorWithResponse Delete a custom connector
+//
+// Deletes one of the app's own connectors, every revision of it, with the app's OAuth client for it. A built-in cannot be deleted and is not found. A connector a live connection was made from, or an agent config binds, is refused with a 409 naming them, unless force is set: then its connections are deleted as a forced connection delete deletes one, credentials dropped at once, and the bindings are left in place. The same id may be created again, from revision 1.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/connectors/{id} (the `DeleteConnector` operationId).
+func (c *ClientWithResponses) DeleteConnectorWithResponse(ctx context.Context, id string, params *DeleteConnectorParams, reqEditors ...RequestEditorFn) (*DeleteConnectorResponse, error) {
+	rsp, err := c.DeleteConnector(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteConnectorResponse(rsp)
+}
+
 // GetConnectorWithResponse Read a connector
 //
 // A built-in or one of the app's own, at its newest revision. Another app's custom connector is not found.
@@ -44549,9 +46212,28 @@ func (c *ClientWithResponses) DeleteConnectorOAuthClientWithResponse(ctx context
 	return ParseDeleteConnectorOAuthClientResponse(rsp)
 }
 
+// GetConnectorOAuthClientWithResponse Read the OAuth client the router keeps for the app and a connector
+//
+// Says which OAuth client and provider app the app's connections to the connector use: the app's own, the one the router created for it, or this deployment's own app recorded for it. It says whether a client secret and a signing secret are stored, and never returns either. Not found when there is none: the connector then uses this deployment's client, or registers one per consent.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/connectors/{id}/oauth-client (the `GetConnectorOAuthClient` operationId).
+func (c *ClientWithResponses) GetConnectorOAuthClientWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetConnectorOAuthClientResponse, error) {
+	rsp, err := c.GetConnectorOAuthClient(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConnectorOAuthClientResponse(rsp)
+}
+
 // SetConnectorOAuthClientWithBodyWithResponse Set the app's own OAuth client for a connector
 //
 // Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
+//
+// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -44569,6 +46251,8 @@ func (c *ClientWithResponses) SetConnectorOAuthClientWithBodyWithResponse(ctx co
 // SetConnectorOAuthClientWithResponse Set the app's own OAuth client for a connector
 //
 // Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
+//
+// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -44645,9 +46329,9 @@ func (c *ClientWithResponses) SetConnectorProviderAppWithResponse(ctx context.Co
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
-func (c *ClientWithResponses) GetConversationCommandWithResponse(ctx context.Context, cid string, commandId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error) {
-	rsp, err := c.GetConversationCommand(ctx, cid, commandId, params, reqEditors...)
+// Corresponds with GET /v1/agents/conversations/{cid}/commands/{request_id} (the `GetConversationCommand` operationId).
+func (c *ClientWithResponses) GetConversationCommandWithResponse(ctx context.Context, cid string, requestId string, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error) {
+	rsp, err := c.GetConversationCommand(ctx, cid, requestId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -44980,13 +46664,125 @@ func (c *ClientWithResponses) GetAgentLogWithResponse(ctx context.Context, id st
 	return ParseGetAgentLogResponse(rsp)
 }
 
+// ListCustomModelsWithResponse The language models the calling customer serves themselves
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/models (the `ListCustomModels` operationId).
+func (c *ClientWithResponses) ListCustomModelsWithResponse(ctx context.Context, params *ListCustomModelsParams, reqEditors ...RequestEditorFn) (*ListCustomModelsResponse, error) {
+	rsp, err := c.ListCustomModels(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCustomModelsResponse(rsp)
+}
+
+// CreateCustomModelWithBodyWithResponse Add a model of the customer's own
+//
+// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+func (c *ClientWithResponses) CreateCustomModelWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCustomModelResponse, error) {
+	rsp, err := c.CreateCustomModelWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCustomModelResponse(rsp)
+}
+
+// CreateCustomModelWithResponse Add a model of the customer's own
+//
+// A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A shared router only dials public https endpoints.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/models (the `CreateCustomModel` operationId).
+func (c *ClientWithResponses) CreateCustomModelWithResponse(ctx context.Context, body CreateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCustomModelResponse, error) {
+	rsp, err := c.CreateCustomModel(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCustomModelResponse(rsp)
+}
+
+// DeleteCustomModelWithResponse Delete a model
+//
+// Sessions that name it are refused from then on.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/models/{id} (the `DeleteCustomModel` operationId).
+func (c *ClientWithResponses) DeleteCustomModelWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteCustomModelResponse, error) {
+	rsp, err := c.DeleteCustomModel(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteCustomModelResponse(rsp)
+}
+
+// GetCustomModelWithResponse One of the customer's models
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/models/{id} (the `GetCustomModel` operationId).
+func (c *ClientWithResponses) GetCustomModelWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCustomModelResponse, error) {
+	rsp, err := c.GetCustomModel(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCustomModelResponse(rsp)
+}
+
+// UpdateCustomModelWithBodyWithResponse Replace a model
+//
+// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+func (c *ClientWithResponses) UpdateCustomModelWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCustomModelResponse, error) {
+	rsp, err := c.UpdateCustomModelWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateCustomModelResponse(rsp)
+}
+
+// UpdateCustomModelWithResponse Replace a model
+//
+// Everything is replaced but the api key, which is kept when left out and removed when sent empty. Renaming a model breaks every config that names it by its old name.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
+func (c *ClientWithResponses) UpdateCustomModelWithResponse(ctx context.Context, id string, body UpdateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCustomModelResponse, error) {
+	rsp, err := c.UpdateCustomModel(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateCustomModelResponse(rsp)
+}
+
 // ListPluginsWithResponse The hosted MCP servers an agent may attach
 //
-// A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
+// Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/plugins (the `ListPlugins` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) ListPluginsWithResponse(ctx context.Context, params *ListPluginsParams, reqEditors ...RequestEditorFn) (*ListPluginsResponse, error) {
 	rsp, err := c.ListPlugins(ctx, params, reqEditors...)
 	if err != nil {
@@ -44997,11 +46793,13 @@ func (c *ClientWithResponses) ListPluginsWithResponse(ctx context.Context, param
 
 // PluginOAuthCallbackWithResponse Finish a plugin login
 //
-// The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
+// Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) PluginOAuthCallbackWithResponse(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*PluginOAuthCallbackResponse, error) {
 	rsp, err := c.PluginOAuthCallback(ctx, params, reqEditors...)
 	if err != nil {
@@ -45012,11 +46810,13 @@ func (c *ClientWithResponses) PluginOAuthCallbackWithResponse(ctx context.Contex
 
 // ReceivePluginEventWithResponse Receive a plugin's MCP event
 //
-// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+// Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) ReceivePluginEventWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceivePluginEventResponse, error) {
 	rsp, err := c.ReceivePluginEvent(ctx, token, reqEditors...)
 	if err != nil {
@@ -45027,11 +46827,13 @@ func (c *ClientWithResponses) ReceivePluginEventWithResponse(ctx context.Context
 
 // GetPluginLogoWithResponse A plugin's logo
 //
-// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+// Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) GetPluginLogoWithResponse(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*GetPluginLogoResponse, error) {
 	rsp, err := c.GetPluginLogo(ctx, pluginId, reqEditors...)
 	if err != nil {
@@ -45138,6 +46940,7 @@ func (c *ClientWithResponses) DeleteSessionWithResponse(ctx context.Context, id 
 // GetSessionWithResponse One session
 //
 // Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -45152,13 +46955,13 @@ func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, id str
 
 // UpdateSessionWithBodyWithResponse Change a session
 //
-// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
-// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
-// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -45173,13 +46976,13 @@ func (c *ClientWithResponses) UpdateSessionWithBodyWithResponse(ctx context.Cont
 
 // UpdateSessionWithResponse Change a session
 //
-// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
-// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
-// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -45194,13 +46997,13 @@ func (c *ClientWithResponses) UpdateSessionWithResponse(ctx context.Context, id 
 
 // GetSessionCommandWithResponse What is known about one durable command
 //
-// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same request id rather than inventing another one.
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
-func (c *ClientWithResponses) GetSessionCommandWithResponse(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error) {
-	rsp, err := c.GetSessionCommand(ctx, id, commandId, reqEditors...)
+// Corresponds with GET /v1/agents/sessions/{id}/commands/{request_id} (the `GetSessionCommand` operationId).
+func (c *ClientWithResponses) GetSessionCommandWithResponse(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error) {
+	rsp, err := c.GetSessionCommand(ctx, id, requestId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -45215,9 +47018,9 @@ func (c *ClientWithResponses) GetSessionCommandWithResponse(ctx context.Context,
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
-func (c *ClientWithResponses) InterruptSessionCommandWithResponse(ctx context.Context, id string, commandId string, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error) {
-	rsp, err := c.InterruptSessionCommand(ctx, id, commandId, reqEditors...)
+// Corresponds with POST /v1/agents/sessions/{id}/commands/{request_id}/interrupt (the `InterruptSessionCommand` operationId).
+func (c *ClientWithResponses) InterruptSessionCommandWithResponse(ctx context.Context, id string, requestId string, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error) {
+	rsp, err := c.InterruptSessionCommand(ctx, id, requestId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -45254,36 +47057,6 @@ func (c *ClientWithResponses) ForkSessionWithResponse(ctx context.Context, id st
 		return nil, err
 	}
 	return ParseForkSessionResponse(rsp)
-}
-
-// SetSessionInstructionsWithBodyWithResponse Change what the agent is told to be
-//
-// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-func (c *ClientWithResponses) SetSessionInstructionsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error) {
-	rsp, err := c.SetSessionInstructionsWithBody(ctx, id, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetSessionInstructionsResponse(rsp)
-}
-
-// SetSessionInstructionsWithResponse Change what the agent is told to be
-//
-// Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /v1/agents/sessions/{id}/instructions (the `SetSessionInstructions` operationId).
-func (c *ClientWithResponses) SetSessionInstructionsWithResponse(ctx context.Context, id string, body SetSessionInstructionsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionInstructionsResponse, error) {
-	rsp, err := c.SetSessionInstructions(ctx, id, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetSessionInstructionsResponse(rsp)
 }
 
 // InterruptSessionWithResponse Abandon the reply being spoken
@@ -45536,6 +47309,38 @@ func (c *ClientWithResponses) ListSessionToolsWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseListSessionToolsResponse(rsp)
+}
+
+// StopSessionVoiceWithResponse Stop voice on a session
+//
+// The agent finishes what it is saying, leaves the call and carries the conversation on in writing, with everything said on the call. Stopping voice on a session held in writing changes nothing. Stopping the session is what ends it.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/sessions/{id}/voice (the `StopSessionVoice` operationId).
+func (c *ClientWithResponses) StopSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopSessionVoiceResponse, error) {
+	rsp, err := c.StopSessionVoice(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStopSessionVoiceResponse(rsp)
+}
+
+// StartSessionVoiceWithResponse Start voice on a session
+//
+// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+//
+// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/voice (the `StartSessionVoice` operationId).
+func (c *ClientWithResponses) StartSessionVoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StartSessionVoiceResponse, error) {
+	rsp, err := c.StartSessionVoice(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartSessionVoiceResponse(rsp)
 }
 
 // ListSimulationRunsWithResponse What the simulations have come to, newest first
@@ -46176,7 +47981,7 @@ func (c *ClientWithResponses) QueryAuditWithResponse(ctx context.Context, body Q
 
 // ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
 //
-// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 // Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 // A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 //
@@ -46193,7 +47998,7 @@ func (c *ClientWithResponses) ClassifyWithBodyWithResponse(ctx context.Context, 
 
 // ClassifyWithResponse Ask a classifier typed questions about a piece of text
 //
-// The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to the classifier at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
+// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
 // Questions are answered independently and share the state's tokens between them, so ask everything that might matter in one request. A question that comes back unanswered fails the request rather than reading as a zero.
 // A target nobody routes is a 404. A provider that is rate limiting is a 429 and one that is overloaded or cannot be reached is a 503; both are worth asking again after a wait, and nothing else is.
 //
@@ -51019,6 +52824,70 @@ func ParseHandOffConnectorLaunchResponse(rsp *http.Response) (*HandOffConnectorL
 	return response, nil
 }
 
+// ParseDeleteConnectorResponse parses an HTTP response from a DeleteConnectorWithResponse call
+func ParseDeleteConnectorResponse(rsp *http.Response) (*DeleteConnectorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteConnectorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetConnectorResponse parses an HTTP response from a GetConnectorWithResponse call
 func ParseGetConnectorResponse(rsp *http.Response) (*GetConnectorResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -51377,6 +53246,67 @@ func ParseDeleteConnectorOAuthClientResponse(rsp *http.Response) (*DeleteConnect
 	return response, nil
 }
 
+// ParseGetConnectorOAuthClientResponse parses an HTTP response from a GetConnectorOAuthClientWithResponse call
+func ParseGetConnectorOAuthClientResponse(rsp *http.Response) (*GetConnectorOAuthClientResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConnectorOAuthClientResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest StoredConnectorOAuthClient
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseSetConnectorOAuthClientResponse parses an HTTP response from a SetConnectorOAuthClientWithResponse call
 func ParseSetConnectorOAuthClientResponse(rsp *http.Response) (*SetConnectorOAuthClientResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -51446,6 +53376,13 @@ func ParseSetConnectorOAuthClientResponse(rsp *http.Response) (*SetConnectorOAut
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -52660,6 +54597,321 @@ func ParseGetAgentLogResponse(rsp *http.Response) (*GetAgentLogResponse, error) 
 	return response, nil
 }
 
+// ParseListCustomModelsResponse parses an HTTP response from a ListCustomModelsWithResponse call
+func ParseListCustomModelsResponse(rsp *http.Response) (*ListCustomModelsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCustomModelsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CustomModelPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateCustomModelResponse parses an HTTP response from a CreateCustomModelWithResponse call
+func ParseCreateCustomModelResponse(rsp *http.Response) (*CreateCustomModelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateCustomModelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest CustomModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteCustomModelResponse parses an HTTP response from a DeleteCustomModelWithResponse call
+func ParseDeleteCustomModelResponse(rsp *http.Response) (*DeleteCustomModelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteCustomModelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCustomModelResponse parses an HTTP response from a GetCustomModelWithResponse call
+func ParseGetCustomModelResponse(rsp *http.Response) (*GetCustomModelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCustomModelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CustomModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateCustomModelResponse parses an HTTP response from a UpdateCustomModelWithResponse call
+func ParseUpdateCustomModelResponse(rsp *http.Response) (*UpdateCustomModelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateCustomModelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CustomModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListPluginsResponse parses an HTTP response from a ListPluginsWithResponse call
 func ParseListPluginsResponse(rsp *http.Response) (*ListPluginsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -53239,63 +55491,6 @@ func ParseForkSessionResponse(rsp *http.Response) (*ForkSessionResponse, error) 
 			return nil, err
 		}
 		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseSetSessionInstructionsResponse parses an HTTP response from a SetSessionInstructionsWithResponse call
-func ParseSetSessionInstructionsResponse(rsp *http.Response) (*SetSessionInstructionsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &SetSessionInstructionsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest BadRequest
@@ -53953,6 +56148,114 @@ func ParseListSessionToolsResponse(rsp *http.Response) (*ListSessionToolsRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest OfferedTools
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStopSessionVoiceResponse parses an HTTP response from a StopSessionVoiceWithResponse call
+func ParseStopSessionVoiceResponse(rsp *http.Response) (*StopSessionVoiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StopSessionVoiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Session
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStartSessionVoiceResponse parses an HTTP response from a StartSessionVoiceWithResponse call
+func ParseStartSessionVoiceResponse(rsp *http.Response) (*StartSessionVoiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StartSessionVoiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Session
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

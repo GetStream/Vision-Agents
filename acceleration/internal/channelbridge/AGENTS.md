@@ -16,7 +16,10 @@ Slack -> POST /v1/connectors/events/{connector}/{app}   api.receiveProviderAppEv
   Bridge.Deliver(app, messages)              on the request, Postgres only
     connection   store.AppConnectionByAccount(customer, connector, provider unit)
     agent        store.AgentConfigsBindingConnection: exactly one, else dropped
-    thread       store.LinkChannelThread: one thread channel per external thread
+    addressed    a reply not to the bot on a thread nobody linked waits
+                 (store.WaitChannelThreadMessage) for the message that links it
+    thread       store.LinkChannelThread: one thread channel per external thread;
+                 the message that starts it takes the replies that waited
     claim        store.ClaimChannelThreadMessage: a retried delivery is dropped
     episode      omnichannel.Cards.Open: contact map row of the author, episode
                  opened on the thread's first message (episodeSources)
@@ -39,7 +42,9 @@ conversation flush: final text stored (UpdateMessagePartial, no webhook)
       core.Transports: resolver credential, scheme Wrap, egress
       2xx and reply.accepted (Slack: ok true); no answer, 5xx, 429: again
       after 2 s, 10 s, 30 s, then unclaimed
-      refused: scheme.Classify; invalid_grant -> Resolver.Invalidate
+      refused: scheme.Classify; invalid_grant -> Resolver.Invalidate; unclaimed,
+      logged with the answer's error member (Slack: not_in_channel)
+      2xx it cannot read: claim kept (the provider may have posted), logged
 ```
 
 ## Terms
@@ -60,7 +65,9 @@ conversation flush: final text stored (UpdateMessagePartial, no webhook)
 - **A thread channel is a conversation.** The session that answers holds its persistent conversation on the thread channel, so the reply is kept there: the Router's own session (`api.threadSession`) and one a caller opens through `POST /v1/agents/sessions` with `agent_id` naming the channel (`api.threadConversation`). The hook does not hand a thread channel's message to a dispatch worker.
 - **One hand-off point for replies.** The conversation calls `Reply` once a reply's final text is stored; the webhook never carries it (`UpdateMessagePartial` sends none). `Reply` claims the reply by its Stream message id, so a reply written again is sent once. Example: a reply a login later marks is told twice and leaves once.
 - **One turn per thread, across routers.** The hook leases the thread's turn on its `channel_threads` row (`store.TakeChannelThreadTurn`) before it tells the session, and lets go after the reply; a router that stops holds it at most `askTimeout` + 30 s. A session the hook opens is closed after the turn, so the next turn on any router reopens the conversation from the channel. Example: router A answers Alice; Bob's message reaches router B, which waits for A's lease, then answers with Alice's turn in its history.
-- **A failed send is sent again.** No answer, a 5xx, a 429, or a refusal the scheme reads as transient or rate limited: the reply is sent again after each of `Options.RetryBackoff` (2 s, 10 s, 30 s). The claim stays while it is retried; a reply never sent is unclaimed, so its next hand-off sends it.
+- **A failed send is sent again.** No answer, a 5xx, a 429, or a refusal the scheme reads as transient or rate limited: the reply is sent again after each of `Options.RetryBackoff` (2 s, 10 s, 30 s). The claim stays while it is retried; a reply never sent is unclaimed, so its next hand-off sends it. A refusal is unclaimed too, so a refused reply leaves no `reply` row in `channel_thread_messages` (AI-990 F28), and the log line names the answer's `error` member. A 2xx answer the bridge cannot read keeps the claim, since the provider may have posted the reply. Example: Slack answers HTTP 200 `{"ok": false, "error": "not_in_channel"}`; the row is gone and the log says `error "not_in_channel"`.
+- **A reply that arrives before its thread's link waits for it** (AI-990 F31a). Slack retries a mention whose delivery failed after the replies in its thread arrived (https://docs.slack.dev/apis/events-api/, «Retries»). A reply that is not to the bot, on a thread nobody linked, is kept in `channel_thread_waiting` for 10 minutes. When a message that starts its thread links it, it takes those replies, and they are answered after it, in the same delivery. Its retry takes them too when its first delivery linked the thread and failed before the take; each waiting row is taken once. A link made by a reply, such as a mention in a thread of people, takes none: some came before the bot was spoken to (AI-989). The reply looks for the link again after it is kept, so a link made meanwhile finds it or it finds the link. Check: `go test -tags integration -run 'TestSlackChannelSuite/TestAReply(ThatArrivesBefore|ThatWaited)' ./internal/api`.
+- **A reply that waited was already forwarded as unhandled** (AI-1001). When it arrives, no agent answers it, so `Deliver` returns `answered` false and the events route sends its delivery to the customer's destinations of unhandled events. When the mention then links the thread, the agent answers the reply too. Nothing takes the forward back, and no event says that the agent answered it. If the reply's write fails after the take, `Deliver` does not call `unanswered`: that is the mention's delivery, which the destinations must not get as unhandled, and they already have the reply's own. Example: Bob's reply arrives at 10:00:01 and goes to the customer's URL; Slack retries Alice's mention at 10:01:00; the agent answers both. Check: `go test -tags integration -run 'TestEventForwardingSuite/TestAReplyThatWaited' ./internal/api`.
 - **A refusal the transport cannot see still ends the grant.** Slack answers a revoked token with HTTP 200 `invalid_auth`; the scheme's `Classify` reads it and `Reply` calls `Resolver.Invalidate`.
 - **One agent per connection.** The agent that answers is the one agent config of the customer that binds the connection as `fixed`. None or two: the message is dropped and logged.
 - **Replies leave only through `core.Transports`**, so the credential, the scheme and the egress checks are the connector layer's. The bridge holds no token.

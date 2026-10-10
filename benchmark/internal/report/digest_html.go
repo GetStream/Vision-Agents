@@ -21,6 +21,20 @@ func (d Digest) HTML(title string, card []byte, runs []LabeledRun) (string, erro
 		Card:  template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(card)),
 		Runs:  d.Runs,
 	}
+	for _, s := range d.STT {
+		row := digestPageSTT{
+			Target: s.Target, Clips: s.Clips, Failed: s.Failed,
+			WER:     fmt.Sprintf("%.1f%%", 100*s.PooledWER),
+			Raw:     fmt.Sprintf("%.1f%%", 100*s.PooledWERRaw),
+			Edits:   fmt.Sprintf("%d / %d / %d", s.Substitutions, s.Insertions, s.Deletions),
+			Perfect: fmt.Sprintf("%.0f%%", 100*s.PerfectRate),
+			Settle:  "—",
+		}
+		if s.TimedClips > 0 {
+			row.Settle = seconds(float64(s.ToSettleP50Ms))
+		}
+		page.STT = append(page.STT, row)
+	}
 	for _, row := range d.Rows {
 		out := digestPageRow{Name: row.Name, Verdict: strings.TrimPrefix(row.verdict(d.Runs), " → ")}
 		for i, cell := range row.Cells {
@@ -124,6 +138,19 @@ type digestPage struct {
 	Runs     []string
 	Rows     []digestPageRow
 	Sections []digestPageRun
+	STT      []digestPageSTT
+}
+
+// digestPageSTT is one speech-to-text target's row, formatted for the page.
+type digestPageSTT struct {
+	Target  string
+	Clips   int
+	Failed  int
+	WER     string
+	Raw     string
+	Edits   string
+	Perfect string
+	Settle  string
 }
 
 type digestPageRow struct {
@@ -241,6 +268,13 @@ var digestTemplate = template.Must(template.New("digest").Parse(`<!doctype html>
       {{end}}
     </table></div>
   </section>
+  {{with .STT}}<section>
+    <h2>Speech-to-text</h2>
+    <div class="panel"><table>
+      <tr><th>Target</th><th>WER</th><th>Raw WER</th><th>S / I / D</th><th>Perfect lines</th><th>Lines</th><th>Settle P50</th></tr>
+      {{range .}}<tr><td>{{.Target}}</td><td><strong>{{.WER}}</strong></td><td>{{.Raw}}</td><td>{{.Edits}}</td><td>{{.Perfect}}</td><td>{{.Clips}}{{if .Failed}} <span class="missed">{{.Failed}} failed</span>{{end}}</td><td>{{.Settle}}</td></tr>{{end}}
+    </table><div class="why">Every caller line of the scenario set, streamed alone through the router's speech-to-text and scored against its script: word errors over script words, normalized (raw beside it). It is the calls' caller audio without the call, so it measures what the model hears, apart from turn-taking. Settle P50 is from the last word spoken to the settled transcript.</div></div>
+  </section>{{end}}
   {{range .Sections}}
   <section>
     <h2>{{.Label}}</h2>

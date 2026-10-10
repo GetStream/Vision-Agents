@@ -195,6 +195,25 @@ func (s *Store) SawVideo(ctx context.Context, id string) error {
 	return nil
 }
 
+// SessionVoiced records that voice was started on a session, on the call it joined. A
+// session that was text becomes a voice one; one that saw video stays a video one.
+func (s *Store) SessionVoiced(ctx context.Context, id, callID, callType string) error {
+	if id == "" {
+		return errors.New("store: a session id is required")
+	}
+
+	_, err := s.db.NewUpdate().Model((*AgentSession)(nil)).
+		Set("call_id = ?", callID).
+		Set("call_type = ?", callType).
+		Set("modality = CASE WHEN modality = ? THEN ? ELSE modality END", ModalityText, ModalityVoice).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: session voiced: %w", err)
+	}
+	return nil
+}
+
 // DescribeSession changes what a session is called. It is separate from SaveSession because
 // renaming a conversation is something a person does long after it ended, when there is no
 // spec left to save.

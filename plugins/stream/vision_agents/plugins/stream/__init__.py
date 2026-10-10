@@ -38,6 +38,7 @@ from .sessions import (
     SessionEvent,
     SessionOptions,
     Sessions,
+    Voice,
 )
 from .simulations import SimulationRuns, Simulations
 from .sts import STS
@@ -93,6 +94,7 @@ __all__ = [
     "Simulations",
     "SkippedVendor",
     "TTS",
+    "Voice",
     "define_agent",
     "define_router",
     "define_skills",

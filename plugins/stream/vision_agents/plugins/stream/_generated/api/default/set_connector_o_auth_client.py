@@ -77,6 +77,11 @@ def _parse_response(
 
         return response_500
 
+    if response.status_code == 503:
+        response_503 = ErrorResponse.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -112,6 +117,14 @@ def sync_detailed(
     reach the app alone. Both secrets are sealed and never returned. A connector whose connections take
     no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret
     without client_id.
+
+    A provider app of a connector whose channel is verified with the app's own secret, such as
+    slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is
+    pinned to a Stream app the customer registered, the router then points that app's message hook at
+    itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the
+    one already there, so the messages written in the app's thread channels reach the router. A router
+    without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is
+    kept, the answer is a 503, and putting it again points the hook again.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -159,6 +172,14 @@ def sync(
     no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret
     without client_id.
 
+    A provider app of a connector whose channel is verified with the app's own secret, such as
+    slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is
+    pinned to a Stream app the customer registered, the router then points that app's message hook at
+    itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the
+    one already there, so the messages written in the app's thread channels reach the router. A router
+    without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is
+    kept, the answer is a 503, and putting it again points the hook again.
+
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -199,6 +220,14 @@ async def asyncio_detailed(
     reach the app alone. Both secrets are sealed and never returned. A connector whose connections take
     no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret
     without client_id.
+
+    A provider app of a connector whose channel is verified with the app's own secret, such as
+    slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is
+    pinned to a Stream app the customer registered, the router then points that app's message hook at
+    itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the
+    one already there, so the messages written in the app's thread channels reach the router. A router
+    without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is
+    kept, the answer is a 503, and putting it again points the hook again.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -243,6 +272,14 @@ async def asyncio(
     reach the app alone. Both secrets are sealed and never returned. A connector whose connections take
     no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret
     without client_id.
+
+    A provider app of a connector whose channel is verified with the app's own secret, such as
+    slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is
+    pinned to a Stream app the customer registered, the router then points that app's message hook at
+    itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the
+    one already there, so the messages written in the app's thread channels reach the router. A router
+    without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is
+    kept, the answer is a 503, and putting it again points the hook again.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

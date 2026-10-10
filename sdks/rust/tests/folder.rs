@@ -228,7 +228,7 @@ fn the_declaration_says_what_the_agent_is_called_and_runs_on() {
     write(
         &root,
         "agent.yaml",
-        "name: receptionist\nllm: openai/gpt-5.6\nthinking_llm: openai/gpt-5.6-sol\nsts: \"\"\nkeyterms: [Vision Agents]\nmode: voice\nsandbox: daytona\nvideo:\n  source: camera\n",
+        "name: receptionist\nllm: openai/gpt-5.6\nsubagent: openai/gpt-5.6-sol\nsts: \"\"\nkeyterms: [Vision Agents]\nmode: voice\nsandbox: daytona\ngreeting:\n  text: Hello.\n  mode: variation\nvideo:\n  source: camera\n",
     );
 
     let folder = Folder::load(&root).unwrap();
@@ -236,7 +236,14 @@ fn the_declaration_says_what_the_agent_is_called_and_runs_on() {
     assert_eq!(folder.name, "receptionist");
     let settings = &folder.settings;
     assert_eq!(settings.llm, "openai/gpt-5.6");
-    assert_eq!(settings.thinking_llm, "openai/gpt-5.6-sol");
+    assert_eq!(settings.subagent, "openai/gpt-5.6-sol");
+    assert_eq!(
+        settings.greeting,
+        Some(types::Greeting {
+            text: "Hello.".into(),
+            mode: Some(types::GreetingMode::Variation),
+        })
+    );
     assert_eq!(settings.keyterms, ["Vision Agents"]);
     assert_eq!(settings.sts.as_deref(), Some(""));
     assert_eq!(settings.mode, Some(types::AgentMode::Voice));
@@ -257,7 +264,7 @@ fn saying_nothing_about_speech_to_speech_is_not_turning_it_off() {
 fn a_declaration_key_nobody_knows_is_refused() {
     for declaration in [
         "name: jean\nlmm: openai/gpt-5.6\n",
-        "subagent: openai/gpt-5.6\n",
+        "agent_plugins: [sentry]\n",
         "video:\n  max_frames: 9\n",
         "keyterms: Vision Agents\n",
         "video:\n  frames: 2\n",
@@ -381,19 +388,20 @@ fn a_page_is_read_again_at_least_an_hour_apart() {
 }
 
 #[test]
-fn the_declaration_names_a_harness_and_a_speed() {
+fn the_declaration_names_a_harness_and_refuses_the_keys_it_no_longer_takes() {
     let (_temporary, root) = directory("jean");
-    write(
-        &root,
-        "agent.yaml",
-        "name: jean\nharness: default\nspeed: 1.1\n",
-    );
+    write(&root, "agent.yaml", "name: jean\nharness: default\n");
 
     let settings = Folder::load(&root).unwrap().settings;
 
     assert_eq!(settings.harness, Some(types::Harness::Default));
-    assert_eq!(settings.speed, 1.1);
-    for declaration in ["harness: fancy\n", "speed: fast\n"] {
+    for declaration in [
+        "harness: fancy\n",
+        "speed: 1.1\n",
+        "thinking_llm: openai/gpt-5.6-sol\n",
+        "greeting: Hello.\n",
+        "greeting:\n  text: Hello.\n  mode: loud\n",
+    ] {
         let (_temporary, root) = directory("jean");
         write(&root, "agent.yaml", declaration);
         assert!(Folder::load(&root).is_err(), "accepted {declaration:?}");

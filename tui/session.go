@@ -11,9 +11,10 @@ import (
 // *agents.Session to it, and anything else that can answer questions and say what it is
 // doing while it answers them can satisfy it too.
 type Session interface {
-	// ID identifies the live session, which is what a browser opens to watch it.
+	// ID identifies the live session, which is what a browser opens to watch it and what
+	// resumes the conversation.
 	ID() string
-	// ConversationID is what the conversation is saved under, and what resumes it.
+	// ConversationID is the channel the conversation is saved under.
 	ConversationID() string
 	// ContextTruncated says whether the session was given less than the whole history.
 	ContextTruncated() bool
@@ -38,10 +39,10 @@ func (s agentSession) Respond(text string) error {
 	return err
 }
 
-// Opener opens a session on a conversation. An empty id starts a new conversation; the
-// id the session settles on is read back from it. The terminal UI closes whatever it
+// Opener resumes the session of an id. An empty id starts a new conversation; the id the
+// session settles on is read back from it. The terminal UI closes whatever it
 // opened, including the session an earlier call returned.
-type Opener func(ctx context.Context, conversationID string) (Session, error)
+type Opener func(ctx context.Context, sessionID string) (Session, error)
 
 // History reads a page of saved messages older than a cursor. An empty cursor reads the
 // newest page, and the cursor for the page before it comes back in the page.

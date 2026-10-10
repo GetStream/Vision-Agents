@@ -5,19 +5,19 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // violates is the id the one question is asked under.
 const violates = "violates"
 
-// classifier screens a turn by asking the lcm router for the probability that it violates
+// classifier screens a turn by asking the decision model router for the probability that it violates
 // the policy.
 type classifier struct {
 	policy  Policy
-	session *lcmrouter.Session
+	session *decisionrouter.Session
 	logger  *slog.Logger
 }
 
@@ -29,10 +29,10 @@ type classifier struct {
 func newClassifier(ctx context.Context, policy Policy, deps Deps) (Guardrail, error) {
 	if deps.Classifier == nil {
 		return nil, stack.Wrap(errors.New(
-			"guardrail: this deployment routes no lcm, so it cannot judge a turn against a policy"))
+			"guardrail: this deployment routes no decision model, so it cannot judge a turn against a policy"))
 	}
 
-	session, err := deps.Classifier.Start(ctx, lcmrouter.Request{
+	session, err := deps.Classifier.Start(ctx, decisionrouter.Request{
 		CustomerID: deps.Owner.CustomerID,
 		AgentID:    deps.Owner.AgentID,
 		CallID:     deps.Owner.CallID,
@@ -60,10 +60,10 @@ func (c *classifier) Check(ctx context.Context, turnID, text string) (Verdict, e
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
 
-	answered, err := c.session.Classify(ctx, lcm.Request{
+	answered, err := c.session.Classify(ctx, decisionmodel.Request{
 		State: map[string]string{"policy": c.policy.Text, "message": text},
-		Questions: map[string]lcm.Question{
-			violates: lcm.Noul(
+		Questions: map[string]decisionmodel.Question{
+			violates: decisionmodel.Noul(
 				"Is `message` a request for something the assistant is not permitted to "+
 					"answer under `policy`?",
 				"It asks for something outside what the policy permits.",

@@ -97,8 +97,13 @@ func (s *Store) ConnectorDefinition(ctx context.Context, customerID, id string, 
 		return ConnectorDefinition{}, stack.Wrap(errors.New("store: a customer and a connector id are required"))
 	}
 
+	return connectorDefinition(ctx, s.db, customerID, id, revision)
+}
+
+// connectorDefinition is one revision of a definition the customer can see, read on db.
+func connectorDefinition(ctx context.Context, db bun.IDB, customerID, id string, revision int) (ConnectorDefinition, error) {
 	var definition ConnectorDefinition
-	err := s.db.NewSelect().Model(&definition).
+	err := db.NewSelect().Model(&definition).
 		Where("customer_id IN (?, ?)", BuiltinCustomer, customerID).
 		Where("id = ?", id).
 		Where("revision = ?", revision).
@@ -444,6 +449,172 @@ func (s *Store) ConnectorDefinitionStatuses(ctx context.Context, customerID stri
 	return statuses, nil
 }
 
+// ErrConnectorDefinitionInUse says an unforced delete found a live connection made from the
+// custom definition, or a live agent config binding it. DeletedConnector.Uses names them.
+var ErrConnectorDefinitionInUse = errors.New("store: the connector is in use")
+
+// ConnectorUses are what names one custom definition: what deleting it would break.
+type ConnectorUses struct {
+	// Connections are the ids of its live connections, app-owned and users', oldest first.
+	Connections []string
+	// Bindings are the bindings of the customer's live agent configs that name it, fixed or
+	// chosen per session, by config name and alias.
+	Bindings []ConnectorBindingUse
+}
+
+// ConnectorBindingUse is one binding of a live agent config that names a connector.
+type ConnectorBindingUse struct {
+	ConfigID   string `bun:"config_id"`
+	ConfigName string `bun:"config_name"`
+	// Binding is the alias the config binds it under.
+	Binding string `bun:"binding"`
+}
+
+// DeletedConnector is what DeleteConnectorDefinition found and removed.
+type DeletedConnector struct {
+	// Uses is what named the definition when the delete looked, set on ErrConnectorDefinitionInUse too.
+	Uses ConnectorUses
+	// Connections are the live connections a forced delete removed.
+	Connections []DeletedConnection
+}
+
+// DeleteConnectorDefinition removes every revision of one of the customer's own definitions.
+// Unforced, a live connection made from it or a live agent config binding it refuses the
+// delete with ErrConnectorDefinitionInUse, and nothing changes. Forced, its live connections
+// are deleted as a forced connection delete deletes one (softDeleteConnection: credentials and
+// tool pins dropped), and the bindings are left in place, naming a connector that no longer
+// exists, as a forced connection delete leaves its bindings. Either way the rows that hold the
+// customer's sealed secrets for the connector go in the same transaction: its OAuth client and
+// provider app (connector_oauth_clients), its configuration token and its event destinations
+// with their pending deliveries, so no secret outlives the connector it was for. Only the
+// customer's own rows are read, so a built-in, stored under BuiltinCustomer, is never deleted:
+// its id is ErrNoConnectorDefinition, as one nobody defined is.
+//
+// Every revision is locked FOR UPDATE first, under the lock saveRevision takes. A writer of a
+// row that names the definition, a connection, an OAuth client or a config's binding, locks
+// it FOR KEY SHARE before its write (lockCustomDefinitions), so of a delete and that write one
+// always waits for the other: the write that came first is seen by the check that follows the
+// lock, and one that came second finds no definition. The connections are locked FOR NO KEY
+// UPDATE, which a config save's FOR KEY SHARE on the connections it binds does not wait for
+// (https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS, table 13.3),
+// so a save holding a connection while it waits for the definition cannot deadlock with this.
+func (s *Store) DeleteConnectorDefinition(ctx context.Context, customerID, id string, force bool) (DeletedConnector, error) {
+	if customerID == BuiltinCustomer || id == "" {
+		return DeletedConnector{}, stack.Wrap(errors.New("store: a customer and a connector id are required"))
+	}
+	var deleted DeletedConnector
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, ?))",
+			customerID+"/"+id, definitionLockSeed); err != nil {
+			return err
+		}
+		var revisions []int
+		err := tx.NewSelect().Model((*ConnectorDefinition)(nil)).Column("revision").
+			Where("customer_id = ?", customerID).
+			Where("id = ?", id).
+			For("UPDATE").
+			Scan(ctx, &revisions)
+		if err != nil {
+			return fmt.Errorf("store: lock connector definition: %w", err)
+		}
+		if len(revisions) == 0 {
+			return fmt.Errorf("%w: %s", ErrNoConnectorDefinition, id)
+		}
+		var connections []struct {
+			ID        string `bun:"id"`
+			OwnerType string `bun:"owner_type"`
+			HadGrant  bool   `bun:"had_grant"`
+		}
+		err = tx.NewSelect().Model((*ConnectorConnection)(nil)).
+			Column("cc.id", "cc.owner_type").
+			ColumnExpr("cc.credentials_sealed <> ''::bytea AS had_grant").
+			Where("cc.customer_id = ?", customerID).
+			Where("cc.connector_id = ?", id).
+			Where("cc.deleted_at IS NULL").
+			Order("cc.created_at", "cc.id").
+			For("NO KEY UPDATE").
+			Scan(ctx, &connections)
+		if err != nil {
+			return fmt.Errorf("store: lock the connector's connections: %w", err)
+		}
+		for _, connection := range connections {
+			deleted.Uses.Connections = append(deleted.Uses.Connections, connection.ID)
+		}
+		// A row whose connectors is not an array binds nothing, as in ConnectorConnectionUses.
+		err = tx.NewSelect().
+			TableExpr("agent_configs AS ac").
+			Join("CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(ac.connectors) = 'array' THEN ac.connectors ELSE '[]'::jsonb END) AS binding").
+			ColumnExpr("ac.id AS config_id, ac.name AS config_name").
+			ColumnExpr("binding ->> 'name' AS binding").
+			Where("ac.customer_id = ?", customerID).
+			Where("ac.deleted_at IS NULL").
+			Where("binding ->> 'connector_id' = ?", id).
+			OrderExpr("ac.name, ac.id, binding ->> 'name'").
+			Scan(ctx, &deleted.Uses.Bindings)
+		if err != nil {
+			return fmt.Errorf("store: connector binding uses: %w", err)
+		}
+		if !force && (len(deleted.Uses.Connections) > 0 || len(deleted.Uses.Bindings) > 0) {
+			return fmt.Errorf("%w: %s", ErrConnectorDefinitionInUse, id)
+		}
+		for _, connection := range connections {
+			if _, err := softDeleteConnection(ctx, tx, customerID, connection.ID, false); err != nil {
+				return err
+			}
+			deleted.Connections = append(deleted.Connections, DeletedConnection{
+				ID: connection.ID, ConnectorID: id, OwnerType: connection.OwnerType, HadGrant: connection.HadGrant,
+			})
+		}
+		// The deliveries go with their destination (ON DELETE CASCADE,
+		// 20261007040000_connector_event_destinations.sql).
+		for _, table := range []string{"connector_oauth_clients", "connector_config_tokens", "connector_event_destinations"} {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE customer_id = ? AND connector_id = ?", customerID, id); err != nil {
+				return fmt.Errorf("store: delete the connector's %s: %w", table, err)
+			}
+		}
+		_, err = tx.NewDelete().Model((*ConnectorDefinition)(nil)).
+			Where("customer_id = ?", customerID).
+			Where("id = ?", id).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("store: delete connector definition: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return deleted, stack.Wrap(err)
+	}
+	return deleted, nil
+}
+
+// lockCustomDefinitions locks every revision of the customer's own definitions among ids FOR
+// KEY SHARE until tx ends, and returns the custom ids among them that have none. A writer of
+// a row naming a custom definition calls it before its write, so DeleteConnectorDefinition
+// and the write take turns. A built-in is never deleted, so it is neither locked nor reported.
+// FOR KEY SHARE, not FOR SHARE, as in lockBoundConnections: definitions are never updated,
+// and nothing but the delete needs to wait.
+func lockCustomDefinitions(ctx context.Context, tx bun.Tx, customerID string, ids []string) ([]string, error) {
+	var custom []string
+	for _, id := range ids {
+		if strings.HasPrefix(id, CustomPrefix) && !slices.Contains(custom, id) {
+			custom = append(custom, id)
+		}
+	}
+	if len(custom) == 0 {
+		return nil, nil
+	}
+	var live []string
+	err := tx.NewSelect().Model((*ConnectorDefinition)(nil)).Column("id").
+		Where("customer_id = ?", customerID).
+		Where("id IN (?)", bun.In(custom)).
+		For("KEY SHARE").
+		Scan(ctx, &live)
+	if err != nil {
+		return nil, fmt.Errorf("store: lock connector definitions: %w", err)
+	}
+	return slices.DeleteFunc(custom, func(id string) bool { return slices.Contains(live, id) }), nil
+}
+
 // latestDefinition is the newest revision of id under any of customers.
 func latestDefinition(ctx context.Context, db bun.IDB, customers []string, id string) (ConnectorDefinition, error) {
 	var definition ConnectorDefinition
@@ -503,4 +674,106 @@ func sameManifest(stored, seeded core.Manifest) (bool, error) {
 		return false, err
 	}
 	return bytes.Equal(a, b), nil
+}
+
+// ConnectorConnectionClient is the OAuth client a connection's grant was issued to (AI-990
+// F16), kept in connector_connection_clients
+// (20261011210000_connector_clients_and_argument_shapes.sql) so it is read without unsealing the
+// credentials. A client_id is not a secret (RFC 6749 section 2.2).
+type ConnectorConnectionClient struct {
+	bun.BaseModel `bun:"table:connector_connection_clients,alias:ccc"`
+
+	ConnectionID string                        `bun:"connection_id,pk"`
+	Registration core.ClientRegistrationMethod `bun:"registration,notnull"`
+	ClientID     string                        `bun:"client_id,notnull"`
+	UpdatedAt    time.Time                     `bun:"updated_at,notnull"`
+}
+
+// PutConnectorConnectionClient records the client a consent of the connection used, replacing
+// the one an earlier consent recorded.
+func (s *Store) PutConnectorConnectionClient(ctx context.Context, client *ConnectorConnectionClient) error {
+	if client.ConnectionID == "" || client.ClientID == "" {
+		return stack.Wrap(errors.New("store: a connection client needs a connection and a client id"))
+	}
+	client.UpdatedAt = time.Now().UTC().Truncate(time.Microsecond)
+	_, err := s.db.NewInsert().Model(client).
+		On("CONFLICT (connection_id) DO UPDATE").
+		Set("registration = EXCLUDED.registration, client_id = EXCLUDED.client_id, updated_at = EXCLUDED.updated_at").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: put connection client: %w", err))
+	}
+	return nil
+}
+
+// ConnectorConnectionClients is the recorded client of each of connectionIDs that has one, by
+// connection id. The caller has already scoped the ids to its customer.
+func (s *Store) ConnectorConnectionClients(ctx context.Context, connectionIDs []string) (map[string]ConnectorConnectionClient, error) {
+	byConnection := map[string]ConnectorConnectionClient{}
+	if len(connectionIDs) == 0 {
+		return byConnection, nil
+	}
+	clients := []ConnectorConnectionClient{}
+	if err := s.db.NewSelect().Model(&clients).Where("connection_id IN (?)", bun.In(connectionIDs)).Scan(ctx); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: list connection clients: %w", err))
+	}
+	for _, client := range clients {
+		byConnection[client.ConnectionID] = client
+	}
+	return byConnection, nil
+}
+
+// ConnectorConnectionValidation is the last validate of a connection (AI-1052), kept in
+// connector_connection_validations (20261016120000_connector_connection_validations.sql): its
+// status, its code (a stable reason, or the provider's HTTP status), its error and when it ran,
+// and the revision of the credentials it checked. The error is the validate's with the
+// credential's values cut out, and capped (api.storedError).
+type ConnectorConnectionValidation struct {
+	bun.BaseModel `bun:"table:connector_connection_validations,alias:ccv"`
+
+	ConnectionID string `bun:"connection_id,pk"`
+	// Revision is the connection's revision (ConnectorConnection.Revision) whose credentials
+	// the validate checked. A connection read at a later revision has newer credentials than
+	// the validate saw.
+	Revision  int       `bun:"revision,notnull"`
+	Status    string    `bun:"status,notnull"`
+	Code      string    `bun:"code,notnull"`
+	Error     string    `bun:"error,notnull"`
+	CheckedAt time.Time `bun:"checked_at,notnull"`
+}
+
+// PutConnectorConnectionValidation records a validate of the connection, replacing the one an
+// earlier validate recorded. Of two validates at once, the one of the later revision stays,
+// and of two of the same revision the one that ran later, whichever writes last: a validate
+// of credentials replaced while it ran never covers one of the new credentials.
+func (s *Store) PutConnectorConnectionValidation(ctx context.Context, validation *ConnectorConnectionValidation) error {
+	if validation.ConnectionID == "" || validation.Status == "" || validation.CheckedAt.IsZero() {
+		return stack.Wrap(errors.New("store: a connection validation needs a connection, a status and a time"))
+	}
+	_, err := s.db.NewInsert().Model(validation).
+		On("CONFLICT (connection_id) DO UPDATE").
+		Set("revision = EXCLUDED.revision, status = EXCLUDED.status, code = EXCLUDED.code, error = EXCLUDED.error, checked_at = EXCLUDED.checked_at").
+		Where("(ccv.revision, ccv.checked_at) <= (EXCLUDED.revision, EXCLUDED.checked_at)").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: put connection validation: %w", err))
+	}
+	return nil
+}
+
+// ConnectorConnectionValidations is the last validate of each of connectionIDs that was
+// validated, by connection id. The caller has already scoped the ids to its customer.
+func (s *Store) ConnectorConnectionValidations(ctx context.Context, connectionIDs []string) (map[string]ConnectorConnectionValidation, error) {
+	byConnection := map[string]ConnectorConnectionValidation{}
+	if len(connectionIDs) == 0 {
+		return byConnection, nil
+	}
+	validations := []ConnectorConnectionValidation{}
+	if err := s.db.NewSelect().Model(&validations).Where("connection_id IN (?)", bun.In(connectionIDs)).Scan(ctx); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: list connection validations: %w", err))
+	}
+	for _, validation := range validations {
+		byConnection[validation.ConnectionID] = validation
+	}
+	return byConnection, nil
 }

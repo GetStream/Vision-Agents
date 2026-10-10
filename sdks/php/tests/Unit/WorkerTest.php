@@ -42,7 +42,7 @@ final class WorkerTest extends TestCase
     {
         $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
             LocalSocketServer::send($socket, ['type' => 'ready', 'worker_id' => 'w-1']);
-            LocalSocketServer::send($socket, ['type' => 'call', 'work_id' => 'wk1', 'call_id' => 'c1', 'caller_number' => '+15550001111', 'custom' => ['lang' => 'fr']]);
+            LocalSocketServer::send($socket, ['type' => 'call', 'work_id' => 'wk1', 'call_id' => 'c1', 'session_id' => 'ses_c1', 'caller_number' => '+15550001111', 'custom' => ['lang' => 'fr']]);
             LocalSocketServer::send($socket, ['type' => 'call', 'work_id' => 'wk2', 'call_id' => 'c2', 'call_type' => 'phone']);
             while (count($server->sent('done')) < 2 && $server->next($socket) !== null) {
             }
@@ -69,6 +69,7 @@ final class WorkerTest extends TestCase
         self::assertSame([], $server->sent('accepted'));
         self::assertSame([], $server->sent('rejected'));
         self::assertSame('+15550001111', $answered[0]->callerNumber);
+        self::assertSame('ses_c1', $answered[0]->sessionId);
         self::assertSame(['lang' => 'fr'], $answered[0]->custom);
         self::assertSame('default', $answered[0]->callType);
         self::assertSame('phone', $answered[1]->callType);
@@ -122,10 +123,10 @@ final class WorkerTest extends TestCase
         self::assertSame([['type' => 'done', 'work_id' => 'wk1', 'error' => 'this worker answers no messages']], $server->sent('done'));
     }
 
-    public function testDispatchHandsTheMessageItsSessionAndCommand(): void
+    public function testDispatchHandsTheMessageItsSessionAndRequest(): void
     {
         $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
-            LocalSocketServer::send($socket, ['type' => 'message', 'work_id' => 'wk1', 'session_id' => 'ses_1', 'command_id' => 'cmd_1', 'agent_id' => 'jean', 'text' => 'hi', 'user_id' => 'ada']);
+            LocalSocketServer::send($socket, ['type' => 'message', 'work_id' => 'wk1', 'session_id' => 'ses_1', 'request_id' => 'req_1', 'agent_id' => 'jean', 'text' => 'hi', 'user_id' => 'ada']);
             while ($server->sent('done') === [] && $server->next($socket) !== null) {
             }
             $socket->close();
@@ -139,7 +140,7 @@ final class WorkerTest extends TestCase
         $dispatch->run();
 
         self::assertSame('ses_1', $received[0]->sessionId);
-        self::assertSame('cmd_1', $received[0]->commandId);
+        self::assertSame('req_1', $received[0]->requestId);
         self::assertSame('', $received[0]->channelId);
     }
 
@@ -149,10 +150,10 @@ final class WorkerTest extends TestCase
         $this->router->answer('POST', '/v1/agents/sessions/ses_1/responses', 201, Rows::response('resp_1', 'running'));
         $dispatch = new Dispatch(client: new Client(new Backend(url: $this->router->url, apiKey: 'key', apiSecret: 'secret')));
 
-        $dispatch->answer(new InboundMessage(channelId: '', text: 'what does it cost?', agentId: 'jean', userId: 'ada', sessionId: 'ses_1', commandId: 'cmd_1'));
+        $dispatch->answer(new InboundMessage(channelId: '', text: 'what does it cost?', agentId: 'jean', userId: 'ada', sessionId: 'ses_1', requestId: 'req_1'));
 
         $sent = $this->router->to('POST', '/v1/agents/sessions/ses_1/responses')[0];
-        self::assertSame(['text' => 'what does it cost?', 'command_id' => 'cmd_1'], $sent->json());
+        self::assertSame(['text' => 'what does it cost?', 'request_id' => 'req_1'], $sent->json());
         self::assertSame('ada', $sent->headers['x-stream-user-id']);
         self::assertSame('server', $sent->headers['stream-auth-type']);
         self::assertStringStartsWith('Bearer ', $sent->headers['authorization']);
@@ -315,7 +316,7 @@ final class WorkerTest extends TestCase
     {
         $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
             LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'weather in Paris?']);
-            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't1', 'name' => 'get_weather', 'arguments' => '{"city":"Paris"}', 'command_id' => 'cmd1', 'turn_id' => 'turn1']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't1', 'name' => 'get_weather', 'arguments' => '{"city":"Paris"}', 'request_id' => 'req1', 'turn_id' => 'turn1']);
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't2', 'name' => 'broken', 'arguments' => '{}']);
             while (count($server->sent('tool_result')) < 2 && $server->next($socket) !== null) {
             }
@@ -339,7 +340,7 @@ final class WorkerTest extends TestCase
         foreach ($server->sent('tool_result') as $result) {
             $results[Json::string($result, 'tool_call_id')] = $result;
         }
-        self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't1', 'command_id' => 'cmd1', 'turn_id' => 'turn1', 'output' => '{"city":"Paris","sky":"clear"}'], $results['t1']);
+        self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't1', 'request_id' => 'req1', 'turn_id' => 'turn1', 'output' => '{"city":"Paris","sky":"clear"}'], $results['t1']);
         self::assertSame(['type' => 'tool_result', 'tool_call_id' => 't2', 'error' => 'the weather service is down'], $results['t2']);
     }
 

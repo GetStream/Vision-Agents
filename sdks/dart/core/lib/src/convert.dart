@@ -74,41 +74,40 @@ GuestUser guestOf(api.GuestUser wire) => GuestUser(
 
 /// The request for a session. [agent] is the name to open it against when the options name
 /// no config of their own.
-api.CreateSessionRequest createRequestOf(SessionOptions options, {String? callId, String? agent}) =>
-    api.CreateSessionRequest(
-      id: _set(options.id),
-      callId: _set(callId),
-      // Held in writing unless a call was named: a conversation with no call is one typed.
-      text: _set(callId) == null ? true : null,
-      agent: _set(options.agent) ?? (_set(options.configId) == null ? _set(agent) : null),
-      configId: _set(options.configId),
-      instructions: options.instructions,
-      greeting: options.greeting,
-      llm: _set(options.llm),
-      stt: _set(options.stt),
-      tts: _set(options.tts),
-      voice: _set(options.voice),
-      title: options.title,
-      description: options.description,
-      projectId: options.projectId,
-      custom: options.custom,
-      incognito: options.incognito,
-      conversationId: _set(options.conversationId),
-      modelOverwrites: overwritesOf(options.modelOverwrites),
-      tools: options.tools.isEmpty
-          ? null
-          : [
-              for (final tool in options.tools)
-                api.SessionTool(
-                  name: tool.name,
-                  description: tool.description,
-                  parameters: tool.parameters,
-                  displayTitle: _set(tool.displayTitle),
-                  executor: tool.executor?.name,
-                ),
-            ],
-      tags: options.tags.isEmpty ? null : options.tags,
-    );
+api.CreateSessionRequest createRequestOf(
+  SessionOptions options, {
+  required bool startVoice,
+  String? agent,
+}) => api.CreateSessionRequest(
+  id: _set(options.id),
+  startVoice: startVoice ? true : null,
+  agent: _set(options.agent) ?? (_set(options.configId) == null ? _set(agent) : null),
+  configId: _set(options.configId),
+  greeting: greetingOf(options.greeting),
+  llm: _set(options.llm),
+  stt: _set(options.stt),
+  tts: _set(options.tts),
+  voice: _set(options.voice),
+  title: options.title,
+  description: options.description,
+  projectId: options.projectId,
+  custom: options.custom,
+  incognito: options.incognito,
+  modelOverwrites: overwritesOf(options.modelOverwrites),
+  tools: options.tools.isEmpty
+      ? null
+      : [
+          for (final tool in options.tools)
+            api.SessionTool(
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.parameters,
+              displayTitle: _set(tool.displayTitle),
+              executor: tool.executor?.name,
+            ),
+        ],
+  tags: options.tags.isEmpty ? null : options.tags,
+);
 
 api.ForkSessionRequest forkRequestOf(ForkOptions options) => api.ForkSessionRequest(
   responseId: _set(options.responseId),
@@ -118,14 +117,15 @@ api.ForkSessionRequest forkRequestOf(ForkOptions options) => api.ForkSessionRequ
   description: options.description,
   projectId: options.projectId,
   custom: options.custom,
-  instructions: options.instructions,
   incognito: options.incognito,
   // Only ever false: true is the default, and sending the default is how a caller loses what
   // the parent was opened with.
   messages: options.withoutHistory ? false : null,
   modelOverwrites: overwritesOf(options.modelOverwrites),
-  callId: _set(options.callId),
 );
+
+api.Greeting? greetingOf(Greeting? greeting) =>
+    greeting == null ? null : api.Greeting(text: greeting.text, mode: greeting.mode?.name);
 
 api.ModelOverwrites? overwritesOf(ModelOverwrites? overwrites) => overwrites == null
     ? null

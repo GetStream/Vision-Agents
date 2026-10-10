@@ -16,7 +16,7 @@ final readonly class ToolApprovalCommand
 {
     public function __construct(
         public bool $allowed,
-        public string $commandId,
+        public string $requestId,
         public string $toolCallId,
         public string $turnId,
         public string $type,
@@ -32,7 +32,7 @@ final readonly class ToolApprovalCommand
     {
         return new self(
             allowed: Json::bool($data, 'allowed'),
-            commandId: Json::string($data, 'command_id'),
+            requestId: Json::string($data, 'request_id'),
             toolCallId: Json::string($data, 'tool_call_id'),
             turnId: Json::string($data, 'turn_id'),
             type: Json::string($data, 'type'),
@@ -49,7 +49,7 @@ final readonly class ToolApprovalCommand
     {
         $out = [];
         $out['allowed'] = $this->allowed;
-        $out['command_id'] = $this->commandId;
+        $out['request_id'] = $this->requestId;
         $out['tool_call_id'] = $this->toolCallId;
         $out['turn_id'] = $this->turnId;
         $out['type'] = $this->type;

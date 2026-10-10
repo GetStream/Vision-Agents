@@ -22,6 +22,8 @@ class OutboundCall:
         from_: One of your own numbers, which is what the person sees.
         to: Who to call.
         call_id: The call the answered leg joins, and so the one the agent has to be in.
+            On the acceleration backend it is the session that holds the call, whose call
+            is ``agent:<session id>``.
         call_type: The call type. Empty means "agent".
         ring_timeout: How long to ring before giving up. None leaves the vendor's default,
             which is long enough to reach voicemail.
@@ -72,6 +74,9 @@ class InboundCall:
     Attributes:
         call_id: The call the caller is in. An agent that joins anything else hears silence.
         call_type: The type of that call.
+        session_id: The session to open for the call, with voice: the call is named for
+            it, ``agent:<session id>``. Empty for a number attached before calls were,
+            which has to be attached again.
         called_number: The number that was rung, which is how an agent serving several
             numbers knows which line this is.
         caller_number: Who is calling. Empty when they had not finished joining yet, which
@@ -83,6 +88,7 @@ class InboundCall:
 
     call_id: str
     call_type: str = "agent"
+    session_id: str = ""
     called_number: str = ""
     caller_number: str = ""
     custom: dict[str, str] = field(default_factory=dict)

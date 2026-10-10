@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -378,11 +379,10 @@ func (s *SessionSuite) manages() {
 	// The agent opens a voice model and a flow controller, in that order, and each needs
 	// its own emitter: two sessions on one channel would each consume the other's events.
 	s.model = &stubLLM{reply: "Hello."}
-	var opened int
+	var opened atomic.Int32
 	reasoning := llmrouter.NewRegistry()
 	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
-		defer func() { opened++ }()
-		if opened == 0 {
+		if opened.Add(1) == 1 {
 			if s.gated != nil {
 				return s.gated, nil
 			}
@@ -1024,7 +1024,7 @@ func (s *SessionSuite) TestARewoundSessionCarriesOnFromTheKeptResponse() {
 	s.Equal([]llm.Message{
 		{Role: llm.User, Content: "Is Stream better than Sendbird?"},
 		{Role: llm.Assistant, Content: "Yes."},
-	}, created.voiceAgent.History())
+	}, created.current().History())
 	s.Len(recorded.exchanges, 1, "the later turn is no longer part of the conversation")
 }
 
@@ -1060,7 +1060,7 @@ func (s *SessionSuite) TestAForkReadFromRecordsStartsFromThatHistory() {
 
 	created := s.writes(Spec{ForkedFrom: "parent", Recall: &Recall{Messages: recalled}})
 
-	s.Equal(recalled, created.voiceAgent.History())
+	s.Equal(recalled, created.current().History())
 }
 
 func (s *SessionSuite) TestATextSessionAsksTheModelWithTheHistoryTheCallerKept() {
@@ -1212,7 +1212,7 @@ func (s *SessionSuite) TestACallersToolIsAskedForAndItsAnswerReachesTheModel() {
 	s.True(created.ResolveTool(asked.ID, "it ships tomorrow", ""))
 
 	s.eventually(func() bool {
-		for _, message := range created.voiceAgent.History() {
+		for _, message := range created.current().History() {
 			if message.ToolCallID == asked.ID && message.Content == "it ships tomorrow" {
 				return true
 			}
@@ -1464,25 +1464,6 @@ func (s *SessionSuite) TestARecordedSessionWritesToMemory() {
 	s.Require().NoError(created.Close())
 
 	s.NotEmpty(s.remembers.remembered(), "a finished turn is handed to memory")
-}
-
-func (s *SessionSuite) TestChangingTheInstructionsAppliesToTheNextTurn() {
-	s.manages()
-	created := s.joins(Spec{Instructions: "be brief"})
-
-	created.SetInstructions("be thorough")
-	s.says(created, "hello")
-
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be thorough", s.model.requests()[0].Instructions)
-}
-
-func (s *SessionSuite) TestASessionNeedsACallToJoin() {
-	s.manages()
-
-	_, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme"})
-
-	s.ErrorContains(err, "call id is required")
 }
 
 func (s *SessionSuite) TestASandboxNobodyHasIsRefusedRatherThanIgnored() {
@@ -1767,7 +1748,7 @@ func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConne
 	s.Equal("notes__search", ran.Tool)
 	s.Equal("the note", ran.Result)
 	s.NoError(ran.Err)
-	s.Contains(created.voiceAgent.Tools(), "notes__search")
+	s.Contains(created.current().Tools(), "notes__search")
 }
 
 func awaitToolCall(events <-chan Event) *ToolCall {

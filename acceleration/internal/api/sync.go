@@ -33,15 +33,13 @@ type SyncAgentRequest struct {
 	Tts           *string                    `json:"tts,omitempty"`
 	Sts           *string                    `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
 	Voice         *string                    `json:"voice,omitempty"`
-	Speed         *float64                   `json:"speed,omitempty" minimum:"0" doc:"The voice's rate of delivery, 1 being its own. Zero leaves it there."`
 	Llm           *string                    `json:"llm,omitempty"`
 	Video         *SessionVideo              `json:"video,omitempty"`
-	ThinkingLlm   *string                    `json:"thinking_llm,omitempty" doc:"Only a voice agent names one: a text agent runs everything on its llm."`
+	Subagent      *string                    `json:"subagent,omitempty" doc:"Only a voice agent names one: a text agent runs everything on its llm."`
 	Search        *string                    `json:"search,omitempty"`
-	Greeting      *string                    `json:"greeting,omitempty"`
-	AgentPlugins  *[]PluginEntry             `json:"agent_plugins,omitempty" doc:"Plugins the agent reaches with the app's own login: a catalog id, or an object naming it with how it is reached."`
-	UserPlugins   *[]PluginEntry             `json:"user_plugins,omitempty" doc:"Plugins each end user connects with their own account, from the conversation, the first time the agent needs one. Each is named like agent_plugins."`
-	PluginEvents  *[]PluginEvent             `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives."`
+	Greeting      *Greeting                  `json:"greeting,omitempty"`
+	Plugins       *[]PluginEntry             `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it."`
+	PluginEvents  *[]PluginEvent             `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives."`
 	McpServers    *[]McpServer               `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login."`
 	Channels      *AgentChannels             `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat, each a number the app connected."`
 	Connectors    *[]AgentConnectorBinding   `json:"connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
@@ -50,9 +48,9 @@ type SyncAgentRequest struct {
 	Harness       *Harness                   `json:"harness,omitempty"`
 	Dispatch      *AgentDispatch             `json:"dispatch,omitempty"`
 	// SandboxOptions is how the sandbox is built. Left out keeps what is stored.
-	SandboxOptions   *SandboxOptions    `json:"sandbox_options,omitempty"`
-	Tags             *map[string]string `json:"tags,omitempty"`
-	ProgressiveTools *bool              `json:"progressive_tools,omitempty" doc:"Whether plugin, MCP server and connector tools are offered by a summary, the first call to each returning its full description and input schema instead of running it."`
+	SandboxOptions *SandboxOptions    `json:"sandbox_options,omitempty"`
+	Tags           *map[string]string `json:"tags,omitempty"`
+	Tools          *AgentTools        `json:"tools,omitempty" doc:"How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored."`
 }
 
 func (*SyncAgentRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -180,7 +178,13 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		return nil, err
 	}
 	if found && existing.SyncHash == hash {
-		return &syncAgentResponse{Body: SyncAgentResult{Unchanged: true, Config: agentConfigOf(existing)}}, nil
+		drifted, err := s.driftedSinceSync(ctx, customerID, existing.ID, body)
+		if err != nil {
+			return nil, err
+		}
+		if !drifted {
+			return &syncAgentResponse{Body: SyncAgentResult{Unchanged: true, Config: agentConfigOf(existing)}}, nil
+		}
 	}
 	// Before anything is written, for the same reason as the simulations in syncComplaint.
 	if message, ok, err := s.unboundConnectors(ctx, customerID, body.Connectors); err != nil {
@@ -193,7 +197,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		config = store.AgentConfig{CustomerID: customerID, Name: name}
 	}
 	applySettings(&config, body)
-	if message, ok := textThinkingComplaint(&config, body.ThinkingLlm); !ok {
+	if message, ok := textSubagentComplaint(&config, body.Subagent); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginEventsComplaint(config); !ok {
@@ -324,6 +328,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		Action: store.AuditSynced, Changes: synced,
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
+	s.warnPluginsSaved(config)
 	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config), Warnings: warnings}}, nil
 }
 
@@ -456,29 +461,23 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Voice != nil {
 		config.Voice = *body.Voice
 	}
-	if body.Speed != nil {
-		config.Speed = *body.Speed
-	}
 	if body.Llm != nil {
 		config.LLM = *body.Llm
 	}
-	if body.ThinkingLlm != nil {
-		config.Subagent = *body.ThinkingLlm
+	if body.Subagent != nil {
+		config.Subagent = *body.Subagent
 	}
 	if body.Search != nil {
 		config.Search = *body.Search
 	}
 	if body.Greeting != nil {
-		config.Greeting = *body.Greeting
+		config.Greeting, config.GreetingMode = greetingOf(body.Greeting)
 	}
-	if body.AgentPlugins != nil {
-		config.AgentPlugins = pluginEntriesOf(*body.AgentPlugins)
+	if body.Plugins != nil {
+		config.Plugins = pluginEntriesOf(*body.Plugins)
 	}
 	if body.Connectors != nil {
 		config.Connectors = storedBindings(*body.Connectors)
-	}
-	if body.UserPlugins != nil {
-		config.UserPlugins = pluginEntriesOf(*body.UserPlugins)
 	}
 	if body.PluginEvents != nil {
 		config.PluginEvents = pluginEventsOf(body.PluginEvents)
@@ -486,7 +485,7 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.McpServers != nil {
 		config.MCPServers = mcpServersOf(body.McpServers)
 	}
-	config.ProgressiveTools = override(config.ProgressiveTools, body.ProgressiveTools)
+	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, body.Tools)
 	if body.Channels != nil {
 		config.Channels = channelsOf(body.Channels)
 	}

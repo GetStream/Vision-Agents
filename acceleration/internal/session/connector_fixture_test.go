@@ -58,6 +58,12 @@ type connectorFixture struct {
 	revision    int
 }
 
+// consented is bearer without its core.Static mark: the suites' token stands for one a
+// consent issued, so a connection that needs reauthorization waits for a login, as an
+// oauth2_code one does. A rejected static token, which waits for none, is covered end to end
+// by internal/api's ChatLoginsSuite (AI-990).
+type consented struct{ core.Scheme }
+
 func (s *connectorFixture) SetupSuite() {
 	dsn := os.Getenv("ROUTER_POSTGRES_DSN")
 	if dsn == "" {
@@ -74,7 +80,7 @@ func (s *connectorFixture) SetupSuite() {
 	s.Require().NoError(err)
 	s.provider = newAccountsProvider(s)
 	s.registry = core.Registry{
-		Schemes:     map[string]core.Scheme{bearer.Name: bearer.New()},
+		Schemes:     map[string]core.Scheme{bearer.Name: consented{bearer.New()}},
 		ToolSources: map[string]core.ToolSource{mcp.Kind: mcp.New()},
 	}
 	credentials, err := pgsealed.New(db, s.sealer)
@@ -245,6 +251,10 @@ var (
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}}
 	toolEcho = &mcpsdk.Tool{Name: "echo", Description: "Answers with the note it was sent.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"note": map[string]any{"type": "string"}}}}
+	// toolOpen takes any key besides its note, so a model chooses the names of some arguments.
+	toolOpen = &mcpsdk.Tool{Name: "open", Description: "Takes a note and whatever else it is sent.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"note": map[string]any{"type": "string"}},
+			"additionalProperties": true}}
 	toolFails = &mcpsdk.Tool{Name: "fails", Description: "Reports its own failure.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}}
 	// toolGuarded is never run: the provider refuses every call of it with a 403 that asks for
@@ -253,7 +263,7 @@ var (
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
 			"scope": map[string]any{"type": "string"}, "claims": map[string]any{"type": "string"}}}}
 	providerTools = map[string]*mcpsdk.Tool{"whoami": toolWhoami, "secret": toolSecret, "slow": toolSlow,
-		"echo": toolEcho, "fails": toolFails, "guarded": toolGuarded}
+		"echo": toolEcho, "open": toolOpen, "fails": toolFails, "guarded": toolGuarded}
 )
 
 // grants grant each of the provider's tools by name, at its digest.
@@ -319,6 +329,9 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 			}
 			_ = json.Unmarshal(request.Params.Arguments, &sent)
 			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "you said " + sent.Note}}}, nil
+		})
+		server.AddTool(toolOpen, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "opened"}}}, nil
 		})
 		server.AddTool(toolFails, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 			return &mcpsdk.CallToolResult{IsError: true, Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the record is locked"}}}, nil

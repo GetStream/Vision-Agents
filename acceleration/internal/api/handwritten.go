@@ -47,7 +47,10 @@ func documentHandWritten(api huma.API) {
 			"`connector_unavailable` names an optional connector binding the session opened " +
 			"without: name (its alias), connector_id and reason, one of no_selection, " +
 			"shared_session, caller_unverified, connection_unavailable, provider_mismatch, " +
-			"needs_reauthorization, not_connected, open_failed, tool_unavailable and " +
+			"needs_reauthorization, credential_rejected (the provider rejected the token or key a " +
+			"bearer or api_key connection holds, or the connection reads a connector revision marked " +
+			"broken; only saving its credentials again fixes it, so no login is " +
+			"offered), not_connected, open_failed, tool_unavailable and " +
 			"selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer " +
 			"declares). " +
 			"Every watcher is sent each one when it attaches.\n" +
@@ -61,7 +64,7 @@ func documentHandWritten(api huma.API) {
 			"the same session. While that step-up is open, calls refused for the same access send " +
 			"no second event.\n" +
 			"Persistent text sessions also emit `conversation_updated` with conversation_id and a " +
-			"complete message snapshot: id, command_id, question_id, role, text, state, " +
+			"complete message snapshot: id, request_id, question_id, role, text, state, " +
 			"response_started_at, state_started_at, finished_at, duration_ms, saved, " +
 			"persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, " +
 			"title, status, phase, summary, immutable started_at, execution_started_at, finished_at " +
@@ -78,16 +81,16 @@ func documentHandWritten(api huma.API) {
 			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and " +
 			"pre_speech when the tool's connector binding sets one in its policy; " +
 			"tool_ran also includes tool_call_id.\n" +
-			"A respond command carrying command_id emits command_accepted with a nested command " +
-			"receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal " +
+			"A respond command carrying request_id emits command_accepted with a nested command " +
+			"receipt (request_id, user_message_id, assistant_message_id, state, duplicate). Personal " +
 			"persistent text sessions require this ID. A retry with the same text returns the " +
 			"existing IDs without invoking the model again; reuse with different text emits an " +
 			"error. Commands with IDs currently accept text only. After restart an interrupted " +
 			"command is reported, not rerun.\n" +
-			"An `interrupt` command carrying `command_id` stops that command and emits " +
+			"An `interrupt` command carrying `request_id` stops that command and emits " +
 			"`command_stopped` with its terminal receipt. A stop arriving after its command finished " +
 			"replays that command's receipt and leaves the command running now alone; an unknown " +
-			"command is reported as an error. Without `command_id` the frame stops whichever reply " +
+			"command is reported as an error. Without `request_id` the frame stops whichever reply " +
 			"is current, which is what a caller with no command to name means by it.\n" +
 			"A `decision` frame is one judgement the conversation made, carrying the same fields as " +
 			"a CallEvent. Together they are why the call went the way it did, and they are also " +
@@ -103,15 +106,14 @@ func documentHandWritten(api huma.API) {
 			"uncertain writes. Ordinary status watchers should leave this disabled. Persistent text " +
 			"command recovery is unchanged.\n" +
 			"The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, " +
-			"`interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the " +
-			"session. `instructions` is server-side only: from an end user's device it changes " +
-			"nothing and is answered with an `error` frame, `context` `command`, as `updateSession` " +
-			"refuses it. A `tool_call` is the only frame that must be answered: everything else is a " +
-			"report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; " +
+			"`interrupt` (optionally naming a `request_id`) or `close` to act on the session. A " +
+			"session's instructions are its agent config's, so there is no command to change them. " +
+			"A `tool_call` is the only frame that must be answered: everything else is a " +
+			"report. Tool calls made by durable personal commands carry `request_id` and `turn_id`; " +
 			"their result must repeat both values so a result cannot be adopted by another command " +
 			"or turn.\n" +
 			"A call to a tool declared with an `approval` waits for a person. The client reports " +
-			"their answer with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, " +
+			"their answer with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, " +
 			"and optionally a `summary` shown when they declined), before it answers the call with " +
 			"`tool_result`.\n" +
 			"`tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. " +
@@ -147,7 +149,7 @@ func documentHandWritten(api huma.API) {
 			"optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes " +
 			"one up for the records. A `text` session is refused, because the socket carries audio. " +
 			"A field that `createSession` refuses from an end user's device is refused here too: " +
-			"`history` and `instructions` are server-side only.\n" +
+			"`history` is server-side only.\n" +
 			"The server answers `session`, with the `Session` and the `sample_rate` in use. Then " +
 			"binary frames are PCM16 mono at that rate in both directions: the caller's audio in, " +
 			"and the agent's speech out at the pace it would be heard on a call. A `cleared` frame " +
@@ -246,9 +248,9 @@ func documentHandWritten(api huma.API) {
 			"Work goes to whichever of a customer's workers is holding the least of what it said it " +
 			"can hold, so a worker that never reports `done` is one the router cannot tell is busy.\n" +
 			"A `message` written to a running session whose agent sets `dispatch.text` carries that " +
-			"`session_id`, and a `command_id` when it was sent as a durable command. The model has " +
+			"`session_id`, and a `request_id` when it was sent as a durable command. The model has " +
 			"not answered it: the worker does, by creating a response on that session with a " +
-			"server-side credential and the same `command_id` and text.\n" +
+			"server-side credential and the same `request_id` and text.\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device. This is the clearest case of why: a worker is offered other people's " +
 			"callers, so anything that can open this socket can answer for the whole app. The auth " +
@@ -276,7 +278,9 @@ func documentHandWritten(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/plugins/callback",
 		Summary:     "Finish a plugin login",
-		Description: "The provider redirects here with a code. The path is unauthenticated because the " +
+		Deprecated:  true,
+		Description: "Deprecated: a connector login finishes at finishConnectorConsent. " +
+			"The provider redirects here with a code. The path is unauthenticated because the " +
 			"browser arrives from the identity provider, and the state is the secret.",
 		Security: []map[string][]string{},
 		Parameters: []*huma.Param{
@@ -442,8 +446,12 @@ func documentHandWritten(api huma.API) {
 				"credential is added instead. On a 401 the credential is renewed and the request sent " +
 				"once more when the scheme can renew it. A provider's 429 and Retry-After come back as " +
 				"they are, and the connection's calls are then refused with a 429 here until that " +
-				"Retry-After passes. A path with a dot segment, which would leave api_base, is " +
-				"refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base " +
+				"Retry-After passes. An app's direct calls to one connector are capped per minute " +
+				"(ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is " +
+				"refused with a 429 and a Retry-After until the minute ends, and is not sent. A path " +
+				"with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash " +
+				"(%5C), which a provider could resolve to leave api_base, is refused. The body is at " +
+				"most 1 MiB. Point a provider's own SDK at this URL as its base " +
 				"URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra " +
 				"headers. An app-owned connection is the app's backend's; a user-owned one is reached " +
 				"only by a backend acting for that user (X-Stream-User-Id). Each call that is sent " +
@@ -452,7 +460,7 @@ func documentHandWritten(api huma.API) {
 				"user's device.",
 			Parameters: []*huma.Param{
 				{Name: "id", In: "path", Description: "The connection.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
-				{Name: "path", In: "path", Description: "The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+				{Name: "path", In: "path", Description: "The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, which is refused, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
 			},
 			RequestBody: body,
 			Responses: map[string]*huma.Response{
@@ -463,7 +471,7 @@ func documentHandWritten(api huma.API) {
 				"404": {Ref: "#/components/responses/NotFound"},
 				"409": {Description: "The connection is not connected", Content: errorBody},
 				"413": {Description: "The body is over 1 MiB", Content: errorBody},
-				"429": {Description: "The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came.", Content: errorBody},
+				"429": {Description: "The provider asked to wait, or the app's calls to this connector are over the minute's cap: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came.", Content: errorBody},
 				"503": {Description: "The call did not reach the provider, or its answer did not come back", Content: errorBody},
 			},
 		})
@@ -501,7 +509,9 @@ func documentHandWritten(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/plugins/{plugin_id}/logo",
 		Summary:     "A plugin's logo",
-		Description: "The image a card uses to show which plugin it is asking about, as an SVG. The path " +
+		Deprecated:  true,
+		Description: "Deprecated with the plugin catalog. Connectors have no logo route. " +
+			"The image a card uses to show which plugin it is asking about, as an SVG. The path " +
 			"is unauthenticated because what draws it is an `<img>` in a chat client or a browser, " +
 			"which has no credential of this API's to send, and because the catalog is the same " +
 			"built-in list for every customer, so there is nothing of anybody's here.",
@@ -519,7 +529,9 @@ func documentHandWritten(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/v1/agents/plugins/events/{token}",
 		Summary:     "Receive a plugin's MCP event",
-		Description: "Where a plugin's MCP server delivers the events an agent subscribed to, signed " +
+		Deprecated:  true,
+		Description: "Deprecated: a connector binding's events are delivered to receiveConnectionEvent. " +
+			"Where a plugin's MCP server delivers the events an agent subscribed to, signed " +
 			"with Standard Webhooks. The path is unauthenticated because the server is not a " +
 			"customer: the token names the subscription and its secret signs each delivery. A " +
 			"verification is answered with its challenge, and an event opens a text conversation.",

@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from ..models.agent_channels import AgentChannels
     from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
+    from ..models.agent_tools import AgentTools
+    from ..models.greeting import Greeting
     from ..models.knowledge_document import KnowledgeDocument
     from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
     from ..models.mcp_server import McpServer
@@ -40,8 +42,6 @@ class SyncAgentRequest:
         Attributes:
             hash_ (str): A fingerprint of the directory. A second sync with the same hash does nothing.
             name (str): What the config is called, which is also the directory's name.
-            agent_plugins (list[PluginWithOptions | str] | Unset): Plugins the agent reaches with the app's own login: a
-                catalog id, or an object naming it with how it is reached.
             base_change (str | Unset): The newest change the caller has already seen, as last_change named it. Everything up
                 to it is taken as decided, so the sync is not refused for it again.
             channels (AgentChannels | Unset): The lines this agent answers on besides its Stream Chat channel. Each names a
@@ -57,7 +57,7 @@ class SyncAgentRequest:
                 left alone.
             dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
                 /v1/dispatch. Omitted settings are disabled.
-            greeting (str | Unset):
+            greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
             guardrail (str | Unset): The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the
                 policy in prose. Empty means every turn is answered.
             harness (Harness | Unset): Which harness the agent's sessions run: what hands work to the subagent, loads
@@ -74,10 +74,12 @@ class SyncAgentRequest:
             mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
                 what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
                 speech target and a session created from it needs no call to join.
-            plugin_events (list[PluginEvent] | Unset): MCP events the agent subscribes to on its plugins, each opening a
-                text conversation when it arrives.
-            progressive_tools (bool | Unset): Whether plugin, MCP server and connector tools are offered by a summary, the
-                first call to each returning its full description and input schema instead of running it.
+            plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors. MCP
+                events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+            plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector. Plugins
+                the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once,
+                unless its entry sets user: then each end user connects it with their own account, from the conversation, the
+                first time the agent needs it.
             sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
                 code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
                 everything out in its head.
@@ -88,28 +90,25 @@ class SyncAgentRequest:
                 Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is
                 deleted. Left out, the stored ones are left alone.
             skills (list[SkillRequest] | Unset):
-            speed (float | Unset): The voice's rate of delivery, 1 being its own. Zero leaves it there.
             sts (str | Unset): A speech-to-speech target: one native audio model that hears the caller and speaks back.
                 Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
             stt (str | Unset):
+            subagent (str | Unset): Only a voice agent names one: a text agent runs everything on its llm.
             tags (SyncAgentRequestTags | Unset):
-            thinking_llm (str | Unset): Only a voice agent names one: a text agent runs everything on its llm.
+            tools (AgentTools | Unset): How an agent is offered its plugin, MCP server and connector tools.
             tts (str | Unset):
-            user_plugins (list[PluginWithOptions | str] | Unset): Plugins each end user connects with their own account,
-                from the conversation, the first time the agent needs one. Each is named like agent_plugins.
             video (SessionVideo | Unset):
             voice (str | Unset):
     """
 
     hash_: str
     name: str
-    agent_plugins: list[PluginWithOptions | str] | Unset = UNSET
     base_change: str | Unset = UNSET
     channels: AgentChannels | Unset = UNSET
     check_changes: bool | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
-    greeting: str | Unset = UNSET
+    greeting: Greeting | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
     instructions: str | Unset = UNSET
@@ -120,19 +119,18 @@ class SyncAgentRequest:
     mcp_servers: list[McpServer] | Unset = UNSET
     mode: AgentMode | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
-    progressive_tools: bool | Unset = UNSET
+    plugins: list[PluginWithOptions | str] | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
     simulations: list[SimulationDeclaration] | Unset = UNSET
     skills: list[SkillRequest] | Unset = UNSET
-    speed: float | Unset = UNSET
     sts: str | Unset = UNSET
     stt: str | Unset = UNSET
+    subagent: str | Unset = UNSET
     tags: SyncAgentRequestTags | Unset = UNSET
-    thinking_llm: str | Unset = UNSET
+    tools: AgentTools | Unset = UNSET
     tts: str | Unset = UNSET
-    user_plugins: list[PluginWithOptions | str] | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     voice: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -143,17 +141,6 @@ class SyncAgentRequest:
         hash_ = self.hash_
 
         name = self.name
-
-        agent_plugins: list[dict[str, Any] | str] | Unset = UNSET
-        if not isinstance(self.agent_plugins, Unset):
-            agent_plugins = []
-            for agent_plugins_item_data in self.agent_plugins:
-                agent_plugins_item: dict[str, Any] | str
-                if isinstance(agent_plugins_item_data, PluginWithOptions):
-                    agent_plugins_item = agent_plugins_item_data.to_dict()
-                else:
-                    agent_plugins_item = agent_plugins_item_data
-                agent_plugins.append(agent_plugins_item)
 
         base_change = self.base_change
 
@@ -174,7 +161,9 @@ class SyncAgentRequest:
         if not isinstance(self.dispatch, Unset):
             dispatch = self.dispatch.to_dict()
 
-        greeting = self.greeting
+        greeting: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.greeting, Unset):
+            greeting = self.greeting.to_dict()
 
         guardrail = self.guardrail
 
@@ -222,7 +211,16 @@ class SyncAgentRequest:
                 plugin_events_item = plugin_events_item_data.to_dict()
                 plugin_events.append(plugin_events_item)
 
-        progressive_tools = self.progressive_tools
+        plugins: list[dict[str, Any] | str] | Unset = UNSET
+        if not isinstance(self.plugins, Unset):
+            plugins = []
+            for plugins_item_data in self.plugins:
+                plugins_item: dict[str, Any] | str
+                if isinstance(plugins_item_data, PluginWithOptions):
+                    plugins_item = plugins_item_data.to_dict()
+                else:
+                    plugins_item = plugins_item_data
+                plugins.append(plugins_item)
 
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
@@ -248,30 +246,21 @@ class SyncAgentRequest:
                 skills_item = skills_item_data.to_dict()
                 skills.append(skills_item)
 
-        speed = self.speed
-
         sts = self.sts
 
         stt = self.stt
+
+        subagent = self.subagent
 
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
 
-        thinking_llm = self.thinking_llm
+        tools: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tools, Unset):
+            tools = self.tools.to_dict()
 
         tts = self.tts
-
-        user_plugins: list[dict[str, Any] | str] | Unset = UNSET
-        if not isinstance(self.user_plugins, Unset):
-            user_plugins = []
-            for user_plugins_item_data in self.user_plugins:
-                user_plugins_item: dict[str, Any] | str
-                if isinstance(user_plugins_item_data, PluginWithOptions):
-                    user_plugins_item = user_plugins_item_data.to_dict()
-                else:
-                    user_plugins_item = user_plugins_item_data
-                user_plugins.append(user_plugins_item)
 
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
@@ -287,8 +276,6 @@ class SyncAgentRequest:
                 "name": name,
             }
         )
-        if agent_plugins is not UNSET:
-            field_dict["agent_plugins"] = agent_plugins
         if base_change is not UNSET:
             field_dict["base_change"] = base_change
         if channels is not UNSET:
@@ -321,8 +308,8 @@ class SyncAgentRequest:
             field_dict["mode"] = mode
         if plugin_events is not UNSET:
             field_dict["plugin_events"] = plugin_events
-        if progressive_tools is not UNSET:
-            field_dict["progressive_tools"] = progressive_tools
+        if plugins is not UNSET:
+            field_dict["plugins"] = plugins
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if sandbox_options is not UNSET:
@@ -333,20 +320,18 @@ class SyncAgentRequest:
             field_dict["simulations"] = simulations
         if skills is not UNSET:
             field_dict["skills"] = skills
-        if speed is not UNSET:
-            field_dict["speed"] = speed
         if sts is not UNSET:
             field_dict["sts"] = sts
         if stt is not UNSET:
             field_dict["stt"] = stt
+        if subagent is not UNSET:
+            field_dict["subagent"] = subagent
         if tags is not UNSET:
             field_dict["tags"] = tags
-        if thinking_llm is not UNSET:
-            field_dict["thinking_llm"] = thinking_llm
+        if tools is not UNSET:
+            field_dict["tools"] = tools
         if tts is not UNSET:
             field_dict["tts"] = tts
-        if user_plugins is not UNSET:
-            field_dict["user_plugins"] = user_plugins
         if video is not UNSET:
             field_dict["video"] = video
         if voice is not UNSET:
@@ -357,54 +342,25 @@ class SyncAgentRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_channels import AgentChannels
-        from ..models.agent_connector_binding import (
-            AgentConnectorBinding,
-        )
+        from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
+        from ..models.agent_tools import AgentTools
+        from ..models.greeting import Greeting
         from ..models.knowledge_document import KnowledgeDocument
-        from ..models.knowledge_url_declaration import (
-            KnowledgeUrlDeclaration,
-        )
+        from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
         from ..models.mcp_server import McpServer
         from ..models.plugin_event import PluginEvent
         from ..models.plugin_with_options import PluginWithOptions
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
-        from ..models.simulation_declaration import (
-            SimulationDeclaration,
-        )
+        from ..models.simulation_declaration import SimulationDeclaration
         from ..models.skill_request import SkillRequest
-        from ..models.sync_agent_request_tags import (
-            SyncAgentRequestTags,
-        )
+        from ..models.sync_agent_request_tags import SyncAgentRequestTags
 
         d = dict(src_dict)
         hash_ = d.pop("hash")
 
         name = d.pop("name")
-
-        _agent_plugins = d.pop("agent_plugins", UNSET)
-        agent_plugins: list[PluginWithOptions | str] | Unset = UNSET
-        if _agent_plugins is not UNSET:
-            agent_plugins = []
-            for agent_plugins_item_data in _agent_plugins:
-
-                def _parse_agent_plugins_item(data: object) -> PluginWithOptions | str:
-                    try:
-                        if not isinstance(data, dict):
-                            raise TypeError()
-                        componentsschemas_plugin_entry_type_1 = (
-                            PluginWithOptions.from_dict(data)
-                        )
-
-                        return componentsschemas_plugin_entry_type_1
-                    except (TypeError, ValueError, AttributeError, KeyError):
-                        pass
-                    return cast(PluginWithOptions | str, data)
-
-                agent_plugins_item = _parse_agent_plugins_item(agent_plugins_item_data)
-
-                agent_plugins.append(agent_plugins_item)
 
         base_change = d.pop("base_change", UNSET)
 
@@ -433,7 +389,12 @@ class SyncAgentRequest:
         else:
             dispatch = AgentDispatch.from_dict(_dispatch)
 
-        greeting = d.pop("greeting", UNSET)
+        _greeting = d.pop("greeting", UNSET)
+        greeting: Greeting | Unset
+        if isinstance(_greeting, Unset):
+            greeting = UNSET
+        else:
+            greeting = Greeting.from_dict(_greeting)
 
         guardrail = d.pop("guardrail", UNSET)
 
@@ -495,7 +456,28 @@ class SyncAgentRequest:
 
                 plugin_events.append(plugin_events_item)
 
-        progressive_tools = d.pop("progressive_tools", UNSET)
+        _plugins = d.pop("plugins", UNSET)
+        plugins: list[PluginWithOptions | str] | Unset = UNSET
+        if _plugins is not UNSET:
+            plugins = []
+            for plugins_item_data in _plugins:
+
+                def _parse_plugins_item(data: object) -> PluginWithOptions | str:
+                    try:
+                        if not isinstance(data, dict):
+                            raise TypeError()
+                        componentsschemas_plugin_entry_type_1 = (
+                            PluginWithOptions.from_dict(data)
+                        )
+
+                        return componentsschemas_plugin_entry_type_1
+                    except (TypeError, ValueError, AttributeError, KeyError):
+                        pass
+                    return cast(PluginWithOptions | str, data)
+
+                plugins_item = _parse_plugins_item(plugins_item_data)
+
+                plugins.append(plugins_item)
 
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
@@ -533,11 +515,11 @@ class SyncAgentRequest:
 
                 skills.append(skills_item)
 
-        speed = d.pop("speed", UNSET)
-
         sts = d.pop("sts", UNSET)
 
         stt = d.pop("stt", UNSET)
+
+        subagent = d.pop("subagent", UNSET)
 
         _tags = d.pop("tags", UNSET)
         tags: SyncAgentRequestTags | Unset
@@ -546,32 +528,14 @@ class SyncAgentRequest:
         else:
             tags = SyncAgentRequestTags.from_dict(_tags)
 
-        thinking_llm = d.pop("thinking_llm", UNSET)
+        _tools = d.pop("tools", UNSET)
+        tools: AgentTools | Unset
+        if isinstance(_tools, Unset):
+            tools = UNSET
+        else:
+            tools = AgentTools.from_dict(_tools)
 
         tts = d.pop("tts", UNSET)
-
-        _user_plugins = d.pop("user_plugins", UNSET)
-        user_plugins: list[PluginWithOptions | str] | Unset = UNSET
-        if _user_plugins is not UNSET:
-            user_plugins = []
-            for user_plugins_item_data in _user_plugins:
-
-                def _parse_user_plugins_item(data: object) -> PluginWithOptions | str:
-                    try:
-                        if not isinstance(data, dict):
-                            raise TypeError()
-                        componentsschemas_plugin_entry_type_1 = (
-                            PluginWithOptions.from_dict(data)
-                        )
-
-                        return componentsschemas_plugin_entry_type_1
-                    except (TypeError, ValueError, AttributeError, KeyError):
-                        pass
-                    return cast(PluginWithOptions | str, data)
-
-                user_plugins_item = _parse_user_plugins_item(user_plugins_item_data)
-
-                user_plugins.append(user_plugins_item)
 
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
@@ -585,7 +549,6 @@ class SyncAgentRequest:
         sync_agent_request = cls(
             hash_=hash_,
             name=name,
-            agent_plugins=agent_plugins,
             base_change=base_change,
             channels=channels,
             check_changes=check_changes,
@@ -602,19 +565,18 @@ class SyncAgentRequest:
             mcp_servers=mcp_servers,
             mode=mode,
             plugin_events=plugin_events,
-            progressive_tools=progressive_tools,
+            plugins=plugins,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
             search=search,
             simulations=simulations,
             skills=skills,
-            speed=speed,
             sts=sts,
             stt=stt,
+            subagent=subagent,
             tags=tags,
-            thinking_llm=thinking_llm,
+            tools=tools,
             tts=tts,
-            user_plugins=user_plugins,
             video=video,
             voice=voice,
         )

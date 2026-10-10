@@ -34,13 +34,12 @@ func (s *SlackChannelSuite) TestADeviceNamingAThreadChannelsAgentIDKeepsAConvers
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
 
-	named := s.client.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel, Text: pointerTo(true)})
-	guessed := s.client.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &unknown, Text: pointerTo(true)})
+	named := s.client.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
+	guessed := s.client.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &unknown})
 
 	s.Equal(answeredFor(guessed, unknown), answeredFor(named, channel))
 	s.Equal(channel, named.AgentId)
-	s.True(strings.HasPrefix(value(named.ConversationId), "agent:support-"),
-		"the conversation is the device's own, not the thread channel: %s", value(named.ConversationId))
+	s.Equal("agent:"+named.Id, value(named.ConversationId), "the conversation is the device's own, not the thread channel")
 }
 
 // TestTheThreadIsAnsweredByTheRouterNotByADevicesSessionNamingIt: the person's message in the
@@ -48,7 +47,7 @@ func (s *SlackChannelSuite) TestADeviceNamingAThreadChannelsAgentIDKeepsAConvers
 // the session a device opened under the thread channel's agent id.
 func (s *SlackChannelSuite) TestTheThreadIsAnsweredByTheRouterNotByADevicesSessionNamingIt() {
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	mine := s.client.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel, Text: pointerTo(true)})
+	mine := s.client.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
 
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
@@ -62,7 +61,7 @@ func (s *SlackChannelSuite) TestTheThreadIsAnsweredByTheRouterNotByADevicesSessi
 // Router opens none of its own, which would take the backend's over.
 func (s *SlackChannelSuite) TestTheBackendsSessionOnAThreadChannelAnswersTheThread() {
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	held := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel, Text: pointerTo(true)})
+	held := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
 
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
@@ -71,57 +70,17 @@ func (s *SlackChannelSuite) TestTheBackendsSessionOnAThreadChannelAnswersTheThre
 }
 
 // TestADevicesCallNamingAThreadChannelWritesNoTranscriptThere: a voice transcript is written
-// into the channel the agent id names (chatlog.Options.Channel). A device's call under a
-// thread channel's agent id writes none there; under an unknown one it writes its own.
+// into the session's own channel (chatlog.Options.Channel), never the one its agent id names.
 func (s *SlackChannelSuite) TestADevicesCallNamingAThreadChannelWritesNoTranscriptThere() {
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
 
-	named := s.client.createSession(CreateSessionRequest{AgentId: &channel, CallId: pointerTo("call-" + s.utils.uuid())})
-	guessed := s.client.createSession(CreateSessionRequest{AgentId: &unknown, CallId: pointerTo("call-" + s.utils.uuid())})
+	named := s.client.createSession(CreateSessionRequest{AgentId: &channel, StartVoice: pointerTo(true)})
+	guessed := s.client.createSession(CreateSessionRequest{AgentId: &unknown, StartVoice: pointerTo(true)})
 
 	s.Equal(answeredFor(guessed, unknown), answeredFor(named, channel))
-	s.True(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an unknown agent id's channel holds the transcript")
+	s.True(s.transcribed.opened(value(guessed.ConversationId)), "the session's own channel holds the transcript")
 	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's call")
-}
-
-// TestADevicesCallKeyedUnderAThreadChannelByItsCallIDWritesNoTranscriptThere: a voice
-// session that names no agent id is keyed under its call id (Spec.Normalize), so a call id
-// naming a thread channel is the same as an agent id naming it.
-func (s *SlackChannelSuite) TestADevicesCallKeyedUnderAThreadChannelByItsCallIDWritesNoTranscriptThere() {
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
-
-	named := s.client.createSession(CreateSessionRequest{CallId: &channel})
-	guessed := s.client.createSession(CreateSessionRequest{CallId: &unknown})
-
-	s.Equal(answeredFor(guessed, unknown), answeredFor(named, channel))
-	s.True(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an unknown call id's channel holds the transcript")
-	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's call")
-}
-
-// TestADevicesCallKeyedUnderAThreadChannelByACallIDWithALeadingSpaceWritesNoTranscriptThere:
-// Normalize trims a call id before it keys the session under it, so the check reads it
-// trimmed too (Spec.KeyedAgentID).
-func (s *SlackChannelSuite) TestADevicesCallKeyedUnderAThreadChannelByACallIDWithALeadingSpaceWritesNoTranscriptThere() {
-	s.callAsForAnUnknownID(func(id string) string { return " " + id })
-}
-
-// TestADevicesCallKeyedUnderAThreadChannelByACallIDWithATrailingSpaceWritesNoTranscriptThere.
-func (s *SlackChannelSuite) TestADevicesCallKeyedUnderAThreadChannelByACallIDWithATrailingSpaceWritesNoTranscriptThere() {
-	s.callAsForAnUnknownID(func(id string) string { return id + " " })
-}
-
-// TestADevicesCallKeyedUnderAThreadChannelByACallIDWithANewlineWritesNoTranscriptThere.
-func (s *SlackChannelSuite) TestADevicesCallKeyedUnderAThreadChannelByACallIDWithANewlineWritesNoTranscriptThere() {
-	s.callAsForAnUnknownID(func(id string) string { return id + "\n" })
-}
-
-// TestADevicesCallKeyedUnderAThreadChannelsIDInUpperCaseWritesNoTranscriptThere: whether
-// Stream Chat takes THREAD-<UUID> for thread-<uuid> is unverified, so it is kept out as if
-// it did.
-func (s *SlackChannelSuite) TestADevicesCallKeyedUnderAThreadChannelsIDInUpperCaseWritesNoTranscriptThere() {
-	s.callAsForAnUnknownID(strings.ToUpper)
 }
 
 // TestADevicesCallNamingAThreadChannelsAgentIDInUpperCaseWritesNoTranscriptThere.
@@ -129,11 +88,11 @@ func (s *SlackChannelSuite) TestADevicesCallNamingAThreadChannelsAgentIDInUpperC
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	upper, unknown := strings.ToUpper(channel), strings.ToUpper(conversation.ThreadChannelPrefix+s.utils.uuid())
 
-	named := s.client.createSession(CreateSessionRequest{AgentId: &upper, CallId: pointerTo("call-" + s.utils.uuid())})
-	guessed := s.client.createSession(CreateSessionRequest{AgentId: &unknown, CallId: pointerTo("call-" + s.utils.uuid())})
+	named := s.client.createSession(CreateSessionRequest{AgentId: &upper, StartVoice: pointerTo(true)})
+	guessed := s.client.createSession(CreateSessionRequest{AgentId: &unknown, StartVoice: pointerTo(true)})
 
 	s.Equal(answeredFor(guessed, unknown), answeredFor(named, upper))
-	s.True(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an unknown agent id's channel holds the transcript")
+	s.True(s.transcribed.opened(value(guessed.ConversationId)), "the session's own channel holds the transcript")
 	s.False(s.transcribed.opened(chatlog.ChannelType+":"+upper), "the thread channel's id in upper case holds no transcript")
 }
 
@@ -144,11 +103,11 @@ func (s *SlackChannelSuite) TestADevicesCallNamingAThreadChannelsAgentIDWithALea
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	padded, unknown := " "+channel, " "+conversation.ThreadChannelPrefix+s.utils.uuid()
 
-	named := s.client.createSession(CreateSessionRequest{AgentId: &padded, CallId: pointerTo("call-" + s.utils.uuid())})
-	guessed := s.client.createSession(CreateSessionRequest{AgentId: &unknown, CallId: pointerTo("call-" + s.utils.uuid())})
+	named := s.client.createSession(CreateSessionRequest{AgentId: &padded, StartVoice: pointerTo(true)})
+	guessed := s.client.createSession(CreateSessionRequest{AgentId: &unknown, StartVoice: pointerTo(true)})
 
 	s.Equal(answeredFor(guessed, unknown), answeredFor(named, padded))
-	s.True(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an unknown agent id's channel holds the transcript")
+	s.True(s.transcribed.opened(value(guessed.ConversationId)), "the session's own channel holds the transcript")
 	s.False(s.transcribed.opened(chatlog.ChannelType+":"+padded), "the padded thread channel id holds no transcript")
 }
 
@@ -158,74 +117,10 @@ func (s *SlackChannelSuite) TestABackendNamingAThreadChannelInUpperCaseIsAnswere
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	upper := strings.ToUpper(channel)
 
-	opened := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &upper, Text: pointerTo(true)})
+	opened := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &upper})
 
 	s.Equal(upper, opened.AgentId)
-	s.True(strings.HasPrefix(value(opened.ConversationId), "agent:support-"), value(opened.ConversationId))
-}
-
-// TestADevicesSocketKeyedUnderAThreadChannelByAPaddedCallIDWritesNoTranscriptThere.
-func (s *SlackChannelSuite) TestADevicesSocketKeyedUnderAThreadChannelByAPaddedCallIDWritesNoTranscriptThere() {
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
-
-	named := s.socketSessionWith(map[string]any{"call_id": " " + channel})
-	guessed := s.socketSessionWith(map[string]any{"call_id": " " + unknown})
-
-	s.Equal(channel, named["agent_id"])
-	s.Equal(unknown, guessed["agent_id"])
-	s.True(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an unknown call id's channel holds the transcript")
-	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's socket")
-}
-
-// TestADevicesForkKeyedUnderAThreadChannelByAPaddedCallIDWritesNoTranscriptThere.
-func (s *SlackChannelSuite) TestADevicesForkKeyedUnderAThreadChannelByAPaddedCallIDWritesNoTranscriptThere() {
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
-	parent := s.client.createSession(CreateSessionRequest{CallId: pointerTo("call-" + s.utils.uuid())})
-
-	var named, guessed Session
-	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+parent.Id+"/fork",
-		ForkSessionRequest{CallId: pointerTo(channel + " ")}, &named))
-	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+parent.Id+"/fork",
-		ForkSessionRequest{CallId: pointerTo(unknown + " ")}, &guessed))
-
-	s.Equal(answeredFor(guessed, unknown), answeredFor(named, channel))
-	s.True(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an unknown call id's channel holds the transcript")
-	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's fork")
-}
-
-// TestADevicesSocketKeyedUnderAThreadChannelByItsCallIDWritesNoTranscriptThere.
-func (s *SlackChannelSuite) TestADevicesSocketKeyedUnderAThreadChannelByItsCallIDWritesNoTranscriptThere() {
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
-
-	named := s.socketSessionWith(map[string]any{"call_id": channel})
-	guessed := s.socketSessionWith(map[string]any{"call_id": unknown})
-
-	s.Equal(channel, named["agent_id"])
-	s.Equal(unknown, guessed["agent_id"])
-	s.Equal(guessed["state"], named["state"])
-	s.True(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an unknown call id's channel holds the transcript")
-	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's socket")
-}
-
-// TestADevicesForkKeyedUnderAThreadChannelByItsCallIDWritesNoTranscriptThere: a voice fork
-// joins the call the request names and is keyed under it (forkSpec).
-func (s *SlackChannelSuite) TestADevicesForkKeyedUnderAThreadChannelByItsCallIDWritesNoTranscriptThere() {
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
-	parent := s.client.createSession(CreateSessionRequest{CallId: pointerTo("call-" + s.utils.uuid())})
-
-	var named, guessed Session
-	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+parent.Id+"/fork",
-		ForkSessionRequest{CallId: &channel}, &named))
-	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+parent.Id+"/fork",
-		ForkSessionRequest{CallId: &unknown}, &guessed))
-
-	s.Equal(answeredFor(guessed, unknown), answeredFor(named, channel))
-	s.True(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an unknown call id's channel holds the transcript")
-	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's fork")
+	s.Equal("agent:"+opened.Id, value(opened.ConversationId))
 }
 
 // TestADevicesCallIsBarredFromAChannelWhoseThreadLinkCannotBeRead: when channel_threads
@@ -235,7 +130,7 @@ func (s *SlackChannelSuite) TestADevicesCallIsBarredFromAChannelWhoseThreadLinkC
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	s.unreadableLink(channel)
 
-	s.client.createSession(CreateSessionRequest{AgentId: &channel, CallId: pointerTo("call-" + s.utils.uuid())})
+	s.client.createSession(CreateSessionRequest{AgentId: &channel, StartVoice: pointerTo(true)})
 
 	s.False(s.transcribed.opened(chatlog.ChannelType + ":" + channel))
 }
@@ -247,7 +142,7 @@ func (s *SlackChannelSuite) TestAMessageInAChannelWhoseThreadLinkCannotBeReadIsA
 	said := "is the build green? " + s.utils.uuid()
 	channel := s.messaged("U0000ALICE", said, "1759740000.000100", "")
 	s.unreadableLink(channel)
-	s.client.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel, CallId: pointerTo("call-" + s.utils.uuid())})
+	s.client.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel, StartVoice: pointerTo(true)})
 
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
@@ -255,14 +150,15 @@ func (s *SlackChannelSuite) TestAMessageInAChannelWhoseThreadLinkCannotBeReadIsA
 	s.Empty(s.slack.Posts())
 }
 
-// TestABackendsCallNamingAThreadChannelWritesItsTranscriptThereAsBefore: the backend is the
-// customer's own; its call under a thread channel's agent id is as it was.
-func (s *SlackChannelSuite) TestABackendsCallNamingAThreadChannelWritesItsTranscriptThereAsBefore() {
+// TestABackendsCallNamingAThreadChannelWritesItsTranscriptIntoItsOwnConversation: the
+// backend's call under a thread channel's agent id is a conversation of its own, like any
+// other session.
+func (s *SlackChannelSuite) TestABackendsCallNamingAThreadChannelWritesItsTranscriptIntoItsOwnConversation() {
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 
-	s.serverClient.createSession(CreateSessionRequest{AgentId: &channel, CallId: pointerTo("call-" + s.utils.uuid())})
+	created := s.serverClient.createSession(CreateSessionRequest{AgentId: &channel, StartVoice: pointerTo(true)})
 
-	s.True(s.transcribed.opened(chatlog.ChannelType + ":" + channel))
+	s.True(s.transcribed.opened(value(created.ConversationId)))
 }
 
 // TestADevicesSocketNamingAThreadChannelWritesNoTranscriptThere: the voice socket is a way
@@ -277,7 +173,7 @@ func (s *SlackChannelSuite) TestADevicesSocketNamingAThreadChannelWritesNoTransc
 	s.Equal(channel, named["agent_id"])
 	s.Equal(unknown, guessed["agent_id"])
 	s.Equal(guessed["state"], named["state"])
-	s.True(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an unknown agent id's channel holds the transcript")
+	s.True(s.transcribed.opened(guessed["conversation_id"].(string)), "the session's own channel holds the transcript")
 	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's socket")
 }
 
@@ -391,26 +287,26 @@ func (s *SlackChannelSuite) TestABackendDoesNotReopenAThreadChannelsSessionThatE
 // ended.
 func (s *SlackChannelSuite) TestABackendOpensAThreadChannelAgainByItsAgentID() {
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	held := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel, Text: pointerTo(true)})
+	held := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
 	s.serverClient.stopSession(held.Id)
 
-	again := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel, Text: pointerTo(true)})
+	again := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
 
 	s.Equal("agent:"+channel, value(again.ConversationId))
 }
 
 // TestWithNoThreadLinkedADevicesAgentIDIsAnsweredAsBefore: with no channel_threads row, as
 // staging runs with connectors off, an agent id in the thread- namespace is any agent id: a
-// conversation of its own, and a call's transcript in the channel it names.
+// conversation of its own, and a call's transcript in its own channel too.
 func (s *SlackChannelSuite) TestWithNoThreadLinkedADevicesAgentIDIsAnsweredAsBefore() {
 	texted, called := conversation.ThreadChannelPrefix+s.utils.uuid(), conversation.ThreadChannelPrefix+s.utils.uuid()
 
-	text := s.client.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &texted, Text: pointerTo(true)})
-	s.client.createSession(CreateSessionRequest{AgentId: &called, CallId: pointerTo("call-" + s.utils.uuid())})
+	text := s.client.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &texted})
+	call := s.client.createSession(CreateSessionRequest{AgentId: &called, StartVoice: pointerTo(true)})
 
 	s.Equal(texted, text.AgentId)
-	s.True(strings.HasPrefix(value(text.ConversationId), "agent:support-"))
-	s.True(s.transcribed.opened(chatlog.ChannelType + ":" + called))
+	s.Equal("agent:"+text.Id, value(text.ConversationId))
+	s.True(s.transcribed.opened(value(call.ConversationId)))
 	s.Zero(s.threadChannels())
 }
 
@@ -418,91 +314,12 @@ func (s *SlackChannelSuite) TestWithNoThreadLinkedADevicesAgentIDIsAnsweredAsBef
 func (s *SlackChannelSuite) TestWithNoThreadLinkedABackendsAgentIDIsAnsweredAsBefore() {
 	texted, called := conversation.ThreadChannelPrefix+s.utils.uuid(), conversation.ThreadChannelPrefix+s.utils.uuid()
 
-	text := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &texted, Text: pointerTo(true)})
-	s.serverClient.createSession(CreateSessionRequest{AgentId: &called, CallId: pointerTo("call-" + s.utils.uuid())})
+	text := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &texted})
+	call := s.serverClient.createSession(CreateSessionRequest{AgentId: &called, StartVoice: pointerTo(true)})
 
 	s.Equal(texted, text.AgentId)
-	s.True(strings.HasPrefix(value(text.ConversationId), "agent:support-"))
-	s.True(s.transcribed.opened(chatlog.ChannelType + ":" + called))
-	s.Zero(s.threadChannels())
-}
-
-// A conversation_id is a second way to name where a session writes. Each call shape a
-// device has is below (AI-936). Only an agent: channel Openable allows is a conversation:
-// any other conversation_id is refused before anything is written (Manager.Create reads its
-// history first, conversation.historyIn), so a session never falls back to writing under a
-// thread channel's agent id. The transcripts these tests read are named as cmd/router's
-// transcriptFor names them (openedTranscripts), so a session that did fall back would show.
-
-// TestADevicesCallNamingAThreadChannelOnAMessagingConversationWritesNoTranscriptThere: a
-// conversation_id of another channel type would leave the transcript under the agent id
-// (Spec.TranscriptChannel).
-func (s *SlackChannelSuite) TestADevicesCallNamingAThreadChannelOnAMessagingConversationWritesNoTranscriptThere() {
-	s.conversationAsForAnUnknownID(false, func(string) string { return "messaging:" + s.utils.uuid() })
-}
-
-// TestADevicesCallNamingAThreadChannelOnAConversationWithNoTypeWritesNoTranscriptThere.
-func (s *SlackChannelSuite) TestADevicesCallNamingAThreadChannelOnAConversationWithNoTypeWritesNoTranscriptThere() {
-	s.conversationAsForAnUnknownID(false, func(string) string { return s.utils.uuid() })
-}
-
-// TestADevicesCallNamingAThreadChannelOnAMessagingChannelOfTheSameIDWritesNoTranscriptThere.
-func (s *SlackChannelSuite) TestADevicesCallNamingAThreadChannelOnAMessagingChannelOfTheSameIDWritesNoTranscriptThere() {
-	s.conversationAsForAnUnknownID(false, func(id string) string { return "messaging:" + id })
-}
-
-// TestADevicesChatNamingAThreadChannelOnAMessagingConversationWritesNothingThere.
-func (s *SlackChannelSuite) TestADevicesChatNamingAThreadChannelOnAMessagingConversationWritesNothingThere() {
-	s.conversationAsForAnUnknownID(true, func(string) string { return "messaging:" + s.utils.uuid() })
-}
-
-// TestADevicesCallOnAThreadChannelsConversationWritesNoTranscriptThere: conversation_id
-// naming the thread channel itself is not Openable for a device.
-func (s *SlackChannelSuite) TestADevicesCallOnAThreadChannelsConversationWritesNoTranscriptThere() {
-	s.threadConversationAsForAnUnknownOne(false)
-}
-
-// TestADevicesChatOnAThreadChannelsConversationWritesNothingThere.
-func (s *SlackChannelSuite) TestADevicesChatOnAThreadChannelsConversationWritesNothingThere() {
-	s.threadConversationAsForAnUnknownOne(true)
-}
-
-// TestADevicesIncognitoCallNamingAThreadChannelWritesNoTranscriptThere: incognito clears the
-// conversation_id (Spec.Normalize) and keeps no transcript, whatever conversation was named.
-func (s *SlackChannelSuite) TestADevicesIncognitoCallNamingAThreadChannelWritesNoTranscriptThere() {
-	for _, conversationID := range []string{"", "messaging:" + s.utils.uuid()} {
-		channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-		unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
-		asked := func(agentID string) CreateSessionRequest {
-			request := CreateSessionRequest{AgentId: &agentID, CallId: pointerTo("call-" + s.utils.uuid()), Incognito: pointerTo(true)}
-			if conversationID != "" {
-				request.ConversationId = &conversationID
-			}
-			return request
-		}
-
-		named := s.client.createSession(asked(channel))
-		guessed := s.client.createSession(asked(unknown))
-
-		s.Equal(answeredFor(guessed, unknown), answeredFor(named, channel), conversationID)
-		s.False(s.transcribed.opened(chatlog.ChannelType+":"+unknown), "an incognito call keeps no transcript: %q", conversationID)
-		s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript: %q", conversationID)
-	}
-}
-
-// TestWithNoThreadLinkedADevicesConversationOfAnotherTypeIsAnsweredAsBefore: with no
-// channel_threads row, as staging runs with connectors off, a conversation_id of another
-// type is refused as it always was.
-func (s *SlackChannelSuite) TestWithNoThreadLinkedADevicesConversationOfAnotherTypeIsAnsweredAsBefore() {
-	agentID := conversation.ThreadChannelPrefix + s.utils.uuid()
-
-	answered := s.answerTo(s.client, http.MethodPost, "/v1/agents/sessions", CreateSessionRequest{
-		AgentId: &agentID, CallId: pointerTo("call-" + s.utils.uuid()), ConversationId: pointerTo("messaging:" + s.utils.uuid()),
-	})
-
-	s.Equal(http.StatusBadRequest, answered.status)
-	s.Equal("invalid conversation channel", answered.error.Message)
-	s.False(s.transcribed.opened(chatlog.ChannelType + ":" + agentID))
+	s.Equal("agent:"+text.Id, value(text.ConversationId))
+	s.True(s.transcribed.opened(value(call.ConversationId)))
 	s.Zero(s.threadChannels())
 }
 
@@ -510,74 +327,13 @@ func (s *SlackChannelSuite) TestWithNoThreadLinkedADevicesConversationOfAnotherT
 // is stored, as a worker opens one (Dispatch.Conversation).
 func (s *SlackChannelSuite) heldOnThread() string {
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	held := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel, Text: pointerTo(true)})
+	held := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
 	s.Require().Equal("agent:"+channel, value(held.ConversationId))
 	s.Require().Eventually(func() bool {
 		_, err := s.store.StoredSession(context.Background(), s.customerID(), held.Id)
 		return err == nil
 	}, settleFor, 20*time.Millisecond, "the session's row was never stored")
 	return held.Id
-}
-
-// callAsForAnUnknownID asserts a device's call under form(a thread channel's id) is answered
-// as one under form(an unknown id), and writes no transcript where it is keyed.
-func (s *SlackChannelSuite) callAsForAnUnknownID(form func(id string) string) {
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
-	asked, guessedAsked := form(channel), form(unknown)
-	keyed, guessedKeyed := strings.TrimSpace(asked), strings.TrimSpace(guessedAsked)
-
-	named := s.client.createSession(CreateSessionRequest{CallId: &asked})
-	guessed := s.client.createSession(CreateSessionRequest{CallId: &guessedAsked})
-
-	s.Equal(answeredFor(guessed, guessedKeyed), answeredFor(named, keyed))
-	s.True(s.transcribed.opened(chatlog.ChannelType+":"+guessedKeyed), "an unknown call id's channel holds the transcript")
-	s.False(s.transcribed.opened(chatlog.ChannelType+":"+keyed), "no transcript where the device's call is keyed")
-	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's call")
-}
-
-// conversationAsForAnUnknownID asserts a device's session under a thread channel's agent id,
-// on the conversation_id conversationOf(the agent id) names, is answered as one under an
-// unknown id, and writes nothing into the thread channel.
-func (s *SlackChannelSuite) conversationAsForAnUnknownID(text bool, conversationOf func(id string) string) {
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
-	before := len(s.chat.Stored(channel))
-
-	named := s.answerTo(s.client, http.MethodPost, "/v1/agents/sessions", s.deviceSession(text, &channel, conversationOf(channel)))
-	guessed := s.answerTo(s.client, http.MethodPost, "/v1/agents/sessions", s.deviceSession(text, &unknown, conversationOf(unknown)))
-
-	s.Equal(guessed, named)
-	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's session")
-	s.Len(s.chat.Stored(channel), before, "nothing of the device's session is written into the thread channel")
-}
-
-// threadConversationAsForAnUnknownOne asserts a device's session with conversation_id naming
-// a thread channel is answered as one naming an unknown thread channel, and writes nothing
-// into it.
-func (s *SlackChannelSuite) threadConversationAsForAnUnknownOne(text bool) {
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
-	before := len(s.chat.Stored(channel))
-
-	named := s.answerTo(s.client, http.MethodPost, "/v1/agents/sessions", s.deviceSession(text, nil, chatlog.ChannelType+":"+channel))
-	guessed := s.answerTo(s.client, http.MethodPost, "/v1/agents/sessions", s.deviceSession(text, nil, chatlog.ChannelType+":"+unknown))
-
-	s.Equal(guessed, named)
-	s.False(s.transcribed.opened(chatlog.ChannelType+":"+channel), "the thread channel holds no transcript of the device's session")
-	s.Len(s.chat.Stored(channel), before, "nothing of the device's session is written into the thread channel")
-}
-
-// deviceSession is a device's request for a session under agentID, if any, on
-// conversationID: a text one with the suite's agent config, else a call.
-func (s *SlackChannelSuite) deviceSession(text bool, agentID *string, conversationID string) CreateSessionRequest {
-	request := CreateSessionRequest{AgentId: agentID, ConversationId: &conversationID}
-	if text {
-		request.Agent, request.Text = &s.config.Name, pointerTo(true)
-	} else {
-		request.CallId = pointerTo("call-" + s.utils.uuid())
-	}
-	return request
 }
 
 // unreadableLink leaves a thread channel's channel_threads row one the store cannot read:
@@ -628,7 +384,7 @@ func (s *SlackChannelSuite) answerTo(client *testClient, method, path string, bo
 // answeredFor is what a created session says of itself that does not differ by its ids: the
 // agent id it was asked for, the sort of conversation it keeps, its state and modality.
 func answeredFor(opened Session, agentID string) []any {
-	return []any{opened.AgentId == agentID, strings.HasPrefix(value(opened.ConversationId), "agent:support-"),
+	return []any{opened.AgentId == agentID, value(opened.ConversationId) == "agent:"+opened.Id,
 		opened.State, opened.Modality}
 }
 

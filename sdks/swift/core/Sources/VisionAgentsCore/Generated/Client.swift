@@ -256,6 +256,7 @@ internal struct Client: APIProtocol {
     /// One session
     ///
     /// Reading a session is open to the device holding it, for the same reason listing and stopping are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+    /// A session that ended is read too. A backend is also given its summary, review and usage, which a device asks the backend for.
     ///
     /// - Remark: HTTP `GET /v1/agents/sessions/{id}`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)`.
@@ -429,13 +430,13 @@ internal struct Client: APIProtocol {
     }
     /// Change a session
     ///
-    /// Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call and incognito are what the session is, so they cannot change; forking is how to get a session that differs in those.
+    /// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
     ///
-    /// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Instructions, models and voice are the backend's to change, and a device asking for them is refused with a 403.
+    /// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
     ///
-    /// A session that ended can still be renamed and relabelled. Instructions and models only mean something to a session that is running, so asking to change them on one that ended is refused.
+    /// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
     ///
-    /// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Instructions and models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
+    /// Model changes are opened before anything changes, so a target that does not route is refused and the session carries on as it was. Models take over from the next turn; a reply being spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes it a cascade again. A session that started with the person's episode cards cannot be moved onto a speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the router naming the conversation for what was said.
     ///
     /// - Remark: HTTP `PATCH /v1/agents/sessions/{id}`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/patch(updateSession)`.
@@ -1725,6 +1726,312 @@ internal struct Client: APIProtocol {
                 switch response.status.code {
                 case 204:
                     return .noContent(.init())
+                case 400:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Components.Responses.BadRequest.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Components.Schemas.ErrorResponse.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .badRequest(.init(body: body))
+                case 401:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Components.Responses.Unauthorized.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Components.Schemas.ErrorResponse.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .unauthorized(.init(body: body))
+                case 404:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Components.Responses.NotFound.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Components.Schemas.ErrorResponse.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .notFound(.init(body: body))
+                case 500:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Components.Responses.InternalError.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Components.Schemas.ErrorResponse.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .internalServerError(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
+    /// Start voice on a session
+    ///
+    /// The agent joins the call agent:<session id>, which joining creates, with the conversation so far, and returns once it is there. What is said on the call and what is typed into the session are one conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models are the ones the session was opened with, or the defaults, and a native config speaks with its speech-to-speech model.
+    ///
+    /// Starting voice on a session that is already on its call changes nothing. A conversation in writing that ended is carried on under the same id, as a message to it is.
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/voice`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/voice/post(startSessionVoice)`.
+    internal func startSessionVoice(_ input: Operations.StartSessionVoice.Input) async throws -> Operations.StartSessionVoice.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.StartSessionVoice.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/v1/agents/sessions/{}/voice",
+                    parameters: [
+                        input.path.id
+                    ]
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .post
+                )
+                suppressMutabilityWarning(&request)
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                return (request, nil)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.StartSessionVoice.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Components.Schemas.Session.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
+                case 400:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Components.Responses.BadRequest.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Components.Schemas.ErrorResponse.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .badRequest(.init(body: body))
+                case 401:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Components.Responses.Unauthorized.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Components.Schemas.ErrorResponse.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .unauthorized(.init(body: body))
+                case 404:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Components.Responses.NotFound.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Components.Schemas.ErrorResponse.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .notFound(.init(body: body))
+                case 500:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Components.Responses.InternalError.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Components.Schemas.ErrorResponse.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .internalServerError(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
+    /// Stop voice on a session
+    ///
+    /// The agent finishes what it is saying, leaves the call and carries the conversation on in writing, with everything said on the call. Stopping voice on a session held in writing changes nothing. Stopping the session is what ends it.
+    ///
+    /// - Remark: HTTP `DELETE /v1/agents/sessions/{id}/voice`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/voice/delete(stopSessionVoice)`.
+    internal func stopSessionVoice(_ input: Operations.StopSessionVoice.Input) async throws -> Operations.StopSessionVoice.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.StopSessionVoice.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/v1/agents/sessions/{}/voice",
+                    parameters: [
+                        input.path.id
+                    ]
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .delete
+                )
+                suppressMutabilityWarning(&request)
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                return (request, nil)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.StopSessionVoice.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Components.Schemas.Session.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
                 case 400:
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Components.Responses.BadRequest.Body

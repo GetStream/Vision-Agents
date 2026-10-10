@@ -27,7 +27,6 @@ class UpdateSessionRequest:
         Attributes:
             custom (UpdateSessionRequestCustom | Unset): Replaces the caller's labels whole. An empty object clears them.
             description (str | Unset):
-            instructions (str | Unset): What the agent is told to be, from the next turn.
             llm (str | Unset): The conversation model, a provider/model or a capability shortcut.
             max_output_tokens (int | Unset):
             sts (str | Unset): A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
@@ -43,7 +42,6 @@ class UpdateSessionRequest:
 
     custom: UpdateSessionRequestCustom | Unset = UNSET
     description: str | Unset = UNSET
-    instructions: str | Unset = UNSET
     llm: str | Unset = UNSET
     max_output_tokens: int | Unset = UNSET
     sts: str | Unset = UNSET
@@ -62,8 +60,6 @@ class UpdateSessionRequest:
             custom = self.custom.to_dict()
 
         description = self.description
-
-        instructions = self.instructions
 
         llm = self.llm
 
@@ -96,8 +92,6 @@ class UpdateSessionRequest:
             field_dict["custom"] = custom
         if description is not UNSET:
             field_dict["description"] = description
-        if instructions is not UNSET:
-            field_dict["instructions"] = instructions
         if llm is not UNSET:
             field_dict["llm"] = llm
         if max_output_tokens is not UNSET:
@@ -123,9 +117,7 @@ class UpdateSessionRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.update_session_request_custom import (
-            UpdateSessionRequestCustom,
-        )
+        from ..models.update_session_request_custom import UpdateSessionRequestCustom
 
         d = dict(src_dict)
         _custom = d.pop("custom", UNSET)
@@ -136,8 +128,6 @@ class UpdateSessionRequest:
             custom = UpdateSessionRequestCustom.from_dict(_custom)
 
         description = d.pop("description", UNSET)
-
-        instructions = d.pop("instructions", UNSET)
 
         llm = d.pop("llm", UNSET)
 
@@ -172,7 +162,6 @@ class UpdateSessionRequest:
         update_session_request = cls(
             custom=custom,
             description=description,
-            instructions=instructions,
             llm=llm,
             max_output_tokens=max_output_tokens,
             sts=sts,

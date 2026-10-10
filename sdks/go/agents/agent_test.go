@@ -1,9 +1,11 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -49,7 +51,7 @@ func newBackend(t *testing.T) *backend {
 		stored := acceleration.AgentConfig{
 			Id: "config-1", Name: request.Name, Instructions: request.Instructions,
 			KnowledgeNamespace: request.KnowledgeNamespace, Skills: request.Skills,
-			ThinkingLlm: request.ThinkingLlm, Tags: request.Tags,
+			Subagent: request.Subagent, Tags: request.Tags,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 		router.configs = append(router.configs, stored)
@@ -114,7 +116,7 @@ func newBackend(t *testing.T) *backend {
 		router.syncs = append(router.syncs, request)
 		stored := acceleration.AgentConfig{
 			Id: "config-" + request.Name, Name: request.Name, Instructions: request.Instructions,
-			ThinkingLlm: request.ThinkingLlm, Llm: request.Llm, Tags: request.Tags,
+			Subagent: request.Subagent, Llm: request.Llm, Tags: request.Tags,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 		if request.Knowledge != nil || request.KnowledgeUrls != nil {
@@ -255,7 +257,6 @@ func TestASessionCanChangeWhatTheAgentWasConfiguredWith(t *testing.T) {
 	}
 
 	session, err := agent.Sessions.Create(t.Context(), SessionOptions{
-		Instructions: "You are Jean, and brief.",
 		CostTracking: map[string]string{"tier": "pro"},
 		Title:        "Order 1042",
 	})
@@ -267,9 +268,6 @@ func TestASessionCanChangeWhatTheAgentWasConfiguredWith(t *testing.T) {
 	router.mu.Lock()
 	defer router.mu.Unlock()
 	opened := router.opened[0]
-	if opened.Instructions == nil || *opened.Instructions != "You are Jean, and brief." {
-		t.Errorf("the session was opened with instructions %v", opened.Instructions)
-	}
 	if opened.Tags == nil || (*opened.Tags)["team"] != "support" || (*opened.Tags)["tier"] != "pro" {
 		t.Errorf("the session was labelled %v", opened.Tags)
 	}
@@ -483,7 +481,7 @@ func TestSyncSendsTheMCPServersNamedByURL(t *testing.T) {
 
 func TestSyncSendsWhetherToolsAreOfferedProgressively(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "progressive_tools: true\n")
+	write(t, root, "agent.yaml", "tools:\n  progressive: true\n")
 	router := newBackend(t)
 	agent := agentOn(t, router, Options{Dir: root})
 
@@ -493,8 +491,8 @@ func TestSyncSendsWhetherToolsAreOfferedProgressively(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	if sent := router.syncs[0].ProgressiveTools; sent == nil || !*sent {
-		t.Errorf("progressive_tools went as %v", sent)
+	if sent := router.syncs[0].Tools; sent == nil || sent.Progressive == nil || !*sent.Progressive {
+		t.Errorf("tools went as %+v", sent)
 	}
 }
 
@@ -532,9 +530,10 @@ func TestSyncSendsWhoLogsIntoEachMCPServer(t *testing.T) {
 
 func TestSyncSendsHowEachPluginIsReached(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", `agent_plugins: [sentry]
-user_plugins:
+	write(t, root, "agent.yaml", `plugins:
+  - sentry
   - name: linear
+    user: true
     readonly: true
     scopes: [read]
   - name: calcom
@@ -550,26 +549,61 @@ user_plugins:
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	app := router.syncs[0].AgentPlugins
-	if app == nil || len(*app) != 1 {
-		t.Fatalf("the app's plugins went as %+v", app)
+	named := router.syncs[0].Plugins
+	if named == nil || len(*named) != 3 {
+		t.Fatalf("the plugins went as %+v", named)
 	}
-	if sentry, err := (*app)[0].AsPluginEntry0(); err != nil || sentry != "sentry" {
+	if sentry, err := (*named)[0].AsPluginEntry0(); err != nil || sentry != "sentry" {
 		t.Errorf("a plugin with nothing said about it went as %q (%v), not its id", sentry, err)
 	}
-	users := router.syncs[0].UserPlugins
-	if users == nil || len(*users) != 2 {
-		t.Fatalf("each user's plugins went as %+v", users)
-	}
-	linear, err := (*users)[0].AsPluginWithOptions()
-	if err != nil || linear.Name != "linear" || linear.Readonly == nil || !*linear.Readonly ||
+	linear, err := (*named)[1].AsPluginWithOptions()
+	if err != nil || linear.Name != "linear" || linear.User == nil || !*linear.User ||
+		linear.Readonly == nil || !*linear.Readonly ||
 		linear.Scopes == nil || strings.Join(*linear.Scopes, ",") != "read" {
 		t.Errorf("linear went as %+v (%v)", linear, err)
 	}
-	calcom, err := (*users)[1].AsPluginWithOptions()
-	if err != nil || calcom.Toolsets == nil || strings.Join(*calcom.Toolsets, ",") != "bookings,availability" ||
+	calcom, err := (*named)[2].AsPluginWithOptions()
+	if err != nil || calcom.User != nil || calcom.Toolsets == nil || strings.Join(*calcom.Toolsets, ",") != "bookings,availability" ||
 		calcom.Tools == nil || strings.Join(*calcom.Tools, ",") != "get_bookings,get_availability" {
 		t.Errorf("calcom went as %+v (%v)", calcom, err)
+	}
+}
+
+func TestSyncWarnsThatPluginsAreDeprecatedAndStillSendsThem(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "plugins: [sentry]\nplugin_events:\n  - plugin: sentry\n    event: issue.created\n")
+	router := newBackend(t)
+	var logged bytes.Buffer
+	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(logged.String(), `level=WARN msg="agent.yaml plugins and plugin_events are deprecated: bind connectors instead" agent=triage plugins=[sentry] plugin_events=1`) {
+		t.Errorf("no deprecation warning in %q", logged.String())
+	}
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	sent := router.syncs[0]
+	if sent.Plugins == nil || len(*sent.Plugins) != 1 || sent.PluginEvents == nil || len(*sent.PluginEvents) != 1 {
+		t.Errorf("the plugins went as %+v and their events as %+v, not as declared", sent.Plugins, sent.PluginEvents)
+	}
+}
+
+func TestSyncWithoutPluginsWarnsOfNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "llm: openai/gpt-4o\n")
+	router := newBackend(t)
+	var logged bytes.Buffer
+	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(logged.String(), "deprecated") {
+		t.Errorf("an agent naming no plugins was warned: %q", logged.String())
 	}
 }
 
@@ -710,8 +744,8 @@ func TestAgentYAMLNamesTheHarnessAndSandboxTheConfigIsStoredWith(t *testing.T) {
 	if synced.Sandbox == nil || *synced.Sandbox != "daytona" {
 		t.Errorf("the sandbox was stored as %v", synced.Sandbox)
 	}
-	if synced.ThinkingLlm == nil || *synced.ThinkingLlm != "openai/gpt-5.6-sol" {
-		t.Errorf("the thinking llm was stored as %v", synced.ThinkingLlm)
+	if synced.Subagent == nil || *synced.Subagent != "openai/gpt-5.6-sol" {
+		t.Errorf("the subagent was stored as %v", synced.Subagent)
 	}
 }
 

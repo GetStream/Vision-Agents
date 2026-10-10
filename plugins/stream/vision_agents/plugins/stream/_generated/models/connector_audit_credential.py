@@ -15,22 +15,24 @@ T = TypeVar("T", bound="ConnectorAuditCredential")
 
 @_attrs_define
 class ConnectorAuditCredential:
-    """The tokens a grant event left, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8
-    lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated
-    the refresh token. No token, and no character of one, is shown.
+    """The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4
+    bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh
+    shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
 
         Attributes:
             rotated (bool): The refresh token the connection already had was replaced, as a provider that rotates refresh
                 tokens does on every refresh.
             access_expires_at (datetime.datetime | Unset): When the access token expires. Absent when the provider did not
                 say.
-            access_fingerprint (str | Unset): The access token the grant left, by fingerprint.
+            access_fingerprint (str | Unset): The access token the grant left, by fingerprint. On grant_revoked, the one
+                that ended.
             previous_access_fingerprint (str | Unset): The access token before it, by fingerprint. Absent for a first grant.
             previous_refresh_fingerprint (str | Unset): The refresh token before it, by fingerprint. Absent for a first
                 grant, or when there was none.
             refresh_expires_at (datetime.datetime | Unset): When the refresh token expires, by the connector's refresh_ttl.
                 Absent when it does not say.
-            refresh_fingerprint (str | Unset): The refresh token the grant left, by fingerprint. Absent when there is none.
+            refresh_fingerprint (str | Unset): The refresh token the grant left, by fingerprint. On grant_revoked, the one
+                that ended. Absent when there is none.
     """
 
     rotated: bool

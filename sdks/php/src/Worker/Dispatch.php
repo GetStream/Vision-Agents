@@ -175,7 +175,7 @@ final class Dispatch
      *
      * The response is created with this worker's own credential, acting for whoever wrote the
      * message, so it goes to the model rather than back to a worker. It carries the message's
-     * command, so the answer lands on it.
+     * request id, so the answer lands on it.
      */
     public function answer(InboundMessage $message): AgentResponse
     {
@@ -183,7 +183,7 @@ final class Dispatch
             throw new ConfigurationException('no session is holding this message; open one with getOrCreateAgent');
         }
         $client = $this->client->withBackend($this->client->backend->onBehalfOf($message->userId));
-        return (new Responses($client, $message->sessionId))->create($message->text, commandId: $message->commandId);
+        return (new Responses($client, $message->sessionId))->createAnswering($message->text, [], $message->requestId);
     }
 
     /**

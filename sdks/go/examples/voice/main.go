@@ -25,7 +25,6 @@ import (
 	"os/signal"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/agents"
-	"github.com/GetStream/Vision-Agents/sdks/go/edge"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
@@ -145,7 +144,7 @@ func start(ctx context.Context, agent *agents.Agent, number, dial string, buy bo
 		return nil, fmt.Errorf("ringing somebody needs one of your own numbers to ring from; pass -number")
 	case number == "":
 		fmt.Println("joining a Stream call")
-		return agent.Join(ctx, edge.Call{})
+		return agent.Join(ctx)
 	case dial != "":
 		fmt.Printf("ringing %s from %s\n", dial, number)
 		return agent.StartCall(ctx, number, dial)

@@ -5,7 +5,6 @@ package phone
 import (
 	"context"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -172,13 +171,14 @@ func (s *AppsSuite) TestACampaignCallAndItsSessionShareAnAppAndACall() {
 
 	placed, err := s.service.Call(s.ctx, CallRequest{
 		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",
-		CallID: "campaign-contact-1", CallType: "agent",
 	})
 	s.Require().NoError(err)
 
 	s.Equal(int64(4242), placed.StreamApp)
+	s.Equal(placed.SessionID, placed.CallID, "the answered leg lands in the session's own call")
+	s.Equal("agent", placed.CallType)
 	s.Len(s.own.Trunks(), 1)
-	pin, found, err := s.store.CallPin(s.ctx, s.customer, "agent", "campaign-contact-1")
+	pin, found, err := s.store.CallPin(s.ctx, s.customer, "agent", placed.SessionID)
 	s.Require().NoError(err)
 	s.True(found)
 	s.Equal(int64(4242), pin, "the session joining it finds the app the call's lines are in")
@@ -309,21 +309,29 @@ func (s *AppsSuite) TestAttachingGivesTheVendorATrunkAddressStreamCanFindByTheNu
 	s.Equal(want, attached.Bridge.URI, "the api shows the address the vendor was given")
 }
 
-func (s *AppsSuite) TestAnAttachedNumbersCallIsNamedWithoutThePlus() {
+func (s *AppsSuite) TestAnAttachedNumbersCallersEachLandInACallOfTheirOwn() {
 	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
 	s.Require().NoError(err)
 
-	want := "phone-" + strings.TrimPrefix(s.e164, "+")
-	s.Equal(want, attached.CallID, "stream allows only a-z, 0-9, _ and - in a call id")
-	s.Equal(want, s.number().StreamCallID)
+	rule := s.deployment.Rule(attached.RouteID)
+	s.Require().NotNil(rule)
+	direct := rule["direct_routing_configs"].(map[string]any)
+	s.Equal("{{uuid}}", direct["call_id"], "each caller's call is named for the session answering them")
+	s.Equal("agent", direct["call_type"])
+	custom := rule["call_configs"].(map[string]any)["custom_data"].(map[string]any)
+	s.Equal(s.e164, custom[NumberKey], "the call says which number it rang")
 }
 
-func (s *AppsSuite) TestAnAttachedNumbersCallKeepsTheIdItWasGiven() {
-	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164, CallID: "front-desk"})
+func (s *AppsSuite) TestAPlacedCallLandsInTheCallOfTheSessionItWasPlacedFor() {
+	id := "0b9f2a52-5c1e-4d7a-9a3e-0f6b8f1c2d3e"
+
+	placed, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111", SessionID: id,
+	})
 	s.Require().NoError(err)
 
-	s.Equal("front-desk", attached.CallID)
-	s.Equal("front-desk", s.number().StreamCallID)
+	s.Equal(id, placed.SessionID)
+	s.Equal(id, placed.CallID)
 }
 
 func (s *AppsSuite) TestReattachingANumberMovesItToTheNewCallName() {
@@ -334,6 +342,5 @@ func (s *AppsSuite) TestReattachingANumberMovesItToTheNewCallName() {
 
 	s.NotEqual(first.TrunkID, second.TrunkID)
 	s.Equal([]string{second.TrunkID}, s.deployment.Trunks(), "the first trunk is removed")
-	s.Equal("phone-"+strings.TrimPrefix(s.e164, "+"), s.number().StreamCallID)
 	s.Equal("sip:"+s.e164+"@sip.example.test", s.vendor.inbound.Bridge.URI)
 }

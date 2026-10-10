@@ -13,6 +13,8 @@ use GetStream\VisionAgents\Json;
 final readonly class InboundCall
 {
     /**
+     * @param string $sessionId the session to open for the call, with voice: the call is named for
+     *     it; empty when the router named none
      * @param string $calledNumber the number they rang, which the agent acts from and can transfer on
      * @param string $callerNumber the number they rang from, where the vendor passed it on
      * @param array<string, string> $custom whatever was put on the Stream call
@@ -24,6 +26,7 @@ final readonly class InboundCall
         public string $callerNumber = '',
         public array $custom = [],
         public ?DateTimeImmutable $at = null,
+        public string $sessionId = '',
     ) {
     }
 
@@ -40,6 +43,7 @@ final readonly class InboundCall
             callerNumber: Json::string($frame, 'caller_number'),
             custom: Json::stringMap($frame, 'custom'),
             at: Json::parseDate(Json::string($frame, 'at')),
+            sessionId: Json::string($frame, 'session_id'),
         );
     }
 }

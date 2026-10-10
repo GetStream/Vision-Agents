@@ -28,6 +28,17 @@ func (s *CatalogSuite) TestTheFourteenPluginsAreListed() {
 	}, ids)
 }
 
+func (s *CatalogSuite) TestAPersonsOwnAccountIsConnectedByEachUser() {
+	var personal []string
+	for _, plugin := range Catalog() {
+		if plugin.User {
+			personal = append(personal, plugin.ID)
+		}
+	}
+
+	s.ElementsMatch([]string{"slack", "calendly", "calcom", "linear", "google_calendar", "google_drive", "google_docs", "gmail"}, personal)
+}
+
 func (s *CatalogSuite) TestSearchMatchesAName() {
 	found := Search("cal")
 	ids := make([]string, 0, len(found))

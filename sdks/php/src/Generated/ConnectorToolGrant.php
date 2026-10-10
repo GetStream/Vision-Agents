@@ -17,7 +17,7 @@ final readonly class ConnectorToolGrant
         // The tool as the connector names it.
         public string $name,
         // The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex characters. A tool whose...
-        public string $schemaDigest,
+        public ?string $schemaDigest = null,
     ) {
     }
 
@@ -28,7 +28,7 @@ final readonly class ConnectorToolGrant
     {
         return new self(
             name: Json::string($data, 'name'),
-            schemaDigest: Json::string($data, 'schema_digest'),
+            schemaDigest: array_key_exists('schema_digest', $data) && $data['schema_digest'] !== null ? Json::string($data, 'schema_digest') : null,
         );
     }
 
@@ -41,7 +41,9 @@ final readonly class ConnectorToolGrant
     {
         $out = [];
         $out['name'] = $this->name;
-        $out['schema_digest'] = $this->schemaDigest;
+        if ($this->schemaDigest !== null) {
+            $out['schema_digest'] = $this->schemaDigest;
+        }
         return $out;
     }
 }

@@ -15,25 +15,22 @@ public sealed interface Command {
     public data class Say(val text: String) : Command
 
     /**
-     * Abandon the reply in flight, or the command named, which is how a durable command is
+     * Abandon the reply in flight, or the request named, which is how a request is
      * stopped wherever it got to.
      */
-    public data class Interrupt(val commandId: String = "") : Command
-
-    /** Replace the system prompt, from the next turn on. */
-    public data class Instructions(val instructions: String) : Command
+    public data class Interrupt(val requestId: String = "") : Command
 
     /**
      * Answer a tool call. One of [output] or [error] says how it went.
      *
-     * [commandId] and [turnId] repeat the call's own, so the router can tell which command or
+     * [requestId] and [turnId] repeat the call's own, so the router can tell which request or
      * turn the answer belongs to.
      */
     public data class ToolResult(
         val id: String,
         val output: String = "",
         val error: String = "",
-        val commandId: String = "",
+        val requestId: String = "",
         val turnId: String = "",
     ) : Command
 
@@ -52,11 +49,7 @@ private fun Command.frame(): JsonObject = when (this) {
     Command.Close -> buildJsonObject { put("type", "close") }
     is Command.Interrupt -> buildJsonObject {
         put("type", "interrupt")
-        if (commandId.isNotEmpty()) put("command_id", commandId)
-    }
-    is Command.Instructions -> buildJsonObject {
-        put("type", "instructions")
-        put("instructions", instructions)
+        if (requestId.isNotEmpty()) put("request_id", requestId)
     }
     is Command.ToolResult -> buildJsonObject {
         put("type", "tool_result")
@@ -65,7 +58,7 @@ private fun Command.frame(): JsonObject = when (this) {
         // are the same thing.
         put("output", output)
         put("error", error)
-        if (commandId.isNotEmpty()) put("command_id", commandId)
+        if (requestId.isNotEmpty()) put("request_id", requestId)
         if (turnId.isNotEmpty()) put("turn_id", turnId)
     }
 }

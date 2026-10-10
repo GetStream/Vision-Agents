@@ -22,26 +22,33 @@ class TestAgent < LocalRouterTest
     @router.last(:post, "/v1/agents/sessions").json
   end
 
-  def test_join_creates_the_call_and_starts_from_the_config
+  def test_join_opens_the_session_with_voice_on_its_own_call
     serve_session
 
-    agent(cost_tracking: { env: "production", team: 7 }, memory_filter: { user_id: 123, plan: "pro" })
-      .join("call-1", participant_wait_timeout: 0, wait_for_end: false) { |session| assert session.live? }
+    call, started = agent(cost_tracking: { env: "production", team: 7 }, memory_filter: { user_id: 123, plan: "pro" })
+                    .join(participant_wait_timeout: 0, wait_for_end: false) do |session|
+                      [session.call, session.voice.started?]
+                    end
 
-    created = @router.last(:post, CALLS)
-    assert_equal "/api/v2/video/call/agent/call-1", created.path
-    assert_equal "support", created.json.dig("data", "created_by_id")
+    assert_empty @router.seen(:post, CALLS)
+    assert_equal VA::Edge::Call.new(id: "sess_1", type: "agent"), call
+    assert started
     assert_equal({ "agent" => "support", "user_id" => "support", "user_name" => "support", "agent_id" => "support",
                    "tags" => { "env" => "production", "team" => "7" },
                    "memory" => { "user_id" => "123", "filter" => { "plan" => "pro" } },
-                   "call_id" => "call-1", "call_type" => "agent" }, session_request)
+                   "start_voice" => true }, session_request)
+  end
+
+  def test_join_is_not_given_a_call_to_name
+    assert_raises(VA::ConfigurationError) { agent.join("call-1") }
+    assert_empty @router.requests
   end
 
   def test_leaving_the_block_closes_the_session_and_returns_its_value
     closed = Thread::Queue.new
     serve_session { |peer| closed << peer.receive_type("close", timeout: 10) }
 
-    value = agent.join("call-1", participant_wait_timeout: 0, wait_for_end: false) { :done }
+    value = agent.join(participant_wait_timeout: 0, wait_for_end: false) { :done }
 
     assert_equal :done, value
     assert_equal({ "type" => "close" }, closed.pop(timeout: 5))
@@ -55,7 +62,7 @@ class TestAgent < LocalRouterTest
     end
 
     started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    participants = agent.join("call-1") { |session| session.participants }
+    participants = agent.join { |session| session.participants }
 
     assert_equal [VA::Participant.new("p1", "ada", "Ada")], participants
     assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :>=, 0.2
@@ -67,25 +74,34 @@ class TestAgent < LocalRouterTest
       peer.receive_type("close", timeout: 10)
     end
 
-    agent.join("call-1", participant_wait_timeout: 0, wait_for_end: false) do |session|
+    agent.join(participant_wait_timeout: 0, wait_for_end: false) do |session|
       refute session.wait_for_participant(timeout: 0.3)
       assert_empty session.participants
     end
   end
 
-  def test_an_inbound_call_is_joined_as_it_arrived
+  def test_an_inbound_call_joins_the_session_it_was_handed
     serve_session do |peer|
       peer.send_frame(type: "heard", text: "hello")
       peer.receive_type("close", timeout: 10)
     end
-    call = VA::InboundCall.from("call_id" => "pstn-1", "called_number" => "+15550100", "caller_number" => "+15550199")
+    call = VA::InboundCall.from("call_id" => "agent:inbound-1", "session_id" => "inbound-1",
+                                "called_number" => "+15550100", "caller_number" => "+15550199")
 
     agent.join(call, wait_for_end: false) { assert call.wait_for_phone_participant(timeout: 5) }
 
     assert_empty @router.seen(:post, CALLS)
-    assert_equal "pstn-1", session_request["call_id"]
-    assert_equal "default", session_request["call_type"]
+    assert_equal "inbound-1", session_request["id"]
+    assert_equal true, session_request["start_voice"]
+    refute session_request.key?("call_id")
     assert_equal({ "number" => "+15550100" }, session_request["phone"])
+  end
+
+  def test_an_inbound_call_that_names_no_session_is_refused
+    call = VA::InboundCall.from("call_id" => "pstn-1", "called_number" => "+15550100")
+
+    assert_raises(VA::ConfigurationError) { agent.join(call) }
+    assert_empty @router.seen(:post, "/v1/agents/sessions")
   end
 
   def test_the_caller_cannot_be_waited_for_before_joining
@@ -101,23 +117,43 @@ class TestAgent < LocalRouterTest
     end
     support = agent
 
-    response = support.join("call-1", participant_wait_timeout: 0, wait_for_end: false) do
+    response = support.join(participant_wait_timeout: 0, wait_for_end: false) do
       support.responses.create("greet the user")
     end
 
     assert_equal "resp_1", response.id
-    assert_equal({ "text" => "greet the user" }, @router.last(:post, "/v1/agents/sessions/sess_1/responses").json)
+    sent = @router.last(:post, "/v1/agents/sessions/sess_1/responses").json
+    assert_equal "greet the user", sent["text"]
+    assert_match(/\A[0-9a-f]{32}\z/, sent["request_id"])
+  end
+
+  def test_each_text_question_carries_a_fresh_request_id_and_one_with_an_image_none
+    serve_session
+    @router.on(:post, "/v1/agents/sessions/sess_1/responses",
+               body: { "id" => "resp_1", "session_id" => "sess_1", "status" => "running" })
+    support = agent
+
+    support.join(participant_wait_timeout: 0, wait_for_end: false) do
+      support.responses.create("first")
+      support.responses.create("second")
+      support.responses.create("look", images: [{ url: "https://example.com/a.png" }])
+    end
+
+    sent = @router.seen(:post, "/v1/agents/sessions/sess_1/responses").map(&:json)
+    assert_equal 2, sent.first(2).map { |body| body["request_id"] }.uniq.size
+    sent.first(2).each { |body| assert_match(/\A[0-9a-f]{32}\z/, body["request_id"]) }
+    assert_equal({ "text" => "look", "images" => [{ "url" => "https://example.com/a.png" }] }, sent[2])
   end
 
   def test_responses_need_a_conversation
     assert_raises(VA::ConfigurationError) { agent.responses }
   end
 
-  def test_a_tool_call_is_answered_with_its_command_and_turn
+  def test_a_tool_call_is_answered_with_its_request_and_turn
     results = Thread::Queue.new
     serve_session do |peer|
       peer.send_frame(type: "tool_call", id: "t1", name: "weather", arguments: '{"city":"Paris"}',
-                      command_id: "c1", turn_id: "turn_1")
+                      request_id: "c1", turn_id: "turn_1")
       results << peer.receive_type("tool_result")
       peer.send_frame(type: "tool_call", id: "t2", name: "broken", arguments: "{}")
       results << peer.receive_type("tool_result")
@@ -128,9 +164,9 @@ class TestAgent < LocalRouterTest
                               display_title: "Checking the sky") { |args| { city: args["city"], sky: "clear" } }
     tools.register("broken", description: "Always fails") { raise ArgumentError, "no sky today" }
 
-    agent(tools: tools).join("call-1", participant_wait_timeout: 0, wait_for_end: false) do
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
       assert_equal({ "type" => "tool_result", "tool_call_id" => "t1", "output" => '{"city":"Paris","sky":"clear"}',
-                     "command_id" => "c1", "turn_id" => "turn_1" }, results.pop(timeout: 5))
+                     "request_id" => "c1", "turn_id" => "turn_1" }, results.pop(timeout: 5))
       assert_equal({ "type" => "tool_result", "tool_call_id" => "t2", "error" => "no sky today" },
                    results.pop(timeout: 5))
     end
@@ -153,7 +189,7 @@ class TestAgent < LocalRouterTest
     end
     tools = VA::Tools.new.register("slow", description: "Takes a while") { release.pop(timeout: 5) && "late" }
 
-    agent(tools: tools).join("call-1", participant_wait_timeout: 0, wait_for_end: false) do
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
       assert_nil results.pop(timeout: 5)
     end
   end
@@ -165,7 +201,7 @@ class TestAgent < LocalRouterTest
       peer.send_frame(type: "left")
     end
 
-    events = agent.join("call-1", participant_wait_timeout: 0) { |session| session.events.to_a }
+    events = agent.join(participant_wait_timeout: 0) { |session| session.events.to_a }
 
     assert_equal %w[heard responded left], events.map(&:kind)
     assert_equal "ada", events[0].participant.user_id
@@ -175,7 +211,7 @@ class TestAgent < LocalRouterTest
   def test_the_events_socket_asks_for_what_was_wanted
     serve_session
 
-    agent.join("call-1", participant_wait_timeout: 0, wait_for_end: false, interim: true) { nil }
+    agent.join(participant_wait_timeout: 0, wait_for_end: false, interim: true) { nil }
 
     assert_equal({ "interim" => "true", "decisions" => "false" },
                  @router.last(:get, "/v1/agents/sessions/sess_1/events").query)
@@ -185,7 +221,7 @@ class TestAgent < LocalRouterTest
     @router.on(:post, "/v1/agents/sessions", body: { "id" => "sess_9" })
     @router.on(:post, "/v1/agents/sessions/sess_9/stop", status: 204)
 
-    assert_raises(VA::RouterError) { agent.join("call-1", participant_wait_timeout: 0) }
+    assert_raises(VA::RouterError) { agent.join(participant_wait_timeout: 0) }
     assert_equal 1, @router.seen(:post, "/v1/agents/sessions/sess_9/stop").size
     assert_empty @router.seen(:delete, "/v1/agents/sessions/sess_9")
   end
@@ -193,57 +229,82 @@ class TestAgent < LocalRouterTest
   def test_chat_holds_the_conversation_in_writing
     serve_session
 
-    agent.chat(conversation_id: "agent:room-1") { nil }
-    assert_equal true, session_request["text"]
-    assert_equal "agent:room-1", session_request["conversation_id"]
-    refute session_request.key?("incognito")
+    started = agent.chat { |session| session.voice.started? }
+    refute started
+    %w[start_voice text conversation_id incognito].each { |key| refute session_request.key?(key), key }
 
     agent.chat(incognito: true) { nil }
     assert_equal true, session_request["incognito"]
     assert_empty @router.seen(:post, CALLS)
   end
 
-  def test_reply_answers_in_the_channel_the_message_came_from
+  def test_voice_is_started_and_stopped_on_a_chat
+    serve_session
+    @router.on(:post, "/v1/agents/sessions/sess_1/voice", body: { "id" => "sess_1", "call_id" => "sess_1" })
+    @router.on(:delete, "/v1/agents/sessions/sess_1/voice", body: { "id" => "sess_1", "call_id" => "" })
+    support = agent
+
+    support.chat do |session|
+      assert_raises(VA::ConfigurationError) { support.monitor_url }
+      assert_equal "sess_1", session.voice.start["call_id"]
+      assert session.voice.started?
+      assert support.monitor_url.start_with?("https://demo.example/join/sess_1?")
+      session.voice.stop
+      refute session.voice.started?
+    end
+
+    assert_equal 1, @router.seen(:post, "/v1/agents/sessions/sess_1/voice").size
+    assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/sess_1/voice").size
+  end
+
+  def test_reply_answers_the_conversation_the_message_came_from
     serve_session
     message = VA::InboundMessage.from("channel_id" => "room-1", "agent_id" => "support-1", "text" => "hi")
 
     agent.reply(message) { nil }
 
-    assert_equal "agent:room-1", session_request["conversation_id"]
     assert_equal "support-1", session_request["agent_id"]
-    assert_equal true, session_request["text"]
-    refute session_request.key?("incognito")
+    %w[conversation_id text incognito].each { |key| refute session_request.key?(key), key }
   end
 
-  def test_an_outbound_call_is_placed_before_the_agent_joins
+  def test_an_outbound_call_is_placed_for_the_session_the_agent_joins
     serve_session
-    @router.on(:post, "/v1/phone/calls") do |request|
-      [202, { "vendor_call_id" => "CA123", "status" => "queued", "call_id" => request.json["call_id"] }]
-    end
+    @router.on(:post, "/v1/phone/calls",
+               status: 202, body: { "vendor_call_id" => "CA123", "status" => "queued", "session_id" => "placed-1" })
 
     agent(cost_tracking: { env: "production" })
-      .outbound_call(from: "+15550100", to: "+15550199", call_id: "out-1", ring_timeout: 30,
+      .outbound_call(from: "+15550100", to: "+15550199", ring_timeout: 30,
                      participant_wait_timeout: 0, wait_for_end: false) { nil }
 
     placed = @router.last(:post, "/v1/phone/calls").json
-    assert_equal({ "from" => "+15550100", "to" => "+15550199", "call_id" => "out-1", "call_type" => "agent",
+    assert_equal({ "from" => "+15550100", "to" => "+15550199",
                    "ring_timeout_seconds" => 30, "tags" => { "env" => "production" } }, placed)
+    assert_equal "placed-1", session_request["id"]
+    assert_equal true, session_request["start_voice"]
     assert_equal true, session_request["navigating"]
     assert_equal({ "number" => "+15550100", "vendor_call_id" => "CA123" }, session_request["phone"])
-    order = @router.requests.map { |r| r.path.split("/")[2] }
-    assert_equal %w[v2 phone agents], order.first(3)
+    assert_equal %w[phone agents], @router.requests.map { |r| r.path.split("/")[2] }.first(2)
+  end
+
+  def test_a_call_placed_for_no_session_is_not_joined
+    @router.on(:post, "/v1/phone/calls", status: 202, body: { "vendor_call_id" => "CA123", "status" => "queued" })
+
+    assert_raises(VA::RouterError) { agent.outbound_call(from: "+15550100", to: "+15550199") }
+    assert_empty @router.seen(:post, "/v1/agents/sessions")
   end
 
   def test_what_the_code_sets_is_sent_and_nothing_else
     serve_session
 
-    agent(name: "Ada", instructions: "Be brief", pipeline: { llm: "fast", language: "fr", max_tokens: 200 })
+    agent(name: "Ada", instructions: "Be brief",
+          pipeline: { llm: "fast", language: "fr", max_tokens: 200, greeting: "Hello" })
       .chat { nil }
 
     request = session_request
     assert_equal "Ada", request["user_name"]
     assert_equal "ada", request["user_id"]
-    assert_equal "Be brief", request["instructions"]
+    refute request.key?("instructions")
+    assert_equal({ "text" => "Hello" }, request["greeting"])
     assert_equal "fast", request["llm"]
     assert_equal ["fr"], request["languages"]
     assert_equal 200, request["max_tokens"]
@@ -265,7 +326,8 @@ class TestAgent < LocalRouterTest
     %w[harness subagent thinking_llm sandbox skills skill_names tasks].each { |key| refute request.key?(key), key }
     synced = @router.last(:post, "/v1/agents/sync").json
     assert_equal "default", synced["harness"]
-    assert_equal "llm-thinking", synced["thinking_llm"]
+    assert_equal "llm-thinking", synced["subagent"]
+    refute synced.key?("thinking_llm")
     assert_equal "daytona", synced["sandbox"]
     assert_equal [{ "name" => "research", "description" => "Looks things up", "instructions" => "Search first",
                     "capture_video" => false, "deadline_ms" => 30_000, "config_id" => "" }], synced["skills"]
@@ -278,10 +340,10 @@ class TestAgent < LocalRouterTest
     @router.on(:get, "/v1/agents/configs", body: [{ "name" => "support", "id" => "cfg_1" }])
     @router.on(:patch, "/v1/agents/configs/cfg_1") { |request| request.json.merge("id" => "cfg_1") }
 
-    config = agent.update_config(guardrail: "Never quote prices.", visible_tools: ["athena_*"], speed: 1.1)
+    config = agent.update_config(guardrail: "Never quote prices.", visible_tools: ["athena_*"], llm: "fast")
 
     assert_equal "cfg_1", config["id"]
-    assert_equal({ "guardrail" => "Never quote prices.", "visible_tools" => ["athena_*"], "speed" => 1.1 },
+    assert_equal({ "guardrail" => "Never quote prices.", "visible_tools" => ["athena_*"], "llm" => "fast" },
                  @router.last(:patch, "/v1/agents/configs/cfg_1").json)
     assert_equal({ "name" => "support" }, @router.last(:get, "/v1/agents/configs").query)
   end
@@ -314,9 +376,9 @@ class TestAgent < LocalRouterTest
     serve_session
     support = agent
 
-    url = support.join("call-1", participant_wait_timeout: 0, wait_for_end: false) { support.monitor_url }
+    url = support.join(participant_wait_timeout: 0, wait_for_end: false) { support.monitor_url }
 
-    assert url.start_with?("https://demo.example/join/call-1?api_key=key&token=")
+    assert url.start_with?("https://demo.example/join/sess_1?api_key=key&token=")
     assert_includes url, "user_name=Monitor"
   end
 
@@ -367,9 +429,10 @@ class TestAgent < LocalRouterTest
     FileUtils.rm_rf(File.dirname(root))
   end
 
-  def test_sync_sends_the_speed_harness_pages_and_simulations_the_folder_declares
+  def test_sync_sends_the_greeting_harness_plugins_pages_and_simulations_the_folder_declares
     root = folder
-    File.write(File.join(root, "agent.yaml"), "name: jean\nspeed: 1.1\nharness: default\nplugins: [linear]\n")
+    File.write(File.join(root, "agent.yaml"),
+               "name: jean\ngreeting:\n  text: Bonjour\n  mode: exact\nharness: default\nplugins: [linear]\n")
     File.write(File.join(root, "knowledge/urls.yaml"), "- url: https://example.com/plans\n  refresh_hours: 24\n")
     FileUtils.mkdir_p(File.join(root, "simulations"))
     File.write(File.join(root, "simulations/lunch.yaml"),
@@ -379,9 +442,10 @@ class TestAgent < LocalRouterTest
     VA::Agent.new(folder: root, client: client).sync
 
     request = @router.last(:post, "/v1/agents/sync").json
-    assert_equal 1.1, request["speed"]
+    assert_equal({ "text" => "Bonjour", "mode" => "exact" }, request["greeting"])
     assert_equal "default", request["harness"]
-    assert_equal ["linear"], request["agent_plugins"]
+    assert_equal ["linear"], request["plugins"]
+    %w[speed agent_plugins].each { |key| refute request.key?(key), key }
     assert_equal [{ "url" => "https://example.com/plans", "refresh_hours" => 24 }], request["knowledge_urls"]
     assert_equal [{ "name" => "lunch", "scenario" => "Order a club", "assertion" => "One club", "variations" => 3 }],
                  request["simulations"]
@@ -392,7 +456,7 @@ class TestAgent < LocalRouterTest
 
   def test_simulations_are_sent_only_when_the_folder_has_a_directory_for_them
     root = folder
-    File.write(File.join(root, "agent.yaml"), "name: jean\nspeed: 0\n")
+    File.write(File.join(root, "agent.yaml"), "name: jean\n")
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
 
     VA::Agent.new(folder: root, client: client).sync
@@ -401,7 +465,6 @@ class TestAgent < LocalRouterTest
 
     without, empty = @router.seen(:post, "/v1/agents/sync").map(&:json)
     refute without.key?("simulations")
-    refute without.key?("speed")
     assert_equal [], empty["simulations"]
   ensure
     FileUtils.rm_rf(File.dirname(root))
@@ -489,14 +552,31 @@ class TestSessions < LocalRouterTest
   def test_create_opens_a_written_conversation
     serve_session
 
-    session = client.agent("docs").sessions.create(id: "0198c3a0-0000-7000-8000-000000000001",
-                                                   title: "Is Stream better?", project_id: "pricing")
+    session = client.agent("docs").sessions.create(id: "billing_ada-1", title: "Is Stream better?",
+                                                   project_id: "pricing")
     session.close
 
     request = @router.last(:post, "/v1/agents/sessions").json
     assert_equal({ "agent" => "docs", "user_id" => "docs", "user_name" => "docs", "agent_id" => "docs",
-                   "id" => "0198c3a0-0000-7000-8000-000000000001", "title" => "Is Stream better?",
-                   "project_id" => "pricing", "text" => true }, request)
+                   "id" => "billing_ada-1", "title" => "Is Stream better?", "project_id" => "pricing" }, request)
+    refute session.voice.started?
+  end
+
+  def test_a_conversation_is_resumed_by_its_session_id
+    @router.on(:get, "/v1/agents/sessions/s1", body: { "id" => "s1", "user_id" => "docs", "call_id" => "" })
+    @router.on_socket("/v1/agents/sessions/s1/events") do |peer|
+      peer.send_frame(type: "responding")
+      peer.receive_type("close", timeout: 10)
+      peer.close
+    end
+
+    session = client.agent("docs").sessions.resume("s1")
+    kind = session.events.first.kind
+    session.close
+
+    assert_equal "s1", session.id
+    assert_equal "responding", kind
+    assert_empty @router.seen(:post, "/v1/agents/sessions")
   end
 
   def test_update_changes_one_session

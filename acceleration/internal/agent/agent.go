@@ -161,9 +161,6 @@ type Options struct {
 
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
 	Voice string
-	// Speed is the voice's rate of delivery, 1 being its own. Zero leaves it there, and a
-	// voice that cannot be sped up is not routed to when it is set.
-	Speed float64
 	// LanguageHints narrow the candidates in every modality.
 	LanguageHints []string
 	// Keyterms are the business-specific words the transcriber should expect. A provider
@@ -888,6 +885,28 @@ func (a *Agent) Say(ctx context.Context, text string) error {
 	return a.speakWhole(turnID, text)
 }
 
+// Greet opens the call with a greeting. Unvaried, it is said word for word without asking
+// the model. Varied, the model writes its own variation of it first, and the words are said
+// as they are when it cannot. A native model cannot say exact words, so it is prompted with
+// the greeting either way and says its own rendering of it.
+func (a *Agent) Greet(ctx context.Context, greeting string, vary bool) error {
+	if a.native() {
+		if vary {
+			return a.Prompt(ctx, "Open the call by greeting the caller with your own variation of this greeting, keeping what it says: "+greeting)
+		}
+		return a.Prompt(ctx, "Open the call by greeting the caller. Say this, in these words or close to them: "+greeting)
+	}
+	if vary {
+		line, err := a.compose(ctx, fmt.Sprintf(greetPurpose, greeting))
+		if err != nil {
+			a.logger.Warn("could not vary the greeting, saying it as written", "error", err)
+		} else if line != "" {
+			greeting = line
+		}
+	}
+	return a.Say(ctx, greeting)
+}
+
 // Interrupt abandons the reply being spoken, the way a participant talking over the agent
 // would. It is what a caller outside the call has instead of a voice.
 func (a *Agent) Interrupt() {
@@ -901,30 +920,6 @@ func (a *Agent) Interrupt() {
 	a.mu.Unlock()
 	a.abandon(turnID)
 	a.interrupt(participant)
-}
-
-// SetInstructions changes what the agent is told to be from the next turn on. The reply
-// being spoken keeps the prompt it was started with, because rewriting it mid-sentence
-// would have the agent change character in the middle of a thought.
-func (a *Agent) SetInstructions(text string) {
-	a.mu.Lock()
-	a.prompt = text
-	instructions := a.instructions()
-	if a.native() {
-		instructions = a.nativeInstructions(a.harness != nil)
-	}
-	model := a.sts
-	a.mu.Unlock()
-
-	// A native model holds the prompt itself, so it is told. One that took its
-	// instructions only when the session opened refuses, and the refusal is reported
-	// rather than swallowed: a caller who changed the prompt and heard nothing of it would
-	// believe the agent had changed.
-	if model != nil {
-		if err := model.SetInstructions(instructions); err != nil {
-			a.fail(err, "sts")
-		}
-	}
 }
 
 // Events carries what happened in the conversation. It is closed by Close.

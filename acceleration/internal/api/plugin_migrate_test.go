@@ -79,8 +79,8 @@ func (s *PluginMigrateSuite) TestADryRunListsEveryRowAndItsTargetAndWritesNothin
 	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindConnection, app).Action)
 	s.Contains(s.row(report, pluginmigrate.KindConnection, app).Target, pluginmigrate.MovedConnectionID(app))
 	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindConnection, mine).Action)
-	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindBinding, fixed+" agent_plugins").Action)
-	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindBinding, personal+" user_plugins").Action)
+	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindBinding, fixed+" plugins").Action)
+	s.Equal(pluginmigrate.Planned, s.row(report, pluginmigrate.KindBinding, personal+" plugins").Action)
 	s.Len(report.Rows, 5, "every row read is listed")
 	s.False(report.Applied)
 }
@@ -94,7 +94,7 @@ func (s *PluginMigrateSuite) TestARealRunLeavesTheAgentsToolsWorkingWithNoNewLog
 	authorized, registered := s.provider.Hits(fakeprovider.PathAuthorize), s.provider.Hits(fakeprovider.PathRegister)
 
 	report := s.run(true)
-	opened := s.client.createSession(CreateSessionRequest{ConfigId: &config, Text: pointerTo(true)})
+	opened := s.client.createSession(CreateSessionRequest{ConfigId: &config})
 	ran := s.toolRan(s.serverClient.actingFor(s.client), opened.Id)
 
 	s.Zero(report.Count("", pluginmigrate.Skipped), "%v", report.Rows)
@@ -104,7 +104,7 @@ func (s *PluginMigrateSuite) TestARealRunLeavesTheAgentsToolsWorkingWithNoNewLog
 	s.Equal(registered, s.provider.Hits(fakeprovider.PathRegister), "no new client")
 }
 
-// TestAPersonsMovedLoginAnswersTheirSessionBinding: a user_plugins entry becomes a session
+// TestAPersonsMovedLoginAnswersTheirSessionBinding: a plugins entry with user becomes a session
 // binding, and the person's moved login, chosen when they open the session, answers it.
 func (s *PluginMigrateSuite) TestAPersonsMovedLoginAnswersTheirSessionBinding() {
 	config := s.config(nil, []store.PluginEntry{{Name: movedPlugin}})
@@ -112,7 +112,7 @@ func (s *PluginMigrateSuite) TestAPersonsMovedLoginAnswersTheirSessionBinding() 
 
 	s.run(true)
 	chosen := []SessionConnectorBinding{{Name: movedPlugin, ConnectionId: pluginmigrate.MovedConnectionID(mine)}}
-	opened := s.client.createSession(CreateSessionRequest{ConfigId: &config, Text: pointerTo(true), ConnectorBindings: &chosen})
+	opened := s.client.createSession(CreateSessionRequest{ConfigId: &config, ConnectorBindings: &chosen})
 	ran := s.toolRan(s.serverClient.actingFor(s.client), opened.Id)
 
 	s.Equal(connectorEchoText, ran["result"])
@@ -220,7 +220,7 @@ func (s *PluginMigrateSuite) TestAnUnmappableRowIsReportedAndSkipped() {
 	s.Contains(s.row(report, pluginmigrate.KindConnection, byURL).Note, "not a catalog plugin")
 	s.Contains(s.row(report, pluginmigrate.KindConnection, pending).Note, "not connected (pending)")
 	s.Contains(s.row(report, pluginmigrate.KindConnection, elsewhere).Note, "renewed at https://elsewhere.example/token")
-	s.Contains(s.row(report, pluginmigrate.KindBinding, config+" agent_plugins").Note, "no login of the app's was moved")
+	s.Contains(s.row(report, pluginmigrate.KindBinding, config+" plugins").Note, "no login of the app's was moved")
 	s.Equal(4, report.Count("", pluginmigrate.Skipped), "%v", report.Rows)
 	s.Zero(s.count("SELECT count(*) FROM connector_connections WHERE customer_id = ?", s.customerID()))
 	s.Empty(s.storedConfig(config).Connectors)
@@ -271,7 +271,7 @@ func (s *PluginMigrateSuite) TestARotatingConnectorsGrantIsSkippedUnlessAskedFor
 	asked := s.runWith(true, true)
 
 	s.Equal(pluginmigrate.Written, s.row(asked, pluginmigrate.KindConnection, login).Action)
-	s.Equal(pluginmigrate.Written, s.row(asked, pluginmigrate.KindBinding, config+" agent_plugins").Action)
+	s.Equal(pluginmigrate.Written, s.row(asked, pluginmigrate.KindBinding, config+" plugins").Action)
 }
 
 // TestAGrantWhoseRotationIsUnknownIsSkippedUnlessAskedFor: a manifest that does not say
@@ -296,6 +296,62 @@ func (s *PluginMigrateSuite) TestAGrantWhoseRotationIsUnknownIsSkippedUnlessAske
 	asked := s.runWith(true, true)
 
 	s.Equal(pluginmigrate.Written, s.row(asked, pluginmigrate.KindConnection, login).Action)
+}
+
+// TestOnlyTheNamedPluginsRowsMove: --plugin moves one plugin's login and binding and leaves
+// another plugin's rows out of the report and unwritten, so a first step can move Slack alone;
+// a later run naming the other plugin moves it.
+func (s *PluginMigrateSuite) TestOnlyTheNamedPluginsRowsMove() {
+	config := s.config([]store.PluginEntry{{Name: movedPlugin}, {Name: rotatingPlugin}}, []store.PluginEntry{{Name: rotatingPlugin}})
+	withEvents := store.AgentConfig{ID: config, PluginEvents: []store.PluginEvent{{Plugin: movedPlugin, Event: "created"}, {Plugin: rotatingPlugin, Event: "closed"}}}
+	_, err := s.store.DB().NewUpdate().Model(&withEvents).Column("plugin_events").WherePK().Exec(context.Background())
+	s.Require().NoError(err)
+	s.pluginClient(config, s.provider.ClientID, s.provider.ClientSecret)
+	s.Require().NoError(s.store.SavePluginClient(context.Background(), &store.PluginClient{CustomerID: s.customerID(),
+		ConfigID: config, PluginID: rotatingPlugin, ClientID: "other-client", SecretSealed: []byte{}, SecretKEKVersion: s.sealer.CurrentVersion()}))
+	moved := s.login(config, "", s.provider.ClientID)
+	later := s.loginTo(config, "", rotatingPlugin, s.provider.ClientID, s.provider.URL+fakeprovider.PathToken, store.PluginConnected)
+
+	report := s.runOnly(true, movedPlugin)
+
+	s.Equal(pluginmigrate.Written, s.row(report, pluginmigrate.KindConnection, moved).Action)
+	for _, row := range report.Rows {
+		s.NotContains(row.Source, later, "a login of a plugin not named is not read")
+		s.NotContains(row.Source, " "+rotatingPlugin, "an entry of a plugin not named is not read")
+	}
+	s.Equal(1, s.count("SELECT count(*) FROM connector_connections WHERE customer_id = ?", s.customerID()))
+	s.Zero(s.count("SELECT count(*) FROM connector_oauth_clients WHERE customer_id = ? AND connector_id = ?", s.customerID(), rotatingPlugin),
+		"a client of a plugin not named is not moved")
+	var events []string
+	for _, row := range report.Rows {
+		if row.Kind == pluginmigrate.KindEvent {
+			events = append(events, row.Source)
+		}
+	}
+	s.Require().Len(events, 1, "only the named plugin's event is reported")
+	s.Contains(events[0], movedPlugin+"/created")
+	bindings := s.storedConfig(config).Connectors
+	s.Require().Len(bindings, 1)
+	s.Equal(movedPlugin, bindings[0].Name)
+
+	next := s.runOnly(true, rotatingPlugin)
+
+	s.Equal(pluginmigrate.Written, s.row(next, pluginmigrate.KindConnection, later).Action)
+	s.Len(s.storedConfig(config).Connectors, 2)
+}
+
+// TestAPluginTheCatalogDoesNotKnowIsRefused: a typo in --plugin is an error, never a run over
+// every plugin.
+func (s *PluginMigrateSuite) TestAPluginTheCatalogDoesNotKnowIsRefused() {
+	config := s.config([]store.PluginEntry{{Name: movedPlugin}}, nil)
+	s.login(config, "", s.provider.ClientID)
+	opts := s.options(false)
+	opts.Plugins = []string{"slak"}
+
+	_, err := pluginmigrate.Run(context.Background(), opts, true)
+
+	s.Require().ErrorContains(err, `plugin "slak" is not in the catalog`)
+	s.Zero(s.count("SELECT count(*) FROM connector_connections WHERE customer_id = ?", s.customerID()))
 }
 
 // credentialsAfterAnotherRun is the credential store with another run's save landing just
@@ -402,7 +458,7 @@ func (s *PluginMigrateSuite) TestAMovedConfigStaysEditableWithItsPluginEntryKept
 		message, ok := pluginAliasComplaint(stored)
 
 		s.True(ok, message)
-		s.True(store.NamesPlugin(append(stored.AgentPlugins, stored.UserPlugins...), movedPlugin), "the plugin entry is kept")
+		s.True(store.NamesPlugin(stored.Plugins, movedPlugin), "the plugin entry is kept")
 		s.Equal(movedPlugin, s.binding(config).Name)
 	}
 }
@@ -485,7 +541,7 @@ func (s *PluginMigrateSuite) TestASessionBindingGrantsByNameAndAFixedOneByDigest
 
 	s.run(true)
 	chosen := []SessionConnectorBinding{{Name: movedPlugin, ConnectionId: pluginmigrate.MovedConnectionID(mine)}}
-	opened := s.client.createSession(CreateSessionRequest{ConfigId: &personal, Text: pointerTo(true), ConnectorBindings: &chosen})
+	opened := s.client.createSession(CreateSessionRequest{ConfigId: &personal, ConnectorBindings: &chosen})
 	ran := s.toolRan(s.serverClient.actingFor(s.client), opened.Id)
 
 	s.Equal(connectorEchoText, ran["result"])
@@ -583,6 +639,15 @@ func (s *PluginMigrateSuite) runWith(apply, includeRotating bool) pluginmigrate.
 	return report
 }
 
+// runOnly is a run that moves only the named plugins' rows, rotating ones included.
+func (s *PluginMigrateSuite) runOnly(apply bool, plugins ...string) pluginmigrate.Report {
+	opts := s.options(true)
+	opts.Plugins = plugins
+	report, err := pluginmigrate.Run(context.Background(), opts, apply)
+	s.Require().NoError(err)
+	return report
+}
+
 // options are the command's, over the suite's router and the test's app.
 func (s *PluginMigrateSuite) options(includeRotating bool) pluginmigrate.Options {
 	credentials, err := pgsealed.New(s.store, s.sealer)
@@ -605,8 +670,13 @@ func (s *PluginMigrateSuite) options(includeRotating bool) pluginmigrate.Options
 // config is an agent config of the test's app on the connecting model, naming plugins as the
 // plugin endpoints write them.
 func (s *PluginMigrateSuite) config(agent, user []store.PluginEntry) string {
+	named := append([]store.PluginEntry{}, agent...)
+	for _, entry := range user {
+		entry.User = true
+		named = append(named, entry)
+	}
 	config := store.AgentConfig{CustomerID: s.customerID(), Name: "migrate-" + s.utils.uuid(),
-		LLM: "connecting/connector-model", AgentPlugins: agent, UserPlugins: user}
+		LLM: "connecting/connector-model", Plugins: named}
 	s.Require().NoError(s.configs.CreateAgentConfig(context.Background(), &config))
 	return config.ID
 }
@@ -639,7 +709,7 @@ func (s *PluginMigrateSuite) loginTo(config, user, plugin, client, tokenEndpoint
 func (s *PluginMigrateSuite) toolRan(as *testClient, id string) map[string]any {
 	events := s.client.opens("/v1/agents/sessions/" + id + "/events")
 	s.Require().Equal(http.StatusOK, as.do(http.MethodPost, "/v1/agents/sessions/"+id+"/respond",
-		RespondRequest{Text: "ask the crm", CommandId: pointerTo(s.utils.uuid())}, nil))
+		RespondRequest{Text: "ask the crm", RequestId: pointerTo(s.utils.uuid())}, nil))
 	return s.await(events, "tool_ran")
 }
 
@@ -684,7 +754,7 @@ func (s *PluginMigrateSuite) pluginTables() string {
 	return s.text(`SELECT
   (SELECT coalesce(string_agg(apc::text, '|' ORDER BY id), '') FROM agent_plugin_connections apc WHERE customer_id = ?) || '#' ||
   (SELECT coalesce(string_agg(apcl::text, '|' ORDER BY config_id, plugin_id), '') FROM agent_plugin_clients apcl WHERE customer_id = ?) || '#' ||
-  (SELECT coalesce(string_agg(id || ':' || agent_plugins::text || ':' || user_plugins::text || ':' || plugin_events::text, '|' ORDER BY id), '') FROM agent_configs WHERE customer_id = ?)`,
+  (SELECT coalesce(string_agg(id || ':' || plugins::text || ':' || plugin_events::text, '|' ORDER BY id), '') FROM agent_configs WHERE customer_id = ?)`,
 		s.customerID(), s.customerID(), s.customerID())
 }
 

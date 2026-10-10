@@ -105,6 +105,24 @@ func (s *OAuth2CCSuite) TestCompleteGetsATokenWithTheSuppliedClientSoAWrongOneFa
 	s.NotContains(err.Error(), "not-the-secret")
 }
 
+// AI-990 F36: the access token last issued is named by its fingerprint with its expiry; the
+// client secret is not, and there is no refresh token.
+func (s *OAuth2CCSuite) TestFingerprintsNameTheAccessTokenAndItsExpiryOnly() {
+	srv := fakeprovider.New(s.T(), fakeprovider.ClientCredentials)
+	scheme := s.scheme(srv.Client())
+	stored := s.complete(srv, scheme, manifest(srv))
+
+	got, err := scheme.Fingerprints(stored)
+
+	s.Require().NoError(err)
+	s.Equal(core.Fingerprint(s.token(stored)), got.Access)
+	s.Empty(got.Refresh)
+	s.Equal(s.now.Add(fakeprovider.AccessTTL).Unix(), got.AccessExpiresAt.Unix())
+	s.True(got.RefreshExpiresAt.IsZero())
+	_, err = scheme.Fingerprints(core.StoredCredentials{Scheme: "bearer", Version: 1, Payload: stored.Payload})
+	s.Error(err)
+}
+
 func (s *OAuth2CCSuite) TestAServerWithoutTheGrantRefusesItAtComplete() {
 	srv := fakeprovider.New(s.T())
 	_, _, err := s.scheme(srv.Client()).Complete(s.ctx, core.CompleteInput{Manifest: manifest(srv), Supplied: supplied(srv)})

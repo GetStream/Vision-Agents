@@ -27,6 +27,8 @@ import (
 type PluginEventsSuite struct {
 	RouterSuite
 	mcp *eventServer
+	// logged is what the router logged, for the tests of the deprecation it warns of.
+	logged *lockedLog
 }
 
 func TestPluginEventsSuite(t *testing.T) {
@@ -37,6 +39,8 @@ func (s *PluginEventsSuite) SetupSuite() {
 	s.mcp = &eventServer{subscriptions: map[string]eventSubscription{}}
 	s.pluginMCP = httptest.NewTLSServer(http.HandlerFunc(s.mcp.serve))
 	s.T().Cleanup(s.pluginMCP.Close)
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -81,6 +85,29 @@ func (s *PluginEventsSuite) TestADeliveryNotSignedWithTheSecretIsRefused() {
 	sub.secret = forged
 
 	s.Equal(http.StatusUnauthorized, s.deliver(sub, "evt-"+s.utils.uuid()))
+}
+
+func (s *PluginEventsSuite) TestADeliveryWarnsOfTheDeprecationAndStillOpensAConversation() {
+	config := s.subscribedAgent(nil)
+	sub := s.mcp.subscription(s.T(), config.Name)
+
+	s.Equal(http.StatusAccepted, s.deliver(sub, "evt-"+s.utils.uuid()))
+
+	lines := deprecations(s.logged, plugins.PathEventDelivery, config.Id)
+	s.Require().Len(lines, 1)
+	s.Contains(lines[0], "customer="+s.customerID()+" config="+config.Id+" plugin=sentry event=issue.created")
+	s.Eventually(func() bool { return len(s.conversations(config.Name, "")) == 1 }, settleFor, 50*time.Millisecond)
+}
+
+func (s *PluginEventsSuite) TestADeliveryNotSignedWithTheSecretWarnsOfNothing() {
+	config := s.subscribedAgent(nil)
+	sub := s.mcp.subscription(s.T(), config.Name)
+	forged, err := plugins.NewWebhookSecret()
+	s.Require().NoError(err)
+	sub.secret = forged
+
+	s.Equal(http.StatusUnauthorized, s.deliver(sub, "evt-"+s.utils.uuid()))
+	s.Empty(deprecations(s.logged, plugins.PathEventDelivery, config.Id))
 }
 
 func (s *PluginEventsSuite) TestAnEventNoLongerDeclaredIsUnsubscribedAndGone() {
@@ -128,11 +155,7 @@ func (s *PluginEventsSuite) subscribedAgent(userID *string) AgentConfig {
 			Instructions: pointerTo("Say what broke."),
 		}},
 	}
-	if userID == nil {
-		request.AgentPlugins = &[]PluginEntry{{Name: "sentry"}}
-	} else {
-		request.UserPlugins = &[]PluginEntry{{Name: "sentry"}}
-	}
+	request.Plugins = &[]PluginEntry{{Name: "sentry", User: pointerTo(userID != nil)}}
 	var config AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", request, &config))
 

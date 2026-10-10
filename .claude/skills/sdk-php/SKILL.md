@@ -86,7 +86,7 @@ tests/Unit tests/Live tests/Support tests/server/router.php
   on the handshake, never credentials in the query string.
 - **No reconnect.** A dropped socket ends the iterator or `run()`; the owner decides. A frame
   that is not a JSON object, or of an unknown type, is skipped, never fatal.
-- **Tool results repeat `command_id` and `turn_id`** from the `tool_call` when present, or a
+- **Tool results repeat `request_id` and `turn_id`** from the `tool_call` when present, or a
   durable command's result is refused. Tools run in their own fiber; a `tool_cancel` drops
   the answer (a PHP callable cannot be interrupted).
 - **Dispatch** sends `active` and `handles` on the handshake, answers every call and message

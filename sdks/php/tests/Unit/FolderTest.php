@@ -6,6 +6,7 @@ namespace GetStream\VisionAgents\Tests\Unit;
 
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Folder;
+use GetStream\VisionAgents\Generated\GreetingMode;
 use GetStream\VisionAgents\Json;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -92,13 +93,15 @@ final class FolderTest extends TestCase
         self::assertNull(Folder::load($this->dir)->simulations);
     }
 
-    public function testReadsSpeedAndHarness(): void
+    public function testReadsGreetingSubagentAndHarness(): void
     {
-        $this->write('agent.yaml', "speed: 1.1\nharness: default\n");
+        $this->write('agent.yaml', "greeting:\n  text: Hello there.\n  mode: exact\nsubagent: openai/gpt-5.6\nharness: default\n");
 
         $settings = Folder::load($this->dir)->settings;
 
-        self::assertSame(1.1, $settings->speed);
+        self::assertSame('Hello there.', $settings->greeting?->text);
+        self::assertSame(GreetingMode::Exact, $settings->greeting->mode);
+        self::assertSame('openai/gpt-5.6', $settings->subagent);
         self::assertSame('default', $settings->harness);
     }
 
@@ -114,7 +117,9 @@ final class FolderTest extends TestCase
         yield 'simulation without an assertion' => ['simulations/a.yaml', "- name: a\n  scenario: s\n"];
         yield 'simulation in an unknown mode' => ['simulations/a.yaml', "- name: a\n  scenario: s\n  assertion: x\n  mode: video\n"];
         yield 'simulations file not a list' => ['simulations/a.yaml', "name: a\n"];
-        yield 'speed not a number' => ['agent.yaml', "speed: fast\n"];
+        yield 'speed, which is gone' => ['agent.yaml', "speed: 1.1\n"];
+        yield 'greeting as a string' => ['agent.yaml', "greeting: Hello there.\n"];
+        yield 'unknown greeting key' => ['agent.yaml', "greeting:\n  text: Hello there.\n  voice: ash\n"];
     }
 
     #[DataProvider('refusedFiles')]

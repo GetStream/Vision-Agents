@@ -14,6 +14,10 @@ import (
 // users of the same Redis (quota, live health, the config cache).
 const limiterPrefix = "connectors:rate_limit:"
 
+// callsPrefix starts every key Take counts a customer's direct calls under, apart from the
+// blocks under limiterPrefix.
+const callsPrefix = "connectors:proxy_calls:"
+
 // MaxBlock is the longest a Limiter holds a key, whatever the Retry-After asked for. No
 // provider doc sets it: it bounds what one bad Retry-After can do (a proxy's 429, an epoch
 // timestamp sent as seconds), which would otherwise refuse a connector's calls for years. A
@@ -31,6 +35,17 @@ if held == nil or held < tonumber(ARGV[1]) then
   redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 end
 return 0
+`)
+
+// countScript adds one to KEYS[1], the count of one window, and returns the count. The call
+// that starts the count sets it to expire after ARGV[1] milliseconds. One script, so no count
+// is left without an expiry.
+var countScript = rueidis.NewLuaScript(`
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+end
+return count
 `)
 
 // Limiter keeps the providers' own rate limits. After a provider answers a call with 429 and
@@ -82,6 +97,40 @@ func (l *Limiter) Wait(ctx context.Context, key string) time.Duration {
 		return 0
 	}
 	return max(time.UnixMilli(until).Sub(l.now()), 0)
+}
+
+// Take counts one call on key in the window it falls in, and says how long until that window
+// ends when the call is over limit, zero when it may go. Windows are fixed: they start at
+// multiples of window, so every router sharing the Redis counts the same one. A refused call
+// is counted as well, which changes nothing: the window it is in is already over limit.
+//
+// Like Wait, it fails open: a nil Limiter, an empty key, a limit or window of zero, or an
+// unreachable Redis refuses nothing.
+//
+// Example: limit 60, window a minute. The 61st call of 12:00 gets 25s at 12:00:35, and the
+// first call of 12:01 goes.
+func (l *Limiter) Take(ctx context.Context, key string, limit int64, window time.Duration) time.Duration {
+	if l == nil || key == "" || limit <= 0 || window <= 0 {
+		return 0
+	}
+	now := l.now()
+	start := now.Truncate(window)
+	// Two windows: the count outlives the window it belongs to whatever the call that started
+	// it saw of the clock, and leaves Redis soon after.
+	expiry := strconv.FormatInt(2*window.Milliseconds(), 10)
+	count, err := countScript.Exec(ctx, l.redis, []string{key + ":" + strconv.FormatInt(start.UnixMilli(), 10)},
+		[]string{expiry}).AsInt64()
+	if err != nil || count <= limit {
+		return 0
+	}
+	return start.Add(window).Sub(now)
+}
+
+// CallsKey is the key Take counts the customer's direct calls to a connector under: one count
+// per customer and connector, whichever connection of theirs the call goes through.
+func CallsKey(customerID, connectorID string) string {
+	// Escaped, so a ":" in an id cannot make two keys one.
+	return callsPrefix + url.QueryEscape(customerID) + ":" + url.QueryEscape(connectorID)
 }
 
 // RateLimitKey is the key calls on connection c of the customer are limited under, as the

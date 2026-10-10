@@ -38,8 +38,8 @@ class McpServer:
             tools (list[str] | Unset): Offer the model only the server's tools matching these names or path.Match patterns.
                 A tool left out is neither listed nor callable. Left out offers every tool.
             user (bool | Unset): Each end user logs in with their own account, in the conversation, the first time the agent
-                needs the server, as for user_plugins, rather than the app once, from the dashboard. Only a server that needs a
-                login may set it.
+                needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that
+                needs a login may set it.
     """
 
     name: str

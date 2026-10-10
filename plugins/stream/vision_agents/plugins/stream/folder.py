@@ -149,6 +149,9 @@ class PluginSettings:
     """
 
     name: str
+    user: bool = False
+    """Each end user connects the plugin with their own account, in the chat, rather than
+    the app once, on the dashboard, for every session."""
     readonly: bool = False
     """Reach the plugin's read-only endpoint, for a vendor that runs one."""
     scopes: list[str] = field(default_factory=list)
@@ -159,6 +162,25 @@ class PluginSettings:
     tools: list[str] = field(default_factory=list)
     """Offer only the tools matching these names or patterns such as `get_*`.
     Empty offers every tool."""
+
+
+@dataclass
+class ToolSettings:
+    """How plugin, MCP server and connector tools are offered."""
+
+    progressive: bool | None = None
+    """Offer each tool by a summary, the first call to it returning its full description
+    instead of running it. None when the file says nothing about it."""
+
+
+@dataclass
+class GreetingSettings:
+    """What the agent says as it joins, before anyone speaks."""
+
+    text: str = ""
+    mode: str = ""
+    """exact, the default, or variation, which has the model say its own variation of
+    the text on every call."""
 
 
 @dataclass
@@ -177,28 +199,25 @@ class Settings:
     tts: str = ""
     sts: str | None = None
     voice: str = ""
-    speed: float = 0.0
-    """The voice's rate of delivery, 1 being its own. Zero leaves it there."""
     llm: str = ""
     harness: str = ""
-    thinking_llm: str = ""
+    subagent: str = ""
     """The model a voice agent hands its skills to. A text agent runs on its llm alone."""
     search: str = ""
-    greeting: str = ""
+    greeting: GreetingSettings | None = None
+    """What the agent opens the call with. None leaves the stored one."""
     sandbox: str = ""
     sandbox_options: SandboxSettings | None = None
     """How the sandbox is built. None when the file says nothing about it."""
-    agent_plugins: list[PluginSettings] = field(default_factory=list)
-    """Catalog MCP servers the app connects once, on the dashboard, for every session."""
-    user_plugins: list[PluginSettings] = field(default_factory=list)
-    """Catalog MCP servers each end user connects with their own account, in the chat."""
+    plugins: list[PluginSettings] = field(default_factory=list)
+    """Catalog MCP servers the app connects once, on the dashboard, for every session, or
+    each end user with their own account, in the chat, for one with `user`."""
     mcp_servers: list[MCPServerSettings] = field(default_factory=list)
     """MCP servers outside the catalog, opened by the router by their URL, with a login
     when the server asks for one."""
-    progressive_tools: bool | None = None
-    """Offer plugin, MCP server and connector tools by a summary, the first call to each
-    returning its full description instead of running it. None when the file says nothing
-    about it."""
+    tools: ToolSettings | None = None
+    """How plugin, MCP server and connector tools are offered. None when the file says
+    nothing about it."""
     channels: ChannelsSettings | None = None
     """Lines the agent answers on besides Stream Chat. The provider's credentials live on
     the router, connected once for the app; this only names the numbers."""
@@ -420,38 +439,26 @@ def _declare(path: Path) -> Settings:
             settings.sts = _word(value)
         elif field_name == "voice":
             settings.voice = _word(value)
-        elif field_name == "speed":
-            if value is not None and (
-                isinstance(value, bool) or not isinstance(value, (int, float))
-            ):
-                raise ValueError(f"{path} should give speed as a number")
-            settings.speed = float(value or 0)
         elif field_name == "llm":
             settings.llm = _word(value)
         elif field_name == "harness":
             settings.harness = _word(value)
-        elif field_name == "thinking_llm":
-            settings.thinking_llm = _word(value)
+        elif field_name == "subagent":
+            settings.subagent = _word(value)
         elif field_name == "search":
             settings.search = _word(value)
         elif field_name == "greeting":
-            settings.greeting = _word(value)
+            settings.greeting = _greeting(path, value)
         elif field_name == "sandbox":
             settings.sandbox = _word(value)
         elif field_name == "sandbox_options":
             settings.sandbox_options = _sandbox_options(path, value)
-        elif field_name == "agent_plugins":
-            settings.agent_plugins = _plugins(path, field_name, value)
-        elif field_name == "user_plugins":
-            settings.user_plugins = _plugins(path, field_name, value)
+        elif field_name == "plugins":
+            settings.plugins = _plugins(path, field_name, value)
         elif field_name == "mcp_servers":
             settings.mcp_servers = _mcp_servers(path, value)
-        elif field_name == "progressive_tools":
-            if value is not None and not isinstance(value, bool):
-                raise ValueError(
-                    f"{path} should give progressive_tools as true or false"
-                )
-            settings.progressive_tools = value
+        elif field_name == "tools":
+            settings.tools = _tools(path, value)
         elif field_name == "channels":
             settings.channels = _channels(path, value)
         elif field_name == "keyterms":
@@ -541,9 +548,12 @@ def _plugins(path: Path, field_name: str, value: object) -> list[PluginSettings]
             raise ValueError(
                 f"{path} should give each of {field_name} as a plugin id or a mapping"
             )
-        extra = set(item) - {"name", "readonly", "scopes", "toolsets", "tools"}
+        extra = set(item) - {"name", "user", "readonly", "scopes", "toolsets", "tools"}
         if extra:
             raise ValueError(f"{path} unknown {field_name} setting: {sorted(extra)[0]}")
+        user = item.get("user", False)
+        if not isinstance(user, bool):
+            raise ValueError(f"{path} should give {field_name} user as true or false")
         readonly = item.get("readonly", False)
         if not isinstance(readonly, bool):
             raise ValueError(
@@ -552,6 +562,7 @@ def _plugins(path: Path, field_name: str, value: object) -> list[PluginSettings]
         named.append(
             PluginSettings(
                 name=_word(item.get("name")),
+                user=user,
                 readonly=readonly,
                 scopes=_terms(path, f"{field_name}.scopes", item.get("scopes")),
                 toolsets=_terms(path, f"{field_name}.toolsets", item.get("toolsets")),
@@ -559,6 +570,34 @@ def _plugins(path: Path, field_name: str, value: object) -> list[PluginSettings]
             )
         )
     return named
+
+
+def _greeting(path: Path, value: object) -> GreetingSettings | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should give greeting as a mapping with text and mode")
+    extra = set(value) - {"text", "mode"}
+    if extra:
+        raise ValueError(f"{path} unknown greeting setting: {sorted(extra)[0]}")
+    text = _word(value.get("text"))
+    if not text:
+        raise ValueError(f"{path} should give the greeting's text")
+    return GreetingSettings(text=text, mode=_word(value.get("mode")))
+
+
+def _tools(path: Path, value: object) -> ToolSettings | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should give tools as a mapping")
+    extra = set(value) - {"progressive"}
+    if extra:
+        raise ValueError(f"{path} unknown tools setting: {sorted(extra)[0]}")
+    progressive = value.get("progressive")
+    if progressive is not None and not isinstance(progressive, bool):
+        raise ValueError(f"{path} should give tools progressive as true or false")
+    return ToolSettings(progressive=progressive)
 
 
 def _mcp_servers(path: Path, value: object) -> list[MCPServerSettings]:

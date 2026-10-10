@@ -3,6 +3,8 @@ package target
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,14 +34,24 @@ type accelToolsFile struct {
 }
 
 type accelSessionRequest struct {
-	CallID       string      `json:"call_id"`
-	CallType     string      `json:"call_type,omitempty"`
-	UserID       string      `json:"user_id,omitempty"`
-	Instructions string      `json:"instructions,omitempty"`
-	Greeting     string      `json:"greeting,omitempty"`
-	LLM          string      `json:"llm,omitempty"`
-	STT          string      `json:"stt,omitempty"`
-	Tools        []AccelTool `json:"tools"`
+	ID         string        `json:"id"`
+	Agent      string        `json:"agent"`
+	StartVoice bool          `json:"start_voice"`
+	UserID     string        `json:"user_id,omitempty"`
+	Greeting   accelGreeting `json:"greeting"`
+	LLM        string        `json:"llm,omitempty"`
+	STT        string        `json:"stt,omitempty"`
+	Tools      []AccelTool   `json:"tools"`
+}
+
+type accelSyncRequest struct {
+	Name         string `json:"name"`
+	Hash         string `json:"hash"`
+	Instructions string `json:"instructions"`
+}
+
+type accelGreeting struct {
+	Text string `json:"text"`
 }
 
 type accelSession struct {
@@ -82,7 +94,7 @@ func (a *Acceleration) Prepare(ctx context.Context) (func(), error) {
 		if a.URL == "" {
 			return nil, fmt.Errorf("run: --target-url is required for an acceleration target without --spawn")
 		}
-		return func() {}, nil
+		return func() {}, a.sync(ctx)
 	}
 	if a.URL == "" {
 		a.URL = "http://127.0.0.1:8080"
@@ -98,7 +110,49 @@ func (a *Acceleration) Prepare(ctx context.Context) (func(), error) {
 		return nil, err
 	}
 	a.logger().Info("spawned accel router", "url", a.URL)
+	if err := a.sync(ctx); err != nil {
+		stop()
+		return nil, err
+	}
 	return stop, nil
+}
+
+// sync stores the pack's instructions as the agent config every session starts from, since
+// a session takes none of its own.
+func (a *Acceleration) sync(ctx context.Context) error {
+	sum := sha256.Sum256([]byte(a.Instructions))
+	body, err := json.Marshal(accelSyncRequest{Name: a.agentName(), Hash: hex.EncodeToString(sum[:]), Instructions: a.Instructions})
+	if err != nil {
+		return err
+	}
+	if _, err := a.post(ctx, "/v1/agents/sync", body); err != nil {
+		return fmt.Errorf("run: sync accel agent: %w", err)
+	}
+	return nil
+}
+
+func (a *Acceleration) agentName() string {
+	return "voicebench-" + strings.ReplaceAll(a.Pack, "_", "-")
+}
+
+func (a *Acceleration) post(ctx context.Context, path string, body []byte) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(a.URL, "/")+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Customer-Id", accelCustomer)
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return raw, nil
 }
 
 // StartRouter launches the acceleration router and waits until /health succeeds.
@@ -129,38 +183,26 @@ func StartRouter(ctx context.Context, bin, baseURL string) (func(), error) {
 	return stop, nil
 }
 
-func (a *Acceleration) StartCall(ctx context.Context, callID string, callType string) (func(), error) {
+// StartCall opens a session held by callID, whose agent joins the call agent:<callID>.
+func (a *Acceleration) StartCall(ctx context.Context, callID string, _ string) (func(), error) {
 	body, err := json.Marshal(accelSessionRequest{
-		CallID:       callID,
-		CallType:     callType,
-		UserID:       "accel-agent",
-		Instructions: a.Instructions,
-		Greeting:     "Hello, how can I help?",
-		LLM:          os.Getenv("VOICEBENCH_MODEL"),
-		STT:          os.Getenv("VOICEBENCH_STT"),
-		Tools:        a.Tools,
+		ID:         callID,
+		Agent:      a.agentName(),
+		StartVoice: true,
+		UserID:     "accel-agent",
+		Greeting:   accelGreeting{Text: "Hello, how can I help?"},
+		LLM:        os.Getenv("VOICEBENCH_MODEL"),
+		STT:        os.Getenv("VOICEBENCH_STT"),
+		Tools:      a.Tools,
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	base := strings.TrimRight(a.URL, "/")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/agents/sessions", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Customer-Id", accelCustomer)
-
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
+	raw, err := a.post(ctx, "/v1/agents/sessions", body)
 	if err != nil {
 		return nil, fmt.Errorf("run: create accel session: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("run: create accel session: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	var created accelSession
 	if err := json.Unmarshal(raw, &created); err != nil {

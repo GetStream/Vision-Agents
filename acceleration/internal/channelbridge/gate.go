@@ -53,7 +53,7 @@ func (b *Bridge) mayReply(ctx context.Context, thread store.ChannelThread) (bool
 // one thread key part), a WhatsApp thread its digits (whatsapp.yaml's), which Read writes as
 // they are, since a number has no % or : to encode. A Linq thread is a chat, whose id names
 // nobody, so it is the person who started it: the contact map row of the thread's episode
-// (store.ThreadContact), with the one agent that binds the thread's connection (take). A chat
+// (store.ThreadContact), with the agent that answers on the thread's connection (take). A chat
 // with no such row, such as one an email handle started, is "", which no opt-out names and
 // no sandbox lists.
 func (b *Bridge) replyTo(ctx context.Context, thread store.ChannelThread) (string, error) {
@@ -62,7 +62,7 @@ func (b *Bridge) replyTo(ctx context.Context, thread store.ChannelThread) (strin
 		return source.recipientOf(thread.ThreadKey), nil
 	}
 	configs, err := b.store.AgentConfigsBindingConnection(ctx, thread.CustomerID, thread.ConnectionID)
-	if err != nil || len(configs) != 1 {
+	if err != nil || len(configs) == 0 {
 		return "", err
 	}
 	contact, err := b.store.ThreadContact(ctx, thread.CustomerID, configs[0].ID, chatlog.ChannelType+":"+thread.ChannelID)

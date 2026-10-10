@@ -161,9 +161,7 @@ class StsOptions:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.data_policy import DataPolicy
-        from ..models.sts_options_overwrites import (
-            StsOptionsOverwrites,
-        )
+        from ..models.sts_options_overwrites import StsOptionsOverwrites
 
         d = dict(src_dict)
         _data_policy = d.pop("data_policy", UNSET)

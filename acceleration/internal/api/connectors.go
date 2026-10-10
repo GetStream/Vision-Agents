@@ -13,12 +13,21 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 var errNoConnectors = notConfigured("connector definitions are not available: no database configured")
+
+// errNoCustomConnector answers a delete of an id the app has no custom connector under. A
+// built-in is answered the same, since an app cannot delete one.
+var errNoCustomConnector = notFound("the app has no custom connector with this id; a built-in cannot be deleted")
+
+// usesNamed is how many connections and how many bindings a refused delete names, the rest
+// counted. Ten keeps the message a line a person reads; it is not measured.
+const usesNamed = 10
 
 // mcpSource is both the tool source a custom definition runs and the endpoint role it runs
 // against, as the built-in manifests write them (internal/connectors/providers/slack.yaml
@@ -29,8 +38,10 @@ const mcpSource = "mcp"
 // Connector is one connector as the catalog shows it and a connection is created from: the
 // revision of its definition (store.ConnectorDefinition) the request read. It is the
 // non-secret part of the manifest: what a caller chooses between (schemes, inputs, scopes,
-// who owns the OAuth client). Everything the router reads to connect is left out: endpoints, vars, authorize and token parameters, capture and identity rules,
-// refresh and rate limits, sources, hooks and the operator's client variables.
+// who owns the OAuth client). Everything the router reads to connect is left out: a built-in's
+// endpoints, vars, authorize and token parameters, capture and identity rules, refresh and
+// rate limits, sources, hooks and the operator's client variables. A custom connector's
+// endpoint is left out too: an MCP URL can carry a secret in its path (AI-837).
 type Connector struct {
 	ID          string           `json:"id" doc:"Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does."`
 	Revision    int              `json:"revision" readOnly:"true" doc:"The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected."`
@@ -43,6 +54,8 @@ type Connector struct {
 	Scopes      []string         `json:"scopes" doc:"The scopes a consent asks for."`
 	Client      ConnectorClient  `json:"client"`
 	Setup       *ConnectorSetup  `json:"setup,omitempty" doc:"What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing."`
+	RedirectURI string           `json:"redirect_uri,omitempty" readOnly:"true" format:"uri" doc:"The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then."`
+	Channel     bool             `json:"channel" readOnly:"true" doc:"The connector is an inbound channel: its manifest reads messages a provider delivers to the router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A dashboard warns on it before a delete that would end those replies."`
 	CreatedAt   time.Time        `json:"created_at" readOnly:"true" doc:"When this revision was stored."`
 }
 
@@ -178,6 +191,11 @@ type getConnectorRequest struct {
 	ID string `path:"id" doc:"The connector, such as slack or custom_crm."`
 }
 
+type deleteConnectorRequest struct {
+	ID    string `path:"id" doc:"The app's custom connector, such as custom_crm."`
+	Force bool   `query:"force" doc:"Delete it even while connections or agent config bindings use it. Its connections are deleted with it, and the bindings are left in place, naming a connector that no longer exists."`
+}
+
 type createConnectorRequest struct {
 	Body CustomConnectorRequest
 }
@@ -186,7 +204,7 @@ type connectorResponse struct {
 	Body Connector
 }
 
-// registerConnectors declares the connector definition operations. All three are
+// registerConnectors declares the connector definition operations. All four are
 // server-side only: the catalog is what an app's backend and dashboard choose from when
 // they set connectors up, and an end user is sent to a consent by that backend rather
 // than picking a connector themselves.
@@ -229,6 +247,24 @@ func (s *Server) registerConnectors(api huma.API) {
 		Responses: map[string]*huma.Response{"200": {Description: "The connector as stored"}},
 		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
 	}, s.createConnector)
+	huma.Register(api, huma.Operation{
+		OperationID:   "deleteConnector",
+		Method:        http.MethodDelete,
+		Path:          "/v1/agents/connectors/{id}",
+		Summary:       "Delete a custom connector",
+		DefaultStatus: http.StatusNoContent,
+		Description: "Deletes one of the app's own connectors, every revision of it, with the " +
+			"app's OAuth client for it. A built-in cannot be deleted and is not found. A " +
+			"connector a live connection was made from, or an agent config binds, is refused " +
+			"with a 409 naming them, unless force is set: then its connections are deleted as a " +
+			"forced connection delete deletes one, credentials dropped at once, and the " +
+			"bindings are left in place. The same id may be created again, from revision 1.\n\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{"204": {Description: "The connector is deleted"}},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusNotFound, http.StatusConflict},
+	}, s.deleteConnector)
 }
 
 // listConnectors lists the built-ins and the caller's own, a page at a time.
@@ -256,7 +292,7 @@ func (s *Server) listConnectors(ctx context.Context, request *listConnectorsRequ
 	kept, more := page(found, store.ConnectorDefinitionLimit(request.Limit))
 	listed := ConnectorPage{Items: make([]Connector, 0, len(kept)), HasMore: more}
 	for _, definition := range kept {
-		listed.Items = append(listed.Items, connectorOf(definition))
+		listed.Items = append(listed.Items, connectorOf(definition, s.publicURL))
 	}
 	if more {
 		last := kept[len(kept)-1]
@@ -284,7 +320,7 @@ func (s *Server) getConnector(ctx context.Context, request *getConnectorRequest)
 	if err != nil {
 		return nil, err
 	}
-	return &connectorResponse{Body: connectorOf(definition)}, nil
+	return &connectorResponse{Body: connectorOf(definition, s.publicURL)}, nil
 }
 
 // createConnector stores a custom MCP definition as the caller's own.
@@ -305,7 +341,61 @@ func (s *Server) createConnector(ctx context.Context, request *createConnectorRe
 	if err != nil {
 		return nil, err
 	}
-	return &connectorResponse{Body: connectorOf(definition)}, nil
+	return &connectorResponse{Body: connectorOf(definition, s.publicURL)}, nil
+}
+
+// deleteConnector deletes one of the caller's own definitions, refused while something uses
+// it unless forced (store.DeleteConnectorDefinition).
+func (s *Server) deleteConnector(ctx context.Context, request *deleteConnectorRequest) (*struct{}, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.store == nil {
+		return nil, errNoConnectors
+	}
+	deleted, err := s.store.DeleteConnectorDefinition(ctx, customerID, request.ID, request.Force)
+	if errors.Is(err, store.ErrNoConnectorDefinition) {
+		return nil, errNoCustomConnector
+	}
+	// 409: the request conflicts with the state of the resource, which the caller can change
+	// and retry (RFC 9110 section 15.5.10), as a bound connection's delete is answered.
+	if errors.Is(err, store.ErrConnectorDefinitionInUse) {
+		return nil, connectorInUse(request.ID, deleted.Uses)
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, connection := range deleted.Connections {
+		s.connectionDeleted(ctx, customerID, connection, core.CredentialChange{})
+	}
+	return nil, nil
+}
+
+// connectorInUse is the refusal of an unforced delete of a connector uses still name: the
+// connections by id and the bindings by config name and alias, usesNamed of each.
+func connectorInUse(id string, uses store.ConnectorUses) APIError {
+	var users []string
+	if len(uses.Connections) > 0 {
+		users = append(users, "connections "+namedFew(uses.Connections))
+	}
+	if len(uses.Bindings) > 0 {
+		bindings := make([]string, 0, len(uses.Bindings))
+		for _, binding := range uses.Bindings {
+			bindings = append(bindings, fmt.Sprintf("%q as %s", binding.ConfigName, binding.Binding))
+		}
+		users = append(users, "agent config bindings "+namedFew(bindings))
+	}
+	return conflict(fmt.Sprintf("%s is used by %s: delete or unbind them first, or delete with force=true",
+		id, strings.Join(users, " and by ")))
+}
+
+// namedFew is the first usesNamed of names, and how many more there are.
+func namedFew(names []string) string {
+	if len(names) <= usesNamed {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(names[:usesNamed], ", "), len(names)-usesNamed)
 }
 
 // customManifest is the manifest a custom MCP definition is stored as, or why it cannot be.
@@ -368,7 +458,9 @@ func (s *Server) customManifest(ctx context.Context, sent CustomConnectorRequest
 
 // connectorOf is the part of a stored definition a caller is shown. Each field is
 // copied by name, so a field added to the manifest stays hidden until it is added here.
-func connectorOf(definition store.ConnectorDefinition) Connector {
+// publicURL is the router's, which an oauth2_code connector's redirect URI is built from as a
+// consent builds it (connectorCallbackURL).
+func connectorOf(definition store.ConnectorDefinition, publicURL string) Connector {
 	manifest := definition.Manifest
 	inputs := make([]ConnectorInput, 0, len(manifest.Inputs))
 	for _, in := range manifest.Inputs {
@@ -385,14 +477,21 @@ func connectorOf(definition store.ConnectorDefinition) Connector {
 			setup.Steps = append(setup.Steps, ConnectorSetupStep{Title: step.Title, Description: step.Description})
 		}
 	}
+	custom := definition.CustomerID != store.BuiltinCustomer
+	var redirectURI string
+	if slices.Contains(manifest.Schemes, oauth2code.Name) {
+		redirectURI = connectorCallbackURL(publicURL)
+	}
 	return Connector{
 		Setup:       setup,
+		RedirectURI: redirectURI,
 		ID:          definition.ID,
 		Revision:    definition.Revision,
 		Name:        definition.Name,
 		Category:    definition.Category,
 		Description: definition.Description,
-		Custom:      definition.CustomerID != store.BuiltinCustomer,
+		Custom:      custom,
+		Channel:     manifest.Channel != nil && !manifest.Channel.Messages.IsZero(),
 		Schemes:     append([]string{}, manifest.Schemes...),
 		Inputs:      inputs,
 		Scopes:      append([]string{}, manifest.Scopes.List...),

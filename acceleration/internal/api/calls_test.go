@@ -152,7 +152,7 @@ func (s *CallsSuite) TestAFinishedNativeCallNamesTheConversationAndSubagentModel
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+call.ID, nil, &rendered))
 	s.Equal("stub/stub-sts", value(rendered.StsUsed))
-	s.Equal("stub/stub-llm", value(rendered.ThinkingLlmUsed))
+	s.Equal("stub/stub-llm", value(rendered.SubagentUsed))
 	s.Nil(rendered.SttUsed)
 	s.Nil(rendered.LlmUsed)
 	s.Nil(rendered.TtsUsed)
@@ -254,7 +254,7 @@ func (s *CallsSuite) TestACallsCostIsSplitByWhereItCameFrom() {
 
 func (s *CallsSuite) TestAConversationRecordsWhatItsPromptsWereMadeOf() {
 	request := textSession(nil)
-	request.Llm, request.Instructions = pointerTo("counted/counted-model"), pointerTo("Answer about "+s.utils.uuid())
+	request.Llm, request.ConfigId = pointerTo("counted/counted-model"), s.data.instructedAgent("Answer about "+s.utils.uuid())
 	opened := s.serverClient.createSession(request)
 	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
 		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "How many tokens is this?"}, nil))

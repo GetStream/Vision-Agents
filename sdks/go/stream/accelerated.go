@@ -53,6 +53,9 @@ type Config struct {
 	// Greeting is said on joining without going through the model. Empty means the agent
 	// waits to be spoken to.
 	Greeting string
+	// GreetingMode is exact, the default, or variation, which has the model say its own
+	// variation of Greeting on every call.
+	GreetingMode acceleration.GreetingMode
 	// Backchannel murmurs while a caller is still talking, the way a person does.
 	Backchannel bool
 	// MaxTokens is a ceiling on a reply. Zero leaves the backend's default.
@@ -79,19 +82,17 @@ type Config struct {
 // created. The cost and memory fields are rendered from an agent's configuration
 // before it joins.
 type Call struct {
-	ConversationID string
-	// ID is the call to join. Empty holds the conversation in writing instead.
-	ID string
-	// Type is the Stream call type. Empty leaves the backend's default.
-	Type string
+	// SessionID is the UUID to hold the session by. Empty lets the router choose one.
+	SessionID string
+	// Voice has the agent join the session's own call, agent:<session id>. False holds the
+	// conversation in writing instead.
+	Voice bool
 	// UserID is who the agent joins the call as.
 	UserID string
 	// UserName is the agent's display name in the call.
 	UserName string
-	// AgentID keys transcripts and statistics. Empty means the call id.
+	// AgentID keys transcripts and statistics. Empty means the session id.
 	AgentID string
-	// Instructions is the system prompt.
-	Instructions string
 
 	// Title and Description are what a person finds this conversation by afterwards. Both
 	// are searched.
@@ -259,10 +260,10 @@ func (p *Pipeline) JoinWith(
 		return nil, err
 	}
 
-	if request.CallId == nil || *request.CallId == "" {
+	if session.CallId == "" {
 		p.logger.Info("opened a text session", "session", session.Id)
 	} else {
-		p.logger.Info("joined a call remotely", "call", *request.CallId, "session", session.Id)
+		p.logger.Info("joined a call remotely", "call", session.CallId, "session", session.Id)
 	}
 	return session, nil
 }
@@ -371,11 +372,6 @@ func (p *Pipeline) Interrupt() error {
 	return p.command(Frame{"type": "interrupt"})
 }
 
-// SetInstructions changes what the agent is told to be, from the next turn.
-func (p *Pipeline) SetInstructions(instructions string) error {
-	return p.command(Frame{"type": "instructions", "instructions": instructions})
-}
-
 // Leave ends the call. Safe to call after it has already ended.
 func (p *Pipeline) Leave(ctx context.Context) error {
 	p.mu.Lock()
@@ -404,14 +400,10 @@ func (p *Pipeline) Leave(ctx context.Context) error {
 // request renders the agent's configuration as a session to create.
 func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	request := acceleration.CreateSessionRequest{
-		ConversationId: &call.ConversationID,
-		Backchannel:    &p.config.Backchannel,
+		Backchannel: &p.config.Backchannel,
 	}
-	if call.ID == "" {
-		text := true
-		request.Text = &text
-	} else {
-		request.CallId = &call.ID
+	if call.Voice {
+		request.StartVoice = &call.Voice
 	}
 
 	if call.Incognito {
@@ -423,11 +415,10 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	}
 	request.ModelOverwrites = call.ModelOverwrites
 
-	setString(&request.CallType, call.Type)
+	setString(&request.Id, call.SessionID)
 	setString(&request.UserId, call.UserID)
 	setString(&request.UserName, call.UserName)
 	setString(&request.AgentId, call.AgentID)
-	setString(&request.Instructions, call.Instructions)
 	setString(&request.Title, call.Title)
 	setString(&request.Description, call.Description)
 	setString(&request.ProjectId, call.ProjectID)
@@ -437,7 +428,12 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	setString(&request.Stt, p.config.STT)
 	setString(&request.Tts, p.config.TTS)
 	setString(&request.Voice, p.config.Voice)
-	setString(&request.Greeting, p.config.Greeting)
+	if p.config.Greeting != "" {
+		request.Greeting = &acceleration.Greeting{Text: p.config.Greeting}
+		if p.config.GreetingMode != "" {
+			request.Greeting.Mode = &p.config.GreetingMode
+		}
+	}
 
 	if p.config.Language != "" {
 		request.Languages = &[]string{p.config.Language}
@@ -546,8 +542,8 @@ func (p *Pipeline) watch(ctx context.Context, socket *Socket, out chan<- Event) 
 func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 	name := frame.String("name")
 	result := Frame{"type": "tool_result", "tool_call_id": frame.String("id")}
-	// A durable command's result is only accepted back with the command and turn it names.
-	for _, key := range []string{"command_id", "turn_id"} {
+	// A durable request's result is only accepted back with the request and turn it names.
+	for _, key := range []string{"request_id", "turn_id"} {
 		if value := frame.String(key); value != "" {
 			result[key] = value
 		}

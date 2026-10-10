@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "securerandom"
+
 module GetStream
   module VisionAgents
     # The things one or more turns were made of, in the order they happened.
@@ -86,13 +88,22 @@ module GetStream
       # Asks the agent something and names the turn it answers as.
       #
       # @param images [Array<Hash>] ImageSource hashes, each a url and an optional detail.
-      # @param command_id [String] the durable command this answers, such as the one a dispatch
-      #   worker was handed with the text. Empty sends none.
-      def create(text, images: nil, command_id: nil)
-        command_id = nil if command_id.to_s.empty?
+      def create(text, images: nil)
+        answer(text, nil, images: images)
+      end
+
+      # Dispatch#answer's way in.
+      #
+      # @api private
+      # @param request_id [String] the request id of the inbound message being answered; empty
+      #   generates one.
+      def answer(text, request_id, images: nil)
+        # The router refuses a request id on a question with media.
+        request_id = SecureRandom.hex(16) if request_id.to_s.empty?
+        request_id = nil if images.to_a.any?
         created = @client.post("/v1/agents/sessions/{id}/responses",
                                path: { id: @session_id },
-                               body: { text: text, images: images, command_id: command_id })
+                               body: { text: text, images: images, request_id: request_id })
         AgentResponse.new(@client, created)
       end
 

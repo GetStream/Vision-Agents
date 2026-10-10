@@ -252,8 +252,16 @@ type Server struct {
 	posts []Post
 	// failPosts is how many more posts answer 503 (FailPosts).
 	failPosts int
+	// refusedPosts is how many more posts answer refusal in an HTTP 200 (RefusePosts).
+	refusedPosts int
+	refusal      string
+	// garbledPosts is how many more posts are taken and answered with a body that is not
+	// JSON (GarblePosts).
+	garbledPosts int
 	// account is the user the next consent is by: UserID until SwitchAccount.
 	account string
+	// mcpStatus is what every MCP request is answered with (AnswerMCP); zero answers them.
+	mcpStatus int
 
 	// The fake Slack (slack.go): configuration tokens by token, refresh tokens with whether
 	// they were spent, successful rotations, and apps by id in the order they were made.

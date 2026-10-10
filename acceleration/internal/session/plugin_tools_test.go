@@ -3,6 +3,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -143,16 +144,16 @@ func (s *UserPluginsSuite) TestAUserIsToldAPluginTheAgentHasNoClientForIsNotAvai
 
 	s.JSONEq(plugins.UnavailableResult(s.calendar), result)
 	_, ok := plugins.RequestedAuthorization("google_calendar__list_tools", result,
-		Logins(Spec{UserPlugins: []store.PluginEntry{{Name: "google_calendar"}}}))
+		Logins(Spec{Plugins: []store.PluginEntry{{Name: "google_calendar", User: true}}}))
 	s.False(ok, "there is nothing for the user to press")
 }
 
 func (s *UserPluginsSuite) TestTheAppsLoginToAPluginEachUserConnectsIsNotHandedToEverySession() {
 	s.login("", s.calendar, "", "good-token")
 	spec := Spec{
-		CustomerID:  s.runner.customerID,
-		ConfigID:    s.runner.configID,
-		UserPlugins: []store.PluginEntry{{Name: "google_calendar"}},
+		CustomerID: s.runner.customerID,
+		ConfigID:   s.runner.configID,
+		Plugins:    []store.PluginEntry{{Name: "google_calendar", User: true}},
 	}
 
 	runtime, tools, unconnected := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.DiscardHandler))
@@ -176,9 +177,9 @@ func (s *UserPluginsSuite) TestTheAppsLoginToAnAgentPluginIsOpenedUnlessABinding
 	s.Require().True(found)
 	s.login("", shopify, strings.TrimPrefix(shop.URL, "https://"), "good-token")
 	spec := Spec{
-		CustomerID:   s.runner.customerID,
-		ConfigID:     s.runner.configID,
-		AgentPlugins: []store.PluginEntry{{Name: "shopify"}},
+		CustomerID: s.runner.customerID,
+		ConfigID:   s.runner.configID,
+		Plugins:    []store.PluginEntry{{Name: "shopify"}},
 	}
 	open := func(spec Spec) (*plugins.Runtime, []harness.Tool) {
 		runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: shop.Client()}, slog.New(slog.DiscardHandler))
@@ -364,8 +365,7 @@ func (s *UserPluginsSuite) TestAServerTheAppHasNotLoggedIntoFailsWithHowToConnec
 
 func (s *UserPluginsSuite) TestOnlyTheServersEachUserLogsIntoMayAskForALoginInTheChat() {
 	spec := Spec{
-		AgentPlugins: []store.PluginEntry{{Name: "sentry"}},
-		UserPlugins:  []store.PluginEntry{{Name: "google_calendar"}},
+		Plugins: []store.PluginEntry{{Name: "sentry"}, {Name: "google_calendar", User: true}},
 		MCPServers: []store.MCPServer{
 			{Name: "notes", URL: "https://notes.example.com/mcp", User: true},
 			{Name: "crm", URL: "https://crm.example.com/mcp", NeedsLogin: &needsLogin},
@@ -388,6 +388,124 @@ func (s *UserPluginsSuite) TestOnlyTheServersEachUserLogsIntoMayAskForALoginInTh
 
 // needsLogin is what a server that said at save it requires a login has stored.
 var needsLogin = true
+
+func (s *UserPluginsSuite) TestASessionOnTheAppsPluginLoginWarnsOfTheDeprecationOnce() {
+	shop := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = "/mcp"
+		s.serveMCP(w, r)
+	}))
+	defer shop.Close()
+	shopify, found := plugins.Lookup("shopify")
+	s.Require().True(found)
+	s.login("", shopify, strings.TrimPrefix(shop.URL, "https://"), "good-token")
+	spec := Spec{CustomerID: s.runner.customerID, ConfigID: s.runner.configID, Plugins: []store.PluginEntry{{Name: "shopify"}}}
+	var logged bytes.Buffer
+
+	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: shop.Client()}, slog.New(slog.NewTextHandler(&logged, nil)))
+	s.Require().NotNil(runtime)
+	defer runtime.Close()
+	for range 2 {
+		answered, err := runtime.Call(context.Background(), llm.ToolCall{ID: uuid.NewString(), Name: "shopify__list_events", Arguments: `{}`})
+		s.Require().NoError(err)
+		s.Equal("standup at 10", answered)
+	}
+
+	s.Equal([]string{"shopify__list_events"}, toolNames(tools), "opened as before")
+	lines := s.deprecations(logged.String(), plugins.PathSessionTools)
+	s.Require().Len(lines, 1, "once for the session, not once per call")
+	s.Contains(lines[0], "customer="+s.runner.customerID+" config="+s.runner.configID+" plugin=[shopify]")
+	s.NotContains(logged.String(), "good-token")
+}
+
+func (s *UserPluginsSuite) TestASessionWhosePluginABindingReplacesWarnsOfNothing() {
+	s.login("", s.calendar, "", "good-token")
+	spec := Spec{
+		CustomerID: s.runner.customerID, ConfigID: s.runner.configID,
+		Plugins: []store.PluginEntry{{Name: "google_calendar", User: true}},
+		ConnectorBindings: []store.ConnectorBinding{{Name: "calendar", ConnectorID: "google_calendar",
+			Connection: store.ConnectionBinding{Type: selectionFixed, ConnectionID: "c1"}}},
+	}
+	// What Spec.Normalize does with the plugin entries when the session is created.
+	spec.Plugins = spec.withoutBoundPlugins(spec.Plugins)
+	var logged bytes.Buffer
+
+	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.NewTextHandler(&logged, nil)))
+
+	s.Nil(runtime)
+	s.Empty(tools)
+	s.Empty(s.deprecations(logged.String(), plugins.PathSessionTools))
+}
+
+func (s *UserPluginsSuite) TestASessionWithoutPluginsWarnsOfNothing() {
+	spec := Spec{CustomerID: s.runner.customerID, ConfigID: s.runner.configID,
+		MCPServers: []store.MCPServer{{Name: "menus", URL: s.provider.URL + "/open"}}}
+	var logged bytes.Buffer
+
+	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.NewTextHandler(&logged, nil)))
+	s.Require().NotNil(runtime)
+	defer runtime.Close()
+
+	s.Equal([]string{"menus__list_events"}, toolNames(tools))
+	s.Empty(s.deprecations(logged.String(), plugins.PathSessionTools))
+}
+
+func (s *UserPluginsSuite) TestASessionOfferingEachUserAPluginWarnsOfTheDeprecation() {
+	spec := Spec{CustomerID: s.runner.customerID, ConfigID: s.runner.configID,
+		Plugins: []store.PluginEntry{{Name: "google_calendar", User: true}}}
+	var logged bytes.Buffer
+
+	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.NewTextHandler(&logged, nil)))
+
+	s.Nil(runtime)
+	s.Empty(tools)
+	lines := s.deprecations(logged.String(), plugins.PathSessionTools)
+	s.Require().Len(lines, 1)
+	s.Contains(lines[0], "plugin=[google_calendar] mcp_server=[]")
+}
+
+func (s *UserPluginsSuite) TestASessionOnServersWithPluginLoginsWarnsOfTheDeprecation() {
+	notes := s.server(store.MCPServer{})
+	s.login("", notes, notes.URL, "good-token")
+	needs := true
+	spec := Spec{CustomerID: s.runner.customerID, ConfigID: s.runner.configID, MCPServers: []store.MCPServer{
+		{Name: notes.ID, URL: notes.URL},
+		{Name: "diary", URL: notes.URL, User: true, NeedsLogin: &needs},
+	}}
+	var logged bytes.Buffer
+
+	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.NewTextHandler(&logged, nil)))
+	s.Require().NotNil(runtime)
+	defer runtime.Close()
+
+	s.Equal([]string{"notes__list_events"}, toolNames(tools), "opened as before")
+	lines := s.deprecations(logged.String(), plugins.PathSessionTools)
+	s.Require().Len(lines, 1)
+	s.Contains(lines[0], "plugin=[] mcp_server=\"[notes diary]\"", "the app's login and each user's are both the plugin system's, as MCP servers")
+}
+
+func (s *UserPluginsSuite) TestAnEndUserAskedToLogInWarnsOfTheDeprecation() {
+	var logged bytes.Buffer
+	s.runner.logger = slog.New(slog.NewTextHandler(&logged, nil))
+
+	result := s.run("google_calendar__list_tools", "")
+
+	s.asksToConnect(result)
+	lines := s.deprecations(logged.String(), plugins.PathLogin)
+	s.Require().Len(lines, 1)
+	s.Contains(lines[0], "customer="+s.runner.customerID+" config="+s.runner.configID+" plugin=google_calendar via=plugins")
+}
+
+// deprecations are the lines logged for a use of the plugin system on path by the suite's config.
+func (s *UserPluginsSuite) deprecations(logged, path string) []string {
+	var found []string
+	for _, line := range strings.Split(logged, "\n") {
+		if strings.Contains(line, `level=WARN msg="`+plugins.DeprecatedUse+`" path=`+path+" ") &&
+			strings.Contains(line, " config="+s.runner.configID+" ") {
+			found = append(found, line)
+		}
+	}
+	return found
+}
 
 // server is the provider's MCP server named by URL as notes, logging in as server says.
 func (s *UserPluginsSuite) server(server store.MCPServer) plugins.Plugin {
@@ -458,7 +576,7 @@ func (s *UserPluginsSuite) connect(token string) {
 
 func (s *UserPluginsSuite) asksToConnect(result string) {
 	found, ok := plugins.RequestedAuthorization("google_calendar__list_tools", result,
-		Logins(Spec{UserPlugins: []store.PluginEntry{{Name: "google_calendar"}}}))
+		Logins(Spec{Plugins: []store.PluginEntry{{Name: "google_calendar", User: true}}}))
 	s.Require().True(ok, result)
 	s.True(strings.HasPrefix(found.AuthorizeURL, "https://accounts.example/auth?"), found.AuthorizeURL)
 	s.Equal("Connect Google Calendar", found.Title)

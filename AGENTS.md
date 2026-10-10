@@ -57,6 +57,8 @@ uv sync && uv run simple_voice_ai.py run
 
 It prints a call URL on the dashboard; open it and talk.
 
+The client generators (`plugins/stream/generate.py`, `sdks/swift/generate.py`) are standalone uv scripts with inline metadata: `uv run <script>` does not resolve the workspace.
+
 Python commands all use `uv`. Never `python -m`. If you hit dependency issues, stop and ask.
 
 ```bash
@@ -116,6 +118,12 @@ npm test        # typecheck, then the suite against a real http and ws server
 To run Voicebench (`benchmark/`) locally or read why a run failed, read the `voicebench` skill
 (`.claude/skills/voicebench/SKILL.md`) first: the keys and services a run needs, which command
 answers which question, and how to read the report.
+
+## Connectors
+
+To give an agent a provider's tools (GitHub, Linear, the Slack bot), read the `connectors`
+skill (`.claude/skills/connectors/SKILL.md`). To add a provider to the catalog, read
+`add-connector`. Plugins are deprecated.
 
 ## Testing
 

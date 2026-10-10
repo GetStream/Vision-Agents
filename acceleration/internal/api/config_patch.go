@@ -18,17 +18,15 @@ type AgentConfigPatch struct {
 	Tts                *string                  `json:"tts,omitempty"`
 	Sts                *string                  `json:"sts,omitempty"`
 	Voice              *string                  `json:"voice,omitempty"`
-	Speed              *float64                 `json:"speed,omitempty" minimum:"0" doc:"The voice's rate of delivery, 1 being its own. Zero leaves it there."`
 	Llm                *string                  `json:"llm,omitempty"`
-	ThinkingLlm        *string                  `json:"thinking_llm,omitempty" doc:"Only a voice agent names one. Switching an agent to text drops it."`
+	Subagent           *string                  `json:"subagent,omitempty" doc:"Only a voice agent names one. Switching an agent to text drops it."`
 	Search             *string                  `json:"search,omitempty"`
 	Instructions       *string                  `json:"instructions,omitempty"`
-	Greeting           *string                  `json:"greeting,omitempty"`
+	Greeting           *Greeting                `json:"greeting,omitempty" doc:"Replaces the greeting whole. An empty text removes it."`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
 	Skills             *[]string                `json:"skills,omitempty"`
-	AgentPlugins       *[]PluginEntry           `json:"agent_plugins,omitempty"`
-	UserPlugins        *[]PluginEntry           `json:"user_plugins,omitempty"`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32"`
+	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
+	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" maxItems:"16"`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
@@ -40,7 +38,7 @@ type AgentConfigPatch struct {
 	Harness            *Harness                 `json:"harness,omitempty"`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
 	EpisodeCards       *bool                    `json:"episode_cards,omitempty"`
-	ProgressiveTools   *bool                    `json:"progressive_tools,omitempty"`
+	Tools              *AgentTools              `json:"tools,omitempty"`
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 }
@@ -128,7 +126,6 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		Sandbox:        patch.Sandbox,
 		SandboxOptions: patch.SandboxOptions,
 		Harness:        patch.Harness,
-		Speed:          patch.Speed,
 		Guardrail:      patch.Guardrail,
 		VisibleTools:   patch.VisibleTools,
 		Connectors:     patch.Connectors,
@@ -150,22 +147,20 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.TTS = override(config.TTS, patch.Tts)
 	config.STS = override(config.STS, patch.Sts)
 	config.Voice = override(config.Voice, patch.Voice)
-	config.Speed = override(config.Speed, patch.Speed)
 	config.LLM = override(config.LLM, patch.Llm)
-	config.Subagent = override(config.Subagent, patch.ThinkingLlm)
+	config.Subagent = override(config.Subagent, patch.Subagent)
 	config.Search = override(config.Search, patch.Search)
 	config.Instructions = override(config.Instructions, patch.Instructions)
-	config.Greeting = override(config.Greeting, patch.Greeting)
+	if patch.Greeting != nil {
+		config.Greeting, config.GreetingMode = greetingOf(patch.Greeting)
+	}
 	config.Guardrail = override(config.Guardrail, patch.Guardrail)
 	config.Skills = override(config.Skills, patch.Skills)
-	if patch.AgentPlugins != nil {
-		config.AgentPlugins = pluginEntriesOf(*patch.AgentPlugins)
+	if patch.Plugins != nil {
+		config.Plugins = pluginEntriesOf(*patch.Plugins)
 	}
 	if patch.Connectors != nil {
 		config.Connectors = storedBindings(*patch.Connectors)
-	}
-	if patch.UserPlugins != nil {
-		config.UserPlugins = pluginEntriesOf(*patch.UserPlugins)
 	}
 	if patch.PluginEvents != nil {
 		config.PluginEvents = pluginEventsOf(patch.PluginEvents)
@@ -192,13 +187,13 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	}
 	applyDispatch(&config, patch.Dispatch)
 	config.EpisodeCards = override(config.EpisodeCards, patch.EpisodeCards)
-	config.ProgressiveTools = override(config.ProgressiveTools, patch.ProgressiveTools)
+	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, patch.Tools)
 	config.Tags = override(config.Tags, patch.Tags)
 	if patch.Video != nil {
 		config.VideoSource = override(config.VideoSource, patch.Video.Source)
 		config.VideoMaxFrames = override(config.VideoMaxFrames, patch.Video.MaxFrames)
 	}
-	if message, ok := textThinkingComplaint(&config, patch.ThinkingLlm); !ok {
+	if message, ok := textSubagentComplaint(&config, patch.Subagent); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := pluginEventsComplaint(config); !ok {
@@ -234,5 +229,6 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		Action: store.AuditUpdated, Changes: auditDiff(existing, stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
+	s.warnPluginsSaved(config)
 	return &agentConfigResponse{Body: stored}, nil
 }

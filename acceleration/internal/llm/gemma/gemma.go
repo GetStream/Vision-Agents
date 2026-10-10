@@ -76,7 +76,9 @@ func New(options Options) (*openaicompat.LLM, error) {
 				"chat_template_kwargs": map[string]any{"enable_thinking": false},
 			}
 		},
-		Logger: options.Logger,
+		// Thinking off still leaves an empty thought channel in some answers.
+		ThoughtChannel: true,
+		Logger:         options.Logger,
 	})
 }
 

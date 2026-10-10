@@ -49,6 +49,20 @@ func (s *BearerSuite) SetupTest() {
 	s.scheme = bearer.New()
 }
 
+// AI-990 F36: a stored token is named by its fingerprint, so a replaced one shows in the audit;
+// it has no refresh token and no expiry. Credentials of another scheme are refused.
+func (s *BearerSuite) TestFingerprintsNameTheTokenAndNothingElse() {
+	stored, _, err := s.scheme.Complete(context.Background(), core.CompleteInput{Supplied: map[string]string{bearer.SuppliedToken: token}})
+	s.Require().NoError(err)
+
+	got, err := s.scheme.Fingerprints(stored)
+
+	s.Require().NoError(err)
+	s.Equal(core.CredentialFingerprints{Access: core.Fingerprint(token)}, got)
+	_, err = s.scheme.Fingerprints(core.StoredCredentials{Scheme: "api_key", Version: 1, Payload: stored.Payload})
+	s.Error(err)
+}
+
 // RFC 6750 section 2.1: b64token = 1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" )
 // *"=".
 func (s *BearerSuite) TestATokenThatIsNotAB64TokenIsRefused() {
@@ -139,6 +153,12 @@ func (s *BearerSuite) TestABare401IsInvalidGrant() {
 	recorder := httptest.NewRecorder()
 	recorder.WriteHeader(http.StatusUnauthorized)
 	s.Equal(core.Outcome{Kind: core.OutcomeInvalidGrant}, s.scheme.Classify(recorder.Result(), nil, nil))
+}
+
+// The token is supplied and never renewed, so a rejected one is replaced rather than consented
+// to again (core.Static, AI-990).
+func (s *BearerSuite) TestItIsStatic() {
+	s.True(core.IsStatic(map[string]core.Scheme{bearer.Name: s.scheme}, bearer.Name))
 }
 
 // provider is a TLS server that answers 200 to a request carrying Authorization: Bearer

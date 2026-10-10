@@ -7,6 +7,8 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="ConnectorToolGrant")
 
 
@@ -16,12 +18,14 @@ class ConnectorToolGrant:
 
     Attributes:
         name (str): The tool as the connector names it.
-        schema_digest (str): The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex
-            characters. A tool whose schema has changed since no longer matches and is not offered.
+        schema_digest (str | Unset): The SHA-256 of the tool's name, description and input schema, as 64 lowercase hex
+            characters. A tool whose schema has changed since no longer matches and is not offered. Required on a fixed
+            binding. A session binding may leave it out: the first session that opens a person's connection pins the digest
+            the provider lists then, later sessions offer the tool only while it still matches, and a reconnect pins again.
     """
 
     name: str
-    schema_digest: str
+    schema_digest: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -34,9 +38,10 @@ class ConnectorToolGrant:
         field_dict.update(
             {
                 "name": name,
-                "schema_digest": schema_digest,
             }
         )
+        if schema_digest is not UNSET:
+            field_dict["schema_digest"] = schema_digest
 
         return field_dict
 
@@ -45,7 +50,7 @@ class ConnectorToolGrant:
         d = dict(src_dict)
         name = d.pop("name")
 
-        schema_digest = d.pop("schema_digest")
+        schema_digest = d.pop("schema_digest", UNSET)
 
         connector_tool_grant = cls(
             name=name,

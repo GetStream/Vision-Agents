@@ -22,12 +22,10 @@ final class Sessions {
 
   /// Opens a conversation without following it, for a caller building its own state layer.
   ///
-  /// Without a [callId] it is held in writing. It returns once the backend is holding the
-  /// conversation, so a session that comes back is one already listening.
-  Future<Session> create([SessionOptions options = const SessionOptions(), String? callId]) async {
-    final request = createRequestOf(options, callId: callId, agent: agent);
-    return sessionOf(await _operations.createSession(body: request));
-  }
+  /// Held in writing unless [SessionOptions.startVoice] is set. It returns once the backend is
+  /// holding the conversation, so a session that comes back is one already listening.
+  Future<Session> create([SessionOptions options = const SessionOptions()]) =>
+      _create(options, options.startVoice);
 
   /// A page of this caller's conversations, most recently updated first, the ones that ended
   /// included. Ask again with the page's [ListPage.nextCursor] as [SessionQuery.cursor] for
@@ -72,6 +70,15 @@ final class Sessions {
   /// kept; [delete] takes it away.
   Future<void> stop(String id) => _operations.stopSession(id: id);
 
+  /// Puts the agent on the session's own call, `agent:<session id>`, and returns the session
+  /// as it now is.
+  Future<Session> startVoice(String id) async =>
+      sessionOf(await _operations.startSessionVoice(id: id));
+
+  /// Takes the agent off the session's call. The conversation goes on in writing.
+  Future<Session> stopVoice(String id) async =>
+      sessionOf(await _operations.stopSessionVoice(id: id));
+
   /// Deletes a conversation, running or ended: it is stopped, and its turns and what it
   /// taught memory are deleted with it.
   Future<void> delete(String id) => _operations.deleteSession(id: id);
@@ -84,6 +91,11 @@ final class Sessions {
 
   /// A conversation's turns, whether or not this process is holding it.
   Responses responses(String id) => Responses._(_operations, id);
+
+  Future<Session> _create(SessionOptions options, bool startVoice) async {
+    final request = createRequestOf(options, startVoice: startVoice, agent: agent);
+    return sessionOf(await _operations.createSession(body: request));
+  }
 
   Future<ListPage<Session>> _query(String? text, SessionQuery query) async {
     final filter = api.SessionFilter(
@@ -114,50 +126,36 @@ final class Sessions {
 }
 
 /// The turns of a session being held here, which show each question in [asking] as it is
-/// asked, and give each one a command id when the conversation is [kept] in Stream Chat.
+/// asked.
 Responses heldResponses(
   Sessions sessions,
   String id, {
-  required bool kept,
   required void Function(String text) asking,
-}) => Responses._(sessions._operations, id, kept: kept, asking: asking);
+}) => Responses._(sessions._operations, id, asking: asking);
 
 /// A conversation's turns, and what each was made of.
 final class Responses {
-  Responses._(
-    this._operations,
-    this.sessionId, {
-    bool kept = false,
-    void Function(String text)? asking,
-  }) : _kept = kept,
-       _asking = asking;
+  Responses._(this._operations, this.sessionId, {void Function(String text)? asking})
+    : _asking = asking;
 
   final api.Operations _operations;
   final String sessionId;
-  final bool _kept;
   final void Function(String text)? _asking;
 
   /// Asks the agent something and names the turn that answers it.
   ///
   /// It returns as soon as the turn has started, not when it has finished, so what comes back
   /// is a handle: [items] with its id reads what has been written down so far, and the
-  /// session's events are what watch it arrive.
-  ///
-  /// A [commandId] makes a retry with the same id and text start no second turn. A session
-  /// held here whose conversation is kept in Stream Chat needs one, and is given a fresh one
-  /// when none is passed.
-  Future<AgentResponse> create(
-    String text, {
-    List<AgentImage> images = const [],
-    String? commandId,
-  }) async {
-    // A command carries text only, so a question with images goes without one.
-    final command = commandId ?? (_kept && images.isEmpty ? _commandId() : null);
+  /// session's events are what watch it arrive. A text question carries a fresh request id,
+  /// so a retry of the same request starts no second turn.
+  Future<AgentResponse> create(String text, {List<AgentImage> images = const []}) async {
+    // The router refuses a request id on a question with images.
+    final requestId = images.isEmpty ? _requestId() : null;
     _asking?.call(text);
     return responseOf(
       await _operations.createResponse(
         id: sessionId,
-        body: api.CreateResponseRequest(text: text, images: imagesOf(images), commandId: command),
+        body: api.CreateResponseRequest(text: text, images: imagesOf(images), requestId: requestId),
       ),
     );
   }
@@ -227,11 +225,15 @@ final class Responses {
   }
 }
 
+/// Opens a conversation on its call or in writing, whatever [options] say.
+Future<Session> openSession(Sessions sessions, SessionOptions options, {required bool voice}) =>
+    sessions._create(options, voice);
+
 /// A name left empty, which means the same as leaving it out.
 String? _named(String? name) => name == null || name.isEmpty ? null : name;
 
-/// A fresh command id: 32 hex digits, within what the router accepts.
-String _commandId() {
+/// A fresh request id: 32 hex digits, within what the router accepts.
+String _requestId() {
   final random = Random.secure();
   return [
     for (var i = 0; i < 16; i++) random.nextInt(256).toRadixString(16).padLeft(2, '0'),

@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from ..models.agent_config_patch_tags import AgentConfigPatchTags
     from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
+    from ..models.agent_tools import AgentTools
+    from ..models.greeting import Greeting
     from ..models.mcp_server import McpServer
     from ..models.plugin_event import PluginEvent
     from ..models.plugin_with_options import PluginWithOptions
@@ -32,7 +34,6 @@ class AgentConfigPatch:
     ignored.
 
         Attributes:
-            agent_plugins (list[PluginWithOptions | str] | Unset):
             channels (AgentChannels | Unset): The lines this agent answers on besides its Stream Chat channel. Each names a
                 number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message
                 that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest
@@ -43,7 +44,7 @@ class AgentConfigPatch:
             dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
                 /v1/dispatch. Omitted settings are disabled.
             episode_cards (bool | Unset):
-            greeting (str | Unset):
+            greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
             guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An
                 empty string removes the guardrail.
             harness (Harness | Unset): Which harness the agent's sessions run: what hands work to the subagent, loads
@@ -58,8 +59,8 @@ class AgentConfigPatch:
                 what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
                 speech target and a session created from it needs no call to join.
             name (str | Unset): What the config is called, which is unique among the customer's own.
-            plugin_events (list[PluginEvent] | Unset):
-            progressive_tools (bool | Unset):
+            plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors.
+            plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector.
             sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
                 code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
                 everything out in its head.
@@ -67,13 +68,12 @@ class AgentConfigPatch:
                 meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
             search (str | Unset):
             skills (list[str] | Unset):
-            speed (float | Unset): The voice's rate of delivery, 1 being its own. Zero leaves it there.
             sts (str | Unset):
             stt (str | Unset):
+            subagent (str | Unset): Only a voice agent names one. Switching an agent to text drops it.
             tags (AgentConfigPatchTags | Unset):
-            thinking_llm (str | Unset): Only a voice agent names one. Switching an agent to text drops it.
+            tools (AgentTools | Unset): How an agent is offered its plugin, MCP server and connector tools.
             tts (str | Unset):
-            user_plugins (list[PluginWithOptions | str] | Unset):
             video (SessionVideo | Unset):
             visible_tools (list[str] | Unset): Tools whose steps end users see on a persistent conversation's replies, as
                 tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its
@@ -82,12 +82,11 @@ class AgentConfigPatch:
             voice (str | Unset):
     """
 
-    agent_plugins: list[PluginWithOptions | str] | Unset = UNSET
     channels: AgentChannels | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
     episode_cards: bool | Unset = UNSET
-    greeting: str | Unset = UNSET
+    greeting: Greeting | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
     instructions: str | Unset = UNSET
@@ -98,35 +97,23 @@ class AgentConfigPatch:
     mode: AgentMode | Unset = UNSET
     name: str | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
-    progressive_tools: bool | Unset = UNSET
+    plugins: list[PluginWithOptions | str] | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     sandbox_options: SandboxOptions | Unset = UNSET
     search: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
-    speed: float | Unset = UNSET
     sts: str | Unset = UNSET
     stt: str | Unset = UNSET
+    subagent: str | Unset = UNSET
     tags: AgentConfigPatchTags | Unset = UNSET
-    thinking_llm: str | Unset = UNSET
+    tools: AgentTools | Unset = UNSET
     tts: str | Unset = UNSET
-    user_plugins: list[PluginWithOptions | str] | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.plugin_with_options import PluginWithOptions
-
-        agent_plugins: list[dict[str, Any] | str] | Unset = UNSET
-        if not isinstance(self.agent_plugins, Unset):
-            agent_plugins = []
-            for agent_plugins_item_data in self.agent_plugins:
-                agent_plugins_item: dict[str, Any] | str
-                if isinstance(agent_plugins_item_data, PluginWithOptions):
-                    agent_plugins_item = agent_plugins_item_data.to_dict()
-                else:
-                    agent_plugins_item = agent_plugins_item_data
-                agent_plugins.append(agent_plugins_item)
 
         channels: dict[str, Any] | Unset = UNSET
         if not isinstance(self.channels, Unset):
@@ -145,7 +132,9 @@ class AgentConfigPatch:
 
         episode_cards = self.episode_cards
 
-        greeting = self.greeting
+        greeting: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.greeting, Unset):
+            greeting = self.greeting.to_dict()
 
         guardrail = self.guardrail
 
@@ -183,7 +172,16 @@ class AgentConfigPatch:
                 plugin_events_item = plugin_events_item_data.to_dict()
                 plugin_events.append(plugin_events_item)
 
-        progressive_tools = self.progressive_tools
+        plugins: list[dict[str, Any] | str] | Unset = UNSET
+        if not isinstance(self.plugins, Unset):
+            plugins = []
+            for plugins_item_data in self.plugins:
+                plugins_item: dict[str, Any] | str
+                if isinstance(plugins_item_data, PluginWithOptions):
+                    plugins_item = plugins_item_data.to_dict()
+                else:
+                    plugins_item = plugins_item_data
+                plugins.append(plugins_item)
 
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
@@ -199,30 +197,21 @@ class AgentConfigPatch:
         if not isinstance(self.skills, Unset):
             skills = self.skills
 
-        speed = self.speed
-
         sts = self.sts
 
         stt = self.stt
+
+        subagent = self.subagent
 
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
 
-        thinking_llm = self.thinking_llm
+        tools: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tools, Unset):
+            tools = self.tools.to_dict()
 
         tts = self.tts
-
-        user_plugins: list[dict[str, Any] | str] | Unset = UNSET
-        if not isinstance(self.user_plugins, Unset):
-            user_plugins = []
-            for user_plugins_item_data in self.user_plugins:
-                user_plugins_item: dict[str, Any] | str
-                if isinstance(user_plugins_item_data, PluginWithOptions):
-                    user_plugins_item = user_plugins_item_data.to_dict()
-                else:
-                    user_plugins_item = user_plugins_item_data
-                user_plugins.append(user_plugins_item)
 
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
@@ -237,8 +226,6 @@ class AgentConfigPatch:
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
-        if agent_plugins is not UNSET:
-            field_dict["agent_plugins"] = agent_plugins
         if channels is not UNSET:
             field_dict["channels"] = channels
         if connectors is not UNSET:
@@ -269,8 +256,8 @@ class AgentConfigPatch:
             field_dict["name"] = name
         if plugin_events is not UNSET:
             field_dict["plugin_events"] = plugin_events
-        if progressive_tools is not UNSET:
-            field_dict["progressive_tools"] = progressive_tools
+        if plugins is not UNSET:
+            field_dict["plugins"] = plugins
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if sandbox_options is not UNSET:
@@ -279,20 +266,18 @@ class AgentConfigPatch:
             field_dict["search"] = search
         if skills is not UNSET:
             field_dict["skills"] = skills
-        if speed is not UNSET:
-            field_dict["speed"] = speed
         if sts is not UNSET:
             field_dict["sts"] = sts
         if stt is not UNSET:
             field_dict["stt"] = stt
+        if subagent is not UNSET:
+            field_dict["subagent"] = subagent
         if tags is not UNSET:
             field_dict["tags"] = tags
-        if thinking_llm is not UNSET:
-            field_dict["thinking_llm"] = thinking_llm
+        if tools is not UNSET:
+            field_dict["tools"] = tools
         if tts is not UNSET:
             field_dict["tts"] = tts
-        if user_plugins is not UNSET:
-            field_dict["user_plugins"] = user_plugins
         if video is not UNSET:
             field_dict["video"] = video
         if visible_tools is not UNSET:
@@ -305,13 +290,11 @@ class AgentConfigPatch:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_channels import AgentChannels
-        from ..models.agent_config_patch_tags import (
-            AgentConfigPatchTags,
-        )
-        from ..models.agent_connector_binding import (
-            AgentConnectorBinding,
-        )
+        from ..models.agent_config_patch_tags import AgentConfigPatchTags
+        from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
+        from ..models.agent_tools import AgentTools
+        from ..models.greeting import Greeting
         from ..models.mcp_server import McpServer
         from ..models.plugin_event import PluginEvent
         from ..models.plugin_with_options import PluginWithOptions
@@ -319,29 +302,6 @@ class AgentConfigPatch:
         from ..models.session_video import SessionVideo
 
         d = dict(src_dict)
-        _agent_plugins = d.pop("agent_plugins", UNSET)
-        agent_plugins: list[PluginWithOptions | str] | Unset = UNSET
-        if _agent_plugins is not UNSET:
-            agent_plugins = []
-            for agent_plugins_item_data in _agent_plugins:
-
-                def _parse_agent_plugins_item(data: object) -> PluginWithOptions | str:
-                    try:
-                        if not isinstance(data, dict):
-                            raise TypeError()
-                        componentsschemas_plugin_entry_type_1 = (
-                            PluginWithOptions.from_dict(data)
-                        )
-
-                        return componentsschemas_plugin_entry_type_1
-                    except (TypeError, ValueError, AttributeError, KeyError):
-                        pass
-                    return cast(PluginWithOptions | str, data)
-
-                agent_plugins_item = _parse_agent_plugins_item(agent_plugins_item_data)
-
-                agent_plugins.append(agent_plugins_item)
-
         _channels = d.pop("channels", UNSET)
         channels: AgentChannels | Unset
         if isinstance(_channels, Unset):
@@ -367,7 +327,12 @@ class AgentConfigPatch:
 
         episode_cards = d.pop("episode_cards", UNSET)
 
-        greeting = d.pop("greeting", UNSET)
+        _greeting = d.pop("greeting", UNSET)
+        greeting: Greeting | Unset
+        if isinstance(_greeting, Unset):
+            greeting = UNSET
+        else:
+            greeting = Greeting.from_dict(_greeting)
 
         guardrail = d.pop("guardrail", UNSET)
 
@@ -413,7 +378,28 @@ class AgentConfigPatch:
 
                 plugin_events.append(plugin_events_item)
 
-        progressive_tools = d.pop("progressive_tools", UNSET)
+        _plugins = d.pop("plugins", UNSET)
+        plugins: list[PluginWithOptions | str] | Unset = UNSET
+        if _plugins is not UNSET:
+            plugins = []
+            for plugins_item_data in _plugins:
+
+                def _parse_plugins_item(data: object) -> PluginWithOptions | str:
+                    try:
+                        if not isinstance(data, dict):
+                            raise TypeError()
+                        componentsschemas_plugin_entry_type_1 = (
+                            PluginWithOptions.from_dict(data)
+                        )
+
+                        return componentsschemas_plugin_entry_type_1
+                    except (TypeError, ValueError, AttributeError, KeyError):
+                        pass
+                    return cast(PluginWithOptions | str, data)
+
+                plugins_item = _parse_plugins_item(plugins_item_data)
+
+                plugins.append(plugins_item)
 
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
@@ -433,11 +419,11 @@ class AgentConfigPatch:
 
         skills = cast(list[str], d.pop("skills", UNSET))
 
-        speed = d.pop("speed", UNSET)
-
         sts = d.pop("sts", UNSET)
 
         stt = d.pop("stt", UNSET)
+
+        subagent = d.pop("subagent", UNSET)
 
         _tags = d.pop("tags", UNSET)
         tags: AgentConfigPatchTags | Unset
@@ -446,32 +432,14 @@ class AgentConfigPatch:
         else:
             tags = AgentConfigPatchTags.from_dict(_tags)
 
-        thinking_llm = d.pop("thinking_llm", UNSET)
+        _tools = d.pop("tools", UNSET)
+        tools: AgentTools | Unset
+        if isinstance(_tools, Unset):
+            tools = UNSET
+        else:
+            tools = AgentTools.from_dict(_tools)
 
         tts = d.pop("tts", UNSET)
-
-        _user_plugins = d.pop("user_plugins", UNSET)
-        user_plugins: list[PluginWithOptions | str] | Unset = UNSET
-        if _user_plugins is not UNSET:
-            user_plugins = []
-            for user_plugins_item_data in _user_plugins:
-
-                def _parse_user_plugins_item(data: object) -> PluginWithOptions | str:
-                    try:
-                        if not isinstance(data, dict):
-                            raise TypeError()
-                        componentsschemas_plugin_entry_type_1 = (
-                            PluginWithOptions.from_dict(data)
-                        )
-
-                        return componentsschemas_plugin_entry_type_1
-                    except (TypeError, ValueError, AttributeError, KeyError):
-                        pass
-                    return cast(PluginWithOptions | str, data)
-
-                user_plugins_item = _parse_user_plugins_item(user_plugins_item_data)
-
-                user_plugins.append(user_plugins_item)
 
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
@@ -485,7 +453,6 @@ class AgentConfigPatch:
         voice = d.pop("voice", UNSET)
 
         agent_config_patch = cls(
-            agent_plugins=agent_plugins,
             channels=channels,
             connectors=connectors,
             dispatch=dispatch,
@@ -501,18 +468,17 @@ class AgentConfigPatch:
             mode=mode,
             name=name,
             plugin_events=plugin_events,
-            progressive_tools=progressive_tools,
+            plugins=plugins,
             sandbox=sandbox,
             sandbox_options=sandbox_options,
             search=search,
             skills=skills,
-            speed=speed,
             sts=sts,
             stt=stt,
+            subagent=subagent,
             tags=tags,
-            thinking_llm=thinking_llm,
+            tools=tools,
             tts=tts,
-            user_plugins=user_plugins,
             video=video,
             visible_tools=visible_tools,
             voice=voice,

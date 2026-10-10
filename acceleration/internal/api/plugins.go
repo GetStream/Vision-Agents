@@ -53,8 +53,8 @@ func (s *Server) servePluginLogo(w http.ResponseWriter, r *http.Request) {
 
 // listConfigPlugins returns the catalog as this agent has it: the app's logins with their
 // status, then every plugin the config names that has none yet, as not_connected, which is
-// what a dashboard reminds the app to finish, then its user_plugins, which the app never
-// logs into. The rest of the catalog is implied absent.
+// what a dashboard reminds the app to finish, then the plugins each end user connects, which
+// the app never logs into. The rest of the catalog is implied absent.
 func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPluginsRequest) (*listConfigPluginsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
@@ -67,6 +67,8 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 	if err != nil {
 		return nil, errUnknownConfig
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathListConfig,
+		"customer", customerID, "config", config.ID)
 
 	conns, err := s.store.PluginConnections(ctx, customerID, request.Id)
 	if err != nil {
@@ -77,7 +79,7 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 		return nil, err
 	}
 
-	listed := make([]PluginConnection, 0, len(conns)+len(config.AgentPlugins)+len(config.UserPlugins))
+	listed := make([]PluginConnection, 0, len(conns)+len(config.Plugins))
 	held := map[string]bool{}
 	for _, conn := range conns {
 		plugin, ok := plugins.Lookup(conn.PluginID)
@@ -87,7 +89,7 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 		held[plugin.ID] = true
 		listed = append(listed, pluginConnectionOf(plugin, conn, clients, s.auth().LogoURL(plugin.ID)))
 	}
-	for _, id := range store.PluginNames(config.AgentPlugins) {
+	for _, id := range store.PluginNames(store.AppPlugins(config.Plugins)) {
 		plugin, ok := plugins.Lookup(id)
 		if !ok || held[id] {
 			continue
@@ -97,7 +99,7 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 			store.PluginConnection{Status: string(PluginConnectionStatusNotConnected)},
 			clients, s.auth().LogoURL(plugin.ID)))
 	}
-	for _, id := range store.PluginNames(config.UserPlugins) {
+	for _, id := range store.PluginNames(store.UserPlugins(config.Plugins)) {
 		plugin, ok := plugins.Lookup(id)
 		if !ok || held[id] {
 			continue
@@ -139,7 +141,7 @@ func appPlugin(config store.AgentConfig, id string) (plugins.Plugin, error) {
 		if userOnly(config, id) {
 			return plugins.Plugin{}, invalidRequest(id + " is connected by each end user, in the conversation")
 		}
-		plugin, err := session.ConfiguredPlugin(session.EntryFor(id, config.AgentPlugins, config.UserPlugins))
+		plugin, err := session.ConfiguredPlugin(session.EntryFor(id, config.Plugins))
 		if err != nil {
 			return plugins.Plugin{}, invalidRequest(err.Error())
 		}
@@ -157,18 +159,18 @@ func appPlugin(config store.AgentConfig, id string) (plugins.Plugin, error) {
 	return plugins.Plugin{}, errUnknownPlugin
 }
 
-// userOnly reports whether the config names a catalog plugin under user_plugins and not
-// agent_plugins, so that each end user logs into it and the app does not.
+// userOnly reports whether the config names a catalog plugin with user, so that each end
+// user logs into it and the app does not.
 func userOnly(config store.AgentConfig, id string) bool {
-	return store.NamesPlugin(config.UserPlugins, id) && !store.NamesPlugin(config.AgentPlugins, id)
+	return store.NamesPlugin(store.UserPlugins(config.Plugins), id)
 }
 
-// pluginClientWarnings names the user_plugins nobody can connect yet: the provider
+// pluginClientWarnings names the plugins with user that nobody can connect yet: the provider
 // registers no client on the fly and the config has none of the app's own. An end user who
 // asks for one is told it is not available.
 func (s *Server) pluginClientWarnings(ctx context.Context, config store.AgentConfig) ([]string, error) {
 	var warnings []string
-	for _, id := range store.PluginNames(config.UserPlugins) {
+	for _, id := range store.PluginNames(store.UserPlugins(config.Plugins)) {
 		plugin, ok := plugins.Lookup(id)
 		if !ok || !plugin.ClientRequired {
 			continue
@@ -178,7 +180,7 @@ func (s *Server) pluginClientWarnings(ctx context.Context, config store.AgentCon
 			return nil, err
 		}
 		if !set {
-			warnings = append(warnings, "user_plugins: "+plugin.Name+" needs an OAuth client of this app's own "+
+			warnings = append(warnings, "plugins: "+plugin.Name+" needs an OAuth client of this app's own "+
 				"before anybody can connect it: set one with PUT /v1/agents/configs/{id}/plugins/"+id+"/client")
 		}
 	}
@@ -186,8 +188,8 @@ func (s *Server) pluginClientWarnings(ctx context.Context, config store.AgentCon
 }
 
 // setPluginClient stores the OAuth client a config logs into a plugin with, its secret
-// sealed. With user set it also names the plugin under user_plugins, which has no login of
-// the app's to name it at.
+// sealed. With user set it also names the plugin with user, which has no login of the app's
+// to name it at.
 func (s *Server) setPluginClient(ctx context.Context, request *setPluginClientRequest) (*setPluginClientResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
@@ -210,6 +212,8 @@ func (s *Server) setPluginClient(ctx context.Context, request *setPluginClientRe
 	if plugin.Auth != "oauth" {
 		return nil, invalidRequest(plugin.Name + " has no OAuth login to set a client for")
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathClientSet,
+		"customer", customerID, "config", config.ID, "plugin", plugin.ID, "via", plugins.ViaPlugins)
 
 	owner := plugins.Owner{CustomerID: customerID, ConfigID: request.Id}
 	client := store.PluginClient{
@@ -229,8 +233,8 @@ func (s *Server) setPluginClient(ctx context.Context, request *setPluginClientRe
 	if err := s.store.SavePluginClient(ctx, &client); err != nil {
 		return nil, err
 	}
-	if value(request.Body.User) && !store.NamesPlugin(config.UserPlugins, plugin.ID) {
-		config.UserPlugins = append(config.UserPlugins, store.PluginEntry{Name: plugin.ID})
+	if value(request.Body.User) && !store.NamesPlugin(config.Plugins, plugin.ID) {
+		config.Plugins = append(config.Plugins, store.PluginEntry{Name: plugin.ID, User: true})
 		if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 			return nil, err
 		}
@@ -265,6 +269,8 @@ func (s *Server) deletePluginClient(ctx context.Context, request *deletePluginCl
 	if err != nil {
 		return nil, err
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathClientDelete,
+		"customer", customerID, "config", request.Id, "plugin", request.PluginId, "via", plugins.Via(request.PluginId))
 	name := request.PluginId
 	if plugin, known := plugins.Lookup(request.PluginId); known {
 		name = plugin.Name
@@ -295,6 +301,8 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 	if err != nil {
 		return nil, err
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathLogin,
+		"customer", customerID, "config", config.ID, "plugin", plugin.ID, "via", plugins.Via(plugin.ID))
 
 	instance := ""
 	if request.Body != nil {
@@ -351,9 +359,10 @@ func (s *Server) disconnectPlugin(ctx context.Context, request *disconnectPlugin
 	if err := s.store.DeletePluginConnection(ctx, customerID, request.Id, string(request.PluginId)); err != nil && !user {
 		return nil, errUnknownPlugin
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathDisconnect,
+		"customer", customerID, "config", config.ID, "plugin", string(request.PluginId), "via", plugins.Via(string(request.PluginId)))
 	unnamed := func(entry store.PluginEntry) bool { return entry.Name == string(request.PluginId) }
-	config.AgentPlugins = slices.DeleteFunc(config.AgentPlugins, unnamed)
-	config.UserPlugins = slices.DeleteFunc(config.UserPlugins, unnamed)
+	config.Plugins = slices.DeleteFunc(config.Plugins, unnamed)
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 		return nil, err
 	}
@@ -412,6 +421,8 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound("no such login"))
 		return
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathCallback,
+		"customer", conn.CustomerID, "config", conn.ConfigID, "plugin", conn.PluginID, "via", plugins.Via(conn.PluginID))
 
 	token, err := auth.Exchange(r.Context(), plugins.Owner{CustomerID: conn.CustomerID, ConfigID: conn.ConfigID}, plugins.Pending{
 		PluginID:      conn.PluginID,
@@ -556,7 +567,9 @@ func (s *Server) registerPlugins(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/plugins",
 		Summary:     "The hosted MCP servers an agent may attach",
-		Description: "A built-in catalog, not the customer's own rows. q filters by name, category or " +
+		Deprecated:  true,
+		Description: "Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. " +
+			"A built-in catalog, not the customer's own rows. q filters by name, category or " +
 			"description. Connecting one is a login on a config, not a change to this list.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "Matching plugins, in catalog order"},
@@ -568,9 +581,11 @@ func (s *Server) registerPlugins(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/configs/{id}/plugins",
 		Summary:     "The plugin logins this agent holds",
-		Description: "The app's own logins, then every plugin the config names that has none yet, as " +
+		Deprecated:  true,
+		Description: "Deprecated: use listConnections for the logins, and the config's connectors for what " +
+			"it binds. The app's own logins, then every plugin the config names that has none yet, as " +
 			"not_connected, then every MCP server it names by URL that needs a login and has no user, " +
-			"which the app logs into the same way. An end user's logins, made for user_plugins or a server " +
+			"which the app logs into the same way. An end user's logins, made for a plugin or a server " +
 			"with user, are never listed.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The config's connections"},
@@ -582,7 +597,10 @@ func (s *Server) registerPlugins(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/v1/agents/configs/{id}/plugins/{plugin_id}/authorize",
 		Summary:     "Start a plugin login",
-		Description: "Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. " +
+		Deprecated:  true,
+		Description: "Deprecated: use createConnection, which returns the consent URL of a connector login; " +
+			"an MCP server named by URL becomes a custom connector with createConnector. " +
+			"Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. " +
 			"Shopify needs an instance url, because it has no single global host.\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device.",
@@ -596,7 +614,9 @@ func (s *Server) registerPlugins(api huma.API) {
 		Method:      http.MethodDelete,
 		Path:        "/v1/agents/configs/{id}/plugins/{plugin_id}",
 		Summary:     "Drop a plugin login",
-		Description: "Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+		Deprecated:  true,
+		Description: "Deprecated: use deleteConnection.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device.",
 		DefaultStatus: http.StatusNoContent,
 		Responses: map[string]*huma.Response{
@@ -609,7 +629,9 @@ func (s *Server) registerPlugins(api huma.API) {
 		Method:      http.MethodPut,
 		Path:        "/v1/agents/configs/{id}/plugins/{plugin_id}/client",
 		Summary:     "Set the OAuth client an agent logs a plugin in with",
-		Description: "The OAuth app the app registered with the provider, such as a Google Cloud client, " +
+		Deprecated:  true,
+		Description: "Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. " +
+			"The OAuth app the app registered with the provider, such as a Google Cloud client, " +
 			"used for this config's logins to the plugin: the app's own and every end user's. A plugin " +
 			"with client_required has no other way in. The secret is sealed and never returned. " +
 			"Replaces the client set before; a login made with that one keeps working until it has to " +
@@ -626,7 +648,9 @@ func (s *Server) registerPlugins(api huma.API) {
 		Method:      http.MethodDelete,
 		Path:        "/v1/agents/configs/{id}/plugins/{plugin_id}/client",
 		Summary:     "Drop the OAuth client an agent logs a plugin in with",
-		Description: "Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+		Deprecated:  true,
+		Description: "Deprecated: use deleteConnectorOAuthClient.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device.",
 		DefaultStatus: http.StatusNoContent,
 		Responses: map[string]*huma.Response{
@@ -655,7 +679,7 @@ type deletePluginClientRequest struct {
 type SetPluginClientRequest struct {
 	ClientId     string  `json:"client_id" minLength:"1" maxLength:"512" doc:"The client id the provider issued."`
 	ClientSecret *string `json:"client_secret,omitempty" maxLength:"512" writeOnly:"true" doc:"The client secret the provider issued. Left out for a public client."`
-	User         *bool   `json:"user,omitempty" doc:"Also name the plugin under the config's user_plugins, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it under agent_plugins."`
+	User         *bool   `json:"user,omitempty" doc:"Also name the plugin under the config's plugins with user, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it as the app's."`
 }
 
 func (*SetPluginClientRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -751,7 +775,7 @@ type PluginConnection struct {
 	Name             string                 `json:"name"`
 	PluginId         string                 `json:"plugin_id"`
 	Status           PluginConnectionStatus `json:"status" enum:"pending,connected,failed,not_connected" doc:"The app's login. Always not_connected for a plugin with user, which the app does not log into."`
-	User             *bool                  `json:"user,omitempty" doc:"True when the config names the plugin under user_plugins only: each end user connects their own account in the conversation."`
+	User             *bool                  `json:"user,omitempty" doc:"True when the config names the plugin with user: each end user connects their own account in the conversation."`
 	ClientRequired   *bool                  `json:"client_required,omitempty" doc:"True when nobody can connect the plugin until the config has a client of the app's own, set with setPluginClient."`
 	Client           *PluginClient          `json:"client,omitempty" doc:"The OAuth client the config set for the plugin. Absent when it set none."`
 }
@@ -795,7 +819,7 @@ type AuthorizePluginRequest struct {
 
 // PluginEvent is one MCP event an agent subscribes to on a plugin it names.
 type PluginEvent struct {
-	Plugin       string          `json:"plugin" minLength:"1" doc:"A catalog plugin the config names under agent_plugins or user_plugins."`
+	Plugin       string          `json:"plugin" minLength:"1" doc:"A catalog plugin the config names under plugins."`
 	Event        string          `json:"event" minLength:"1" doc:"The event's name, as the server's events/list gives it, such as comment.created."`
 	Arguments    *map[string]any `json:"arguments,omitempty" doc:"The event's filters, as its inputSchema describes them."`
 	Instructions *string         `json:"instructions,omitempty" doc:"What the agent does with the event when it arrives, added to its instructions for that conversation."`
@@ -811,6 +835,7 @@ func (*PluginEvent) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.
 // PluginWithOptions names one catalog plugin an agent reaches, with how it is reached.
 type PluginWithOptions struct {
 	Name     string    `json:"name" minLength:"1" doc:"A catalog plugin id, such as linear."`
+	User     *bool     `json:"user,omitempty" doc:"Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says."`
 	Readonly *bool     `json:"readonly,omitempty" doc:"Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear."`
 	Scopes   *[]string `json:"scopes,omitempty" maxItems:"32" doc:"The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set."`
 	Toolsets *[]string `json:"toolsets,omitempty" maxItems:"32" doc:"Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login."`
@@ -829,7 +854,7 @@ func (*PluginWithOptions) TransformSchema(_ huma.Registry, schema *huma.Schema) 
 type PluginEntry PluginWithOptions
 
 func (e PluginEntry) MarshalJSON() ([]byte, error) {
-	if e.Readonly == nil && e.Scopes == nil && e.Toolsets == nil && e.Tools == nil {
+	if e.User == nil && e.Readonly == nil && e.Scopes == nil && e.Toolsets == nil && e.Tools == nil {
 		return json.Marshal(e.Name)
 	}
 	return json.Marshal(PluginWithOptions(e))
@@ -870,7 +895,7 @@ type McpServer struct {
 	Url        string             `json:"url" minLength:"1" maxLength:"2048" doc:"Its Streamable HTTP endpoint, over https."`
 	Tools      *[]string          `json:"tools,omitempty" maxItems:"128" doc:"Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool."`
 	Scopes     *[]string          `json:"scopes,omitempty" maxItems:"32" doc:"The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted."`
-	User       *bool              `json:"user,omitempty" doc:"Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for user_plugins, rather than the app once, from the dashboard. Only a server that needs a login may set it."`
+	User       *bool              `json:"user,omitempty" doc:"Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it."`
 	Branding   *McpServerBranding `json:"branding,omitempty" readOnly:"true" doc:"How the server described itself when the config was saved. Absent when it did not answer."`
 	NeedsLogin *bool              `json:"needs_login,omitempty" readOnly:"true" doc:"Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again."`
 }

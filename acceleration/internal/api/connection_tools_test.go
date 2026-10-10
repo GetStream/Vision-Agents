@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
@@ -39,6 +42,8 @@ type ConnectionToolsSuite struct {
 	// token is an access token the fake issued, which its MCP endpoint takes: the value a
 	// bearer connection is given. Synthetic, fresh per suite.
 	token string
+	// builtinID is the built-in connector the test's builtin made last.
+	builtinID string
 }
 
 func TestConnectionToolsSuite(t *testing.T) {
@@ -63,7 +68,7 @@ func (s *ConnectionToolsSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.connectors = core.Registry{
 		Schemes: map[string]core.Scheme{oauth2code.Name: code, oauth2cc.Name: clientCredentials,
-			bearer.Name: bearer.New(), none.Name: none.New()},
+			bearer.Name: bearer.New(), none.Name: none.New(), apikey.Name: apikey.New()},
 		ToolSources: map[string]core.ToolSource{mcp.Kind: mcp.New()},
 	}
 	s.connectorHTTP = s.provider.Client()
@@ -294,9 +299,27 @@ func (s *ConnectionToolsSuite) TestAConnectionThatNeedsAReconnectSaysSoWithoutAs
 	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP))
 }
 
+// TestAStaticTokenThatLacksScopeSaysToReplaceItNotToReconnect: a channel bridge invalidates a
+// connection with OutcomeScopeRequired when the provider refuses it for want of access; for a
+// token or key a reconnect cannot help, so the validate says to replace it (AI-990).
+func (s *ConnectionToolsSuite) TestAStaticTokenThatLacksScopeSaysToReplaceItNotToReconnect() {
+	id := s.connected(bearer.Name)
+	ref := core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: id}
+	sent, err := s.resolver.Resolve(context.Background(), ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+	s.Require().NoError(s.resolver.Invalidate(context.Background(), ref, sent, core.Outcome{Kind: core.OutcomeScopeRequired, Scopes: []string{"repo"}}))
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal("The provider rejected the stored token or key; replace it with PUT /v1/agents/connections/{id}/credentials", validation.Error)
+}
+
 // TestATokenTheProviderRefusesMovesTheConnectionToNeedsReauthorization: the MCP server answers
 // 401 invalid_token, nothing renews a static token, so core.Transports invalidates it and the
-// validate reports what the connection now needs.
+// validate reports what the connection now needs: new credentials, not a reconnect (AI-990),
+// with a code a program branches on.
 func (s *ConnectionToolsSuite) TestATokenTheProviderRefusesMovesTheConnectionToNeedsReauthorization() {
 	id := s.connection(bearer.Name)
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, "not-a-token-the-fake-issued"), nil))
@@ -304,7 +327,185 @@ func (s *ConnectionToolsSuite) TestATokenTheProviderRefusesMovesTheConnectionToN
 	validation := s.validate(id)
 
 	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal("The provider rejected the stored token or key; replace it with PUT /v1/agents/connections/{id}/credentials", validation.Error)
 	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), s.get(id).Status)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(s.get(id).Revision, s.token), nil))
+	s.Equal(validationConnected, string(s.validate(id).Status), "a new token is what fixes it")
+}
+
+// TestAStaticTokenOnABrokenRevisionSaysToSaveItAgain: a later revision of a built-in marks the
+// one a bearer connection reads broken (AI-1002). No consent can move a token's connection, so
+// the validate says what does: saving the token again, with the code a rejected token has.
+func (s *ConnectionToolsSuite) TestAStaticTokenOnABrokenRevisionSaysToSaveItAgain() {
+	connector := s.builtin(bearer.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	s.builtin(bearer.Name, 2, brokenFirst)
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal("Revision 1 of "+connector+" is marked broken (reads the wrong path); save the token or key again "+
+		"with PUT /v1/agents/connections/{id}/credentials, which moves the connection to the latest revision", validation.Error)
+}
+
+// TestSavingAStaticTokenAgainMovesItOffABrokenRevision: the same connection, given its token
+// again, reads the connector's latest revision and lists its tools (AI-1002). The write is a
+// new trust event, as a reconnect is, so the tools pinned for the old grant no longer hold.
+func (s *ConnectionToolsSuite) TestSavingAStaticTokenAgainMovesItOffABrokenRevision() {
+	connector := s.builtin(bearer.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	before := s.connectedAt(id)
+	_, err := s.store.PinConnectorTools(context.Background(), id, before, map[string]string{"echo": "pinned-on-revision-1"})
+	s.Require().NoError(err)
+	s.builtin(bearer.Name, 2, brokenFirst)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		s.bearerToken(s.get(id).Revision, s.token), &saved))
+	validation := s.validate(id)
+	var tools ConnectionTools
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, &tools))
+
+	s.Equal(2, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), saved.DefinitionStatus)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), saved.Status)
+	s.Equal(validationConnected, string(validation.Status))
+	s.Len(tools.Tools, 2, "both of the fake's tools")
+	after := s.connectedAt(id)
+	s.Require().NotNil(before)
+	s.Require().NotNil(after)
+	s.True(after.After(*before), "a new grant began")
+	pins, err := s.store.ConnectorToolPins(context.Background(), id, after)
+	s.Require().NoError(err)
+	s.Empty(pins, "the pin taken on revision 1 is not one for the new grant")
+}
+
+// TestRotatingAStaticTokenOnTheLatestRevisionKeepsItsGrant is the control for AI-1002: a
+// token saved again while the connection already reads the latest revision keeps the
+// connection's connected_at, and with it the tools pinned for it, as on base c000cedc.
+func (s *ConnectionToolsSuite) TestRotatingAStaticTokenOnTheLatestRevisionKeepsItsGrant() {
+	id := s.connected(bearer.Name)
+	before := s.connectedAt(id)
+	_, err := s.store.PinConnectorTools(context.Background(), id, before, map[string]string{"echo": "pinned"})
+	s.Require().NoError(err)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		s.bearerToken(s.get(id).Revision, s.token), nil))
+
+	s.Equal(before, s.connectedAt(id))
+	pins, err := s.store.ConnectorToolPins(context.Background(), id, s.connectedAt(id))
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"echo": "pinned"}, pins)
+	s.Equal(1, s.get(id).DefinitionRevision)
+}
+
+// TestAnImportedGrantOnABrokenRevisionKeepsItsRevision is the OAuth control for AI-1002: an
+// oauth2_code connection whose grant the backend imports again stays on the revision it read,
+// as on base c000cedc. Only a consent moves an OAuth connection.
+func (s *ConnectionToolsSuite) TestAnImportedGrantOnABrokenRevisionKeepsItsRevision() {
+	connector := s.builtin(oauth2code.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.importedGrant(s.token, "chat:write"), nil))
+	before := s.connectedAt(id)
+	s.builtin(oauth2code.Name, 2, brokenFirst)
+
+	grant := s.importedGrant(s.token, "chat:write")
+	grant["expected_revision"] = s.get(id).Revision
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", grant, &saved))
+	validation := s.validate(id)
+
+	s.Equal(1, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionBroken), saved.DefinitionStatus)
+	s.Equal(before, s.connectedAt(id))
+	s.Equal(validationFailed, string(validation.Status))
+	s.Empty(validation.Code)
+}
+
+// TestSavingAStaticTokenAgainMovesAnOutdatedConnection: a bearer connection on a revision a
+// later one replaced, broken or not, reads the latest one once its token is saved again
+// (AI-1002), and the token is completed against that revision's manifest: its identity, which
+// revision 1 lacked, is the connection's account now.
+func (s *ConnectionToolsSuite) TestSavingAStaticTokenAgainMovesAnOutdatedConnection() {
+	const line = "inputs:\n  - name: line\n    pattern: \"[+][0-9]+\"\n    default: \"+12025551234\"\n"
+	connector := s.builtin(bearer.Name, 1, line)
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	s.Require().Empty(s.get(id).AccountID)
+	s.builtin(bearer.Name, 2, line+"identity: [line]\n")
+	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), s.get(id).DefinitionStatus)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		s.bearerToken(s.get(id).Revision, s.token), &saved))
+
+	s.Equal(2, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), saved.DefinitionStatus)
+	s.Equal("+12025551234", saved.AccountID, "the account revision 2's identity makes")
+}
+
+// TestAStaticTokenKeepsItsRevisionWhenTheLatestDoesNotTakeIt: a later revision that drops the
+// connection's scheme, or declares a required input it was not created with, cannot be read
+// by it, and its inputs cannot change. Its token saved again keeps the revision it reads, as
+// on base c000cedc, rather than failing.
+func (s *ConnectionToolsSuite) TestAStaticTokenKeepsItsRevisionWhenTheLatestDoesNotTakeIt() {
+	for name, latest := range map[string]struct{ scheme, extra string }{
+		"another scheme":   {oauth2code.Name, ""},
+		"a required input": {bearer.Name, "inputs:\n  - name: region\n    enum: [us, eu]\n"},
+	} {
+		s.Run(name, func() {
+			connector := s.builtin(bearer.Name, 1, "")
+			id := s.connectionTo(connector)
+			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+			s.builtin(latest.scheme, 2, latest.extra)
+
+			var saved Connection
+			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+				s.bearerToken(s.get(id).Revision, s.token), &saved))
+
+			s.Equal(1, saved.DefinitionRevision)
+			s.Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), saved.DefinitionStatus)
+			s.Equal(ConnectionStatus(store.ConnectionConnected), saved.Status)
+		})
+	}
+}
+
+// TestAStaticTokenOnABrokenRevisionTheLatestDoesNotTakeIsRefused: the connection's own
+// revision is marked broken and the latest one dropped its scheme, so no revision is left for
+// it. Saving its token again says so, as a 400, and leaves it where it was.
+func (s *ConnectionToolsSuite) TestAStaticTokenOnABrokenRevisionTheLatestDoesNotTakeIsRefused() {
+	connector := s.builtin(bearer.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	s.builtin(oauth2code.Name, 2, brokenFirst)
+
+	status, message := s.serverClient.failure(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		s.bearerToken(s.get(id).Revision, s.token))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("revision 1 of "+connector+" is marked broken (reads the wrong path), and its latest revision 2 does "+
+		"not take this connection (manifest \""+connector+"\": scheme \"bearer\" is not one of [oauth2_code]); "+
+		"create a new connection", message)
+	s.Equal(1, s.get(id).DefinitionRevision)
+}
+
+// TestAPendingStaticConnectionOnABrokenRevisionValidatesAsPending: a bearer connection with no
+// token yet, on a revision marked broken since, still says it needs one. The broken-revision
+// answer is for a connected one (AI-1002); saving the first token moves this one anyway.
+func (s *ConnectionToolsSuite) TestAPendingStaticConnectionOnABrokenRevisionValidatesAsPending() {
+	connector := s.builtin(bearer.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.builtin(bearer.Name, 2, brokenFirst)
+
+	validation := s.validate(id)
+
+	s.Equal(validationPending, string(validation.Status))
+	s.Empty(validation.Code)
 }
 
 // TestABare401WhoseRefreshIsRefusedValidatesAsNeedsReauthorization: the MCP server refuses an
@@ -323,6 +524,8 @@ func (s *ConnectionToolsSuite) TestABare401WhoseRefreshIsRefusedValidatesAsNeeds
 	validation := s.validate(id)
 
 	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Empty(validation.Code, "an OAuth grant keeps the answer it had before AI-990")
+	s.Equal("The provider rejected the grant; reconnect the account", validation.Error)
 	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), s.get(id).Status)
 	s.Equal(refreshes+1, s.provider.Refreshes(), "the bare 401 was renewed first")
 }
@@ -409,9 +612,19 @@ func (s *ConnectionToolsSuite) connected(scheme string) string {
 // scheme; tools is more YAML under its mcp source.
 func (s *ConnectionToolsSuite) connector(scheme, tools string) string {
 	id := "custom_tools" + strings.ReplaceAll(s.utils.uuid(), "-", "")
-	manifest, err := core.ParseManifest([]byte(`
+	manifest, err := core.ParseManifest([]byte(s.manifest(id, 1, scheme, tools)))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	return id
+}
+
+// manifest is a connector at the fake taking scheme, at revision; tools is more YAML under its
+// mcp source.
+func (s *ConnectionToolsSuite) manifest(id string, revision int, scheme, tools string) string {
+	return `
 id: ` + id + `
-revision: 1
+revision: ` + strconv.Itoa(revision) + `
 name: Fake
 endpoints:
   authorize: ` + s.provider.URL + fakeprovider.PathAuthorize + `
@@ -427,11 +640,36 @@ scopes:
 sources:
   - kind: mcp
     endpoint: mcp
-` + tools))
+` + tools
+}
+
+// brokenFirst is the manifest YAML a revision marks revision 1 broken with.
+const brokenFirst = "broken_revisions:\n  - revisions: [1]\n    reason: reads the wrong path\n"
+
+// builtin seeds a built-in connector at the fake taking scheme, at revision, with more manifest
+// YAML in extra, as a router start with that file does: only a built-in's later revision marks
+// an earlier one broken. Revision 1 names a new connector, a later one the last one made.
+func (s *ConnectionToolsSuite) builtin(scheme string, revision int, extra string) string {
+	if revision == 1 {
+		s.builtinID = "fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	}
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), fstest.MapFS{s.builtinID + ".yaml": {
+		Data: []byte(s.manifest(s.builtinID, revision, scheme, "") + extra)}}))
+	return s.builtinID
+}
+
+// connectionTo is a pending app-owned connection to connector.
+func (s *ConnectionToolsSuite) connectionTo(connector string) string {
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	return created.ID
+}
+
+// connectedAt is when the connection's grant began, as stored.
+func (s *ConnectionToolsSuite) connectedAt(id string) *time.Time {
+	connection, err := s.store.ConnectorConnection(context.Background(), s.customerID(), id)
 	s.Require().NoError(err)
-	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
-	s.Require().NoError(err)
-	return id
+	return connection.ConnectedAt
 }
 
 func (s *ConnectionToolsSuite) bearerToken(revision int, token string) map[string]any {

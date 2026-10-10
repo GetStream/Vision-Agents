@@ -20,6 +20,9 @@ import (
 // asserted about authorizing is everything the router decides before it goes out.
 type PluginsSuite struct {
 	RouterSuite
+
+	// logged is what the router logged, for the tests of the deprecation it warns of.
+	logged *lockedLog
 }
 
 func TestPluginsSuite(t *testing.T) {
@@ -30,6 +33,8 @@ func TestPluginsSuite(t *testing.T) {
 // the router's own client refuses.
 func (s *PluginsSuite) SetupSuite() {
 	s.pluginHTTP = &http.Client{}
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -120,9 +125,8 @@ func (s *PluginsSuite) TestAPluginTheAgentNamesThatNobodyConnectedIsLeftToRemind
 	var agent AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
 		AgentConfigRequest{
-			Name:         "on-call-" + s.utils.uuid(),
-			AgentPlugins: pointerTo([]PluginEntry{{Name: "sentry"}}),
-			UserPlugins:  pointerTo([]PluginEntry{{Name: "google_calendar"}}),
+			Name:    "on-call-" + s.utils.uuid(),
+			Plugins: pointerTo([]PluginEntry{{Name: "sentry"}, {Name: "google_calendar", User: pointerTo(true)}}),
 		}, &agent))
 
 	var connections []PluginConnection
@@ -139,7 +143,7 @@ func (s *PluginsSuite) TestAPluginTheAgentNamesThatNobodyConnectedIsLeftToRemind
 	s.Require().NotNil(connections[1].ClientRequired)
 	s.True(*connections[1].ClientRequired, "Google registers no client on the fly")
 	s.Nil(connections[1].Client)
-	s.Equal([]PluginEntry{{Name: "google_calendar"}}, *agent.UserPlugins)
+	s.Equal([]PluginEntry{{Name: "sentry"}, {Name: "google_calendar"}}, *agent.Plugins)
 }
 
 func (s *PluginsSuite) TestAnAgentsClientSecretIsSealedAndNeverReturned() {
@@ -192,8 +196,8 @@ func (s *PluginsSuite) TestAPluginEachEndUserConnectsIsNotConnectedByTheApp() {
 	var agent AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
 		AgentConfigRequest{
-			Name:        "assistant-" + s.utils.uuid(),
-			UserPlugins: pointerTo([]PluginEntry{{Name: "linear"}}),
+			Name:    "assistant-" + s.utils.uuid(),
+			Plugins: pointerTo([]PluginEntry{{Name: "linear", User: pointerTo(true)}}),
 		}, &agent))
 
 	status, failure := s.serverClient.failure(http.MethodPost,
@@ -216,12 +220,14 @@ func (s *PluginsSuite) TestRemovingAPluginEachEndUserConnectsDropsItsClient() {
 	s.ErrorIs(err, store.ErrUnknownPluginClient)
 	var stored AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+agent.Id, nil, &stored))
-	s.Nil(stored.UserPlugins)
+	s.Nil(stored.Plugins)
 }
 
 func (s *PluginsSuite) TestASyncNamingAPluginNobodyCanConnectYetIsStoredWithAWarning() {
 	name := "assistant-" + s.utils.uuid()
-	sync := map[string]any{"name": name, "hash": "v1", "mode": "text", "user_plugins": []string{"linear", "google_calendar"}}
+	sync := map[string]any{"name": name, "hash": "v1", "mode": "text", "plugins": []any{
+		map[string]any{"name": "linear", "user": true}, map[string]any{"name": "google_calendar", "user": true},
+	}}
 
 	var synced SyncAgentResult
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sync", sync, &synced))
@@ -294,7 +300,7 @@ func (s *PluginsSuite) TestAnEndUsersLoginIsTheirsAloneAndSendsThemBackToTheConv
 	s.Equal(PluginConnectionStatusPending, connections[0].Status)
 	var stored AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+agent.Id, nil, &stored))
-	s.Nil(stored.AgentPlugins, "a user's login does not hand the plugin to every session")
+	s.Nil(stored.Plugins, "a user's login does not hand the plugin to every session")
 }
 
 func (s *PluginsSuite) TestTheLoginsOfAnAgentThatIsNotThereAreNotFound() {
@@ -389,6 +395,157 @@ func (s *PluginsSuite) TestAnEndUsersDeviceMayNotStartALogin() {
 }
 
 // catalog is the plugins matching a filter, or all of them for an empty one.
+func (s *PluginsSuite) TestCreatingAConfigWithPluginsWarnsOfTheDeprecationAndStoresThem() {
+	var created AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
+		AgentConfigRequest{Name: "assistant-" + s.utils.uuid(), Plugins: pointerTo([]PluginEntry{{Name: "linear", User: pointerTo(true)}})}, &created))
+
+	lines := deprecations(s.logged, plugins.PathConfigSave, created.Id)
+	s.Require().Len(lines, 1)
+	s.Contains(lines[0], "customer="+s.customerID()+" config="+created.Id+" plugin=[linear] unbound=1 plugin_events=0")
+	s.Equal([]string{"linear"}, s.storedPlugins(created.Id), "stored as before")
+}
+
+func (s *PluginsSuite) TestReplacingAConfigWithPluginsWarnsOfTheDeprecationAndStoresThem() {
+	agent := s.data.createAgentConfig()
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+agent.Id,
+		AgentConfigRequest{Name: agent.Name, Plugins: pointerTo([]PluginEntry{{Name: "linear", User: pointerTo(true)}})}, nil))
+
+	s.Len(deprecations(s.logged, plugins.PathConfigSave, agent.Id), 1)
+	s.Equal([]string{"linear"}, s.storedPlugins(agent.Id))
+}
+
+func (s *PluginsSuite) TestPatchingAConfigThatHasPluginsWarnsOfTheDeprecationAndStoresThem() {
+	agent := s.data.createAgentConfig()
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+agent.Id,
+		AgentConfigPatch{Plugins: pointerTo([]PluginEntry{{Name: "linear", User: pointerTo(true)}})}, nil))
+
+	s.Len(deprecations(s.logged, plugins.PathConfigSave, agent.Id), 1)
+	s.Equal([]string{"linear"}, s.storedPlugins(agent.Id))
+}
+
+func (s *PluginsSuite) TestSyncingAnAgentWithPluginsWarnsOfTheDeprecationAndStoresThem() {
+	var synced SyncAgentResult
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "assistant-" + s.utils.uuid(), "hash": "v1", "mode": "text",
+		"plugins": []any{map[string]any{"name": "linear", "user": true}},
+	}, &synced))
+
+	s.Len(deprecations(s.logged, plugins.PathConfigSave, synced.Config.Id), 1)
+	s.Equal([]string{"linear"}, s.storedPlugins(synced.Config.Id))
+}
+
+func (s *PluginsSuite) TestSavingAConfigWithoutPluginsWarnsOfNothing() {
+	agent := s.data.createAgentConfig()
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+agent.Id,
+		AgentConfigRequest{Name: agent.Name, Instructions: pointerTo("be kind")}, nil))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+agent.Id,
+		AgentConfigPatch{Instructions: pointerTo("be brief")}, nil))
+	var synced SyncAgentResult
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "assistant-" + s.utils.uuid(), "hash": "v1", "mode": "text"}, &synced))
+
+	s.Empty(deprecations(s.logged, plugins.PathConfigSave, agent.Id))
+	s.Empty(deprecations(s.logged, plugins.PathConfigSave, synced.Config.Id))
+	s.Empty(s.storedPlugins(agent.Id))
+}
+
+func (s *PluginsSuite) TestAFinishedEndUserLoginWarnsOfTheDeprecationAndIsStored() {
+	agent := s.data.createAgentConfig()
+	tokens := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "alices-token", "expires_in": 3600})
+	}))
+	defer tokens.Close()
+	state := s.utils.uuid()
+	s.Require().NoError(s.store.UpsertPluginConnection(s.T().Context(), &store.PluginConnection{
+		CustomerID: s.customerID(), ConfigID: agent.Id, PluginID: "google_calendar", UserID: "alice",
+		OAuthState: state, CodeVerifier: "verifier", ClientID: "client", TokenEndpoint: tokens.URL,
+	}))
+
+	status, _ := s.unauthenticatedClient.call(http.MethodGet, plugins.CallbackPath+"?state="+state+"&code=the-code", nil)
+
+	s.Equal(http.StatusOK, status)
+	lines := deprecations(s.logged, plugins.PathCallback, agent.Id)
+	s.Require().Len(lines, 1)
+	s.Contains(lines[0], "customer="+s.customerID()+" config="+agent.Id+" plugin=google_calendar via=plugins")
+	s.NotContains(s.logged.String(), "alices-token")
+	alices, err := s.store.UserPluginConnection(s.T().Context(), s.customerID(), agent.Id, "alice", "google_calendar")
+	s.Require().NoError(err)
+	s.Equal(store.PluginConnected, alices.Status)
+}
+
+func (s *PluginsSuite) TestEveryOtherUseOfThePluginAPIWarnsOfTheDeprecation() {
+	agent := s.data.createAgentConfig()
+	clientURL := "/v1/agents/configs/" + agent.Id + "/plugins/google_calendar"
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, clientURL+"/client",
+		SetPluginClientRequest{ClientId: "acme-client", ClientSecret: pointerTo("acme-secret"), User: pointerTo(true)}, nil))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+agent.Id+"/plugins", nil, nil))
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, clientURL+"/client", nil, nil))
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, clientURL, nil, nil))
+
+	prefix := "customer=" + s.customerID() + " config=" + agent.Id
+	set := deprecations(s.logged, plugins.PathClientSet, agent.Id)
+	s.Require().Len(set, 1)
+	s.Contains(set[0], prefix+" plugin=google_calendar via=plugins")
+	listed := deprecations(s.logged, plugins.PathListConfig, agent.Id)
+	s.Require().Len(listed, 1)
+	s.Contains(listed[0], prefix)
+	deleted := deprecations(s.logged, plugins.PathClientDelete, agent.Id)
+	s.Require().Len(deleted, 1)
+	s.Contains(deleted[0], prefix+" plugin=google_calendar via=plugins")
+	disconnected := deprecations(s.logged, plugins.PathDisconnect, agent.Id)
+	s.Require().Len(disconnected, 1)
+	s.Contains(disconnected[0], prefix+" plugin=google_calendar via=plugins")
+	s.NotContains(s.logged.String(), "acme-secret")
+}
+
+func (s *PluginsSuite) TestARefusedUseOfThePluginAPIWarnsOfNothing() {
+	agent := s.data.createAgentConfig()
+
+	status, _ := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+agent.Id+"/plugins/carrier-pigeon/client",
+		SetPluginClientRequest{ClientId: "x"})
+	s.Equal(http.StatusNotFound, status)
+	status, _ = s.serverClient.failure(http.MethodDelete, "/v1/agents/configs/"+agent.Id+"/plugins/carrier-pigeon", nil)
+	s.Equal(http.StatusNotFound, status)
+
+	status, _ = s.serverClient.failure(http.MethodDelete, "/v1/agents/configs/"+agent.Id+"/plugins/google_calendar/client", nil)
+	s.Equal(http.StatusNotFound, status, "a client never set")
+	status, _ = s.serverClient.failure(http.MethodDelete, "/v1/agents/configs/"+agent.Id+"/plugins/carrier-pigeon/client", nil)
+	s.Equal(http.StatusNotFound, status, "an unknown plugin")
+	status, _ = s.serverClient.failure(http.MethodDelete, "/v1/agents/configs/"+agent.Id+"/plugins/slack", nil)
+	s.Equal(http.StatusNotFound, status, "a login nobody made")
+
+	s.Empty(deprecations(s.logged, plugins.PathClientSet, agent.Id))
+	s.Empty(deprecations(s.logged, plugins.PathClientDelete, agent.Id))
+	s.Empty(deprecations(s.logged, plugins.PathDisconnect, agent.Id))
+}
+
+// storedPlugins are the names of the plugins the config is stored with.
+func (s *PluginsSuite) storedPlugins(configID string) []string {
+	config, err := s.store.AgentConfig(s.T().Context(), s.customerID(), configID)
+	s.Require().NoError(err)
+	if len(config.Plugins) == 0 {
+		return nil
+	}
+	return store.PluginNames(config.Plugins)
+}
+
+// deprecations are the lines the router logged for a use of the plugin system on path by the
+// config.
+func deprecations(logged *lockedLog, path, configID string) []string {
+	var found []string
+	for _, line := range strings.Split(logged.String(), "\n") {
+		if strings.Contains(line, `level=WARN msg="`+plugins.DeprecatedUse+`" path=`+path+" ") &&
+			strings.Contains(line+" ", " config="+configID+" ") {
+			found = append(found, line)
+		}
+	}
+	return found
+}
+
 func (s *PluginsSuite) catalog(query string) []Plugin {
 	path := "/v1/agents/plugins"
 	if query != "" {

@@ -40,7 +40,7 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 	setString(&wanted.Instructions, a.options.Instructions)
 	setString(&wanted.Guardrail, a.options.Guardrail)
 	harness, subagent, sandbox := a.options.Harness.stored()
-	wanted.Harness, wanted.ThinkingLlm, wanted.Sandbox = harness, subagent, sandbox
+	wanted.Harness, wanted.Subagent, wanted.Sandbox = harness, subagent, sandbox
 	if len(a.options.CostTracking) > 0 {
 		tags := a.options.CostTracking
 		wanted.Tags = &tags
@@ -60,6 +60,15 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 // the directory says, and is part of the fingerprint, so changing either syncs again.
 func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithResponses) (*acceleration.AgentConfig, error) {
 	folder := a.folder
+	// Still sent as before, until the router stops taking them.
+	if len(folder.Settings.Plugins) > 0 || len(folder.Settings.PluginEvents) > 0 {
+		named := make([]string, 0, len(folder.Settings.Plugins))
+		for _, plugin := range folder.Settings.Plugins {
+			named = append(named, plugin.Name)
+		}
+		a.logger.Warn("agent.yaml plugins and plugin_events are deprecated: bind connectors instead",
+			"agent", a.options.Name, "plugins", named, "plugin_events", len(folder.Settings.PluginEvents))
+	}
 	skills := a.syncedSkills()
 	hash := fingerprint(folder.Declaration, a.options.Instructions, a.options.Guardrail,
 		skills, folder.Knowledge, folder.KnowledgeURLs, folder.Simulations)
@@ -118,7 +127,7 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 		body.Harness = harness
 	}
 	if subagent != nil {
-		body.ThinkingLlm = subagent
+		body.Subagent = subagent
 	}
 	if sandbox != nil {
 		body.Sandbox = sandbox
@@ -162,13 +171,14 @@ func pluginEntries(named []PluginSettings) *[]acceleration.PluginEntry {
 	entries := make([]acceleration.PluginEntry, 0, len(named))
 	for _, plugin := range named {
 		var entry acceleration.PluginEntry
-		if !plugin.Readonly && len(plugin.Scopes) == 0 && len(plugin.Toolsets) == 0 && len(plugin.Tools) == 0 {
+		if plugin.User == nil && !plugin.Readonly && len(plugin.Scopes) == 0 && len(plugin.Toolsets) == 0 && len(plugin.Tools) == 0 {
 			// A string always encodes.
 			_ = entry.FromPluginEntry0(plugin.Name)
 			entries = append(entries, entry)
 			continue
 		}
 		declared := acceleration.PluginWithOptions{Name: plugin.Name}
+		declared.User = plugin.User
 		if plugin.Readonly {
 			declared.Readonly = &plugin.Readonly
 		}
@@ -197,9 +207,6 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	setString(&body.Tts, settings.TTS)
 	body.Sts = settings.STS
 	setString(&body.Voice, settings.Voice)
-	if settings.Speed != 0 {
-		body.Speed = &settings.Speed
-	}
 	setString(&body.Llm, settings.LLM)
 	if settings.Harness != "" {
 		harness := acceleration.Harness(settings.Harness)
@@ -216,9 +223,15 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 			body.Dispatch.Text = &setting
 		}
 	}
-	setString(&body.ThinkingLlm, settings.ThinkingLLM)
+	setString(&body.Subagent, settings.Subagent)
 	setString(&body.Search, settings.Search)
-	setString(&body.Greeting, settings.Greeting)
+	if settings.Greeting != nil {
+		body.Greeting = &acceleration.Greeting{Text: settings.Greeting.Text}
+		if settings.Greeting.Mode != "" {
+			mode := acceleration.GreetingMode(settings.Greeting.Mode)
+			body.Greeting.Mode = &mode
+		}
+	}
 	if settings.Sandbox != "" {
 		sandbox := acceleration.Sandbox(settings.Sandbox)
 		body.Sandbox = &sandbox
@@ -231,8 +244,7 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 			Cpu: &cpu, MemoryGb: &memory, DiskGb: &disk,
 		}
 	}
-	body.AgentPlugins = pluginEntries(settings.AgentPlugins)
-	body.UserPlugins = pluginEntries(settings.UserPlugins)
+	body.Plugins = pluginEntries(settings.Plugins)
 	if len(settings.PluginEvents) > 0 {
 		events := make([]acceleration.PluginEvent, 0, len(settings.PluginEvents))
 		for _, event := range settings.PluginEvents {
@@ -265,7 +277,9 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		}
 		body.McpServers = &servers
 	}
-	body.ProgressiveTools = settings.ProgressiveTools
+	if settings.Tools != nil {
+		body.Tools = &acceleration.AgentTools{Progressive: settings.Tools.Progressive}
+	}
 	if settings.Channels != nil {
 		declared := acceleration.AgentChannels{
 			Whatsapp: channelLine(settings.Channels.WhatsApp),

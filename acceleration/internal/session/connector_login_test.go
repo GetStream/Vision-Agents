@@ -5,6 +5,7 @@ package session
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -33,8 +34,9 @@ type ConnectorLoginSuite struct {
 	// it to.
 	begun Consent
 	shown []string
-	// begins is how many consents the router began.
-	begins int
+	// begins is how many consents the router began, and requested what each was asked for.
+	begins    int
+	requested []ConsentRequest
 }
 
 func TestConnectorLoginSuite(t *testing.T) {
@@ -43,7 +45,7 @@ func TestConnectorLoginSuite(t *testing.T) {
 
 func (s *ConnectorLoginSuite) SetupTest() {
 	s.connectorFixture.SetupTest()
-	s.begun, s.shown, s.begins = Consent{}, nil, 0
+	s.begun, s.shown, s.begins, s.requested = Consent{}, nil, 0, nil
 }
 
 // TestWithoutConsentsABindingWithNoSelectionIsLeftOutAsBefore: a deployment with connectors
@@ -128,7 +130,7 @@ func (s *ConnectorLoginSuite) TestABindingWaitingForALoginKeepsItsPolicy() {
 // a consent the login did not begin, or one for another connection, opens nothing; the one
 // it began opens the binding, and its granted tools reach the account through call_tool.
 func (s *ConnectorLoginSuite) TestALoginOpensTheBindingOnlyForTheConsentItBegan() {
-	mine, other := s.pending("alice", "primary"), s.connection("alice", "secondary")
+	mine, other := s.pending("alice", "primary"), s.pending("alice", "secondary")
 	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", LaunchURL: "https://router.example/launch", Name: "CRM"}
 	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))
 	s.Require().NoError(err)
@@ -262,11 +264,12 @@ func (s *ConnectorLoginSuite) TestAConfigThatDroppedTheBindingBeginsNoConsent() 
 }
 
 // TestAConnectionConnectedBeforeOpensOnlyOnceTheChatsConsentConnectsItAnew: the router asks
-// on the caller's connection that is connected already (a new chat with no selection). The
-// session does not use it on its own: only a consent since then, a later connected_at, opens
-// it.
+// on the caller's connection that is connected already (a new chat with no selection, and two
+// connected, so none is implied). The session does not use it on its own: only a consent
+// since then, a later connected_at, opens it.
 func (s *ConnectorLoginSuite) TestAConnectionConnectedBeforeOpensOnlyOnceTheChatsConsentConnectsItAnew() {
 	mine := s.connection("alice", "primary")
+	s.connection("alice", "secondary")
 	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM"}
 	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))
 	s.Require().NoError(err)
@@ -314,6 +317,29 @@ func (s *ConnectorLoginSuite) TestAConnectionOnARevisionMarkedBrokenWaitsForALog
 	s.Equal("primary", said, "the login's consent moved it to the latest revision")
 }
 
+// TestAnImpliedConnectionOnARevisionMarkedBrokenIsTheOneTheLoginReconnects: the caller's one
+// connected connection, implied, needs a reconnect. The login asks for that one, not for the
+// newest of the caller's connections, which a consent with none named would take.
+func (s *ConnectorLoginSuite) TestAnImpliedConnectionOnARevisionMarkedBrokenIsTheOneTheLoginReconnects() {
+	s.connectorID, s.revision = "crm"+strings.ReplaceAll(uuid.NewString(), "-", ""), 1
+	s.seedCRM(1, "")
+	mine := s.connection("alice", "primary")
+	s.pending("alice", "secondary")
+	s.seedCRM(2, "broken_revisions:\n  - revisions: [1]\n    reason: reads the wrong path\n")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM"}
+	d, tools, unavailable, err := s.attachWithConsents(s.persisted(s.spec(s.config(s.chosen("crm", "whoami")), "alice", nil)))
+	s.Require().NoError(err)
+
+	asked, err := s.call(d, "crm__call_tool", `{"tool":"whoami"}`)
+
+	s.Require().NoError(err)
+	s.Equal([]string{"crm__list_tools", "crm__call_tool"}, names(tools))
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableReauthorize}}, unavailable)
+	s.Contains(asked, `"status":"authorization_required"`)
+	s.Require().Len(s.requested, 1)
+	s.Equal(mine, s.requested[0].ConnectionID)
+}
+
 // TestAConnectionOnAnOutdatedRevisionStillOpens: a later revision that marks nothing broken
 // leaves the connection's binding open.
 func (s *ConnectorLoginSuite) TestAConnectionOnAnOutdatedRevisionStillOpens() {
@@ -359,6 +385,36 @@ func (s *ConnectorLoginSuite) TestACallThroughALoginLeavesOneInvocationRow() {
 	s.Equal("whoami", rows[0].Tool)
 	s.Equal("crm", rows[0].Binding)
 	s.Empty(rows[0].ErrorType)
+}
+
+// TestACallThroughALoginRecordsTheShapeOfTheToolsArguments: the row is the inner tool's
+// arguments, not the {tool, arguments} of the login's call_tool verb; so is a refused one's.
+func (s *ConnectorLoginSuite) TestACallThroughALoginRecordsTheShapeOfTheToolsArguments() {
+	mine := s.pending("alice", "primary")
+	s.begun = Consent{ConnectionID: mine, AuthorizationID: "attempt-alice", Name: "CRM"}
+	config := s.config(s.chosen("crm", "echo"))
+	d, _, _, err := s.attachWithConsents(s.persisted(s.spec(config, "alice", nil)))
+	s.Require().NoError(err)
+	_, err = s.call(d, "crm__call_tool", `{"tool":"echo"}`)
+	s.Require().NoError(err)
+	s.connect(mine, "primary")
+	_, finished := d.loginFinished(s.ctx, "attempt-alice", mine)
+	s.Require().True(finished)
+	length := 2
+	inner := []store.ArgumentShape{{Name: "note", Type: "string", Length: &length}}
+
+	_, err = s.call(d, "crm__call_tool", `{"tool":"echo","arguments":{"note":"hi"}}`)
+	s.Require().NoError(err)
+	s.rebind(config, s.chosen("crm"))
+	_, err = s.call(d, "crm__call_tool", `{"tool":"echo","arguments":{"note":"hi"}}`)
+
+	s.Require().Error(err)
+	rows := s.invocations(mine, 2)
+	sort.Slice(rows, func(i, j int) bool { return rows[i].ErrorType < rows[j].ErrorType })
+	s.Empty(rows[0].ErrorType)
+	s.Equal(inner, rows[0].Arguments)
+	s.Equal(store.InvocationDenied, rows[1].ErrorType)
+	s.Equal(inner, rows[1].Arguments)
 }
 
 // TestARefusedCallThroughALoginLeavesADeniedRow: the config stopped granting the tool after
@@ -472,6 +528,7 @@ func (s *ConnectorLoginSuite) attachWithConsents(spec Spec) (*dispatcher, []harn
 			return Consent{}, errors.New("no consent to begin")
 		}
 		s.begins++
+		s.requested = append(s.requested, request)
 		return s.begun, nil
 	}
 	d, tools, unavailable, err := manager.attachConnectors(s.ctx, &spec)

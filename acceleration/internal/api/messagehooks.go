@@ -113,7 +113,7 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 func addressed(event messageEvent) bool {
 	// This namespace belongs to durable session commands, even on older channels
 	// without trigger metadata or when a client omits/forges the source marker.
-	if conversation.SessionCommandChannel(event.ChannelType, event.ChannelID) {
+	if conversation.SessionCommandChannel(event.ChannelType, event.ChannelID, event.ChannelCustom) {
 		return false
 	}
 	if event.ChannelType != chatlog.ChannelType || event.ChannelID == "" {
@@ -265,8 +265,15 @@ func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEv
 	} else {
 		config, err = s.store.AgentConfigOwner(ctx, declared)
 	}
+	// A config nobody in the app holds is no failure here: an app whose message hooks deliver
+	// to two routers, such as a local one and staging, sends each the other's channels too.
+	if errors.Is(err, store.ErrNoAgentConfig) {
+		s.logger.Info("an arriving message's channel names a config nobody in its app holds",
+			"channel", event.ChannelID, "config", declared, "stream_app", origin.app, "customer", origin.customer)
+		return "", "", false
+	}
 	if err != nil {
-		s.logger.Error("an arriving message's channel names a config nobody in its app holds",
+		s.logger.Error("could not read the config an arriving message's channel names",
 			"channel", event.ChannelID, "config", declared, "stream_app", origin.app, "error", err)
 		return "", "", false
 	}

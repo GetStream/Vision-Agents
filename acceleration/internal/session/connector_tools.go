@@ -48,7 +48,8 @@ const (
 // required binding fails the session with. Stable codes for a program to branch on; none
 // names a credential or says whose a connection is.
 const (
-	// unavailableNoSelection: a session binding the caller picked no connection for.
+	// unavailableNoSelection: a session binding the caller picked no connection for, and does
+	// not have exactly one connected connection to the connector of (impliedSelection).
 	unavailableNoSelection = "no_selection"
 	// unavailableShared: a session binding in a conversation more than one verified person
 	// writes in (Spec.Shared), which uses the app's connections only.
@@ -63,6 +64,11 @@ const (
 	// unavailableReauthorize: the provider no longer takes the connection's credential, or the
 	// connection reads a definition revision a later one marked broken.
 	unavailableReauthorize = "needs_reauthorization"
+	// unavailableCredentialRejected: the provider no longer takes the token or key a
+	// core.Static scheme holds (AI-990), or the connection that holds one reads a definition
+	// revision a later one marked broken (AI-1002). Only saving its credentials again helps,
+	// never a consent.
+	unavailableCredentialRejected = "credential_rejected"
 	// unavailableNotConnected: the connection has no credential yet, or was disconnected.
 	unavailableNotConnected = "not_connected"
 	// unavailableOpenFailed: the provider could not be reached or listed nothing, or this
@@ -79,12 +85,14 @@ const (
 
 // unavailableWhy is each reason in words, for the error a required binding fails with.
 var unavailableWhy = map[string]string{
-	unavailableNoSelection:  "the session named no connection for it in connector_bindings",
-	unavailableShared:       "more than one person writes in this conversation, so it uses the app's connections only",
-	unavailableUnverified:   "it is the caller's own connection, and the caller is anonymous, a guest or a backend acting for nobody",
-	unavailableConnection:   "there is no such connection that it may use",
-	unavailableProvider:     "the connection is to another connector",
-	unavailableReauthorize:  "the provider no longer takes the connection's credential; reconnect it",
+	unavailableNoSelection: "the session named no connection for it in connector_bindings",
+	unavailableShared:      "more than one person writes in this conversation, so it uses the app's connections only",
+	unavailableUnverified:  "it is the caller's own connection, and the caller is anonymous, a guest or a backend acting for nobody",
+	unavailableConnection:  "there is no such connection that it may use",
+	unavailableProvider:    "the connection is to another connector",
+	unavailableReauthorize: "the provider no longer takes the connection's credential; reconnect it",
+	unavailableCredentialRejected: "the provider rejected the connection's token or key, or the connector " +
+		"revision it was saved on is marked broken; save it again with PUT /v1/agents/connections/{id}/credentials",
 	unavailableNotConnected: "the connection is not connected",
 	unavailableOpenFailed:   "its tools could not be listed",
 	unavailableTool:         "the provider no longer offers a granted tool with the schema it was granted against",
@@ -132,7 +140,15 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 	// covers those too.
 	opening := d.correlated(ctx)
 	for _, binding := range spec.ConnectorBindings {
-		reason, err := m.openBinding(opening, *spec, binding, selected[binding.Name], d)
+		selection := selected[binding.Name]
+		if selection == "" {
+			selection, err = m.impliedSelection(opening, *spec, binding)
+			if err != nil {
+				d.Close()
+				return nil, nil, nil, err
+			}
+		}
+		reason, err := m.openBinding(opening, *spec, binding, selection, d)
 		if err != nil {
 			d.Close()
 			return nil, nil, nil, err
@@ -147,9 +163,46 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 		}
 		m.logger.Warn("opening the session without a connector", "connector", binding.Name, "reason", reason)
 		unavailable = append(unavailable, ConnectorUnavailable{Name: binding.Name, ConnectorID: binding.ConnectorID, Reason: reason})
-		m.offerLogin(*spec, binding, reason, selected[binding.Name], d)
+		m.offerLogin(*spec, binding, reason, selection, d)
 	}
 	return d, d.tools, unavailable, nil
+}
+
+// impliedSelection is the connection a session binding the session named none for uses: the
+// verified caller's one connected connection to the binding's connector, of the session's
+// customer (Kanat's decision of 2026-10-09, AI-994), so an app that creates sessions without
+// connector_bindings, as it did with user_plugins, needs no new login after the plugin rows
+// move. Empty with none, or with more than one, which the caller has to choose between; a
+// connection pending, needing reauthorization or disconnected is not counted, since only a
+// connected one opens without a login. Not kept as the session's selection: a fork or a
+// reopened chat implies again from the connections as they are then. Nothing is implied for
+// a fixed binding, a shared conversation, an unverified caller, or with connectors off.
+//
+// A session the router opens itself implies the same way (Kanat's decision of 2026-10-09,
+// AI-1000), with the trust user_plugins gives its caller (userPlugins): for a plugin event,
+// the end user whose login subscribed, and nobody for the app's (pluginevents.Service.run);
+// for a channel message, the number that wrote, as phone:+E164, or the user it was linked to
+// (channels.Service.answer). Pinned by api.RouterOpenedConnectorsSuite.
+//
+// Example: Alice's only connected Linear connection is the one the plugin migration moved, so
+// a session of a config binding linear as session opens on it with no connector_bindings.
+// Once she connects a second Linear account, a session has to name one.
+func (m *Manager) impliedSelection(ctx context.Context, spec Spec, binding store.ConnectorBinding) (string, error) {
+	if binding.Connection.Type != selectionSession || spec.Shared() || !verifiedCaller(spec) ||
+		m.options.Store == nil || m.options.Connectors.Transports == nil {
+		return "", nil
+	}
+	// Limit 1 lists at most two, enough to tell one from more than one.
+	connected, err := m.options.Store.ConnectorConnectionsByOwner(ctx, spec.CustomerID, store.ConnectionFilter{
+		OwnerType: store.OwnerUser, OwnerID: spec.Caller.UserID, ConnectorID: binding.ConnectorID,
+		Status: store.ConnectionConnected, Limit: 1,
+	})
+	if err != nil || len(connected) != 1 {
+		return "", err
+	}
+	m.logger.Debug("a session binding uses the caller's only connected connection", "connector", binding.Name,
+		"connection", connected[0].ID)
+	return connected[0].ID, nil
 }
 
 // selections are the caller's connections by alias. One for an alias the config does not
@@ -222,6 +275,9 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 	switch connection.Status {
 	case store.ConnectionConnected:
 	case store.ConnectionNeedsReauthorization:
+		if core.IsStatic(registry.Schemes, connection.AuthScheme) {
+			return unavailableCredentialRejected, nil
+		}
 		return unavailableReauthorize, nil
 	default:
 		return unavailableNotConnected, nil
@@ -237,12 +293,16 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 	}
 	// The resolver gives a connection on a revision marked broken no credential, so it is
 	// one that needs a reconnect: a binding of the caller's own waits for their login, whose
-	// consent runs on the latest revision.
+	// consent runs on the latest revision. A token or key has no consent: saving it again
+	// moves it (AI-1002), so it is left out as a rejected one is.
 	_, broken, err := m.options.Store.BrokenConnectorRevision(ctx, connection.ConnectorID, connection.DefinitionRevision)
 	if err != nil {
 		return "", err
 	}
 	if broken {
+		if core.IsStatic(registry.Schemes, connection.AuthScheme) {
+			return unavailableCredentialRejected, nil
+		}
 		return unavailableReauthorize, nil
 	}
 	manifest, err := definition.Manifest.Resolve(connection.AuthScheme, connection.Inputs, connection.Metadata)
@@ -294,7 +354,7 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 				continue
 			}
 			d.routes[tool.Name] = route{binding: binding, connection: connection, toolset: toolset,
-				tool: name, digest: digests[name], timeout: timeout,
+				tool: name, digest: digests[name], timeout: timeout, declared: declaredArguments(tool.Parameters),
 				limit: manifest.RateLimitKey(connection.CustomerID, resolved.Connection)}
 			d.tools = append(d.tools, harness.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
 			offered++

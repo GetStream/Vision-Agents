@@ -109,6 +109,7 @@ the other commands that read them there.
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
 | `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>` that is set still opens its rows, so moving this back to an older version is safe |
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
+| `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off |
@@ -361,7 +362,7 @@ optional. The organization's are a floor its apps can tighten but not loosen.
 | ------- | ------------ |
 | `budget` | A spend cap across every modality, reset hourly, daily, weekly or monthly on a UTC boundary. Once spent, new sessions and new LLM responses are refused. Both the app's and the organization's caps apply |
 | `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models |
-| `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the lcm router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
+| `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the decision model router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
 
 The screen asks one question per harm in OpenRouter's prompt injection list (instruction
 override, privileged modes, system override, prompt extraction, role manipulation, DAN-style
@@ -738,9 +739,9 @@ skills are offered by name and description only, and their instructions are read
 when one is used, so an edit reaches the next use rather than the next session.
 
 The harness is agent config, never session config: `harness` (only `default` today),
-`thinking_llm`, `sandbox` and `skills` are set on the config or in `agent.yaml`, and
-`createSession` does not take them. Only a voice agent names a `thinking_llm`: a text agent
-runs everything, skills included, on its `llm`, and a config that gives one a thinking model
+`subagent`, `sandbox` and `skills` are set on the config or in `agent.yaml`, and
+`createSession` does not take them. Only a voice agent names a `subagent`: a text agent
+runs everything, skills included, on its `llm`, and a config that gives one a subagent
 is refused. A client that wants a sandbox of its own declares it as a
 tool instead.
 

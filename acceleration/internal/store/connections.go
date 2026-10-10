@@ -156,7 +156,9 @@ type ConnectionFilter struct {
 	OwnerType   string
 	OwnerID     string
 	ConnectorID string
-	Limit       int
+	// Status keeps only connections in that status (Connection*). Empty keeps every status.
+	Status string
+	Limit  int
 	// After is the last connection of the previous page.
 	After *ConnectionPosition
 }
@@ -256,52 +258,58 @@ func (s *Store) createConnection(ctx context.Context, registry core.Registry, co
 	if connection.ProviderUnitID != "" {
 		return stack.Wrap(errors.New("store: a provider unit is set on a connection after consent, not with it"))
 	}
-	// Definitions are never updated or deleted, so a revision found here stays.
-	definition, err := s.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
-	if err != nil {
-		return err
-	}
-	if !slices.Contains(definition.Manifest.Schemes, connection.AuthScheme) {
-		return stack.Wrap(fmt.Errorf("%w: %s revision %d does not list auth scheme %q", ErrSchemeNotAllowed,
-			connection.ConnectorID, connection.DefinitionRevision, connection.AuthScheme))
-	}
-	if connection.TLSScheme != "" && !slices.Contains(definition.Manifest.Schemes, connection.TLSScheme) {
-		return stack.Wrap(fmt.Errorf("%w: %s revision %d does not list tls scheme %q", ErrSchemeNotAllowed,
-			connection.ConnectorID, connection.DefinitionRevision, connection.TLSScheme))
-	}
-
-	// Truncated to what Postgres keeps, so the row handed back is the row a read returns.
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	connection.ID = id
-	connection.Status = ConnectionPending
-	connection.Revision = 1
-	connection.CredentialsSealed = []byte{}
-	connection.CredentialsKEKVersion = 0
-	connection.CreatedAt = now
-	connection.UpdatedAt = now
-	connection.DeletedAt = nil
-	if connection.Inputs == nil {
-		connection.Inputs = map[string]string{}
-	}
-	if connection.Metadata == nil {
-		connection.Metadata = map[string]string{}
-	}
-	if connection.GrantedScopes == nil {
-		connection.GrantedScopes = []string{}
-	}
-	if connection.CachedTools == nil {
-		connection.CachedTools = []ConnectorTool{}
-	}
-	_, err = s.db.NewInsert().Model(connection).Exec(ctx)
-	// The primary key, named by Postgres's default for a table's (CREATE TABLE in
-	// 20261002193000_connector_connections.sql names none).
-	if constraint(err) == "connector_connections_pkey" {
-		return stack.Wrap(fmt.Errorf("%w: %s", ErrConnectorConnectionExists, id))
-	}
-	if err != nil {
-		return stack.Wrap(fmt.Errorf("store: create connector connection: %w", err))
-	}
-	return nil
+	return stack.Wrap(s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// A custom definition is held until the connection is stored, so a delete of it waits
+		// and then finds the connection (DeleteConnectorDefinition). A built-in is never
+		// deleted, so a revision found here stays.
+		if _, err := lockCustomDefinitions(ctx, tx, connection.CustomerID, []string{connection.ConnectorID}); err != nil {
+			return err
+		}
+		definition, err := connectorDefinition(ctx, tx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(definition.Manifest.Schemes, connection.AuthScheme) {
+			return fmt.Errorf("%w: %s revision %d does not list auth scheme %q", ErrSchemeNotAllowed,
+				connection.ConnectorID, connection.DefinitionRevision, connection.AuthScheme)
+		}
+		if connection.TLSScheme != "" && !slices.Contains(definition.Manifest.Schemes, connection.TLSScheme) {
+			return fmt.Errorf("%w: %s revision %d does not list tls scheme %q", ErrSchemeNotAllowed,
+				connection.ConnectorID, connection.DefinitionRevision, connection.TLSScheme)
+		}
+		// Truncated to what Postgres keeps, so the row handed back is the row a read returns.
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		connection.ID = id
+		connection.Status = ConnectionPending
+		connection.Revision = 1
+		connection.CredentialsSealed = []byte{}
+		connection.CredentialsKEKVersion = 0
+		connection.CreatedAt = now
+		connection.UpdatedAt = now
+		connection.DeletedAt = nil
+		if connection.Inputs == nil {
+			connection.Inputs = map[string]string{}
+		}
+		if connection.Metadata == nil {
+			connection.Metadata = map[string]string{}
+		}
+		if connection.GrantedScopes == nil {
+			connection.GrantedScopes = []string{}
+		}
+		if connection.CachedTools == nil {
+			connection.CachedTools = []ConnectorTool{}
+		}
+		_, err = tx.NewInsert().Model(connection).Exec(ctx)
+		// The primary key, named by Postgres's default for a table's (CREATE TABLE in
+		// 20261002193000_connector_connections.sql names none).
+		if constraint(err) == "connector_connections_pkey" {
+			return fmt.Errorf("%w: %s", ErrConnectorConnectionExists, id)
+		}
+		if err != nil {
+			return fmt.Errorf("store: create connector connection: %w", err)
+		}
+		return nil
+	}))
 }
 
 // ConnectorConnection returns one live connection of the customer's.
@@ -475,6 +483,9 @@ func (s *Store) ConnectorConnectionsByOwner(ctx context.Context, customerID stri
 	if filter.ConnectorID != "" {
 		query = query.Where("connector_id = ?", filter.ConnectorID)
 	}
+	if filter.Status != "" {
+		query = query.Where("status = ?", filter.Status)
+	}
 	if after := filter.After; after != nil {
 		query = query.Where("(created_at, id) < (?, ?)", after.CreatedAt, after.ID)
 	}
@@ -594,10 +605,12 @@ func softDeleteConnection(ctx context.Context, db bun.IDB, customerID, id string
 	return affected, nil
 }
 
-// DeletedConnection is one connection DeleteUserConnectorConnections removed.
+// DeletedConnection is one connection DeleteUserConnectorConnections or
+// DeleteConnectorDefinition removed.
 type DeletedConnection struct {
 	ID          string
 	ConnectorID string
+	OwnerType   string
 	// HadGrant says it still held stored credentials, which the delete revoked.
 	HadGrant bool
 }
@@ -620,10 +633,11 @@ func (s *Store) DeleteUserConnectorConnections(ctx context.Context, customerID, 
 		var rows []struct {
 			ID          string `bun:"id"`
 			ConnectorID string `bun:"connector_id"`
+			OwnerType   string `bun:"owner_type"`
 			HadGrant    bool   `bun:"had_grant"`
 		}
 		err := tx.NewSelect().Model((*ConnectorConnection)(nil)).
-			Column("cc.id", "cc.connector_id").
+			Column("cc.id", "cc.connector_id", "cc.owner_type").
 			ColumnExpr("cc.credentials_sealed <> ''::bytea AS had_grant").
 			Where("cc.customer_id = ?", customerID).
 			Where("cc.owner_type = ?", OwnerUser).
@@ -639,7 +653,7 @@ func (s *Store) DeleteUserConnectorConnections(ctx context.Context, customerID, 
 		ids := make([]string, 0, len(rows))
 		for _, row := range rows {
 			ids = append(ids, row.ID)
-			deleted = append(deleted, DeletedConnection{ID: row.ID, ConnectorID: row.ConnectorID, HadGrant: row.HadGrant})
+			deleted = append(deleted, DeletedConnection{ID: row.ID, ConnectorID: row.ConnectorID, OwnerType: row.OwnerType, HadGrant: row.HadGrant})
 		}
 		// Attempts reference their connection with no cascade (20261002193100), so they go
 		// first. Invocations cascade.

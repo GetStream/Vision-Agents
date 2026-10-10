@@ -29,6 +29,8 @@ final readonly class PluginWithOptions
         // Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's book...
         /** @var list<string>|null */
         public ?array $toolsets = null,
+        // Each end user connects the plugin with their own account, in the conversation, the first time the agent nee...
+        public ?bool $user = null,
     ) {
     }
 
@@ -43,6 +45,7 @@ final readonly class PluginWithOptions
             scopes: array_key_exists('scopes', $data) && $data['scopes'] !== null ? Json::strings($data, 'scopes') : null,
             tools: array_key_exists('tools', $data) && $data['tools'] !== null ? Json::strings($data, 'tools') : null,
             toolsets: array_key_exists('toolsets', $data) && $data['toolsets'] !== null ? Json::strings($data, 'toolsets') : null,
+            user: array_key_exists('user', $data) && $data['user'] !== null ? Json::bool($data, 'user') : null,
         );
     }
 
@@ -66,6 +69,9 @@ final readonly class PluginWithOptions
         }
         if ($this->toolsets !== null) {
             $out['toolsets'] = $this->toolsets;
+        }
+        if ($this->user !== null) {
+            $out['user'] = $this->user;
         }
         return $out;
     }

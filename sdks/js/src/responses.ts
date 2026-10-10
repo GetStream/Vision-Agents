@@ -9,11 +9,6 @@ export type ImageSource = Schemas["ImageSource"];
 
 export interface CreateResponseOptions {
   images?: ImageSource[];
-  /**
-   * Names the question so a retry with the same id and text starts no second turn. A session
-   * that keeps its conversation needs one, so it gets a fresh one when none is given.
-   */
-  commandId?: string;
 }
 
 /**
@@ -119,29 +114,21 @@ export class Responses {
 
   private readonly client: Client;
   private readonly sessionId: string;
-  private readonly persistent: boolean;
 
-  constructor(client: Client, sessionId: string, persistent = false) {
+  constructor(client: Client, sessionId: string) {
     this.client = client;
     this.sessionId = sessionId;
-    this.persistent = persistent;
     this.items = new Items(client, sessionId);
   }
 
-  /** Asks the agent something and names the turn it answers as. */
-  async create(text: string, options: CreateResponseOptions = {}): Promise<AgentResponse> {
-    // A command carries text only, so a question with images goes without one.
-    const commandId =
-      options.commandId ?? (this.persistent && !options.images?.length ? crypto.randomUUID() : undefined);
-    const created = await this.client.post("/v1/agents/sessions/{id}/responses", {
-      path: { id: this.sessionId },
-      body: {
-        text,
-        ...(options.images?.length ? { images: options.images } : {}),
-        ...(commandId ? { command_id: commandId } : {}),
-      },
-    });
-    return new AgentResponse(this.client, created);
+  /**
+   * Asks the agent something and names the turn it answers as.
+   *
+   * A text-only question goes with a fresh request id, so a retry of it is answered once. One
+   * with images goes without, because the router refuses a request id alongside media.
+   */
+  create(text: string, options: CreateResponseOptions = {}): Promise<AgentResponse> {
+    return createResponse(this.client, this.sessionId, text, options);
   }
 
   /**
@@ -173,4 +160,29 @@ export class Responses {
       query: { limit: options.limit, cursor: options.cursor },
     });
   }
+}
+
+/**
+ * Creates a response under `requestId`, or under a fresh one when the question is text only.
+ *
+ * Not exported from the package: naming the request is only for a dispatch worker answering an
+ * inbound message, which passes back that message's own request id so the answer lands on it.
+ */
+export async function createResponse(
+  client: Client,
+  sessionId: string,
+  text: string,
+  options: CreateResponseOptions = {},
+  requestId = "",
+): Promise<AgentResponse> {
+  const id = requestId || (options.images?.length ? "" : crypto.randomUUID());
+  const created = await client.post("/v1/agents/sessions/{id}/responses", {
+    path: { id: sessionId },
+    body: {
+      text,
+      ...(options.images?.length ? { images: options.images } : {}),
+      ...(id ? { request_id: id } : {}),
+    },
+  });
+  return new AgentResponse(client, created);
 }

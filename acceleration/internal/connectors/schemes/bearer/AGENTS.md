@@ -1,6 +1,6 @@
 # internal/connectors/schemes/bearer
 
-The `bearer` scheme: a static token the developer supplies (a bot token, a personal access token), sent as `Authorization: Bearer <token>` (RFC 6750 §2.1) on every request. It replaces the prototype's `AuthBearer` path (`internal/connectors/runtime.go:190-195` on `codex/connector-support` at `cf62af0d`). A token an OAuth consent issued is `oauth2_code`'s, not this one's.
+The `bearer` scheme: a static token the developer supplies (a bot token, a personal access token), sent as `Authorization: Bearer <token>` (RFC 6750 §2.1) on every request. It replaces the prototype's `AuthBearer` path (`internal/connectors/runtime.go:190-195` on `codex/connector-support` at `cf62af0d`). A token an OAuth consent issued is `oauth2_code`'s, not this one's. Built-ins that take it: `linq`, `telnyx`, `whatsapp`, and `github` beside `oauth2_code`, for a personal access token (AI-990).
 
 ## Flow
 
@@ -14,6 +14,7 @@ Wrap       Authorization: Bearer <token> on a clone of each request; a credentia
            fails every request
 Classify   oauth2code.ClassifyStatic: oauth2code.Classify, then a bare 401 -> InvalidGrant
 Revoke     -> ErrNotRevocable: nothing sent, the token lives on at the provider
+Static     core.Static: a rejected token is replaced with PUT .../credentials, never consented to
 ```
 
 ## Rules

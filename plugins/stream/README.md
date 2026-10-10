@@ -31,7 +31,6 @@ from vision_agents.plugins import getstream, stream
 agent = Agent(
     edge=getstream.Edge(),
     agent_user=agent_user,
-    instructions="Keep your replies short.",
     llm=stream.Accelerated(model="gemma4", stt="realtime-best", tts="sonic_36"),
     cost_tracking={"project": "moderation", "environment": "dev"},
     memory_filter={"user_id": "222", "company_id": "12312"},
@@ -46,6 +45,10 @@ async def weather(city: str) -> str:
 `register_function` works as it does with any other LLM. The model asks for the function
 over the session's socket, this plugin runs it here and sends back what it returned.
 
+The session is held by the call's id with voice on, so the backend's agent joins the same
+`agent:<call id>` call. What the agent is told to be is agent config, synced from its
+directory or `define_agent`, never set per session.
+
 `cost_tracking` and `memory_filter` are configuration rather than behaviour: they are
 serialized into the session and acted on by the backend. `memory_filter["user_id"]` is who
 the memories are about, and everything else in it narrows recall further.
@@ -54,10 +57,10 @@ The agent's transcripts, conversation and events all work as they do locally, be
 events the backend sends back are recorded into the same places.
 
 The harness (the subagent, its sandbox and its skills) is agent config, never session
-config: declare `thinking_llm:`, `sandbox:` and `skills/` in the agent's directory, or pass
-`thinking_llm=` and `vm=` to `define_agent`. `sandbox: daytona` gives the subagent somewhere to
+config: declare `subagent:`, `sandbox:` and `skills/` in the agent's directory, or pass
+`subagent=` and `vm=` to `define_agent`. `sandbox: daytona` gives the subagent somewhere to
 run code it writes, and needs `DAYTONA_API_KEY` on the backend. Only a voice agent names a
-`thinking_llm`: a text agent runs everything, skills included, on its `llm`.
+`subagent`: a text agent runs everything, skills included, on its `llm`.
 
 ## An agent as a directory
 
@@ -79,14 +82,15 @@ name: customer_support
 description: Support for a subscription business.
 mode: voice
 llm: llm-fast
-thinking_llm: llm-thinking
+subagent: llm-thinking
 stt: stt-fast
 tts: tts-fast
 voice: aurora
-speed: 1.1
 harness: default
 search: search-fast
-greeting: Thanks for calling, how can I help?
+greeting:
+  text: Thanks for calling, how can I help?
+  mode: exact  # or variation, the model's own take on it every call
 sandbox: daytona
 plugins:
   - gmail
@@ -132,7 +136,7 @@ config = await stream.define_agent(
     name="docs-agent",
     instructions="Answer questions about the documentation.",
     llm="llm-fast",
-    thinking_llm="llm-smart",
+    subagent="llm-smart",
     skills=[Skill(name="explain", description="...", instructions="...")],
     knowledge="docs",
 )
@@ -185,7 +189,10 @@ docs = api.agent("docs")
 
 session = await docs.sessions.create(stream.SessionOptions(project_id="support"))
 await session.update(title="Pricing", llm="openai/gpt-5")
+await session.voice.start()  # the agent joins agent:<session id>; voice.stop() leaves
 await session.close()  # stops it; what it recorded and remembered is kept
+
+session = await docs.sessions.resume(session.id)  # carry on where it left off
 
 page = await docs.sessions.query(stream.Query(user_id="u1", state="live"))
 while page.has_more:
@@ -251,7 +258,7 @@ agent = Agent(
     phone=stream.Phone(),
 )
 
-async with agent.outbound_call(from_=held, to=person, call_type="default", call_id="hello"):
+async with agent.outbound_call(from_=held, to=person, call_id="hello"):
     await agent.responses.create("greet the user and let them know you're a friendly AI agent")
     await agent.finish()
 ```
@@ -262,6 +269,11 @@ call. Vendors do not all support all of them, and one that cannot express a term
 call rather than placing it without: a ring timeout that was dropped is a call sitting in
 somebody's voicemail. Seven of the backend's eight implemented vendors can place a call at
 all; DIDWW cannot, because it has no call control API.
+
+A placed call is held by a session, and the answered leg lands in its call,
+`agent:<session id>`, so `call_id` is that session's id. A number given to `Phone.attach`
+gets every caller a session of their own: the `InboundCall` dispatch hands over names it in
+`session_id`.
 
 See [example 13](../../examples/old/13_outbound_call_example) for the whole thing.
 
@@ -337,7 +349,7 @@ Keep the conversation on `llm-fast` and put the subagent on a model that can see
 
 ```yaml
 llm: llm-fast
-thinking_llm: vlm
+subagent: vlm
 video:
   max_frames: 1
 ```

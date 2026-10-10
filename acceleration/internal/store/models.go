@@ -367,23 +367,23 @@ type AgentConfig struct {
 	Search         string `bun:"search,notnull"`
 	Instructions   string `bun:"instructions,notnull"`
 	Greeting       string `bun:"greeting,notnull"`
-	// Speed is the voice's rate of delivery, 1 being its own. Zero leaves it there.
-	Speed float64 `bun:"speed,notnull"`
+	// GreetingMode is GreetingExact, said word for word, or GreetingVariation, which the
+	// model rewords on every call.
+	GreetingMode string `bun:"greeting_mode,notnull"`
 	// Guardrail is a guardrail.md: frontmatter saying how to screen a turn, then the
 	// policy in prose. Empty, which most configs are, means every turn is answered.
 	Guardrail string `bun:"guardrail,notnull"`
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`
-	// AgentPlugins names hosted MCP servers this agent is allowed to reach, from the built-in
-	// catalog, each with how it is reached. A name here without a connected row is a plugin
-	// that was attached and then the login expired or was revoked.
-	AgentPlugins []PluginEntry `bun:"agent_plugins,type:jsonb"`
+	// Plugins names hosted MCP servers this agent is allowed to reach, from the built-in
+	// catalog, each with how it is reached. The app logs into one once; one marked User is
+	// connected by each end user with their own account, from the conversation, when the
+	// model first needs it. An app's plugin without a connected row is one that was attached
+	// and then the login expired or was revoked.
+	Plugins []PluginEntry `bun:"plugins,type:jsonb"`
 	// Connectors are the connectors this agent may call tools of, each under an alias.
 	Connectors []ConnectorBinding `bun:"connectors,type:jsonb"`
-	// UserPlugins names catalog plugins each end user connects with their own account, from
-	// the conversation, when the model first needs one.
-	UserPlugins []PluginEntry `bun:"user_plugins,type:jsonb"`
 	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
 	// a conversation of its own when it arrives.
 	PluginEvents []PluginEvent `bun:"plugin_events,type:jsonb"`
@@ -589,6 +589,14 @@ const (
 	AgentModeVoice = "voice"
 	// AgentModeText holds the same conversation in writing, using neither speech target.
 	AgentModeText = "text"
+)
+
+// How a greeting is said.
+const (
+	// GreetingExact says the greeting word for word.
+	GreetingExact = "exact"
+	// GreetingVariation has the model say its own variation of the greeting.
+	GreetingVariation = "variation"
 )
 
 // Skill is one kind of work worth handing to the slower model, stored so the config that
@@ -809,6 +817,9 @@ type ChannelAccount struct {
 // Name is required; without the rest the plugin is the catalog's.
 type PluginEntry struct {
 	Name string `json:"name"`
+	// User has each end user connect the plugin with their own account, in the conversation,
+	// rather than the app once.
+	User bool `json:"user,omitempty"`
 	// Readonly reaches the plugin's read-only endpoint.
 	Readonly bool `json:"readonly,omitempty"`
 	// Scopes are asked for at consent in place of the catalog's.
@@ -832,6 +843,16 @@ func PluginNames(entries []PluginEntry) []string {
 // NamesPlugin reports whether entries name the plugin id.
 func NamesPlugin(entries []PluginEntry, id string) bool {
 	return slices.ContainsFunc(entries, func(entry PluginEntry) bool { return entry.Name == id })
+}
+
+// AppPlugins are the entries the app logs into once.
+func AppPlugins(entries []PluginEntry) []PluginEntry {
+	return slices.DeleteFunc(slices.Clone(entries), func(entry PluginEntry) bool { return entry.User })
+}
+
+// UserPlugins are the entries each end user connects with their own account.
+func UserPlugins(entries []PluginEntry) []PluginEntry {
+	return slices.DeleteFunc(slices.Clone(entries), func(entry PluginEntry) bool { return !entry.User })
 }
 
 // PluginEvent is one MCP event an agent config subscribes to on a plugin it names.

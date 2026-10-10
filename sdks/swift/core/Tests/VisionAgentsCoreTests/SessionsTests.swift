@@ -33,6 +33,36 @@ import Testing
         let request = try await server.request()
         #expect(request.body == ["description": .string("Billing"), "custom": .object(custom)])
     }
+
+    @Test func aVoiceSessionAsksToStartVoiceAndIsOnItsOwnCall() async throws {
+        let server = try SessionServer(answer: .session(status: 201, callID: "s1"))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        var options = SessionOptions(agent: "myagent")
+        options.startVoice = true
+
+        let session = try await agents.createSession(options)
+
+        #expect(session.callID == "s1")
+        let request = try await server.request()
+        #expect(request.path == "/v1/agents/sessions")
+        #expect(request.body["start_voice"] == .bool(true))
+        #expect(request.body["text"] == nil)
+    }
+
+    @Test func aSessionHeldInWritingSendsNoVoice() async throws {
+        let server = try SessionServer(answer: .session(status: 201, callID: ""))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        var options = SessionOptions(agent: "myagent")
+        options.greeting = Greeting("Hello.", mode: .variation)
+
+        _ = try await agents.createSession(options)
+
+        let body = try await server.request().body
+        #expect(body["start_voice"] == nil)
+        #expect(body["greeting"] == .object(["text": .string("Hello."), "mode": .string("variation")]))
+    }
 }
 
 /// A real HTTP peer that answers one request with a session carrying what it was sent, or with
@@ -49,6 +79,13 @@ struct SessionServer {
         let status: Int
         let headers: [String: String]
         let body: String
+
+        /// The session `s1`, on the call named `callID` or held in writing when it is empty.
+        static func session(status: Int, callID: String) -> Answer {
+            Answer(
+                status: status, headers: ["Content-Type": "application/json"],
+                body: #"{"id":"s1","agent_id":"a1","call_id":"\#(callID)","call_type":"agent","created_at":"2026-10-02T17:00:00Z","modality":"text","state":"live","user_id":"jlahey"}"#)
+        }
     }
 
     let listener: NWListener

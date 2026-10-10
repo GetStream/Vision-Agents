@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/uptrace/bun"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -21,6 +23,13 @@ var ErrNoChannelThread = errors.New("store: no external thread is linked to this
 // (https://docs.slack.dev/apis/events-api/, «Retries»); a day is that with a wide margin, a
 // choice rather than a measurement. Other providers' retry spans are unverified.
 const channelMessageKeep = 24 * time.Hour
+
+// channelWaitingKeep is how long a reply waits for the message that links its thread
+// (WaitChannelThreadMessage). Slack's last retry of an event comes about 6 minutes after its
+// first delivery: one «nearly immediately», then after 1 minute and after 5 minutes
+// (https://docs.slack.dev/apis/events-api/, «Retries»). 10 minutes is that with a margin, a
+// choice rather than a measurement. Other providers' retry spans are unverified.
+const channelWaitingKeep = 10 * time.Minute
 
 // ChannelThread links one external thread, such as a Slack thread, to the thread channel the
 // channel bridge writes it into (20261007003100_channel_threads.sql).
@@ -149,6 +158,84 @@ func (s *Store) ChannelThread(ctx context.Context, channelID string) (ChannelThr
 	return thread, nil
 }
 
+// waitingMessage is one row of channel_thread_waiting (20261011220000_channel_thread_waiting.sql).
+type waitingMessage struct {
+	ConnectorID       string    `bun:"connector_id"`
+	ProviderUnitID    string    `bun:"provider_unit_id"`
+	ThreadKey         string    `bun:"thread_key"`
+	ProviderMessageID string    `bun:"provider_message_id"`
+	AuthorID          string    `bun:"author_id"`
+	Text              string    `bun:"text"`
+	Raw               []byte    `bun:"raw"`
+	CreatedAt         time.Time `bun:"created_at"`
+}
+
+// WaitChannelThreadMessage keeps a customer's message on an external thread no thread channel
+// is linked to, for the message that links the thread to take
+// (TakeWaitingChannelThreadMessages). False is one already waiting, delivered again. Rows past
+// channelWaitingKeep are dropped first, so the table holds minutes of them.
+func (s *Store) WaitChannelThreadMessage(ctx context.Context, customerID string, message core.InboundMessage) (bool, error) {
+	if customerID == "" || message.ConnectorID == "" || message.ThreadKey == "" || message.ProviderMessageID == "" {
+		return false, stack.Wrap(errors.New("store: a customer, a connector, a thread key and a message id are required"))
+	}
+	now := time.Now().UTC()
+	if _, err := s.db.NewRaw("DELETE FROM channel_thread_waiting WHERE created_at < ?", now.Add(-channelWaitingKeep)).Exec(ctx); err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: wait channel thread message: %w", err))
+	}
+	result, err := s.db.NewRaw(
+		"INSERT INTO channel_thread_waiting (customer_id, connector_id, provider_unit_id, thread_key, provider_message_id, author_id, text, raw, created_at) "+
+			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+		customerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey, message.ProviderMessageID,
+		message.AuthorID, message.Text, message.Raw, now).Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: wait channel thread message: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: wait channel thread message: %w", err))
+	}
+	return affected == 1, nil
+}
+
+// UnwaitChannelThreadMessage takes one waiting message back. False is one that is not waiting:
+// the message that linked its thread took it first, or it was never kept.
+func (s *Store) UnwaitChannelThreadMessage(ctx context.Context, customerID string, message core.InboundMessage) (bool, error) {
+	result, err := s.db.NewRaw(
+		"DELETE FROM channel_thread_waiting WHERE customer_id = ? AND connector_id = ? AND provider_unit_id = ? AND thread_key = ? AND provider_message_id = ?",
+		customerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey, message.ProviderMessageID).Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: unwait channel thread message: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: unwait channel thread message: %w", err))
+	}
+	return affected == 1, nil
+}
+
+// TakeWaitingChannelThreadMessages takes every message waiting on a customer's external thread
+// that is not past channelWaitingKeep, oldest first. Each is taken once: a message that takes
+// itself back at the same time (UnwaitChannelThreadMessage) gets it, or this does.
+func (s *Store) TakeWaitingChannelThreadMessages(ctx context.Context, customerID, connectorID, providerUnitID, threadKey string) ([]core.InboundMessage, error) {
+	var rows []waitingMessage
+	err := s.db.NewRaw(
+		"DELETE FROM channel_thread_waiting WHERE customer_id = ? AND connector_id = ? AND provider_unit_id = ? AND thread_key = ? AND created_at >= ? "+
+			"RETURNING connector_id, provider_unit_id, thread_key, provider_message_id, author_id, text, raw, created_at",
+		customerID, connectorID, providerUnitID, threadKey, time.Now().UTC().Add(-channelWaitingKeep)).Scan(ctx, &rows)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: take waiting channel thread messages: %w", err))
+	}
+	slices.SortStableFunc(rows, func(a, b waitingMessage) int { return a.CreatedAt.Compare(b.CreatedAt) })
+	messages := make([]core.InboundMessage, 0, len(rows))
+	for _, row := range rows {
+		messages = append(messages, core.InboundMessage{
+			ConnectorID: row.ConnectorID, ProviderUnitID: row.ProviderUnitID, ThreadKey: row.ThreadKey,
+			AuthorID: row.AuthorID, Text: row.Text, ProviderMessageID: row.ProviderMessageID, Raw: row.Raw,
+		})
+	}
+	return messages, nil
+}
+
 // What a claimed message of a thread channel is, each with its own ids
 // (20261007003100_channel_threads.sql).
 const (
@@ -216,9 +303,16 @@ func (s *Store) AppConnectionByAccount(ctx context.Context, customerID, connecto
 	return connection, nil
 }
 
+// bindsFixedConnection is the WHERE clause that finds the agent configs that bind a connection
+// as their fixed connection, matched as boundByConfig matches them.
+const bindsFixedConnection = "connectors @> jsonb_build_array(jsonb_build_object('connection', jsonb_build_object('type', 'fixed', 'connection_id', ?::text)))"
+
 // AgentConfigsBindingConnection returns the customer's live agent configs that bind the
 // connection as their fixed connection, oldest first: the agents that answer on the provider
-// unit the connection is, matched as boundByConfig matches them.
+// unit the connection is, matched as boundByConfig matches them. A test copy (DraftOfTag) is
+// left out: it answers no channel message and subscribes to no event (AI-1049, AI-1048). The
+// first is the connection's owner, which refuseSecondChannelAgent keeps the only one on a
+// channel connection.
 func (s *Store) AgentConfigsBindingConnection(ctx context.Context, customerID, connectionID string) ([]AgentConfig, error) {
 	if customerID == "" || connectionID == "" {
 		return nil, stack.Wrap(errors.New("store: a customer and a connection id are required"))
@@ -227,7 +321,8 @@ func (s *Store) AgentConfigsBindingConnection(ctx context.Context, customerID, c
 	err := s.db.NewSelect().Model(&configs).
 		Where("customer_id = ?", customerID).
 		Where("deleted_at IS NULL").
-		Where("connectors @> jsonb_build_array(jsonb_build_object('connection', jsonb_build_object('type', 'fixed', 'connection_id', ?::text)))", connectionID).
+		Where(notTestCopy).
+		Where(bindsFixedConnection, connectionID).
 		Order("created_at", "id").
 		Scan(ctx)
 	if err != nil {

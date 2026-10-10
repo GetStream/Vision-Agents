@@ -212,3 +212,37 @@ func (s *PluginsMigrateSuite) migrate(apply bool, customer string) string {
 	s.Require().NoError(migratePlugins(s.ctx, s.settings, slog.Default(), pluginmigrate.Options{Customer: customer}, apply, &out))
 	return out.String()
 }
+
+// TestPluginNamesTheRowsRead: --plugin goes through runPlugins to the move, so a login of
+// another plugin is not read and does not appear in the report.
+func (s *PluginsMigrateSuite) TestPluginNamesTheRowsRead() {
+	customer := "app-" + store.NewID()
+	named := store.PluginConnection{CustomerID: customer, ConfigID: "gone-" + store.NewID(), PluginID: "linear",
+		Status: store.PluginConnected, AccessToken: "synthetic-access"}
+	s.Require().NoError(s.db.UpsertPluginConnection(s.ctx, &named))
+	other := store.PluginConnection{CustomerID: customer, ConfigID: "gone-" + store.NewID(), PluginID: "github",
+		Status: store.PluginConnected, AccessToken: "synthetic-access"}
+	s.Require().NoError(s.db.UpsertPluginConnection(s.ctx, &other))
+
+	out := s.runCommand("migrate", "--customer", customer, "--plugin", "linear")
+
+	s.Contains(out, named.ID)
+	s.NotContains(out, other.ID)
+	s.Contains(out, "1 rows:")
+}
+
+// runCommand runs router plugins with args and returns what it printed.
+func (s *PluginsMigrateSuite) runCommand(args ...string) string {
+	reader, writer, err := os.Pipe()
+	s.Require().NoError(err)
+	stdout := os.Stdout
+	os.Stdout = writer
+	runErr := runPlugins(args, s.settings, slog.Default())
+	os.Stdout = stdout
+	s.Require().NoError(writer.Close())
+	var out bytes.Buffer
+	_, err = out.ReadFrom(reader)
+	s.Require().NoError(err)
+	s.Require().NoError(runErr)
+	return out.String()
+}

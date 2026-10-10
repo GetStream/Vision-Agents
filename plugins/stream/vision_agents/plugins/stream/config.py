@@ -21,10 +21,13 @@ from ._generated.models import (
     AgentConfigRequest,
     AgentDispatch,
     AgentMode,
+    AgentTools,
     ChannelIdentity,
     ChannelLineRequest,
     DispatchSetting,
     ErrorResponse,
+    Greeting,
+    GreetingMode,
     Harness,
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
@@ -182,7 +185,7 @@ async def define_agent(
     name: str,
     instructions: str = "",
     llm: str = "",
-    thinking_llm: str = "",
+    subagent: str = "",
     stt: str = "",
     tts: str = "",
     voice: str = "",
@@ -209,7 +212,7 @@ async def define_agent(
         name: What the config is called, which is also how it is found again.
         instructions: The system prompt.
         llm: The model that answers.
-        thinking_llm: The model a voice agent hands its skills to. Only for a voice
+        subagent: The model a voice agent hands its skills to. Only for a voice
             agent: a text agent runs everything on its llm.
         video_source: Source used by skills that capture video.
         video_max_frames: Number of retained frames to capture, from 1 to 8.
@@ -239,8 +242,8 @@ async def define_agent(
         wanted.instructions = instructions
     if llm:
         wanted.llm = llm
-    if thinking_llm:
-        wanted.thinking_llm = thinking_llm
+    if subagent:
+        wanted.subagent = subagent
     if video_source is not None or video_max_frames is not None:
         wanted.video = SessionVideo()
         if video_source is not None:
@@ -254,7 +257,7 @@ async def define_agent(
     if voice:
         wanted.voice = voice
     if greeting:
-        wanted.greeting = greeting
+        wanted.greeting = Greeting(text=greeting)
     if named:
         wanted.skills = [skill.name for skill in named]
     if knowledge:
@@ -336,14 +339,12 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.sts = settings.sts
     if settings.voice:
         body.voice = settings.voice
-    if settings.speed:
-        body.speed = settings.speed
     if settings.llm:
         body.llm = settings.llm
     if settings.harness:
         body.harness = Harness(settings.harness)
-    if settings.thinking_llm:
-        body.thinking_llm = settings.thinking_llm
+    if settings.subagent:
+        body.subagent = settings.subagent
     if settings.video_max_frames:
         body.video = SessionVideo(
             source=settings.video_source, max_frames=settings.video_max_frames
@@ -358,18 +359,18 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
             body.dispatch.text = DispatchSetting(settings.dispatch["text"])
     if settings.search:
         body.search = settings.search
-    if settings.greeting:
-        body.greeting = settings.greeting
-    if settings.agent_plugins:
-        body.agent_plugins = [
-            _plugin_entry(plugin) for plugin in settings.agent_plugins
-        ]
-    if settings.user_plugins:
-        body.user_plugins = [_plugin_entry(plugin) for plugin in settings.user_plugins]
+    if settings.greeting is not None:
+        body.greeting = Greeting(text=settings.greeting.text)
+        if settings.greeting.mode:
+            body.greeting.mode = GreetingMode(settings.greeting.mode)
+    if settings.plugins:
+        body.plugins = [_plugin_entry(plugin) for plugin in settings.plugins]
     if settings.mcp_servers:
         body.mcp_servers = [_mcp_server(server) for server in settings.mcp_servers]
-    if settings.progressive_tools is not None:
-        body.progressive_tools = settings.progressive_tools
+    if settings.tools is not None:
+        body.tools = AgentTools()
+        if settings.tools.progressive is not None:
+            body.tools.progressive = settings.tools.progressive
     if settings.channels is not None:
         declared = AgentChannels()
         if settings.channels.whatsapp is not None:
@@ -407,9 +408,17 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
 
 def _plugin_entry(plugin: PluginSettings) -> PluginWithOptions | str:
     """A plugin as the router takes it: its id alone when nothing else is said about it."""
-    if not (plugin.readonly or plugin.scopes or plugin.toolsets or plugin.tools):
+    if not (
+        plugin.user
+        or plugin.readonly
+        or plugin.scopes
+        or plugin.toolsets
+        or plugin.tools
+    ):
         return plugin.name
     declared = PluginWithOptions(name=plugin.name)
+    if plugin.user:
+        declared.user = True
     if plugin.readonly:
         declared.readonly = True
     if plugin.scopes:

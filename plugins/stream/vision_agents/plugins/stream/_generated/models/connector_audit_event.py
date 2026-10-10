@@ -37,9 +37,10 @@ class ConnectorAuditEvent:
             owner_type (ConnectionOwnerType): app is the app's own account, user one user's.
             attempt_id (str | Unset): The authorization attempt a consent finished. Absent once the connection's user was
                 deleted.
-            credential (ConnectorAuditCredential | Unset): The tokens a grant event left, each named by its fingerprint: the
-                first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token,
-                so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
+            credential (ConnectorAuditCredential | Unset): The tokens a grant event left, or on grant_revoked the tokens
+                that ended, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex
+                characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the
+                refresh token. No token, and no character of one, is shown.
             latency_ms (int | Unset): How long a proxy_call took until the provider's answer, in milliseconds. Absent for a
                 grant.
             reason (str | Unset): Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted
@@ -141,9 +142,7 @@ class ConnectorAuditEvent:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.connector_audit_credential import (
-            ConnectorAuditCredential,
-        )
+        from ..models.connector_audit_credential import ConnectorAuditCredential
 
         d = dict(src_dict)
         action = ConnectorAuditAction(d.pop("action"))

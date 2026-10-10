@@ -13,7 +13,9 @@ from ..models.connection_status import ConnectionStatus
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.connection_client import ConnectionClient
     from ..models.connection_inputs import ConnectionInputs
+    from ..models.connection_last_validation import ConnectionLastValidation
     from ..models.connection_metadata import ConnectionMetadata
     from ..models.connection_owner import ConnectionOwner
     from ..models.connection_use import ConnectionUse
@@ -31,11 +33,13 @@ class Connection:
         connector_id (str):
         created_at (datetime.datetime):
         definition_revision (int): The connector's revision the connection reads: the one its grant was made on. Every
-            consent runs on the connector's latest revision, and one that connects the connection moves it there; until then
-            it keeps this one.
+            consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a
+            bearer or api_key connection's token or key again (PUT .../credentials) moves it there too, when that revision
+            still takes the connection's scheme and inputs. Until then it keeps this one.
         definition_status (ConnectionDefinitionStatus): current when the connection reads its connector's latest
             revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection
-            is given no credential until a consent connects it again, on the latest revision.
+            is given no credential until it moves to the latest revision, by a consent that connects it again or, for a
+            bearer or api_key connection, by saving its token or key again.
         granted_scopes (list[str] | None):
         id (str):
         inputs (ConnectionInputs): What the connection was created with, the connector's defaults filled in.
@@ -51,11 +55,16 @@ class Connection:
             connection, which deleting it would break. A binding a session fills with the caller's own connection names
             none, so it is never listed.
         account_id (str | Unset): The provider account, known once it is connected.
+        client (ConnectionClient | Unset): Which OAuth client a connection's grant was issued to, so a client the router
+            registered on the fly (RFC 7591) can be found at the provider. Its secret is never shown.
         definition_broken_reason (str | Unset): Why the connector marked definition_revision broken. Present only when
             definition_status is broken.
         expires_at (datetime.datetime | Unset): When the current credential expires. Absent when there is none or it
             does not.
         label (str | Unset):
+        last_validation (ConnectionLastValidation | Unset): What a connection's last validate found, kept so it is still
+            shown after the validate's answer is gone. A validate whose provider refused a bearer or api_key credential with
+            any 4xx but 429 also moves the connection to needs_reauthorization.
     """
 
     auth_scheme: str
@@ -73,9 +82,11 @@ class Connection:
     updated_at: datetime.datetime
     used_by: list[ConnectionUse] | None
     account_id: str | Unset = UNSET
+    client: ConnectionClient | Unset = UNSET
     definition_broken_reason: str | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
     label: str | Unset = UNSET
+    last_validation: ConnectionLastValidation | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -122,6 +133,10 @@ class Connection:
 
         account_id = self.account_id
 
+        client: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.client, Unset):
+            client = self.client.to_dict()
+
         definition_broken_reason = self.definition_broken_reason
 
         expires_at: str | Unset = UNSET
@@ -129,6 +144,10 @@ class Connection:
             expires_at = self.expires_at.isoformat()
 
         label = self.label
+
+        last_validation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.last_validation, Unset):
+            last_validation = self.last_validation.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -152,18 +171,24 @@ class Connection:
         )
         if account_id is not UNSET:
             field_dict["account_id"] = account_id
+        if client is not UNSET:
+            field_dict["client"] = client
         if definition_broken_reason is not UNSET:
             field_dict["definition_broken_reason"] = definition_broken_reason
         if expires_at is not UNSET:
             field_dict["expires_at"] = expires_at
         if label is not UNSET:
             field_dict["label"] = label
+        if last_validation is not UNSET:
+            field_dict["last_validation"] = last_validation
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.connection_client import ConnectionClient
         from ..models.connection_inputs import ConnectionInputs
+        from ..models.connection_last_validation import ConnectionLastValidation
         from ..models.connection_metadata import ConnectionMetadata
         from ..models.connection_owner import ConnectionOwner
         from ..models.connection_use import ConnectionUse
@@ -232,6 +257,13 @@ class Connection:
 
         account_id = d.pop("account_id", UNSET)
 
+        _client = d.pop("client", UNSET)
+        client: ConnectionClient | Unset
+        if isinstance(_client, Unset):
+            client = UNSET
+        else:
+            client = ConnectionClient.from_dict(_client)
+
         definition_broken_reason = d.pop("definition_broken_reason", UNSET)
 
         _expires_at = d.pop("expires_at", UNSET)
@@ -242,6 +274,13 @@ class Connection:
             expires_at = datetime.datetime.fromisoformat(_expires_at)
 
         label = d.pop("label", UNSET)
+
+        _last_validation = d.pop("last_validation", UNSET)
+        last_validation: ConnectionLastValidation | Unset
+        if isinstance(_last_validation, Unset):
+            last_validation = UNSET
+        else:
+            last_validation = ConnectionLastValidation.from_dict(_last_validation)
 
         connection = cls(
             auth_scheme=auth_scheme,
@@ -259,9 +298,11 @@ class Connection:
             updated_at=updated_at,
             used_by=used_by,
             account_id=account_id,
+            client=client,
             definition_broken_reason=definition_broken_reason,
             expires_at=expires_at,
             label=label,
+            last_validation=last_validation,
         )
 
         connection.additional_properties = d

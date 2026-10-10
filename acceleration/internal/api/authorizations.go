@@ -44,6 +44,17 @@ const (
 	connectorLaunchPath         = "/v1/agents/connectors/oauth/launch/"
 )
 
+// connectorCallbackURL is the redirect URI every consent of a router at publicURL sends, and
+// so the one a provider has to have registered for the OAuth client: publicURL followed by
+// ConnectorCallbackPath. Empty when publicURL is, since no consent can start then (begin).
+func connectorCallbackURL(publicURL string) string {
+	base := strings.TrimRight(publicURL, "/")
+	if base == "" {
+		return ""
+	}
+	return base + ConnectorCallbackPath
+}
+
 const (
 	// attemptLifetime is how long a consent may take, from authorize to callback. It is RFC
 	// 6749 section 4.1.2's recommended maximum authorization code lifetime (10 minutes), the
@@ -259,10 +270,15 @@ func (c consents) connectionFor(ctx context.Context, request session.ConsentRequ
 	// again does not leave a row and a grant each time. The person still consents in this
 	// chat: one connected before gets a reconnect (begin), which keeps the old grant when it
 	// comes back with another account (completeConsent, account_mismatch), and the session
-	// opens it only once that consent connected it anew (session.openOrAsk). A session still
-	// uses only the connection chosen for it (T22): this one, by the person's own consent.
+	// opens it only once that consent connected it anew (session.openOrAsk). A session uses a
+	// connection nobody chose for it only when it is the caller's one connected connection to
+	// the connector (session.impliedSelection, AI-994); here they have none or several, so it
+	// uses this one by the person's own consent.
+	//
+	// A static token or key is replaced, never consented to (AI-990), so the chat passes over
+	// a connection that holds one: a person's github token beside the consent the chat asks for.
 	for _, connection := range held {
-		if mine(connection) {
+		if mine(connection) && !core.IsStatic(c.registry.Schemes, connection.AuthScheme) {
 			return connection, nil
 		}
 	}
@@ -272,11 +288,16 @@ func (c consents) connectionFor(ctx context.Context, request session.ConsentRequ
 	}
 	// The chat cannot ask for a scheme or an input, so only a connector that needs neither is
 	// connected from it, as createConnection takes one with neither named.
-	if len(definition.Manifest.Schemes) != 1 {
+	scheme, found := defaultScheme(definition.Manifest, c.registry.Schemes)
+	if !found {
 		return store.ConnectorConnection{}, stack.Wrap(fmt.Errorf("%s allows %d schemes, and the chat cannot choose one",
 			definition.ID, len(definition.Manifest.Schemes)))
 	}
-	scheme := definition.Manifest.Schemes[0]
+	// Nor can it ask for a token or key, so it makes no connection that could only wait for one.
+	if core.IsStatic(c.registry.Schemes, scheme) {
+		return store.ConnectorConnection{}, stack.Wrap(fmt.Errorf("%s takes only a static token or key, which the chat cannot ask for",
+			definition.ID))
+	}
 	profile, err := definition.Manifest.Resolve(scheme, nil, nil)
 	if err != nil {
 		return store.ConnectorConnection{}, stack.Wrap(err)
@@ -331,7 +352,7 @@ func (c consents) begin(ctx context.Context, connection store.ConnectorConnectio
 		manifest = steppedUp(manifest, connection, *stepUp)
 	}
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
-	begun, err := scheme.Begin(ctx, core.BeginInput{Ref: ref, Manifest: manifest, RedirectURI: public + ConnectorCallbackPath})
+	begun, err := scheme.Begin(ctx, core.BeginInput{Ref: ref, Manifest: manifest, RedirectURI: connectorCallbackURL(c.publicURL)})
 	// The client comes from the app's own record or the operator's environment
 	// (ConnectorClients), so a connector that takes the app's own and finds none says where
 	// to put it.
@@ -714,6 +735,7 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 	}
 	s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
 		store.AuditGrantCreated, store.AuditReasonConsent, committed.Revision, row.ID, change)
+	s.recordClient(ctx, connection.ID, credentials)
 	// A reconnect brings back the MCP event subscriptions its bindings declare, as a validate
 	// does: one a disconnect or a long wait dropped is made again. The consent itself is done,
 	// so a failure here is logged and the next validate tries again.
@@ -755,7 +777,7 @@ func (s *Server) serveConnectorClientMetadata(w http.ResponseWriter, _ *http.Req
 		return
 	}
 	document := oauth2code.ClientMetadataDocument(clientID,
-		[]string{strings.TrimRight(s.publicURL, "/") + ConnectorCallbackPath})
+		[]string{connectorCallbackURL(s.publicURL)})
 	w.Header().Set("Cache-Control", clientMetadataMaxAge)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -817,6 +839,13 @@ func connectionManifest(ctx context.Context, records *store.Store, connection st
 	if err != nil {
 		return core.ResolvedManifest{}, err
 	}
+	return definitionManifest(definition, connection)
+}
+
+// definitionManifest is definition resolved for the connection, as connectionManifest. Its
+// only error is Resolve's: definition does not take the connection's scheme, inputs or
+// captured values.
+func definitionManifest(definition store.ConnectorDefinition, connection store.ConnectorConnection) (core.ResolvedManifest, error) {
 	metadata := maps.Clone(connection.Metadata)
 	maps.DeleteFunc(metadata, func(name, _ string) bool {
 		return !slices.ContainsFunc(definition.Manifest.Capture, func(rule core.CaptureRule) bool { return rule.Name == name })

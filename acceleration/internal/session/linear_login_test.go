@@ -193,7 +193,7 @@ func (s *LinearLoginSuite) run(name, arguments string) string {
 // something else.
 func (s *LinearLoginSuite) asked(result string) plugins.Authorization {
 	found, ok := plugins.RequestedAuthorization("linear__list_tools", result,
-		Logins(Spec{UserPlugins: []store.PluginEntry{{Name: "linear"}}}))
+		Logins(Spec{Plugins: []store.PluginEntry{{Name: "linear", User: true}}}))
 	s.Require().True(ok, "the tool did not ask for a login: %s", result)
 	return found
 }

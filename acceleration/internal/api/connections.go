@@ -38,7 +38,7 @@ var errNoSuchConnection = APIError{
 type Connection struct {
 	ID                     string                     `json:"id" readOnly:"true"`
 	ConnectorID            string                     `json:"connector_id"`
-	DefinitionRevision     int                        `json:"definition_revision" readOnly:"true" doc:"The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there; until then it keeps this one."`
+	DefinitionRevision     int                        `json:"definition_revision" readOnly:"true" doc:"The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again (PUT .../credentials) moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one."`
 	DefinitionStatus       ConnectionDefinitionStatus `json:"definition_status" readOnly:"true"`
 	DefinitionBrokenReason string                     `json:"definition_broken_reason,omitempty" readOnly:"true" doc:"Why the connector marked definition_revision broken. Present only when definition_status is broken."`
 	Owner                  ConnectionOwner            `json:"owner"`
@@ -54,6 +54,37 @@ type Connection struct {
 	CreatedAt              time.Time                  `json:"created_at" readOnly:"true"`
 	UpdatedAt              time.Time                  `json:"updated_at" readOnly:"true"`
 	UsedBy                 []ConnectionUse            `json:"used_by" readOnly:"true" doc:"The agent config bindings that name this connection as their fixed connection, which deleting it would break. A binding a session fills with the caller's own connection names none, so it is never listed."`
+	Client                 *ConnectionClient          `json:"client,omitempty" readOnly:"true" doc:"The OAuth client the connection's grant was issued to. Absent for a scheme without one, before the first consent, and for a connection last consented before the router kept it."`
+	LastValidation         *ConnectionLastValidation  `json:"last_validation,omitempty" readOnly:"true" doc:"What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh)."`
+}
+
+// ConnectionLastValidation is what a connection's last validate found
+// (store.ConnectorConnectionValidation, AI-1052).
+type ConnectionLastValidation struct {
+	Status    ConnectionValidationStatus `json:"status"`
+	Code      string                     `json:"code,omitempty" doc:"The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies."`
+	Error     string                     `json:"error,omitempty" doc:"Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote."`
+	CheckedAt time.Time                  `json:"checked_at" doc:"When the validate ran."`
+}
+
+func (*ConnectionLastValidation) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What a connection's last validate found, kept so it is still shown after the " +
+		"validate's answer is gone. A validate whose provider refused a bearer or api_key credential " +
+		"with any 4xx but 429 also moves the connection to needs_reauthorization."
+	return schema
+}
+
+// ConnectionClient is the OAuth client a connection's grant was issued to
+// (store.ConnectorConnectionClient, AI-990 F16).
+type ConnectionClient struct {
+	Registration ConnectorClientRegistrationMethod `json:"registration"`
+	ClientID     string                            `json:"client_id" doc:"The client identifier, which is not a secret (RFC 6749 section 2.2). For dcr, the one the provider issued when the router registered at the consent."`
+}
+
+func (*ConnectionClient) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "Which OAuth client a connection's grant was issued to, so a client the router " +
+		"registered on the fly (RFC 7591) can be found at the provider. Its secret is never shown."
+	return schema
 }
 
 // ConnectionUse is one binding of an agent config that names a connection as its fixed
@@ -108,7 +139,8 @@ func (ConnectionDefinitionStatus) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "ConnectionDefinitionStatus",
 		"current when the connection reads its connector's latest revision, outdated when a later "+
 			"one exists, and broken when a later one marked it as not working: the connection is "+
-			"given no credential until a consent connects it again, on the latest revision.",
+			"given no credential until it moves to the latest revision, by a consent that connects "+
+			"it again or, for a bearer or api_key connection, by saving its token or key again.",
 		store.DefinitionCurrent, store.DefinitionOutdated, store.DefinitionBroken)
 }
 
@@ -131,7 +163,7 @@ func (ConnectionStatus) Schema(registry huma.Registry) *huma.Schema {
 type ConnectionRequest struct {
 	ConnectorID string            `json:"connector_id" minLength:"1" doc:"A built-in, such as slack, or one of the app's own."`
 	Owner       ConnectionOwner   `json:"owner"`
-	AuthScheme  string            `json:"auth_scheme,omitempty" doc:"One of the connector's schemes. Omitted is its only one; a connector with several needs it named."`
+	AuthScheme  string            `json:"auth_scheme,omitempty" doc:"One of the connector's schemes. Omitted is its only one, or else its only one that is not a static token or key (bearer, api_key), such as oauth2_code for github; a connector with several others needs it named."`
 	Inputs      map[string]string `json:"inputs,omitempty" doc:"Values for the connector's inputs, such as a region. One without a default is required, and each must match the connector's enum or pattern."`
 	Label       string            `json:"label,omitempty" maxLength:"120" doc:"A name to tell connections apart by."`
 }
@@ -291,11 +323,12 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 	}
 	scheme := sent.AuthScheme
 	if scheme == "" {
-		if len(definition.Manifest.Schemes) != 1 {
+		chosen, found := defaultScheme(definition.Manifest, s.connectors.Schemes)
+		if !found {
 			return nil, invalidRequest(fmt.Sprintf("auth_scheme is required: %s allows %s",
 				definition.ID, strings.Join(definition.Manifest.Schemes, ", ")))
 		}
-		scheme = definition.Manifest.Schemes[0]
+		scheme = chosen
 	}
 	// Resolve is what every later use of the connection reads it through, so an input it
 	// refuses here is one the connection could never be used with. Its errors name the input.
@@ -315,6 +348,10 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 		Label:              strings.TrimSpace(sent.Label),
 	}
 	err = s.store.CreateConnectorConnection(ctx, s.connectors, &connection)
+	// Deleted since it was read above (DeleteConnectorDefinition), so answered as one never made.
+	if errors.Is(err, store.ErrNoConnectorDefinition) {
+		return nil, invalidRequest(fmt.Sprintf("no such connector: %q", sent.ConnectorID))
+	}
 	if errors.Is(err, store.ErrUnregisteredScheme) {
 		known := slices.Sorted(maps.Keys(s.connectors.Schemes))
 		return nil, invalidRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has (%s)",
@@ -329,7 +366,27 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 		return nil, err
 	}
 	// A new connection is bound by nothing yet.
-	return &connectionResponse{Body: connectionOf(connection, nil, definitions[connection.ID])}, nil
+	return &connectionResponse{Body: connectionOf(connection, nil, definitions[connection.ID], nil, nil)}, nil
+}
+
+// defaultScheme is the scheme a connection to m gets when nobody names one: m's only scheme,
+// or else its only one that is not core.Static. A connector that takes a consent and a static
+// token beside it (github: oauth2_code and bearer, AI-990) so connects by consent, as it did
+// before it took the token. found is false when that leaves none or several.
+func defaultScheme(m core.Manifest, schemes map[string]core.Scheme) (string, bool) {
+	if len(m.Schemes) == 1 {
+		return m.Schemes[0], true
+	}
+	var others []string
+	for _, name := range m.Schemes {
+		if !core.IsStatic(schemes, name) {
+			others = append(others, name)
+		}
+	}
+	if len(others) != 1 {
+		return "", false
+	}
+	return others[0], true
 }
 
 // listConnections lists one owner's connections, a page at a time.
@@ -377,9 +434,18 @@ func (s *Server) listConnections(ctx context.Context, request *listConnectionsRe
 	if err != nil {
 		return nil, err
 	}
+	clients, err := s.store.ConnectorConnectionClients(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	validations, err := s.store.ConnectorConnectionValidations(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 	listed := ConnectionPage{Items: make([]Connection, 0, len(kept)), HasMore: more}
 	for _, connection := range kept {
-		listed.Items = append(listed.Items, connectionOf(connection, uses[connection.ID], definitions[connection.ID]))
+		listed.Items = append(listed.Items, connectionOf(connection, uses[connection.ID], definitions[connection.ID],
+			clientOf(clients, connection.ID), lastValidationOf(validations, connection)))
 	}
 	if more {
 		last := kept[len(kept)-1]
@@ -402,7 +468,16 @@ func (s *Server) getConnection(ctx context.Context, request *connectionRequest) 
 	if err != nil {
 		return nil, err
 	}
-	return &connectionResponse{Body: connectionOf(connection, uses[connection.ID], definitions[connection.ID])}, nil
+	clients, err := s.store.ConnectorConnectionClients(ctx, []string{connection.ID})
+	if err != nil {
+		return nil, err
+	}
+	validations, err := s.store.ConnectorConnectionValidations(ctx, []string{connection.ID})
+	if err != nil {
+		return nil, err
+	}
+	return &connectionResponse{Body: connectionOf(connection, uses[connection.ID], definitions[connection.ID],
+		clientOf(clients, connection.ID), lastValidationOf(validations, connection))}, nil
 }
 
 // deleteConnection soft deletes one connection the caller may have, unless an
@@ -415,6 +490,9 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 	// Unforced, the store locks the connection and then checks for a binding in the statement
 	// that deletes. A config save locks the connections it binds while it writes, so of a
 	// bind and a delete one always waits for the other and sees it.
+	// The tokens the delete drops, named by fingerprint for the revoked row (AI-1053 F52); read
+	// before the row goes, since the delete clears them.
+	ended := s.heldFingerprints(ctx, connection)
 	if request.Force {
 		err = s.store.DeleteConnectorConnection(ctx, connection.CustomerID, connection.ID)
 	} else {
@@ -432,27 +510,54 @@ func (s *Server) deleteConnection(ctx context.Context, request *deleteConnection
 	if err != nil {
 		return nil, err
 	}
+	s.connectionDeleted(ctx, connection.CustomerID, store.DeletedConnection{
+		ID: connection.ID, ConnectorID: connection.ConnectorID, OwnerType: connection.OwnerType,
+		HadGrant: len(connection.CredentialsSealed) > 0,
+	}, ended)
+	return nil, nil
+}
+
+// heldFingerprints is the fingerprints of the tokens a connection holds, zero when it holds
+// none or they cannot be read: a delete is never refused over a log line.
+func (s *Server) heldFingerprints(ctx context.Context, connection store.ConnectorConnection) core.CredentialChange {
+	if len(connection.CredentialsSealed) == 0 || s.credentials == nil {
+		return core.CredentialChange{}
+	}
+	var held core.CredentialFingerprints
+	err := s.credentials.Update(ctx, core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID},
+		func(state *core.CredentialState, _ func() error) (bool, error) {
+			held = core.FingerprintsOf(s.connectors.Schemes, state.Credentials)
+			return false, nil
+		})
+	if err != nil {
+		s.logger.Warn("could not read a connection's tokens before its delete", "connection", connection.ID, "error", err)
+	}
+	return core.CredentialChange{Current: held}
+}
+
+// connectionDeleted lets go of what a connection the store just soft deleted still has
+// outside its row, as deleteConnection and deleteConnector both leave it.
+func (s *Server) connectionDeleted(ctx context.Context, customerID string, connection store.DeletedConnection, ended core.CredentialChange) {
 	// Its outbound client goes too. A session holding a copy is refused by the resolver, and
 	// by its dispatcher's check before every call.
 	if s.connectorTransports != nil {
-		s.connectorTransports.Close(core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID})
+		s.connectorTransports.Close(core.ConnectionRef{CustomerID: customerID, ConnectionID: connection.ID})
 	}
 	// So do its MCP event subscriptions: a delivery to one is answered 410 from here on. The
 	// connection is deleted whatever happens here, so a failure is logged, not answered with a
 	// 500 a retry would turn into a 404: a row left behind goes at its next delivery or its
 	// next look, which comes a day later at most (mcpevents.refreshAt, retryWait, waitUntil).
 	if s.mcpEvents != nil {
-		if err := s.mcpEvents.Stop(ctx, connection.CustomerID, connection.ID); err != nil {
+		if err := s.mcpEvents.Stop(ctx, customerID, connection.ID); err != nil {
 			s.logger.Error("could not drop a deleted connection's MCP event subscriptions", "connection", connection.ID, "error", err)
 		}
 	}
 	// The delete dropped its credentials. One that held none, pending since it was made, had
 	// no grant to revoke.
-	if len(connection.CredentialsSealed) > 0 {
-		s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
-			store.AuditGrantRevoked, store.AuditReasonDeleted, 0, "", core.CredentialChange{})
+	if connection.HadGrant {
+		s.auditGrant(ctx, customerID, connection.ID, connection.ConnectorID, connection.OwnerType,
+			store.AuditGrantRevoked, store.AuditReasonDeleted, 0, "", ended)
 	}
-	return nil, nil
 }
 
 // auditGrant records one grant the API created or revoked (T47), with the request's id
@@ -476,6 +581,23 @@ func (s *Server) auditGrant(ctx context.Context, customerID, connectionID, conne
 	err := s.store.RecordConnectorAudit(ctx, event)
 	if err != nil {
 		s.logger.Error("could not record a connector audit row", "connection", connectionID, "action", action, "error", err)
+	}
+}
+
+// recordClient keeps which OAuth client a consent's credentials were issued to, for a scheme
+// that names it (core.ClientNamer), so the connection's reads show it (AI-990 F16). The consent
+// is committed when it is called, so a row that cannot be written is logged and the consent
+// stands.
+func (s *Server) recordClient(ctx context.Context, connectionID string, credentials core.StoredCredentials) {
+	client, ok := core.ClientOf(s.connectors.Schemes, credentials)
+	if !ok {
+		return
+	}
+	err := s.store.PutConnectorConnectionClient(ctx, &store.ConnectorConnectionClient{
+		ConnectionID: connectionID, Registration: client.Registration, ClientID: client.ID,
+	})
+	if err != nil {
+		s.logger.Error("could not record a connection's OAuth client", "connection", connectionID, "error", err)
 	}
 }
 
@@ -548,9 +670,12 @@ func actingUser(ctx context.Context) string {
 // copied by name, so a column added to the row stays hidden until it is added here. Sealed
 // credentials, cached tools and last_error are left out: the first is never shown, and the
 // other two are for the operations that write them (T18, T12). uses are the bindings that
-// name it (store.ConnectorConnectionUses), and definition how its revision compares with its
-// connector's (store.ConnectorDefinitionStatuses).
-func connectionOf(connection store.ConnectorConnection, uses []store.ConnectionUse, definition store.DefinitionStatus) Connection {
+// name it (store.ConnectorConnectionUses), definition how its revision compares with its
+// connector's (store.ConnectorDefinitionStatuses), and client the OAuth client its grant was
+// issued to, nil when none is recorded (store.ConnectorConnectionClients), and validation what
+// its last validate found, nil before the first (store.ConnectorConnectionValidations).
+func connectionOf(connection store.ConnectorConnection, uses []store.ConnectionUse, definition store.DefinitionStatus,
+	client *ConnectionClient, validation *ConnectionLastValidation) Connection {
 	usedBy := make([]ConnectionUse, 0, len(uses))
 	for _, use := range uses {
 		usedBy = append(usedBy, ConnectionUse{ConfigID: use.ConfigID, ConfigName: use.ConfigName, Binding: use.Binding})
@@ -566,17 +691,44 @@ func connectionOf(connection store.ConnectorConnection, uses []store.ConnectionU
 			Type:   ConnectionOwnerType(connection.OwnerType),
 			UserID: connection.OwnerID,
 		},
-		AuthScheme:    connection.AuthScheme,
-		Inputs:        maps.Clone(connection.Inputs),
-		Metadata:      maps.Clone(connection.Metadata),
-		Label:         connection.Label,
-		AccountID:     connection.AccountID,
-		Status:        ConnectionStatus(connection.Status),
-		GrantedScopes: append([]string{}, connection.GrantedScopes...),
-		Revision:      connection.Revision,
-		ExpiresAt:     connection.ExpiresAt,
-		CreatedAt:     connection.CreatedAt,
-		UpdatedAt:     connection.UpdatedAt,
-		UsedBy:        usedBy,
+		AuthScheme:     connection.AuthScheme,
+		Inputs:         maps.Clone(connection.Inputs),
+		Metadata:       maps.Clone(connection.Metadata),
+		Label:          connection.Label,
+		AccountID:      connection.AccountID,
+		Status:         ConnectionStatus(connection.Status),
+		GrantedScopes:  append([]string{}, connection.GrantedScopes...),
+		Revision:       connection.Revision,
+		ExpiresAt:      connection.ExpiresAt,
+		CreatedAt:      connection.CreatedAt,
+		UpdatedAt:      connection.UpdatedAt,
+		UsedBy:         usedBy,
+		Client:         client,
+		LastValidation: validation,
 	}
+}
+
+// lastValidationOf is the recorded last validate of connection, nil when there is none or when
+// it no longer describes the connection's grant: new credentials since (a token saved, a
+// consent, a refresh) moved the connection's revision past the validate's, or a grant began
+// after it ran. The second is a token saved again as it was, which leaves the revision
+// (pgsealed's commit seals only changed credentials anew) but connects a connection that was
+// not connected from then on (ConnectedAt), and a consent, which always begins a grant.
+func lastValidationOf(validations map[string]store.ConnectorConnectionValidation, connection store.ConnectorConnection) *ConnectionLastValidation {
+	validation, ok := validations[connection.ID]
+	if !ok || validation.Revision < connection.Revision ||
+		connection.ConnectedAt != nil && validation.CheckedAt.Before(*connection.ConnectedAt) {
+		return nil
+	}
+	return &ConnectionLastValidation{Status: ConnectionValidationStatus(validation.Status), Code: validation.Code,
+		Error: validation.Error, CheckedAt: validation.CheckedAt}
+}
+
+// clientOf is the recorded client of the connection id names, nil when there is none.
+func clientOf(clients map[string]store.ConnectorConnectionClient, id string) *ConnectionClient {
+	client, ok := clients[id]
+	if !ok {
+		return nil
+	}
+	return &ConnectionClient{Registration: ConnectorClientRegistrationMethod(client.Registration), ClientID: client.ClientID}
 }

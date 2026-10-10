@@ -46,7 +46,8 @@ type dataTable struct {
 // connector_authorization_attempts: one lives minutes, is sealed under this deployment's
 // key and finishes at this deployment's callback, so a copy could only expire. And
 // connector_oauth_clients: a client's secret is sealed under this deployment's key, and a
-// client without it cannot authenticate, so the app puts it again where it moved to. And
+// client without it cannot authenticate, so the app puts it again where it moved to. So is
+// custom_models, whose endpoint keys are sealed the same way. And
 // connector_config_tokens, sealed under this deployment's key for the provider app whose
 // events URL is this deployment's. And connector_event_destinations, whose signing secrets are
 // sealed under this deployment's key, with connector_event_deliveries, forwards in flight. And
@@ -54,10 +55,13 @@ type dataTable struct {
 // under this deployment's key and their callbacks are this deployment's URL. And
 // channel_threads, contact_map, episodes and episode_activity: the thread channels,
 // omni-channels and cards they point at live in the Stream app, which a move does not carry
-// either. And
-// connector_invocations and connector_audit, with connector_audit_credentials: this
-// deployment's record of what it did with credentials sealed under its own key. And connector_tool_pins: the deployment a connection
-// moves to pins its tools again on first use.
+// either; and channel_thread_waiting, replies in flight for minutes. And
+// connector_invocations and connector_audit, with connector_audit_credentials and
+// connector_invocation_arguments: this deployment's record of what it did with credentials
+// sealed under its own key. And connector_tool_pins: the deployment a connection moves to pins
+// its tools again on first use. And connector_connection_clients: the next consent of the
+// connection where it moved to records its client again. And connector_connection_validations:
+// the next validate where it moved to records its result again.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},

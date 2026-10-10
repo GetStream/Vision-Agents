@@ -96,6 +96,12 @@ public sealed record Pipeline
     /// <summary>Said on joining, without going through the model.</summary>
     public string? Greeting { get; init; }
 
+    /// <summary>
+    /// <c>exact</c>, the default, or <c>variation</c>, which has the model say its own
+    /// variation of <see cref="Greeting"/> on every call.
+    /// </summary>
+    public string? GreetingMode { get; init; }
+
     /// <summary>Murmurs while a caller is still talking, the way a person does.</summary>
     public bool? Backchannel { get; init; }
 
@@ -113,13 +119,11 @@ public sealed record Pipeline
 public sealed record SessionOptions
 {
     /// <summary>
-    /// The UUID to hold the session by, for a caller that wants to know it before the session
-    /// exists. Null lets the router generate one; one already taken is refused with a 409.
+    /// The id to hold the session by, up to 64 of <c>A-Za-z0-9_-</c>, for a caller that wants
+    /// to know it before the session exists. Null lets the router generate one; one already
+    /// taken is refused with a 409.
     /// </summary>
     public string? Id { get; init; }
-
-    /// <summary>A Stream Chat CID to resume.</summary>
-    public string? ConversationId { get; init; }
 
     /// <summary>
     /// The conversation being answered, which names the channel replies are written into.
@@ -164,7 +168,10 @@ public sealed record AgentOptions
     /// <summary>What the agent is called. Defaults to the directory's or the config's name.</summary>
     public string? Name { get; init; }
 
-    /// <summary>The system prompt. Wins over instructions.md.</summary>
+    /// <summary>
+    /// The system prompt. Wins over instructions.md. It reaches the backend with
+    /// <see cref="Agent.SyncAsync"/>: a session runs on the stored config's.
+    /// </summary>
     public string? Instructions { get; init; }
 
     /// <summary>The policy screening what may be asked of the agent. Wins over guardrail.md.</summary>
@@ -209,6 +216,12 @@ public sealed record InboundCall
     /// <summary>Its type.</summary>
     public string CallType { get; init; } = Edge.DefaultCallType;
 
+    /// <summary>
+    /// The session to open for the call, with voice: the call is named for it. Empty for a
+    /// number attached before calls were, which has to be attached again.
+    /// </summary>
+    public string SessionId { get; init; } = "";
+
     /// <summary>The number that was rung.</summary>
     public string CalledNumber { get; init; } = "";
 
@@ -246,8 +259,8 @@ public sealed record InboundMessage
     /// </summary>
     public string SessionId { get; init; } = "";
 
-    /// <summary>The durable command it was sent as, which the answer lands on. May be empty.</summary>
-    public string CommandId { get; init; } = "";
+    /// <summary>The request it was sent as, which the answer lands on. May be empty.</summary>
+    public string RequestId { get; init; } = "";
 
     /// <summary>What was written.</summary>
     public string Text { get; init; } = "";
@@ -475,7 +488,7 @@ public sealed class Agent : IAsyncDisposable
             Declare(request, Folder);
         }
         request.Harness = VisionAgentsClient.Blank(harness) ?? request.Harness;
-        request.ThinkingLlm = VisionAgentsClient.Blank(subagent) ?? request.ThinkingLlm;
+        request.Subagent = VisionAgentsClient.Blank(subagent) ?? request.Subagent;
         request.Sandbox = VisionAgentsClient.Blank(sandbox) ?? request.Sandbox;
         if (_options.CostTracking is { Count: > 0 } costs)
         {
@@ -508,29 +521,45 @@ public sealed class Agent : IAsyncDisposable
     }
 
     /// <summary>
-    /// Has the backend join a call and hold a conversation on it.
+    /// Holds a conversation on the session's own call, <c>agent:&lt;session id&gt;</c>.
     /// </summary>
     /// <remarks>
-    /// The call is created first, through Stream's own API; a null id names a new one after
-    /// a random string. It returns once the backend is in the call.
+    /// It returns once the backend is in the call. <see cref="Session.Voice"/> stops voice
+    /// to carry the conversation on in writing, and starts it again.
     /// </remarks>
-    public async Task<Session> JoinAsync(string? callId = null, string? callType = null, SessionOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        var call = await Edge.CreateCallAsync(callId, callType, UserId, cancellationToken).ConfigureAwait(false);
-        return await OpenAsync(call, options, null, false, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>Answers a call dispatch handed over. The call already exists, so none is created.</summary>
-    public Task<Session> JoinAsync(InboundCall call, SessionOptions? options = null, CancellationToken cancellationToken = default) =>
-        OpenAsync(new Call(call.CallId, call.CallType), options,
-            call.CalledNumber != "" ? new SessionPhone { Number = call.CalledNumber } : null, false, cancellationToken);
+    public Task<Session> JoinAsync(SessionOptions? options = null, CancellationToken cancellationToken = default) =>
+        OpenAsync(null, true, options, null, false, cancellationToken);
 
     /// <summary>
-    /// Holds the conversation in writing rather than on a call. Nothing is transcribed or spoken;
-    /// everything between hearing and answering is unchanged.
+    /// Answers a call dispatch handed over, on the call the router routed the caller into,
+    /// which is named for the session opened here.
+    /// </summary>
+    /// <exception cref="ConfigurationException">The call names no session.</exception>
+    public Task<Session> JoinAsync(InboundCall call, SessionOptions? options = null, CancellationToken cancellationToken = default) =>
+        call.SessionId == ""
+            ? throw new ConfigurationException("the call names no session; attach its number again")
+            : OpenAsync(call.SessionId, true, options,
+                call.CalledNumber != "" ? new SessionPhone { Number = call.CalledNumber } : null, false, cancellationToken);
+
+    /// <summary>
+    /// Holds the conversation in writing rather than on a call. Nothing is transcribed or spoken
+    /// until <see cref="Session.Voice"/> starts it; everything between hearing and answering is unchanged.
     /// </summary>
     public Task<Session> ChatAsync(SessionOptions? options = null, CancellationToken cancellationToken = default) =>
-        OpenAsync(null, options, null, false, cancellationToken);
+        OpenAsync(null, false, options, null, false, cancellationToken);
+
+    /// <summary>
+    /// Carries on a conversation by the id of the session it was held in, and watches it. One
+    /// that ended is reopened with what was said in it.
+    /// </summary>
+    public async Task<Session> ResumeAsync(string id, CancellationToken cancellationToken = default)
+    {
+        var got = await Client.GetAsync<Models.Session>(
+            $"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}", cancellationToken: cancellationToken).ConfigureAwait(false);
+        var session = await Session.OpenAsync(Client, got, Tools, UserId, new Session.Watch(), cancellationToken).ConfigureAwait(false);
+        Volatile.Write(ref _session, session);
+        return session;
+    }
 
     /// <summary>
     /// Rings somebody from one of the customer's numbers and holds the conversation when they answer.
@@ -545,18 +574,19 @@ public sealed class Agent : IAsyncDisposable
         {
             throw new ConfigurationException("a call needs a number to ring from and one to ring");
         }
-        var call = await Edge.CreateCallAsync(null, null, UserId, cancellationToken).ConfigureAwait(false);
-        // Placing the call makes its own routing rule, pinned to the call named here, so the
-        // answered leg arrives in the call this agent is about to join.
+        // Placing the call makes its own routing rule, pinned to the call of the session it
+        // names, so the answered leg arrives in the call this agent is about to join.
         var placed = await Client.PostAsync<PlacedCall>("/v1/phone/calls", new PlaceCallRequest
         {
             From = from,
             To = to,
-            CallId = call.Id,
-            CallType = call.Type,
             Tags = _options.CostTracking is { Count: > 0 } costs ? new Dictionary<string, string>(costs) : null,
         }, cancellationToken).ConfigureAwait(false);
-        return await OpenAsync(call, options, new SessionPhone { Number = from, VendorCallId = placed.VendorCallId }, true, cancellationToken)
+        if (placed.SessionId is not { Length: > 0 } sessionId)
+        {
+            throw new RouterException(0, "POST /v1/phone/calls", "the router placed the call for no session");
+        }
+        return await OpenAsync(sessionId, true, options, new SessionPhone { Number = from, VendorCallId = placed.VendorCallId }, true, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -564,8 +594,10 @@ public sealed class Agent : IAsyncDisposable
     /// Answers the next call to one of the customer's numbers.
     /// </summary>
     /// <remarks>
-    /// The number is pointed at a fresh Stream call, the agent joins it, and this waits until
-    /// somebody rings and says something. What they said is still on the session's events.
+    /// The number is attached, so every caller lands in a call of their own, and this waits
+    /// for the router to hand the next one over, joins it, and waits until the caller says
+    /// something. What they said is still on the session's events. A worker answering many
+    /// calls uses <see cref="Dispatch.WaitForCall"/> and <see cref="JoinAsync(InboundCall, SessionOptions?, CancellationToken)"/> instead.
     /// </remarks>
     public async Task<Session> WaitForCallAsync(string number, SessionOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -573,10 +605,34 @@ public sealed class Agent : IAsyncDisposable
         {
             throw new ConfigurationException("there is no number to answer on");
         }
-        var call = await Edge.CreateCallAsync(null, null, UserId, cancellationToken).ConfigureAwait(false);
         await Client.PostAsync<PhoneNumber>($"/v1/phone/numbers/{VisionAgentsClient.Escape(number)}/attach",
-            new AttachNumberRequest { CallId = call.Id, CallType = call.Type }, cancellationToken).ConfigureAwait(false);
-        var session = await OpenAsync(call, options, new SessionPhone { Number = number }, false, cancellationToken).ConfigureAwait(false);
+            new AttachNumberRequest(), cancellationToken).ConfigureAwait(false);
+
+        var arrived = new TaskCompletionSource<InboundCall>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var dispatch = new Dispatch(new DispatchOptions { Client = Client, Capacity = 1 }).WaitForCall(call =>
+        {
+            if (call.CalledNumber != number)
+            {
+                throw new InvalidOperationException($"this agent is waiting on {number}, not {call.CalledNumber}");
+            }
+            if (!arrived.TrySetResult(call))
+            {
+                throw new InvalidOperationException("this agent is already answering a call");
+            }
+            return Task.CompletedTask;
+        });
+        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var running = dispatch.RunAsync(waiting.Token);
+        if (await Task.WhenAny(arrived.Task, running).ConfigureAwait(false) != arrived.Task)
+        {
+            await running.ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new InvalidOperationException("stopped waiting before anybody rang");
+        }
+        await waiting.CancelAsync().ConfigureAwait(false);
+        await running.ConfigureAwait(false);
+
+        var session = await JoinAsync(await arrived.Task.ConfigureAwait(false), options, cancellationToken).ConfigureAwait(false);
         try
         {
             await session.HeardAsync(cancellationToken).ConfigureAwait(false);
@@ -591,9 +647,9 @@ public sealed class Agent : IAsyncDisposable
 
     /// <summary>A link a person can open to join the session's call from a browser and hear the agent.</summary>
     public string MonitorUrl(Session session) =>
-        session.CallId == ""
+        !session.Voice.Started
             ? throw new ConfigurationException("a conversation held in writing has no call to watch")
-            : Edge.MonitorUrl(new Call(session.CallId, session.CallType), "monitor-" + session.Id, "Monitor");
+            : Edge.MonitorUrl(session.Call, "monitor-" + session.Id, "Monitor");
 
     /// <summary>Closes the conversation the agent opened last, and the client if the agent made it.</summary>
     public async ValueTask DisposeAsync()
@@ -610,24 +666,20 @@ public sealed class Agent : IAsyncDisposable
     }
 
     /// <summary>The session request, rendered from the agent and the conversation.</summary>
-    internal CreateSessionRequest Request(Call? call, SessionOptions? options, SessionPhone? phone, bool navigating)
+    internal CreateSessionRequest Request(string? sessionId, bool voice, SessionOptions? options, SessionPhone? phone, bool navigating)
     {
         var pipeline = _options.Pipeline ?? new Pipeline();
         options ??= new SessionOptions();
         return new CreateSessionRequest
         {
-            Id = VisionAgentsClient.Blank(options.Id),
-            CallId = call?.Id,
-            CallType = call?.Type,
-            Text = call is null ? true : null,
+            Id = VisionAgentsClient.Blank(sessionId) ?? VisionAgentsClient.Blank(options.Id),
+            StartVoice = voice ? true : null,
             Agent = _configId == "" ? VisionAgentsClient.Blank(_config) : null,
             ConfigId = VisionAgentsClient.Blank(_configId),
             UserId = UserId,
             UserName = Name,
             AgentId = VisionAgentsClient.Blank(options.AgentId) ?? UserId,
-            Instructions = VisionAgentsClient.Blank(Instructions),
             Incognito = options.Incognito ? true : null,
-            ConversationId = VisionAgentsClient.Blank(options.ConversationId),
             Title = VisionAgentsClient.Blank(options.Title),
             Description = VisionAgentsClient.Blank(options.Description),
             ProjectId = VisionAgentsClient.Blank(options.ProjectId),
@@ -637,7 +689,9 @@ public sealed class Agent : IAsyncDisposable
             Stt = VisionAgentsClient.Blank(pipeline.Stt),
             Tts = VisionAgentsClient.Blank(pipeline.Tts),
             Voice = VisionAgentsClient.Blank(pipeline.Voice),
-            Greeting = VisionAgentsClient.Blank(pipeline.Greeting),
+            Greeting = pipeline.Greeting is { Length: > 0 } greeting
+                ? new Greeting { Text = greeting, Mode = VisionAgentsClient.Blank(pipeline.GreetingMode) }
+                : null,
             Languages = pipeline.Language is { Length: > 0 } language ? [language] : null,
             Backchannel = pipeline.Backchannel,
             MaxTokens = pipeline.MaxTokens is > 0 ? pipeline.MaxTokens : null,
@@ -678,7 +732,7 @@ public sealed class Agent : IAsyncDisposable
         };
     }
 
-    private async Task<Session> OpenAsync(Call? call, SessionOptions? options, SessionPhone? phone, bool navigating, CancellationToken cancellationToken)
+    private async Task<Session> OpenAsync(string? sessionId, bool voice, SessionOptions? options, SessionPhone? phone, bool navigating, CancellationToken cancellationToken)
     {
         if (Folder is not null && _configId == "")
         {
@@ -696,7 +750,7 @@ public sealed class Agent : IAsyncDisposable
             }
         }
         var created = await Client.PostAsync<Models.Session>("/v1/agents/sessions",
-            Request(call, options, phone, navigating), cancellationToken).ConfigureAwait(false);
+            Request(sessionId, voice, options, phone, navigating), cancellationToken).ConfigureAwait(false);
         var session = await Session.OpenAsync(Client, created, Tools, UserId, new Session.Watch(), cancellationToken).ConfigureAwait(false);
         Volatile.Write(ref _session, session);
         return session;
@@ -734,14 +788,18 @@ public sealed class Agent : IAsyncDisposable
         request.Tts = VisionAgentsClient.Blank(declared.Tts);
         request.Sts = declared.Sts;
         request.Voice = VisionAgentsClient.Blank(declared.Voice);
-        request.Speed = declared.Speed != 0 ? declared.Speed : null;
         request.Llm = VisionAgentsClient.Blank(declared.Llm);
         request.Harness = VisionAgentsClient.Blank(declared.Harness);
-        request.ThinkingLlm = VisionAgentsClient.Blank(declared.Subagent);
+        request.Subagent = VisionAgentsClient.Blank(declared.Subagent);
         request.Search = VisionAgentsClient.Blank(declared.Search);
-        request.Greeting = VisionAgentsClient.Blank(declared.Greeting);
+        request.Greeting = declared.Greeting is { } greeting
+            ? new Greeting { Text = greeting.Text, Mode = VisionAgentsClient.Blank(greeting.Mode) }
+            : null;
         request.Sandbox = VisionAgentsClient.Blank(declared.Sandbox);
-        request.AgentPlugins = declared.Plugins.Count > 0 ? [.. declared.Plugins] : null;
+        // Deprecated for connectors, but still what the router reads until plugins are removed.
+#pragma warning disable CS0612
+        request.Plugins = declared.Plugins.Count > 0 ? [.. declared.Plugins] : null;
+#pragma warning restore CS0612
         request.Keyterms = declared.Keyterms.Count > 0 ? [.. declared.Keyterms] : null;
         request.Tags = declared.Tags.Count > 0 ? new Dictionary<string, string>(declared.Tags) : null;
         request.Video = declared.Video is { } video

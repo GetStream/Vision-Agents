@@ -59,14 +59,54 @@ func (c CredentialChange) Rotated() bool {
 	return c.Previous.Refresh != "" && c.Previous.Refresh != c.Current.Refresh
 }
 
-// LogAttrs are the change as slog key-value pairs, the names the audit's columns have too.
+// LogAttrs are the change as slog key-value pairs, the names the audit's columns have too. An
+// expiry the provider did not say is left out, as the audit leaves its column NULL, rather
+// than logged as Go's zero time.
 func (c CredentialChange) LogAttrs() []any {
-	return []any{
+	attrs := []any{
 		"previous_access_fingerprint", c.Previous.Access, "access_fingerprint", c.Current.Access,
 		"previous_refresh_fingerprint", c.Previous.Refresh, "refresh_fingerprint", c.Current.Refresh,
 		"rotated", c.Rotated(),
-		"access_expires_at", c.Current.AccessExpiresAt, "refresh_expires_at", c.Current.RefreshExpiresAt,
 	}
+	if !c.Current.AccessExpiresAt.IsZero() {
+		attrs = append(attrs, "access_expires_at", c.Current.AccessExpiresAt)
+	}
+	if !c.Current.RefreshExpiresAt.IsZero() {
+		attrs = append(attrs, "refresh_expires_at", c.Current.RefreshExpiresAt)
+	}
+	return attrs
+}
+
+// ClientNamer is a Scheme whose stored credentials were issued to an OAuth client it can name,
+// so which client a connection's grant belongs to can be read without unsealing them (AI-990
+// F16). It is optional: a scheme without an OAuth client does not implement it.
+type ClientNamer interface {
+	// Client is the client stored was issued to. An error means stored is not credentials
+	// this scheme wrote, and never quotes them.
+	Client(stored StoredCredentials) (OAuthClient, error)
+}
+
+// OAuthClient names the OAuth client a grant was issued to. The client identifier is not a
+// secret (RFC 6749 section 2.2), so it may be logged and shown; the client's secret is never
+// part of it.
+type OAuthClient struct {
+	Registration ClientRegistrationMethod
+	ID           string
+}
+
+// ClientOf is the client stored was issued to, by the scheme in schemes that wrote it, and false
+// when that scheme is not a ClientNamer or cannot read it: like FingerprintsOf, a missing
+// client leaves a record short, never a credential event undone.
+func ClientOf(schemes map[string]Scheme, stored StoredCredentials) (OAuthClient, bool) {
+	namer, ok := schemes[stored.Scheme].(ClientNamer)
+	if !ok {
+		return OAuthClient{}, false
+	}
+	client, err := namer.Client(stored)
+	if err != nil || client.ID == "" {
+		return OAuthClient{}, false
+	}
+	return client, true
 }
 
 // FingerprintsOf is stored's fingerprints by the scheme in schemes that wrote it, and the

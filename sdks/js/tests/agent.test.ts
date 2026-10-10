@@ -70,12 +70,11 @@ describe("Agent", () => {
   it("holds a conversation in writing without joining a call", async () => {
     await chatting(new Agent({ name: "John", instructions: "Be brief.", client: api }));
 
-    const body = requested();
-    assert.equal(body.text, true);
-    assert.equal(body.call_id, undefined);
-    assert.equal(body.instructions, "Be brief.");
-    assert.equal(body.user_id, "john");
-    assert.equal(body.user_name, "John");
+    const body = requested() as Record<string, unknown>;
+    assert.equal(body["start_voice"], undefined);
+    assert.equal(body["instructions"], undefined, "instructions reach the backend with sync");
+    assert.equal(body["user_id"], "john");
+    assert.equal(body["user_name"], "John");
   });
 
   it("renders the models it was declared with into the session", async () => {
@@ -102,7 +101,7 @@ describe("Agent", () => {
     assert.equal(body.tts, "sonic_36");
     assert.equal(body.voice, "amy");
     assert.deepEqual(body.languages, ["en"]);
-    assert.equal(body.greeting, "Hello");
+    assert.deepEqual(body.greeting, { text: "Hello" });
     assert.equal(body.backchannel, true);
     assert.equal(body.max_tokens, 200);
     assert.equal(body.tool_timeout_ms, 5_000);
@@ -158,13 +157,13 @@ describe("Agent", () => {
 
     const synced = router.requestsTo("POST", "/v1/agents/sync")[0]?.body as Schemas["SyncAgentRequest"];
     assert.equal(synced.harness, "default");
-    assert.equal(synced.thinking_llm, "llm-slow");
+    assert.equal(synced.subagent, "llm-slow");
     assert.equal(synced.sandbox, "daytona");
     assert.deepEqual(synced.skills, [
       { name: "think", description: "Think", instructions: "Work it out.", config_id: "" },
     ]);
     const body = requested() as Record<string, unknown>;
-    for (const key of ["harness", "thinking_llm", "sandbox", "skills", "tasks"]) {
+    for (const key of ["harness", "subagent", "sandbox", "skills", "tasks"]) {
       assert.equal(key in body, false, `${key} went on the session`);
     }
   });
@@ -241,12 +240,13 @@ describe("Agent", () => {
     assert.equal(agent.instructions, "Be warm.");
   });
 
-  it("answers a call that arrived on the dispatch socket without creating one", async () => {
+  it("answers a call that arrived on the dispatch socket in the session it names", async () => {
     const agent = new Agent({ name: "John", client: api });
 
     const opening = agent.answer({
-      callId: "call_1",
+      callId: "sess_1",
       callType: "agent",
+      sessionId: "sess_1",
       calledNumber: "+15551234567",
       callerNumber: "+15557654321",
       custom: {},
@@ -255,64 +255,122 @@ describe("Agent", () => {
     const held = await opening;
 
     const body = requested();
-    assert.equal(body.call_id, "call_1");
-    assert.equal(body.call_type, "agent");
+    assert.equal(body.id, "sess_1");
+    assert.equal(body.start_voice, true, "a call is not held in writing");
     assert.deepEqual(body.phone, { number: "+15551234567" });
-    assert.equal(body.text, undefined, "a call is not held in writing");
 
     connection.socket.close();
     await held.wait();
   });
 
-  it("rings somebody and joins the call it placed, navigating", async () => {
+  it("refuses a call that names no session, since there is no call to join", async () => {
+    const agent = new Agent({ name: "John", client: api });
+    const call = {
+      callId: "",
+      callType: "default",
+      sessionId: "",
+      calledNumber: "+15551234567",
+      callerNumber: "",
+      custom: {},
+    };
+
+    await assert.rejects(() => agent.answer(call), ConfigurationError);
+    assert.equal(router.received.length, 0);
+  });
+
+  it("rings somebody and joins the session the call was placed for, navigating", async () => {
     router.serve("POST", "/v1/phone/calls", {
       status: 202,
-      body: { vendor: "twilio", vendor_call_id: "vc_1", call_id: "demo", call_type: "agent" },
+      body: { status: "ringing", vendor: "twilio", vendor_call_id: "vc_1", session_id: "sess_1" },
     });
-    const agent = new Agent({
-      name: "John",
-      client: api,
-      costTracking: { team: "sales" },
-      edge: new Edge({ apiKey: "key", apiSecret: "secret", fetch: streamCallCreated }),
-    });
+    const agent = new Agent({ name: "John", client: api, costTracking: { team: "sales" } });
 
     const opening = agent.startCall("+15551234567", "+15557654321");
     const connection = await router.socket();
     const held = await opening;
 
-    const placed = router.received.find((one) => one.path === "/v1/phone/calls")?.body as {
-      from: string;
-      to: string;
-      call_id: string;
-      tags: Record<string, string>;
-    };
-    assert.equal(placed.from, "+15551234567");
-    assert.equal(placed.to, "+15557654321");
-    assert.deepEqual(placed.tags, { team: "sales" });
+    const placed = router.received.find((one) => one.path === "/v1/phone/calls")?.body;
+    assert.deepEqual(placed, { from: "+15551234567", to: "+15557654321", tags: { team: "sales" } });
 
     const body = requested();
+    assert.equal(body.id, "sess_1");
+    assert.equal(body.start_voice, true);
     assert.equal(body.navigating, true);
     assert.deepEqual(body.phone, { number: "+15551234567", vendor_call_id: "vc_1" });
-    assert.equal(body.call_id, placed.call_id);
 
     connection.socket.close();
     await held.wait();
   });
 
-  it("builds a link to the call it joined, as a listener of its own", async () => {
+  it("answers the next caller to a number in the session the router opened the call for", async () => {
+    router.serve("POST", "/v1/phone/numbers/%2B15551234567/attach", {
+      body: { number: "+15551234567", trunk_id: "t_1", sip_uri: "sip:x" },
+    });
+    const agent = new Agent({ name: "John", client: api });
+
+    const waiting = agent.waitForCall("+15551234567");
+    const dispatch = await router.socket();
+    assert.equal(dispatch.path, "/v1/dispatch");
+    assert.equal(dispatch.query.get("capacity"), "1");
+    dispatch.send({
+      type: "call",
+      work_id: "work_1",
+      call_id: "sess_1",
+      call_type: "agent",
+      session_id: "sess_1",
+      called_number: "+15551234567",
+    });
+    const connection = await router.socket();
+    connection.send({ type: "heard", text: "hello?" });
+    const held = await waiting;
+
+    const attached = router.received.find((one) => one.path.endsWith("/attach"))?.body;
+    assert.deepEqual(attached, {}, "a number is attached to the agent, not to a call");
+    const body = requested();
+    assert.equal(body.id, "sess_1");
+    assert.equal(body.start_voice, true);
+    assert.deepEqual(body.phone, { number: "+15551234567" });
+
+    connection.socket.close();
+    await held.wait();
+  });
+
+  it("builds a link to the session's own call, as a listener of its own", async () => {
     const agent = new Agent({
       name: "John",
       client: api,
       edge: new Edge({ apiKey: "key", apiSecret: "secret", fetch: streamCallCreated }),
     });
 
-    const opening = agent.join({ id: "demo" });
+    const opening = agent.join();
     const connection = await router.socket();
     const held = await opening;
 
+    assert.equal(requested().start_voice, true);
     const url = new URL(await agent.monitorURL(held));
-    assert.equal(url.pathname, "/video/demos/join/demo");
+    assert.equal(url.pathname, "/video/demos/join/sess_1");
     assert.equal(url.searchParams.get("user_name"), "Monitor");
+
+    connection.socket.close();
+    await held.wait();
+  });
+
+  it("has no link to give for a conversation held in writing", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: { ...session, call_id: "", call_type: "" },
+    });
+    const agent = new Agent({
+      name: "John",
+      client: api,
+      edge: new Edge({ apiKey: "key", apiSecret: "secret", fetch: streamCallCreated }),
+    });
+
+    const opening = agent.chat();
+    const connection = await router.socket();
+    const held = await opening;
+
+    await assert.rejects(() => agent.monitorURL(held), ConfigurationError);
 
     connection.socket.close();
     await held.wait();
@@ -339,7 +397,7 @@ describe("Agent", () => {
         settings: {
           llm: "llm-smart",
           stt: "flux",
-          speed: 0.9,
+          greeting: { text: "Hello", mode: "variation" },
           harness: "default",
           tags: { team: "support" },
           dispatch: { incoming_call: "disabled", text: "enabled" },
@@ -369,7 +427,7 @@ describe("Agent", () => {
       assert.equal(body.stt, "flux", "what only agent.yaml says still goes");
       assert.deepEqual(body.tags, { team: "support" });
       assert.deepEqual(body.dispatch, { incoming_call: "disabled", text: "enabled" });
-      assert.equal(body.speed, 0.9);
+      assert.deepEqual(body.greeting, { text: "Hello", mode: "variation" });
       assert.equal(body.harness, "default");
       assert.equal(body.skills?.length, 1);
       assert.equal(body.knowledge?.length, 1);

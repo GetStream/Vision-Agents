@@ -29,14 +29,17 @@ $agent = new Agent(
     memoryFilter: ['user_id' => '123'],
 );
 
-$session = $agent->join('hello');
+$session = $agent->join();
 $session->responses->create('Greet the user in one short sentence.');
 echo $agent->monitorUrl($session), "\n";
 ```
 
-`join` creates the Stream call with `STREAM_API_KEY` and `STREAM_API_SECRET` and returns once
-the backend is in it. What is written in code wins over the stored config; what is left out
-is the config's to decide.
+`join` opens a session with voice started: the backend joins the session's own call,
+`agent:<session id>`, and `join` returns once it is in it. `stopVoice()` carries the
+conversation on in writing and `startVoice()` puts the agent back on the call;
+`$agent->resume($id)` picks a session up again by id. What is written in code wins over the
+stored config; what is left out is the config's to decide. Instructions reach the router only
+through `sync()`.
 
 ## Who is calling
 
@@ -77,7 +80,7 @@ Stream Chat unless it is opened with `incognito: true`. Neither can be rewound (
 answers 400): fork at the response instead. `$session->responses->rewind()` is for a call, and
 takes a response `id`, not a `turn_id`.
 
-One method changes a session: title, description, custom labels, instructions, models and
+One method changes a session: title, description, custom labels, models and
 voice, from the next turn, for this session only. An ended session can still be renamed by id:
 
 ```php
@@ -106,7 +109,7 @@ $client->memories->truncate('u1');          // everything remembered about one u
 
 ```
 support/
-  agent.yaml          name, models, mode, speed, harness, keyterms, video, dispatch, ...
+  agent.yaml          name, models, mode, subagent, greeting {text, mode}, plugins, harness, dispatch, ...
   instructions.md
   guardrail.md
   skills/refunds.md   frontmatter: description, deadline, capture_video
@@ -171,6 +174,10 @@ shows, and `executor: 'client'` for a tool a person's device runs instead.
 $session = $agent->outboundCall(from: '+15550001111', to: '+15552223333');
 ```
 
+The router places the call for a session of its own and the agent joins it with voice. An
+inbound call arrives with the `sessionId` of the call the caller was routed into, and
+`answer($call)` joins that session.
+
 ## Workers: calls and messages the router hands you
 
 Run this as a long-lived CLI process, not in a web request.
@@ -200,7 +207,7 @@ Each call and message ends with a `done` frame to the router, carrying what the 
 if it threw. SIGINT and SIGTERM stop it where pcntl is loaded; work still running is waited for.
 
 An agent whose `agent.yaml` says `dispatch: {text: enabled}` leaves what end users write to
-the worker: the message arrives with `sessionId` and `commandId`, and `answer()` has the
+the worker: the message arrives with `sessionId` and `requestId`, and `answer()` has the
 model reply on that session, using the worker's server credential acting for the writer.
 
 ### Hosted tools

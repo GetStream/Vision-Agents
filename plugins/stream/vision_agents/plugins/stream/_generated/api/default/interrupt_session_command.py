@@ -13,14 +13,14 @@ from ...types import Response
 
 def _get_kwargs(
     id: str,
-    command_id: str,
+    request_id: str,
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/agents/sessions/{id}/commands/{command_id}/interrupt".format(
+        "url": "/v1/agents/sessions/{id}/commands/{request_id}/interrupt".format(
             id=quote(str(id), safe=""),
-            command_id=quote(str(command_id), safe=""),
+            request_id=quote(str(request_id), safe=""),
         ),
     }
 
@@ -79,7 +79,7 @@ def _build_response(
 
 def sync_detailed(
     id: str,
-    command_id: str,
+    request_id: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[CommandReceipt | ErrorResponse]:
@@ -95,7 +95,7 @@ def sync_detailed(
 
     Args:
         id (str): The session, as returned when it was created.
-        command_id (str): The client's own command id, as sent when the command was submitted.
+        request_id (str): The request id the question was sent with.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -107,7 +107,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         id=id,
-        command_id=command_id,
+        request_id=request_id,
     )
 
     response = client.get_httpx_client().request(
@@ -119,7 +119,7 @@ def sync_detailed(
 
 def sync(
     id: str,
-    command_id: str,
+    request_id: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> CommandReceipt | ErrorResponse | None:
@@ -135,7 +135,7 @@ def sync(
 
     Args:
         id (str): The session, as returned when it was created.
-        command_id (str): The client's own command id, as sent when the command was submitted.
+        request_id (str): The request id the question was sent with.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -147,14 +147,14 @@ def sync(
 
     return sync_detailed(
         id=id,
-        command_id=command_id,
+        request_id=request_id,
         client=client,
     ).parsed
 
 
 async def asyncio_detailed(
     id: str,
-    command_id: str,
+    request_id: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[CommandReceipt | ErrorResponse]:
@@ -170,7 +170,7 @@ async def asyncio_detailed(
 
     Args:
         id (str): The session, as returned when it was created.
-        command_id (str): The client's own command id, as sent when the command was submitted.
+        request_id (str): The request id the question was sent with.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,7 +182,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         id=id,
-        command_id=command_id,
+        request_id=request_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -192,7 +192,7 @@ async def asyncio_detailed(
 
 async def asyncio(
     id: str,
-    command_id: str,
+    request_id: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> CommandReceipt | ErrorResponse | None:
@@ -208,7 +208,7 @@ async def asyncio(
 
     Args:
         id (str): The session, as returned when it was created.
-        command_id (str): The client's own command id, as sent when the command was submitted.
+        request_id (str): The request id the question was sent with.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,7 +221,7 @@ async def asyncio(
     return (
         await asyncio_detailed(
             id=id,
-            command_id=command_id,
+            request_id=request_id,
             client=client,
         )
     ).parsed

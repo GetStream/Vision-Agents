@@ -249,12 +249,30 @@ func (s *Store) KnowledgeDocument(ctx context.Context, customerID, id string) (K
 func (s *Store) CustomerKnowledgeDocuments(
 	ctx context.Context, customerID, namespace string,
 ) ([]KnowledgeDocument, error) {
+	return s.customerKnowledgeDocuments(ctx, customerID, namespace, false)
+}
+
+// CustomerKnowledgeDocumentsWithText returns the same documents with the text they were
+// posted as. It is for the callers that compare the text rather than list it: what a sync
+// would write over, and what a change records. A listing reads the lighter one.
+func (s *Store) CustomerKnowledgeDocumentsWithText(
+	ctx context.Context, customerID, namespace string,
+) ([]KnowledgeDocument, error) {
+	return s.customerKnowledgeDocuments(ctx, customerID, namespace, true)
+}
+
+func (s *Store) customerKnowledgeDocuments(
+	ctx context.Context, customerID, namespace string, withText bool,
+) ([]KnowledgeDocument, error) {
 	if customerID == "" {
 		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	var documents []KnowledgeDocument
-	query := s.db.NewSelect().Model(&documents).ExcludeColumn("text").Where("customer_id = ?", customerID)
+	query := s.db.NewSelect().Model(&documents).Where("customer_id = ?", customerID)
+	if !withText {
+		query = query.ExcludeColumn("text")
+	}
 	if namespace != "" {
 		query = query.Where("namespace = ?", namespace)
 	}
