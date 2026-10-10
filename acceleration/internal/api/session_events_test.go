@@ -123,10 +123,12 @@ func (s *SessionEventsSuite) TestTheCallDoesNotOutliveASocketThatEndsIt() {
 
 	s.Require().NoError(watching.WriteJSON(map[string]any{"type": "close"}))
 
+	// The agent is given a moment to finish what it is saying before the session ends.
 	s.Require().Eventually(func() bool {
-		status, _ := s.serverClient.call(http.MethodGet, "/v1/agents/sessions/"+opened.Id, nil)
-		return status == http.StatusNotFound
-	}, settleFor, 10*time.Millisecond, "the call outlived the socket that closed it")
+		var read Session
+		status := s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+opened.Id, nil, &read)
+		return status == http.StatusNotFound || read.State == Ended
+	}, 2*settleFor, 50*time.Millisecond, "the call outlived the socket that closed it")
 }
 
 func (s *SessionEventsSuite) TestAnotherAppCannotWatchASession() {
