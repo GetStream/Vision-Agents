@@ -2186,6 +2186,10 @@ components:
       properties:
         category:
           type: string
+        channel:
+          description: 'The connector is an inbound channel: its manifest reads messages a provider delivers to the router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A dashboard warns on it before a delete that would end those replies.'
+          readOnly: true
+          type: boolean
         client:
           $ref: '#/components/schemas/ConnectorClient'
         created_at:
@@ -2244,6 +2248,7 @@ components:
         - inputs
         - scopes
         - client
+        - channel
         - created_at
       type: object
     ConnectorAuditAction:
@@ -2302,7 +2307,7 @@ components:
           type: string
         credential:
           $ref: '#/components/schemas/ConnectorAuditCredential'
-          description: The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens.
+          description: The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a user's erasure, a connector's delete, and a connection whose scheme does not name its tokens. A connection delete's row names the tokens it ended.
         id:
           type: string
         latency_ms:

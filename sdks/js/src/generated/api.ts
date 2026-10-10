@@ -4791,6 +4791,8 @@ export type components = {
         /** @description A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router. */
         readonly Connector: {
             readonly category?: string;
+            /** @description The connector is an inbound channel: its manifest reads messages a provider delivers to the router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A dashboard warns on it before a delete that would end those replies. */
+            readonly channel: boolean;
             readonly client: components["schemas"]["ConnectorClient"];
             /**
              * Format: date-time
@@ -4860,7 +4862,7 @@ export type components = {
             readonly connector_id: string;
             /** Format: date-time */
             readonly created_at: string;
-            /** @description The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens. */
+            /** @description The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a user's erasure, a connector's delete, and a connection whose scheme does not name its tokens. A connection delete's row names the tokens it ended. */
             readonly credential?: components["schemas"]["ConnectorAuditCredential"];
             readonly id: string;
             /**
