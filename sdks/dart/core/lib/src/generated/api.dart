@@ -133,6 +133,16 @@ final class Operations {
     return SearchAnswer.fromJson(json);
   }
 
+  /// Start voice on a session.
+  Future<Session> startSessionVoice({required String id}) async {
+    final json = await _wire.send(
+      'POST',
+      '/v1/agents/sessions/${Uri.encodeComponent(id)}/voice',
+      operation: 'startSessionVoice',
+    );
+    return Session.fromJson(json);
+  }
+
   /// Stop a running session.
   Future<void> stopSession({required String id}) async {
     await _wire.send(
@@ -140,6 +150,16 @@ final class Operations {
       '/v1/agents/sessions/${Uri.encodeComponent(id)}/stop',
       operation: 'stopSession',
     );
+  }
+
+  /// Stop voice on a session.
+  Future<Session> stopSessionVoice({required String id}) async {
+    final json = await _wire.send(
+      'DELETE',
+      '/v1/agents/sessions/${Uri.encodeComponent(id)}/voice',
+      operation: 'stopSessionVoice',
+    );
+    return Session.fromJson(json);
   }
 
   /// Change a session.
@@ -323,22 +343,58 @@ final class AgentResponsePage {
   };
 }
 
+/// What the call spent, summed over every request it made.
+final class CallUsage {
+  const CallUsage({
+    required this.cachedInputTokens,
+    required this.costMicros,
+    required this.inputTokens,
+    required this.outputTokens,
+    required this.requests,
+  });
+
+  factory CallUsage.fromJson(Object? value) {
+    final json = _object(value, 'CallUsage');
+    return CallUsage(
+      cachedInputTokens: _int(json['cached_input_tokens'], 'CallUsage.cached_input_tokens'),
+      costMicros: _int(json['cost_micros'], 'CallUsage.cost_micros'),
+      inputTokens: _int(json['input_tokens'], 'CallUsage.input_tokens'),
+      outputTokens: _int(json['output_tokens'], 'CallUsage.output_tokens'),
+      requests: _int(json['requests'], 'CallUsage.requests'),
+    );
+  }
+
+  final int cachedInputTokens;
+  final int costMicros;
+  final int inputTokens;
+  final int outputTokens;
+  final int requests;
+
+  Map<String, Object?> toJson() => {
+    'cached_input_tokens': cachedInputTokens,
+    'cost_micros': costMicros,
+    'input_tokens': inputTokens,
+    'output_tokens': outputTokens,
+    'requests': requests,
+  };
+}
+
 final class CreateResponseRequest {
-  const CreateResponseRequest({this.commandId, this.images, required this.text, this.videos});
+  const CreateResponseRequest({this.images, this.requestId, required this.text, this.videos});
 
   factory CreateResponseRequest.fromJson(Object? value) {
     final json = _object(value, 'CreateResponseRequest');
     return CreateResponseRequest(
-      commandId: switch (json['command_id']) {
-        null => null,
-        final Object value => _string(value, 'CreateResponseRequest.command_id'),
-      },
       images: switch (json['images']) {
         null => null,
         final Object value => [
           for (final item in _list(value, 'CreateResponseRequest.images'))
             ImageSource.fromJson(item),
         ],
+      },
+      requestId: switch (json['request_id']) {
+        null => null,
+        final Object value => _string(value, 'CreateResponseRequest.request_id'),
       },
       text: _string(json['text'], 'CreateResponseRequest.text'),
       videos: switch (json['videos']) {
@@ -351,14 +407,14 @@ final class CreateResponseRequest {
     );
   }
 
-  final String? commandId;
   final List<ImageSource>? images;
+  final String? requestId;
   final String text;
   final List<VideoSource>? videos;
 
   Map<String, Object?> toJson() => {
-    'command_id': ?commandId,
     if (images case final value?) 'images': [for (final item in value) item.toJson()],
+    'request_id': ?requestId,
     'text': text,
     if (videos case final value?) 'videos': [for (final item in value) item.toJson()],
   };
@@ -369,19 +425,15 @@ final class CreateSessionRequest {
     this.agent,
     this.agentId,
     this.backchannel,
-    this.callId,
-    this.callType,
     this.configId,
     this.connectorBindings,
     this.contextTruncated,
-    this.conversationId,
     this.custom,
     this.description,
     this.greeting,
     this.history,
     this.id,
     this.incognito,
-    this.instructions,
     this.keyterms,
     this.languages,
     this.llm,
@@ -393,10 +445,10 @@ final class CreateSessionRequest {
     this.phone,
     this.projectId,
     this.search,
+    this.startVoice,
     this.sts,
     this.stt,
     this.tags,
-    this.text,
     this.title,
     this.toolTimeoutMs,
     this.tools,
@@ -422,14 +474,6 @@ final class CreateSessionRequest {
         null => null,
         final Object value => _bool(value, 'CreateSessionRequest.backchannel'),
       },
-      callId: switch (json['call_id']) {
-        null => null,
-        final Object value => _string(value, 'CreateSessionRequest.call_id'),
-      },
-      callType: switch (json['call_type']) {
-        null => null,
-        final Object value => _string(value, 'CreateSessionRequest.call_type'),
-      },
       configId: switch (json['config_id']) {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.config_id'),
@@ -445,10 +489,6 @@ final class CreateSessionRequest {
         null => null,
         final Object value => _bool(value, 'CreateSessionRequest.context_truncated'),
       },
-      conversationId: switch (json['conversation_id']) {
-        null => null,
-        final Object value => _string(value, 'CreateSessionRequest.conversation_id'),
-      },
       custom: switch (json['custom']) {
         null => null,
         final Object value => _object(value, 'CreateSessionRequest.custom'),
@@ -459,7 +499,7 @@ final class CreateSessionRequest {
       },
       greeting: switch (json['greeting']) {
         null => null,
-        final Object value => _string(value, 'CreateSessionRequest.greeting'),
+        final Object value => Greeting.fromJson(value),
       },
       history: switch (json['history']) {
         null => null,
@@ -475,10 +515,6 @@ final class CreateSessionRequest {
       incognito: switch (json['incognito']) {
         null => null,
         final Object value => _bool(value, 'CreateSessionRequest.incognito'),
-      },
-      instructions: switch (json['instructions']) {
-        null => null,
-        final Object value => _string(value, 'CreateSessionRequest.instructions'),
       },
       keyterms: switch (json['keyterms']) {
         null => null,
@@ -530,6 +566,10 @@ final class CreateSessionRequest {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.search'),
       },
+      startVoice: switch (json['start_voice']) {
+        null => null,
+        final Object value => _bool(value, 'CreateSessionRequest.start_voice'),
+      },
       sts: switch (json['sts']) {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.sts'),
@@ -541,10 +581,6 @@ final class CreateSessionRequest {
       tags: switch (json['tags']) {
         null => null,
         final Object value => _strings(value, 'CreateSessionRequest.tags'),
-      },
-      text: switch (json['text']) {
-        null => null,
-        final Object value => _bool(value, 'CreateSessionRequest.text'),
       },
       title: switch (json['title']) {
         null => null,
@@ -586,19 +622,15 @@ final class CreateSessionRequest {
   final String? agent;
   final String? agentId;
   final bool? backchannel;
-  final String? callId;
-  final String? callType;
   final String? configId;
   final List<SessionConnectorBinding>? connectorBindings;
   final bool? contextTruncated;
-  final String? conversationId;
   final Map<String, Object?>? custom;
   final String? description;
-  final String? greeting;
+  final Greeting? greeting;
   final List<HistoryMessage>? history;
   final String? id;
   final bool? incognito;
-  final String? instructions;
   final List<String>? keyterms;
   final List<String>? languages;
   final String? llm;
@@ -610,10 +642,10 @@ final class CreateSessionRequest {
   final SessionPhone? phone;
   final String? projectId;
   final String? search;
+  final bool? startVoice;
   final String? sts;
   final String? stt;
   final Map<String, String>? tags;
-  final bool? text;
   final String? title;
   final int? toolTimeoutMs;
   final List<SessionTool>? tools;
@@ -627,20 +659,16 @@ final class CreateSessionRequest {
     'agent': ?agent,
     'agent_id': ?agentId,
     'backchannel': ?backchannel,
-    'call_id': ?callId,
-    'call_type': ?callType,
     'config_id': ?configId,
     if (connectorBindings case final value?)
       'connector_bindings': [for (final item in value) item.toJson()],
     'context_truncated': ?contextTruncated,
-    'conversation_id': ?conversationId,
     'custom': ?custom,
     'description': ?description,
-    'greeting': ?greeting,
+    if (greeting case final value?) 'greeting': value.toJson(),
     if (history case final value?) 'history': [for (final item in value) item.toJson()],
     'id': ?id,
     'incognito': ?incognito,
-    'instructions': ?instructions,
     'keyterms': ?keyterms,
     'languages': ?languages,
     'llm': ?llm,
@@ -652,10 +680,10 @@ final class CreateSessionRequest {
     if (phone case final value?) 'phone': value.toJson(),
     'project_id': ?projectId,
     'search': ?search,
+    'start_voice': ?startVoice,
     'sts': ?sts,
     'stt': ?stt,
     'tags': ?tags,
-    'text': ?text,
     'title': ?title,
     'tool_timeout_ms': ?toolTimeoutMs,
     if (tools case final value?) 'tools': [for (final item in value) item.toJson()],
@@ -671,12 +699,10 @@ final class CreateSessionRequest {
 final class ForkSessionRequest {
   const ForkSessionRequest({
     this.agent,
-    this.callId,
     this.configId,
     this.custom,
     this.description,
     this.incognito,
-    this.instructions,
     this.messages,
     this.modelOverwrites,
     this.projectId,
@@ -690,10 +716,6 @@ final class ForkSessionRequest {
       agent: switch (json['agent']) {
         null => null,
         final Object value => _string(value, 'ForkSessionRequest.agent'),
-      },
-      callId: switch (json['call_id']) {
-        null => null,
-        final Object value => _string(value, 'ForkSessionRequest.call_id'),
       },
       configId: switch (json['config_id']) {
         null => null,
@@ -710,10 +732,6 @@ final class ForkSessionRequest {
       incognito: switch (json['incognito']) {
         null => null,
         final Object value => _bool(value, 'ForkSessionRequest.incognito'),
-      },
-      instructions: switch (json['instructions']) {
-        null => null,
-        final Object value => _string(value, 'ForkSessionRequest.instructions'),
       },
       messages: switch (json['messages']) {
         null => null,
@@ -739,12 +757,10 @@ final class ForkSessionRequest {
   }
 
   final String? agent;
-  final String? callId;
   final String? configId;
   final Map<String, Object?>? custom;
   final String? description;
   final bool? incognito;
-  final String? instructions;
   final bool? messages;
   final ModelOverwrites? modelOverwrites;
   final String? projectId;
@@ -753,18 +769,37 @@ final class ForkSessionRequest {
 
   Map<String, Object?> toJson() => {
     'agent': ?agent,
-    'call_id': ?callId,
     'config_id': ?configId,
     'custom': ?custom,
     'description': ?description,
     'incognito': ?incognito,
-    'instructions': ?instructions,
     'messages': ?messages,
     if (modelOverwrites case final value?) 'model_overwrites': value.toJson(),
     'project_id': ?projectId,
     'response_id': ?responseId,
     'title': ?title,
   };
+}
+
+/// What the agent says as it joins, before anyone speaks.
+final class Greeting {
+  const Greeting({this.mode, required this.text});
+
+  factory Greeting.fromJson(Object? value) {
+    final json = _object(value, 'Greeting');
+    return Greeting(
+      mode: switch (json['mode']) {
+        null => null,
+        final Object value => _string(value, 'Greeting.mode'),
+      },
+      text: _string(json['text'], 'Greeting.text'),
+    );
+  }
+
+  final String? mode;
+  final String text;
+
+  Map<String, Object?> toJson() => {'mode': ?mode, 'text': text};
 }
 
 final class GuestUser {
@@ -1209,13 +1244,17 @@ final class Session {
     this.mode,
     this.modelOverwrites,
     this.projectId,
+    this.reviewNotes,
+    this.reviewScore,
     required this.state,
     this.sts,
     this.stt,
+    this.subagent,
+    this.summary,
     this.text,
-    this.thinkingLlm,
     this.title,
     this.tts,
+    this.usage,
     required this.userId,
     this.video,
     this.voice,
@@ -1290,6 +1329,14 @@ final class Session {
         null => null,
         final Object value => _string(value, 'Session.project_id'),
       },
+      reviewNotes: switch (json['review_notes']) {
+        null => null,
+        final Object value => _string(value, 'Session.review_notes'),
+      },
+      reviewScore: switch (json['review_score']) {
+        null => null,
+        final Object value => _int(value, 'Session.review_score'),
+      },
       state: _string(json['state'], 'Session.state'),
       sts: switch (json['sts']) {
         null => null,
@@ -1299,13 +1346,17 @@ final class Session {
         null => null,
         final Object value => _string(value, 'Session.stt'),
       },
+      subagent: switch (json['subagent']) {
+        null => null,
+        final Object value => _string(value, 'Session.subagent'),
+      },
+      summary: switch (json['summary']) {
+        null => null,
+        final Object value => _string(value, 'Session.summary'),
+      },
       text: switch (json['text']) {
         null => null,
         final Object value => _bool(value, 'Session.text'),
-      },
-      thinkingLlm: switch (json['thinking_llm']) {
-        null => null,
-        final Object value => _string(value, 'Session.thinking_llm'),
       },
       title: switch (json['title']) {
         null => null,
@@ -1314,6 +1365,10 @@ final class Session {
       tts: switch (json['tts']) {
         null => null,
         final Object value => _string(value, 'Session.tts'),
+      },
+      usage: switch (json['usage']) {
+        null => null,
+        final Object value => CallUsage.fromJson(value),
       },
       userId: _string(json['user_id'], 'Session.user_id'),
       video: switch (json['video']) {
@@ -1348,13 +1403,17 @@ final class Session {
   final String? mode;
   final ModelOverwrites? modelOverwrites;
   final String? projectId;
+  final String? reviewNotes;
+  final int? reviewScore;
   final String state;
   final String? sts;
   final String? stt;
+  final String? subagent;
+  final String? summary;
   final bool? text;
-  final String? thinkingLlm;
   final String? title;
   final String? tts;
+  final CallUsage? usage;
   final String userId;
   final SessionVideo? video;
   final String? voice;
@@ -1381,13 +1440,17 @@ final class Session {
     'mode': ?mode,
     if (modelOverwrites case final value?) 'model_overwrites': value.toJson(),
     'project_id': ?projectId,
+    'review_notes': ?reviewNotes,
+    'review_score': ?reviewScore,
     'state': state,
     'sts': ?sts,
     'stt': ?stt,
+    'subagent': ?subagent,
+    'summary': ?summary,
     'text': ?text,
-    'thinking_llm': ?thinkingLlm,
     'title': ?title,
     'tts': ?tts,
+    if (usage case final value?) 'usage': value.toJson(),
     'user_id': userId,
     if (video case final value?) 'video': value.toJson(),
     'voice': ?voice,
@@ -1810,7 +1873,6 @@ final class UpdateSessionRequest {
   const UpdateSessionRequest({
     this.custom,
     this.description,
-    this.instructions,
     this.llm,
     this.maxOutputTokens,
     this.sts,
@@ -1833,10 +1895,6 @@ final class UpdateSessionRequest {
       description: switch (json['description']) {
         null => null,
         final Object value => _string(value, 'UpdateSessionRequest.description'),
-      },
-      instructions: switch (json['instructions']) {
-        null => null,
-        final Object value => _string(value, 'UpdateSessionRequest.instructions'),
       },
       llm: switch (json['llm']) {
         null => null,
@@ -1883,7 +1941,6 @@ final class UpdateSessionRequest {
 
   final Map<String, Object?>? custom;
   final String? description;
-  final String? instructions;
   final String? llm;
   final int? maxOutputTokens;
   final String? sts;
@@ -1898,7 +1955,6 @@ final class UpdateSessionRequest {
   Map<String, Object?> toJson() => {
     'custom': ?custom,
     'description': ?description,
-    'instructions': ?instructions,
     'llm': ?llm,
     'max_output_tokens': ?maxOutputTokens,
     'sts': ?sts,
