@@ -1,6 +1,6 @@
 ---
 name: sdk-swift
-description: How to build and extend the Swift SDKs in sdks/swift. Read this before changing VisionAgentsCore, VisionAgentsUI or VisionAgentsRTC, or before adding a Swift client for a new endpoint.
+description: How to build and extend the Swift SDKs in sdks/swift. Read this before changing VisionAgentsCore, VisionAgentsUI, VisionAgentsRTC or VisionAgentsChat, or before adding a Swift client for a new endpoint.
 ---
 
 # Swift SDK conventions
@@ -13,7 +13,7 @@ Assume Swift 6 language mode with complete strict concurrency, iOS 17, SPM only.
 
 ## Packages
 
-Three packages, not one package with three products. Splitting *targets* stops compilation and
+Four packages, not one package with four products. Splitting *targets* stops compilation and
 linking; splitting *packages* is the only reliable way to stop a consumer resolving and
 fetching a dependency's whole graph, and SwiftPM's pruning has changed across releases. Stream
 Video's `StreamWebRTC` is a 47 MB binary artifact, so this matters.
@@ -22,10 +22,19 @@ Video's `StreamWebRTC` is a 47 MB binary artifact, so this matters.
 core  VisionAgentsCore  generated client, socket, conversation state
 ui    VisionAgentsUI    SwiftUI views over that state          -> core
 rtc   VisionAgentsRTC   joining the call over Stream Video     -> core
+chat  VisionAgentsChat  the Stream Chat channel, iOS only      -> core
 ```
 
-- `ui` holds no networking. `rtc` maps Stream's types into ours and keeps them out of `core`'s
-  public API.
+- `ui` holds no networking. `core` holds no Stream type.
+- `rtc` and `chat` are the exception to keeping Stream's types out of the public API, because
+  their point is an app using Stream's own SDK: they take the app's `StreamVideo` or
+  `ChatClient` in `use`, and `chat()` answers Stream's `ChatChannelController`. Nothing else of
+  Stream's crosses, and nothing generated.
+- `chat` is iOS only, because Stream Chat's macOS build does not compile under Swift 6, and
+  needs `stream-chat-swift` 5.3 or later: 4.x's `ChatClient` is not `Sendable`, and 5.0 to 5.2
+  fail inside `stream-core-swift`.
+- Cross-package internals (`Backend.give`, `Backend.shared`, `AgentSession.backend`) are
+  `@_spi(Stream)`, so `rtc` and `chat` reach them and an app does not see them.
 - Declare `platforms:` on every package. An unspecified platform makes consumers discover
   availability failures inside generated code.
 - Never add an umbrella product. It hands the WebRTC binary to somebody who wanted text.
@@ -38,7 +47,7 @@ development, keep the local packages in one Xcode workspace or use
 environment variable between `path:` and `url:` — resolution stops being reproducible and
 development paths leak into releases.
 
-A library's `Package.resolved` is not a promise to consumers; it is gitignored for the three
+A library's `Package.resolved` is not a promise to consumers; it is gitignored for the four
 packages and committed for the demo app.
 
 ## Concurrency
@@ -181,7 +190,8 @@ too, with only the status and request id: URLSession never hands over its body.
 `VisionAgents(apiKey:)`, defaulting to Stream's hosted router, then `setUser` with a token
 provider: the shape [sdk](../sdk/SKILL.md) gives every client SDK. `ID` and `URL` are
 capitalised as Swift does. The initialiser does no I/O. `VisionAgents(url:customerID:)` is
-only for a router running locally with nothing in front of it.
+only for a router running locally with nothing in front of it; an `apiKey:` beside it is
+Stream's alone, for chat and video, and the router is still reached by customer id.
 
 ```swift
 let agents = VisionAgents(apiKey: "your_api_key")
@@ -210,8 +220,17 @@ Async/await only. No completion handlers, no `.shared` singleton, no configurati
 
 **A token provider, not a token,** for anything with credentials. `Backend` takes a
 `TokenProvider` in `setUser` and threads it through requests, the socket handshake and a
-single 401 retry, single-flighted. `VoiceSession` passes one to StreamVideo so an hour-long
-call does not drop when the call token expires.
+single 401 retry, single-flighted.
+
+**Stream is set up once.** The key, the user and the token from `setUser` are the one identity
+for the router, Stream Chat and Stream Video. `VoiceSession.join()` and `session.chat()` take
+no credentials: `Backend.shared` builds one client per kind, key and user, single-flighted and
+shared by every session, and hands Stream a provider that asks `streamCredentials(refresh:
+true)`, so an hour-long call outlives its token and two clients refreshing at once fetch one.
+`agents.use(_:)` hands over the app's own `ChatClient` or `StreamVideo`, which is used first,
+kept across `setUser` and never disconnected here; one connected as another user is a
+`.configuration` error. `agents.disconnect()` closes only what was built, and closing a session
+closes nothing. Opting in is by package: there is no runtime registry.
 
 ## SwiftUI
 
@@ -248,7 +267,8 @@ Three layers, in order of how much they cost to run:
 2. **Live tests.** `LiveTests` is gated on `VISION_AGENTS_URL`, which is the Swift answer to
    `@pytest.mark.integration`. It creates a real session, asks the model something and waits
    for a real tool call. Mark the suite `@MainActor`, because `AgentSession` is.
-3. **Builds.** `ui` and `rtc` are views and a WebRTC wrapper; build them for the simulator.
+3. **Builds.** `ui`, `rtc` and `chat` are views and wrappers over Stream's SDKs; build them
+   for the simulator. What they share is in `core` and tested there (`StreamCredentialsTests`).
 
 Wait on a condition with a deadline, never `Task.sleep` for a fixed guess:
 
@@ -285,7 +305,9 @@ frames or bodies by default. Never put a token in a query string.
 Reject it if it:
 
 - mutates conversation state off the main actor, or hops per frame;
-- exposes a generated or Stream type publicly;
+- exposes a generated type publicly, or a Stream type outside `use` and `chat()`;
+- builds a second Stream client for a user who already has one, or disconnects one the app
+  handed over;
 - uses `[String: Any]`, or `@unchecked Sendable` to quiet a warning;
 - starts more than one receive per connection, or replays `respond`/`tool_result`;
 - treats an unknown frame as fatal, or discards its payload;
