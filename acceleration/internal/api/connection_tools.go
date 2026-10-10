@@ -342,19 +342,32 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 	// moves one whose renewal the provider refused; either way the row says what to do.
 	credential, err := s.connectorResolver.Resolve(ctx, ref, core.CredentialRequest{})
 	var response *validationResponse
+	moved := false
 	if err != nil {
 		response, err = s.validationAfter(ctx, connection, err)
 	} else {
 		revision = credential.Revision
 		response, err = s.checkConnection(ctx, connection, credential, request.Body, answered)
+		if err == nil {
+			// The transport resolves its own credential on every request (core/transport.go), so
+			// one saved or renewed during the check may be what the provider saw and echoed, and
+			// storedError cuts out only credential. pgsealed moves the revision on any change of
+			// the stored credentials, so a revision that did not move means every request carried
+			// credential; one that moved keeps no provider text.
+			var current store.ConnectorConnection
+			current, err = s.store.ConnectorConnection(ctx, connection.CustomerID, connection.ID)
+			moved = current.Revision != revision
+		}
 	}
 	if err != nil {
 		return nil, err
 	}
 	validation := response.Body
 	record := &store.ConnectorConnectionValidation{ConnectionID: connection.ID, Revision: revision, Status: string(validation.Status),
-		Code: validation.Code, Error: storedError(validation.Error, s.connectors.Schemes[connection.AuthScheme], credential),
-		CheckedAt: time.Now().UTC().Truncate(time.Microsecond)}
+		Code: validation.Code, CheckedAt: time.Now().UTC().Truncate(time.Microsecond)}
+	if !moved {
+		record.Error = storedError(validation.Error, s.connectors.Schemes[connection.AuthScheme], credential)
+	}
 	if validation.CheckedAt != nil {
 		record.CheckedAt = *validation.CheckedAt
 	}

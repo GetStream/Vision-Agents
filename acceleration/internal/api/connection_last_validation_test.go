@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -404,6 +406,108 @@ func (s *ConnectionToolsSuite) TestAnErrorThatEchoesTheCredentialIsStoredWithout
 				}
 			})
 		}
+	}
+}
+
+// TestATokenSavedDuringAValidateIsNotStoredFromTheProvidersError (R2.1 of PR #874): the
+// transport resolves its own credential on every request, so a token saved while the validate
+// runs is what the provider sees next, and a provider can echo it in its error. That token is
+// not the one the validate cuts out, so a validate whose connection's revision moved keeps no
+// provider text: B is nowhere in its row, and GET and list still show no last validation.
+func (s *ConnectionToolsSuite) TestATokenSavedDuringAValidateIsNotStoredFromTheProvidersError() {
+	tokenA, tokenB := s.token, s.token+"-saved-during-the-validate"
+	arrived, release := make(chan struct{}, 1), make(chan struct{})
+	echo := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var request struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params struct {
+				ProtocolVersion string `json:"protocolVersion"`
+			} `json:"params"`
+		}
+		_ = json.Unmarshal(raw, &request)
+		w.Header().Set("Content-Type", "application/json")
+		if request.Method == "initialize" {
+			select {
+			case arrived <- struct{}{}:
+			default:
+			}
+			<-release
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":%q,"capabilities":{"tools":{}},"serverInfo":{"name":"echo","version":"1"}}}`,
+				request.ID, request.Params.ProtocolVersion)
+			return
+		}
+		// 501: a non-transient answer whose body go-sdk keeps, and that moves no credential.
+		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "error": map[string]any{"code": -32600, "message": "refused: " + r.Header.Get("Authorization")}})
+		w.WriteHeader(http.StatusNotImplemented)
+		_, _ = w.Write(body)
+	}))
+	s.T().Cleanup(echo.Close)
+	connector := s.connectorAt(echo.URL + "/mcp")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, tokenA), nil))
+	done := make(chan int, 1)
+	go func() {
+		done <- s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil, nil)
+	}()
+	<-arrived
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(s.get(id).Revision, tokenB), nil))
+	close(release)
+	s.Require().Equal(http.StatusOK, <-done)
+
+	var row, errorText string
+	var revision int
+	s.Require().NoError(s.store.DB().NewRaw("SELECT row_to_json(ccv)::text, ccv.error, ccv.revision FROM connector_connection_validations AS ccv WHERE ccv.connection_id = ?", id).
+		Scan(s.T().Context(), &row, &errorText, &revision))
+	// s.False on strings.Contains, not s.NotContains, so a failure never prints the token.
+	s.False(strings.Contains(row, tokenB), "the row holds the token saved during the validate")
+	s.Empty(errorText, "a validate whose revision moved keeps no provider text")
+	s.Equal(2, revision, "the revision the validate checked")
+	got := s.get(id)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), got.Status)
+	s.Equal(3, got.Revision, "token B")
+	s.Nil(got.LastValidation, "token A's result is not token B's")
+	var page ConnectionPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections?owner_type=app&connector_id="+connector, nil, &page))
+	s.Require().Len(page.Items, 1)
+	s.Nil(page.Items[0].LastValidation)
+}
+
+// TestAnAPIKeyEchoedFromItsNamedHeaderIsNotStored (R2.2 of PR #874): an api_key goes in the
+// header the connection names, not in Authorization, and a provider can echo that header in its
+// error. The last validation keeps the provider's text without the key, in the row, on GET and
+// on list.
+func (s *ConnectionToolsSuite) TestAnAPIKeyEchoedFromItsNamedHeaderIsNotStored() {
+	const header = "X-Api-Key"
+	echo := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		// 501: a non-transient answer whose body go-sdk keeps, and that moves no credential.
+		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "error": map[string]any{"code": -32600, "message": "bad key: " + r.Header.Get(header)}})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotImplemented)
+		_, _ = w.Write(body)
+	}))
+	s.T().Cleanup(echo.Close)
+	connector := s.connectorWith(apikey.Name, echo.URL+"/mcp")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		map[string]any{"expected_revision": 1, "values": map[string]string{apikey.SuppliedKey: s.token, apikey.SuppliedHeader: header}}, nil))
+
+	s.Require().Equal(validationFailed, string(s.validate(id).Status))
+
+	var row string
+	s.Require().NoError(s.store.DB().NewRaw("SELECT error FROM connector_connection_validations WHERE connection_id = ?", id).Scan(s.T().Context(), &row))
+	one := s.get(id).LastValidation
+	s.Require().NotNil(one)
+	var page ConnectionPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections?owner_type=app&connector_id="+connector, nil, &page))
+	s.Require().Len(page.Items, 1)
+	s.Require().NotNil(page.Items[0].LastValidation)
+	for where, text := range map[string]string{"row": row, "get": one.Error, "list": page.Items[0].LastValidation.Error} {
+		// s.False on strings.Contains, not s.NotContains, so a failure never prints the key.
+		s.False(strings.Contains(text, s.token), where+" holds the key")
+		s.True(strings.Contains(text, "bad key: "+storedRedacted), where+" keeps the provider's error")
 	}
 }
 
