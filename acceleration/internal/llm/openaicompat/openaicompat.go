@@ -15,12 +15,14 @@ package openaicompat
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -366,7 +368,9 @@ func (p *puller) textCall(w *llm.ResponseWriter, call string) {
 		w.ReasoningText(call)
 		return
 	}
-	id := fmt.Sprintf("call_text_%d_%d", p.id, p.textCalls)
+	// A random id: a provider can be built per request, so nothing it counts is unique across
+	// the conversation the call is replayed in.
+	id := "call_" + strings.ToLower(rand.Text())
 	// Real calls stream under indexes from 0, so these take negative ones.
 	index := -1 - int64(p.textCalls)
 	p.textCalls++
