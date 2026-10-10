@@ -104,6 +104,7 @@ from .connection_definition_status import ConnectionDefinitionStatus
 from .connection_inputs import ConnectionInputs
 from .connection_invocation import ConnectionInvocation
 from .connection_invocation_page import ConnectionInvocationPage
+from .connection_last_validation import ConnectionLastValidation
 from .connection_metadata import ConnectionMetadata
 from .connection_owner import ConnectionOwner
 from .connection_owner_type import ConnectionOwnerType
@@ -531,6 +532,7 @@ __all__ = (
     "ConnectionInputs",
     "ConnectionInvocation",
     "ConnectionInvocationPage",
+    "ConnectionLastValidation",
     "ConnectionMetadata",
     "ConnectionOwner",
     "ConnectionOwnerType",

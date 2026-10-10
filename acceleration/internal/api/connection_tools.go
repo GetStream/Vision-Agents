@@ -10,8 +10,11 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -320,8 +323,8 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 	return s.getConnection(ctx, &connectionRequest{ID: connection.ID})
 }
 
-// validateConnection resolves the connection's credential, lists its tools through each of its
-// sources, stores the list, and compares the granted scopes with what the tools need.
+// validateConnection checks the connection (checkConnection) and records what it found as the
+// connection's last validation (AI-1052), which GET and list show.
 func (s *Server) validateConnection(ctx context.Context, request *validateConnectionRequest) (*validationResponse, error) {
 	connection, err := s.reachableConnection(ctx, request.ID)
 	if err != nil {
@@ -331,11 +334,58 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 		return nil, errConnectionToolsOff
 	}
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
+	answered := &lastAnswer{}
+	// The revision the validate checks: the credential's, or, when none was resolved, the
+	// connection's as read before, so a credential saved since is never shown with this result.
+	revision := connection.Revision
 	// The resolver refuses a connection that is not connected before anything is sent, and
 	// moves one whose renewal the provider refused; either way the row says what to do.
-	if _, err := s.connectorResolver.Resolve(ctx, ref, core.CredentialRequest{}); err != nil {
-		return s.validationAfter(ctx, connection, err)
+	credential, err := s.connectorResolver.Resolve(ctx, ref, core.CredentialRequest{})
+	var response *validationResponse
+	moved := false
+	if err != nil {
+		response, err = s.validationAfter(ctx, connection, err)
+	} else {
+		revision = credential.Revision
+		response, err = s.checkConnection(ctx, connection, credential, request.Body, answered)
+		if err == nil {
+			// The transport resolves its own credential on every request (core/transport.go), so
+			// one saved or renewed during the check may be what the provider saw and echoed, and
+			// storedError cuts out only credential. pgsealed moves the revision on any change of
+			// the stored credentials, so a revision that did not move means every request carried
+			// credential; one that moved keeps no provider text.
+			var current store.ConnectorConnection
+			current, err = s.store.ConnectorConnection(ctx, connection.CustomerID, connection.ID)
+			moved = current.Revision != revision
+		}
 	}
+	if err != nil {
+		return nil, err
+	}
+	validation := response.Body
+	record := &store.ConnectorConnectionValidation{ConnectionID: connection.ID, Revision: revision, Status: string(validation.Status),
+		Code: validation.Code, CheckedAt: time.Now().UTC().Truncate(time.Microsecond)}
+	if !moved {
+		record.Error = storedError(validation.Error, s.connectors.Schemes[connection.AuthScheme], credential)
+	}
+	if validation.CheckedAt != nil {
+		record.CheckedAt = *validation.CheckedAt
+	}
+	if status := answered.status(); record.Code == "" && status >= http.StatusBadRequest {
+		record.Code = strconv.Itoa(status)
+	}
+	if err := s.store.PutConnectorConnectionValidation(ctx, record); err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
+// checkConnection lists the connection's tools through each of its sources with credential,
+// the one Resolve gave, stores the list, and compares the granted scopes with what the tools
+// need. answered is told the provider's answers.
+func (s *Server) checkConnection(ctx context.Context, connection store.ConnectorConnection, credential core.AccessCredential,
+	body *ConnectionValidationRequest, answered *lastAnswer) (*validationResponse, error) {
+	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
 	scheme, found := s.connectors.Schemes[connection.AuthScheme]
 	if !found {
 		return nil, invalidRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has", connection.AuthScheme))
@@ -344,10 +394,14 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 	if err != nil {
 		return nil, err
 	}
+	// A copy of the connection's client, on the same transport and so the same pool, whose
+	// answers the validate reads.
+	client := *s.connectorTransports.Client(ref, scheme)
+	answered.base, client.Transport = client.Transport, answered
 	binding := core.ResolvedBinding{
 		Connection: coreConnection(connection),
 		Manifest:   manifest,
-		HTTP:       s.connectorTransports.Client(ref, scheme),
+		HTTP:       &client,
 	}
 	var specs []core.ToolSpec
 	for _, kind := range sourceKinds(manifest) {
@@ -357,14 +411,23 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 		}
 		listed, err := source.Discover(ctx, binding)
 		if err != nil {
+			if refusedStatic(s.connectors.Schemes, connection.AuthScheme, answered.status()) {
+				// The 401 path's move (core.Transports invalidates a refused credential nothing
+				// renews), so the row and the validate say the same: replace the token or key.
+				// Invalidate leaves a connection whose credentials changed since Resolve alone.
+				moveErr := s.connectorResolver.Invalidate(ctx, ref, credential, core.Outcome{Kind: core.OutcomeInvalidGrant})
+				if moveErr != nil {
+					return nil, moveErr
+				}
+			}
 			return s.validationAfter(ctx, connection, err)
 		}
 		specs = append(specs, listed...)
 	}
 
 	var checked []string
-	if request.Body != nil {
-		checked = request.Body.Tools
+	if body != nil {
+		checked = body.Tools
 	}
 	missing, err := missingScopes(specs, checked, connection.GrantedScopes)
 	if err != nil {
@@ -438,6 +501,123 @@ func missingScopes(specs []core.ToolSpec, names, granted []string) ([]string, er
 	}
 	slices.Sort(missing)
 	return missing, nil
+}
+
+// lastAnswer is the provider's status for the last request of a validate that was answered, 0
+// when none was: the answer the validate failed on, since an MCP client stops at the first
+// failed request (go-sdk v1.8.0, MaxRetries -1 in sources/mcp). The DELETE that ends an MCP
+// session is left out: a source sends it when it closes the session after the failure, and a
+// server «MAY respond to this request with HTTP 405 Method Not Allowed» (MCP 2025-11-25,
+// Transports, «Session Management»).
+type lastAnswer struct {
+	base   http.RoundTripper
+	mu     sync.Mutex
+	answer int
+}
+
+func (a *lastAnswer) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := a.base.RoundTrip(request)
+	if err != nil || request.Method == http.MethodDelete {
+		return response, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.answer = response.StatusCode
+	return response, err
+}
+
+func (a *lastAnswer) status() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.answer
+}
+
+// maxStoredErrorBytes caps the error a last validation keeps. A provider's error body reaches
+// it whole: go-sdk v1.8.0 copies the body of a non-transient non-2xx answer into the error
+// (mcp/streamable.go checkResponse), up to the 4 MiB the mcp source reads
+// (sources/mcp/source.go maxResponseBytes), and a list page of up to 200 connections
+// (listConnectionsRequest.Limit) would serve 800 MiB of them. 1 KiB is a choice, unverified
+// and not measured: it keeps every error the router writes itself whole (the longest, a
+// broken revision's, is under 300 bytes before the manifest's reason) and the start of a
+// provider's, which is what a person reads first.
+const maxStoredErrorBytes = 1 << 10
+
+// storedErrorCut ends an error that was cut at maxStoredErrorBytes.
+const storedErrorCut = " [cut]"
+
+// storedRedacted stands for a credential value cut out of an error.
+const storedRedacted = "[redacted]"
+
+// storedError is text as a last validation keeps it: every value scheme sends credential as cut
+// out, since a provider can echo a request in its error (an Authorization header in a JSON-RPC
+// error message), then at most maxStoredErrorBytes of what is left, never splitting a UTF-8
+// sequence. The validate's own answer is left as it is.
+func storedError(text string, scheme core.Scheme, credential core.AccessCredential) string {
+	for _, value := range sentValues(scheme, credential) {
+		text = strings.ReplaceAll(text, value, storedRedacted)
+	}
+	if len(text) <= maxStoredErrorBytes {
+		return text
+	}
+	cut := maxStoredErrorBytes - len(storedErrorCut)
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + storedErrorCut
+}
+
+// sentValues are the header values scheme's Wrap puts on a request for credential, longest
+// first, and each one's part after its auth scheme (the token in "Bearer <token>", RFC 6750
+// section 2.1), since a provider may echo either. Wrap is asked rather than the credential read,
+// since only the scheme that issued it reads its secret (core.AccessCredential.Secret). Nothing
+// is sent: the request stops at headerCatch. A zero credential or no scheme sends none.
+func sentValues(scheme core.Scheme, credential core.AccessCredential) []string {
+	if scheme == nil || credential.Scheme == "" {
+		return nil
+	}
+	caught := &headerCatch{}
+	request, err := http.NewRequest(http.MethodGet, "https://validate.invalid/", nil)
+	if err != nil {
+		return nil
+	}
+	_, _ = scheme.Wrap(caught, credential).RoundTrip(request) //nolint:bodyclose // headerCatch returns no response
+	var values []string
+	for _, sent := range caught.header {
+		for _, value := range sent {
+			if value != "" {
+				values = append(values, value)
+			}
+			if _, token, found := strings.Cut(value, " "); found && token != "" {
+				values = append(values, token)
+			}
+		}
+	}
+	slices.SortFunc(values, func(a, b string) int { return len(b) - len(a) })
+	return values
+}
+
+// headerCatch is a RoundTripper that keeps the header of the request it is handed and sends
+// nothing.
+type headerCatch struct {
+	header http.Header
+}
+
+func (c *headerCatch) RoundTrip(request *http.Request) (*http.Response, error) {
+	c.header = request.Header.Clone()
+	return nil, errors.New("api: a caught request is not sent")
+}
+
+// refusedStatic says a validate whose provider last answered status moves a connection of
+// scheme to needs_reauthorization (Kanat, 2026-10-10, AI-1052): a bearer or api_key credential
+// answered with any 4xx (RFC 9110 section 15.5, client errors) but 429. A provider can refuse a
+// token it does not take with something other than 401: GitHub's MCP server answers a wrong
+// token with 400 Bad Request (E2E F60). A 429 (RFC 6585 section 4) says to wait, not that the
+// credential is wrong. A 5xx, a timeout or no answer says nothing about the credential, and
+// keeps the status. OAuth grants keep the 401-only rule, as tool calls do (core.Transports):
+// a reconnect, not a new token, is their remedy, and a 4xx on validate does not prove one is due.
+func refusedStatic(schemes map[string]core.Scheme, scheme string, status int) bool {
+	return core.IsStatic(schemes, scheme) && status >= http.StatusBadRequest && status < http.StatusInternalServerError &&
+		status != http.StatusTooManyRequests
 }
 
 // validationAfter is what a validate reports after the resolver or a source failed: the

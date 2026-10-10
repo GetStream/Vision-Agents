@@ -4577,6 +4577,8 @@ export type components = {
                 readonly [key: string]: string;
             };
             readonly label?: string;
+            /** @description What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh). */
+            readonly last_validation?: components["schemas"]["ConnectionLastValidation"];
             /** @description What the provider said about the account when it was connected, such as a workspace id. Empty until then. */
             readonly metadata: {
                 readonly [key: string]: string;
@@ -4646,6 +4648,19 @@ export type components = {
             readonly items: readonly components["schemas"]["ConnectionInvocation"][] | null;
             /** @description Pass as cursor for the next page. Absent on the last one. */
             readonly next_cursor?: string;
+        };
+        /** @description What a connection's last validate found, kept so it is still shown after the validate's answer is gone. A validate whose provider refused a bearer or api_key credential with any 4xx but 429 also moves the connection to needs_reauthorization. */
+        readonly ConnectionLastValidation: {
+            /**
+             * Format: date-time
+             * @description When the validate ran.
+             */
+            readonly checked_at: string;
+            /** @description The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies. */
+            readonly code?: string;
+            /** @description Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote. */
+            readonly error?: string;
+            readonly status: components["schemas"]["ConnectionValidationStatus"];
         };
         /** @description Whose a connection is: the app's, which any of its agents may be bound to, or one user's. */
         readonly ConnectionOwner: {
