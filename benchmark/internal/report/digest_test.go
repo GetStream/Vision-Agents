@@ -110,3 +110,33 @@ func TestDigestReportCarriesTheCardAndWhatFailedEachCall(t *testing.T) {
 		}
 	}
 }
+
+func TestDigestReportShowsTheSpeechToTextWERBesideTheCalls(t *testing.T) {
+	runs := []LabeledRun{steadyRun("accelerated", "restaurant", 1800, 1, 2)}
+	d := BuildDigest(runs)
+
+	page, err := d.HTML("Voicebench", []byte("png"), runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(page, "<h2>Speech-to-text</h2>") {
+		t.Fatal("a run without the speech-to-text bench has no section for it")
+	}
+
+	d.STT = []STTSummary{{
+		Target: "deepgram/flux-general-en", Clips: 40, Failed: 1, PooledWER: 0.042, PooledWERRaw: 0.118,
+		Substitutions: 9, Insertions: 2, Deletions: 3, PerfectRate: 0.65, TimedClips: 39, ToSettleP50Ms: 420,
+	}}
+	page, err = d.HTML("Voicebench", []byte("png"), runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"<h2>Speech-to-text</h2>", "deepgram/flux-general-en", "<strong>4.2%</strong>", "11.8%", "9 / 2 / 3", "65%", "1 failed"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("report is missing %q", want)
+		}
+	}
+	if strings.Contains(d.SlackText("Voicebench"), "WER") {
+		t.Error("the Slack message keeps its approved shape; WER is in the full report")
+	}
+}
