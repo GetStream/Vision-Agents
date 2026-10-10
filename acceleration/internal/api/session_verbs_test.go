@@ -164,6 +164,28 @@ func (s *SessionVerbsSuite) TestAskingForAResponseNamesTheTurnItAnswersAs() {
 	s.NotEmpty(answering.Id, "the turn it will be written down as")
 }
 
+func (s *SessionVerbsSuite) TestAResponseMayCapItsOwnLength() {
+	opened := s.serverClient.createSession(textSession(nil))
+
+	var answering AgentResponse
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(
+		http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{Text: "Summarise our plans", MaxOutputTokens: pointerTo(64)}, &answering))
+
+	s.NotEmpty(answering.Id)
+}
+
+func (s *SessionVerbsSuite) TestAReasoningEffortTheModelDoesNotTakeIsRefused() {
+	opened := s.serverClient.createSession(textSession(nil))
+
+	status, failure := s.serverClient.failure(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{Text: "Think hard about this", ReasoningEffort: pointerTo("max")})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "reasoning effort")
+}
+
 func (s *SessionVerbsSuite) TestAResponseWithNothingToAnswerIsRefused() {
 	opened := s.serverClient.createSession(textSession(nil))
 

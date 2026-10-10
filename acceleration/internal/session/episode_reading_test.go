@@ -343,7 +343,7 @@ func (s *EpisodeReadingSuite) voiceSession(caller string, cards bool, text strin
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
-	_, err = created.Respond(s.ctx, text, nil)
+	_, err = created.Respond(s.ctx, text, nil, options.LLM{})
 	s.Require().NoError(err)
 	return s.replyTo(text), call
 }
@@ -746,7 +746,7 @@ func (s *EpisodeReadingSuite) TestASlowCallReadDelaysTheJoinByTheBudgetAtMost() 
 	<-waiting
 	s.GreaterOrEqual(took, omnichannel.ReadTimeout, "the call read was held")
 	s.Less(took, omnichannel.ReadTimeout+2*time.Second, "the join waited no longer than the budget")
-	_, err = created.Respond(s.ctx, "hello", nil)
+	_, err = created.Respond(s.ctx, "hello", nil, options.LLM{})
 	s.Require().NoError(err)
 	s.Nil(s.handed(s.replyTo("hello")))
 }

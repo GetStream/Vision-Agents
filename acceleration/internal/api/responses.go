@@ -9,6 +9,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/video"
 	"github.com/danielgtaylor/huma/v2"
@@ -66,17 +67,18 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		}
 	}
 
+	asked := options.LLM{MaxOutputTokens: request.Body.MaxOutputTokens, ReasoningEffort: value(request.Body.ReasoningEffort)}
 	var responseID string
 	if id := value(request.Body.RequestId); id != "" && found.Durable() {
 		if len(parts) > 0 {
 			return nil, invalidRequest("a request id carries text only")
 		}
-		_, responseID, err = found.RespondCommand(ctx, id, request.Body.Text, "")
+		_, responseID, err = found.RespondCommand(ctx, id, request.Body.Text, "", asked)
 		if errors.Is(err, conversation.ErrCommandConflict) {
 			return nil, conflict(err.Error())
 		}
 	} else {
-		responseID, err = found.Respond(ctx, request.Body.Text, parts)
+		responseID, err = found.Respond(ctx, request.Body.Text, parts, asked)
 	}
 	if errors.Is(err, agent.ErrCannotSeeImages) {
 		return nil, notConfigured(agent.ErrCannotSeeImages.Error())
@@ -403,10 +405,17 @@ type AgentResponsePage struct {
 
 // CreateResponseRequest is the CreateResponseRequest schema.
 type CreateResponseRequest struct {
-	RequestId *string        `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id." pattern:"^[A-Za-z0-9_-]{1,128}$"`
-	Images    *[]ImageSource `json:"images,omitempty"`
-	Text      string         `json:"text" doc:"What to answer, as though it had been said."`
-	Videos    *[]VideoSource `json:"videos,omitempty" doc:"Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole." maxItems:"2"`
+	RequestId       *string        `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	Images          *[]ImageSource `json:"images,omitempty"`
+	MaxOutputTokens *int           `json:"max_output_tokens,omitempty" doc:"Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's." minimum:"1"`
+	ReasoningEffort *string        `json:"reasoning_effort,omitempty" doc:"How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's."`
+	Text            string         `json:"text" doc:"What to answer, as though it had been said."`
+	Videos          *[]VideoSource `json:"videos,omitempty" doc:"Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole." maxItems:"2"`
+}
+
+func (*CreateResponseRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["max_output_tokens"].Format = ""
+	return schema
 }
 
 // ItemLimit is the ItemLimit schema.
