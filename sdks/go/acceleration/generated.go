@@ -3777,6 +3777,9 @@ type ConnectionValidationStatus string
 type Connector struct {
 	Category *string `json:"category,omitempty"`
 
+	// Channel The connector is an inbound channel: its manifest reads messages a provider delivers to the router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A dashboard warns on it before a delete that would end those replies.
+	Channel *bool `json:"channel,omitempty"`
+
 	// Client How the OAuth client a connection uses is registered, and how the client authenticates at the token endpoint.
 	Client ConnectorClient `json:"client"`
 
