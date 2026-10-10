@@ -21,7 +21,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 private const val SESSION = """{"id":"s1","call_id":"","call_type":"default","user_id":"u1","agent_id":"a1","state":"live","modality":"text","created_at":"2026-09-24T04:03:19Z","text":true}"""
-private const val KEPT = """{"id":"s1","call_id":"","call_type":"default","user_id":"u1","agent_id":"a1","state":"live","modality":"text","created_at":"2026-09-24T04:03:19Z","text":true,"conversation_id":"messaging:agent-s1"}"""
 private const val ASKED = """{"id":"r1","session_id":"s1","status":"running","created_at":"2026-09-24T04:03:19Z"}"""
 
 /** Socket tests run in real time, because what they wait for is a real connection. */
@@ -59,7 +58,9 @@ class AgentSessionTest {
         val asked = chat.responses.create("What are your hours?")
         val request = router.requests.last()
         assertEquals("POST /v1/agents/sessions/s1/responses", "${request.method} ${request.path}")
-        assertEquals("""{"text":"What are your hours?"}""", request.body)
+        val body = Json.parseToJsonElement(request.body).jsonObject
+        assertEquals(setOf("text", "request_id"), body.keys)
+        assertEquals(JsonPrimitive("What are your hours?"), body["text"])
         assertEquals("r1", asked.id)
         assertEquals(listOf("What are your hours?"), chat.conversation.value.turns.map { it.text })
         router.script.send(Script.Send("""{"type":"responding","turn_id":"t1","prompt":"What are your hours?"}"""))
@@ -74,22 +75,24 @@ class AgentSessionTest {
     }
 
     @Test
-    fun `a question in a conversation kept in chat is a command, unless it shows the agent something`() = runBlocking {
-        router.answer = { if (it.path.endsWith("/responses")) Reply(202, ASKED) else Reply(201, KEPT) }
+    fun `every text question carries a fresh request id, and one showing the agent something carries none`() = runBlocking {
         val chat = agents.chat()
 
         chat.responses.create("first")
+        chat.responses.create("first")
         chat.responses.create("what is this", listOf(ImageSource("https://x/y.png")))
 
-        val (asked, shown) = router.requests.filter { it.path.endsWith("/responses") }
+        val (first, again, shown) = router.requests.filter { it.path.endsWith("/responses") }
             .map { Json.parseToJsonElement(it.body).jsonObject }
-        assertTrue(Regex("[A-Za-z0-9_-]{1,128}").matches(asked["command_id"]!!.jsonPrimitive.content))
-        assertNull(shown["command_id"])
+        val ids = listOf(first, again).map { it["request_id"]!!.jsonPrimitive.content }
+        assertTrue(ids.all { Regex("[A-Za-z0-9_-]{1,128}").matches(it) })
+        assertEquals(2, ids.toSet().size)
+        assertNull(shown["request_id"])
         chat.close()
     }
 
     @Test
-    fun `a tool call is answered with nobody collecting events, repeating its turn and command`() = runBlocking {
+    fun `a tool call is answered with nobody collecting events, repeating its turn and request`() = runBlocking {
         val asked = CopyOnWriteArrayList<String>()
         val lookup = AgentTool(
             "lookup_order",
@@ -111,13 +114,14 @@ class AgentSessionTest {
         )
 
         router.script.send(
-            Script.Send("""{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"{\"order_id\":\"A-1042\"}","command_id":"","turn_id":"t1"}"""),
+            Script.Send("""{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"{\"order_id\":\"A-1042\"}","request_id":"r1","turn_id":"t1"}"""),
         )
 
         val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
         assertEquals(JsonPrimitive("tool_result"), answer["type"])
         assertEquals(JsonPrimitive("c1"), answer["tool_call_id"])
         assertEquals(JsonPrimitive("Order A-1042: two wool throws."), answer["output"])
+        assertEquals(JsonPrimitive("r1"), answer["request_id"])
         assertEquals(JsonPrimitive("t1"), answer["turn_id"])
         assertEquals(listOf("A-1042"), asked)
         chat.close()
@@ -128,7 +132,7 @@ class AgentSessionTest {
         val broken = AgentTool("lookup_order", "Look up an order.") { error("the orders database is down") }
         val chat = agents.chat(SessionOptions(tools = listOf(broken)))
 
-        router.script.send(Script.Send("""{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"","command_id":"","turn_id":""}"""))
+        router.script.send(Script.Send("""{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"","request_id":"","turn_id":""}"""))
 
         val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
         assertEquals(JsonPrimitive("the orders database is down"), answer["error"])
@@ -163,7 +167,7 @@ class AgentSessionTest {
 
         router.script.send(Script.Send("""{"type":"tool_call","id":"c1","name":"slow","arguments":"{}"}"""))
         started.await()
-        router.script.send(Script.Send("""{"type":"tool_cancel","id":"c1","command_id":"","turn_id":""}"""))
+        router.script.send(Script.Send("""{"type":"tool_cancel","id":"c1","request_id":"","turn_id":""}"""))
         stopped.await()
         chat.interrupt()
 

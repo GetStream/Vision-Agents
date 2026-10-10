@@ -22,24 +22,23 @@ class CreateResponseRequest:
     """
     Attributes:
         text (str): What to answer, as though it had been said.
-        command_id (str | Unset): Required for personal persistent text conversations, and text only. Reuse this ID and
-            identical text for retries; a retry starts no second turn and returns no id.
         images (list[ImageSource] | Unset):
+        request_id (str | Unset): Generated and sent by the SDKs, one per question, so a retry of the same question is
+            answered once. Required for personal persistent text conversations, and text only, and ignored by a session not
+            kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
         videos (list[VideoSource] | Unset): Recorded clips to show the agent. The router samples evenly spaced frames
             from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a
             video, since none of the ones routed here take one whole.
     """
 
     text: str
-    command_id: str | Unset = UNSET
     images: list[ImageSource] | Unset = UNSET
+    request_id: str | Unset = UNSET
     videos: list[VideoSource] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         text = self.text
-
-        command_id = self.command_id
 
         images: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.images, Unset):
@@ -47,6 +46,8 @@ class CreateResponseRequest:
             for images_item_data in self.images:
                 images_item = images_item_data.to_dict()
                 images.append(images_item)
+
+        request_id = self.request_id
 
         videos: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.videos, Unset):
@@ -62,10 +63,10 @@ class CreateResponseRequest:
                 "text": text,
             }
         )
-        if command_id is not UNSET:
-            field_dict["command_id"] = command_id
         if images is not UNSET:
             field_dict["images"] = images
+        if request_id is not UNSET:
+            field_dict["request_id"] = request_id
         if videos is not UNSET:
             field_dict["videos"] = videos
 
@@ -79,8 +80,6 @@ class CreateResponseRequest:
         d = dict(src_dict)
         text = d.pop("text")
 
-        command_id = d.pop("command_id", UNSET)
-
         _images = d.pop("images", UNSET)
         images: list[ImageSource] | Unset = UNSET
         if _images is not UNSET:
@@ -89,6 +88,8 @@ class CreateResponseRequest:
                 images_item = ImageSource.from_dict(images_item_data)
 
                 images.append(images_item)
+
+        request_id = d.pop("request_id", UNSET)
 
         _videos = d.pop("videos", UNSET)
         videos: list[VideoSource] | Unset = UNSET
@@ -101,8 +102,8 @@ class CreateResponseRequest:
 
         create_response_request = cls(
             text=text,
-            command_id=command_id,
             images=images,
+            request_id=request_id,
             videos=videos,
         )
 

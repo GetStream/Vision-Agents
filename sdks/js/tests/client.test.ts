@@ -58,11 +58,11 @@ describe("Client", () => {
   it("carries the credentials and the body on a write", async () => {
     router.serve("POST", "/v1/agents/sessions", { status: 201, body: { id: "sess_1" } });
 
-    await api.post("/v1/agents/sessions", { body: { call_id: "demo", text: false } });
+    await api.post("/v1/agents/sessions", { body: { start_voice: true, title: "demo" } });
 
     assert.equal(router.last.headers["x-customer-id"], "local");
     assert.equal(router.last.headers["content-type"], "application/json");
-    assert.deepEqual(router.last.body, { call_id: "demo", text: false });
+    assert.deepEqual(router.last.body, { start_voice: true, title: "demo" });
   });
 
   it("names the end user in the query to a router reached by customer id", async () => {

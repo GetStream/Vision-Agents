@@ -48,6 +48,36 @@ import Testing
         #expect(call.argumentValues["full"]?.boolValue == true)
     }
 
+    @Test func aToolCallNamesTheRequestAndTurnItsResultAnswers() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self,
+            from: Data(
+                #"{"type":"tool_call","id":"c1","name":"now","arguments":"{}","request_id":"r1","turn_id":"t1"}"#
+                    .utf8))
+
+        let call = try #require(event.toolCall)
+        #expect(call.requestID == "r1")
+        #expect(call.turnID == "t1")
+    }
+
+    @Test func aTextQuestionCarriesAFreshRequestID() throws {
+        let first = try JSONEncoder().encode(Responses.body("Where is order 1042?", images: []))
+        let second = try JSONEncoder().encode(Responses.body("Where is order 1042?", images: []))
+
+        let ids = try [first, second].map {
+            try #require(JSONDecoder().decode(JSONValue.self, from: $0).objectValue["request_id"]).stringValue
+        }
+        #expect(ids.allSatisfy { $0.wholeMatch(of: /[A-Za-z0-9_-]{1,128}/) != nil })
+        #expect(ids[0] != ids[1])
+    }
+
+    @Test func aQuestionWithImagesCarriesNoRequestID() throws {
+        let body = try JSONEncoder().encode(
+            Responses.body("What is this?", images: [ImageSource(url: "https://example.com/a.png")]))
+
+        #expect(try JSONDecoder().decode(JSONValue.self, from: body).objectValue["request_id"] == nil)
+    }
+
     @Test func aToolCallWhoseArgumentsAreNotAnObjectYieldsNoArguments() throws {
         let event = try JSONDecoder().decode(
             AgentEvent.self,
@@ -69,7 +99,6 @@ import Testing
     @Test(arguments: [
         (Command.say("welcome"), #"{"text":"welcome","type":"say"}"#),
         (Command.interrupt, #"{"type":"interrupt"}"#),
-        (Command.instructions("be brief"), #"{"instructions":"be brief","type":"instructions"}"#),
         (Command.close, #"{"type":"close"}"#),
         (
             Command.toolResult(id: "c1", output: "20 degrees", error: nil),
@@ -80,8 +109,8 @@ import Testing
             #"{"error":"no such order","output":"","tool_call_id":"c1","type":"tool_result"}"#
         ),
         (
-            Command.toolResult(id: "c1", output: "ok", error: nil, commandID: "m1", turnID: "t1"),
-            #"{"command_id":"m1","error":"","output":"ok","tool_call_id":"c1","turn_id":"t1","type":"tool_result"}"#
+            Command.toolResult(id: "c1", output: "ok", error: nil, requestID: "m1", turnID: "t1"),
+            #"{"error":"","output":"ok","request_id":"m1","tool_call_id":"c1","turn_id":"t1","type":"tool_result"}"#
         ),
     ])
     func aCommandEncodesToWhatTheRouterReads(command: Command, expected: String) throws {

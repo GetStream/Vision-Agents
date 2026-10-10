@@ -12,9 +12,9 @@ final readonly class CommandReceipt
 {
     public function __construct(
         public string $assistantMessageId,
-        public string $commandId,
         // True when this command already exists and no new inference was started.
         public bool $duplicate,
+        public string $requestId,
         // Latest locally recorded response state; an interrupted command is never automatically rerun.
         public string $state,
         public string $userMessageId,
@@ -28,8 +28,8 @@ final readonly class CommandReceipt
     {
         return new self(
             assistantMessageId: Json::string($data, 'assistant_message_id'),
-            commandId: Json::string($data, 'command_id'),
             duplicate: Json::bool($data, 'duplicate'),
+            requestId: Json::string($data, 'request_id'),
             state: Json::string($data, 'state'),
             userMessageId: Json::string($data, 'user_message_id'),
         );
@@ -44,8 +44,8 @@ final readonly class CommandReceipt
     {
         $out = [];
         $out['assistant_message_id'] = $this->assistantMessageId;
-        $out['command_id'] = $this->commandId;
         $out['duplicate'] = $this->duplicate;
+        $out['request_id'] = $this->requestId;
         $out['state'] = $this->state;
         $out['user_message_id'] = $this->userMessageId;
         return $out;

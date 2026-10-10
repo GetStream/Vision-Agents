@@ -53,9 +53,7 @@ class AddTrunkNumberRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.add_trunk_number_request_tags import (
-            AddTrunkNumberRequestTags,
-        )
+        from ..models.add_trunk_number_request_tags import AddTrunkNumberRequestTags
 
         d = dict(src_dict)
         country = d.pop("country", UNSET)

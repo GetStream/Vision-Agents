@@ -53,6 +53,9 @@ type Call struct {
 	// joins anything else hears silence.
 	CallID   string
 	CallType string
+	// SessionID is the session to open for the call, with voice started: the call is named
+	// for it. Empty for a number attached before calls were, whose call is its own.
+	SessionID string
 	// CalledNumber is the number that was rung, which is how a worker serving several
 	// numbers knows which line this is.
 	CalledNumber string

@@ -113,7 +113,7 @@ describe("Session", () => {
 
   /** Opens a session and hands back both ends of it. */
   async function opened(tools?: Tools): Promise<[Session, Connection]> {
-    const opening = Session.open(api, { call_id: "demo" }, tools ? { tools } : {});
+    const opening = Session.open(api, { start_voice: true }, tools ? { tools } : {});
     const connection = await router.socket();
     return [await opening, connection];
   }
@@ -128,7 +128,7 @@ describe("Session", () => {
   });
 
   it("asks for interim speech only when told to", async () => {
-    const opening = Session.open(api, { call_id: "demo" }, { interim: true });
+    const opening = Session.open(api, { start_voice: true }, { interim: true });
     const connection = await router.socket();
     const session = await opening;
 
@@ -157,7 +157,7 @@ describe("Session", () => {
     router.serve("POST", "/v1/agents/sessions/sess_1/stop", { status: 204 });
     await router.stop();
 
-    await assert.rejects(() => Session.open(unwatchable, { call_id: "demo" }));
+    await assert.rejects(() => Session.open(unwatchable, { start_voice: true }));
   });
 
   it("hands the backend's events to whoever is reading them", async () => {
@@ -208,7 +208,7 @@ describe("Session", () => {
     await session.close();
   });
 
-  it("names the durable command and turn a tool was asked for by, so the result is taken", async () => {
+  it("names the durable request and turn a tool was asked for by, so the result is taken", async () => {
     const tools = new Tools().register({ name: "lookup", description: "Look it up", run: () => "found" });
     const [session, connection] = await opened(tools);
 
@@ -217,14 +217,14 @@ describe("Session", () => {
       id: "call_1",
       name: "lookup",
       arguments: "{}",
-      command_id: "command-a",
+      request_id: "request-a",
       turn_id: "turn-a",
     });
 
     assert.deepEqual(await connection.next(), {
       type: "tool_result",
       tool_call_id: "call_1",
-      command_id: "command-a",
+      request_id: "request-a",
       turn_id: "turn-a",
       output: "found",
     });
@@ -313,20 +313,33 @@ describe("Session", () => {
     assert.deepEqual(await connection.next(), { type: "interrupt" });
     assert.deepEqual(await connection.next(), { type: "say", text: "actually" });
 
-    session.setInstructions("be brief");
-    assert.deepEqual(await connection.next(), {
-      type: "instructions",
-      instructions: "be brief",
-    });
-
     await session.close();
   });
 
-  it("abandons the reply to one command, or whatever is being said", async () => {
+  it("takes the agent off the call and puts it back, carrying on one conversation", async () => {
+    const [session] = await opened();
+    const row = { id: "sess_1", user_id: "john", agent_id: "john", state: "live", created_at: "2026-01-01T00:00:00Z" };
+    router.serve("DELETE", "/v1/agents/sessions/sess_1/voice", { body: row });
+    router.serve("POST", "/v1/agents/sessions/sess_1/voice", { body: { ...row, call_id: "sess_1" } });
+
+    assert.equal(session.voice.started, true, "a session that joined its call has voice on");
+    await session.voice.stop();
+    assert.equal(router.last.method, "DELETE");
+    assert.equal(router.last.path, "/v1/agents/sessions/sess_1/voice");
+    assert.equal(session.voice.started, false);
+
+    await session.voice.start();
+    assert.equal(router.last.method, "POST");
+    assert.equal(router.last.path, "/v1/agents/sessions/sess_1/voice");
+    assert.equal(session.voice.started, true);
+    await session.close();
+  });
+
+  it("abandons the reply to one request, or whatever is being said", async () => {
     const [session, connection] = await opened();
 
-    session.interrupt({ commandId: "cmd_2" });
-    assert.deepEqual(await connection.next(), { type: "interrupt", command_id: "cmd_2" });
+    session.interrupt({ requestId: "req_2" });
+    assert.deepEqual(await connection.next(), { type: "interrupt", request_id: "req_2" });
     session.interrupt();
     assert.deepEqual(await connection.next(), { type: "interrupt" });
 
@@ -345,7 +358,7 @@ describe("Session", () => {
         created_at: "2026-01-01T00:00:00Z",
       },
     });
-    const opening = Session.open(api, { text: true });
+    const opening = Session.open(api, {});
     await router.socket();
     const session = await opening;
     let connects = 0;
@@ -384,7 +397,7 @@ describe("Session", () => {
         created_at: "2026-01-01T00:00:00Z",
       },
     });
-    const opening = Session.open(api, { call_id: "call-1" });
+    const opening = Session.open(api, { start_voice: true });
     await router.socket();
     const session = await opening;
     const client = {
@@ -397,7 +410,7 @@ describe("Session", () => {
     const video = await session.video();
 
     assert.equal(video.client, client);
-    assert.deepEqual(video.call, { type: "default", id: "call-1" });
+    assert.deepEqual(video.call, { type: "agent", id: "sess_1" });
     await session.close();
   });
 
@@ -423,7 +436,7 @@ describe("Session", () => {
         created_at: "2026-01-01T00:00:00Z",
       },
     });
-    const opening = Session.open(page, { text: true });
+    const opening = Session.open(page, {});
     await router.socket();
     const session = await opening;
 
@@ -447,7 +460,7 @@ describe("Session", () => {
         created_at: "2026-01-01T00:00:00Z",
       },
     });
-    const opening = Session.open(api, { text: true });
+    const opening = Session.open(api, {});
     await router.socket();
     const session = await opening;
 
@@ -474,7 +487,7 @@ describe("Session", () => {
         created_at: "2026-01-01T00:00:00Z",
       },
     });
-    const opening = Session.open(page, { text: true });
+    const opening = Session.open(page, {});
     await router.socket();
     const session = await opening;
 

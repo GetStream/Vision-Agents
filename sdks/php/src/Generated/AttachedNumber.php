@@ -12,7 +12,7 @@ final readonly class AttachedNumber
 {
     public function __construct(
         public string $routeId,
-        // Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com.
+        // Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip....
         public string $sipUri,
         public string $trunkId,
     ) {

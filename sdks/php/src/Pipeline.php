@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace GetStream\VisionAgents;
 
+use GetStream\VisionAgents\Generated\Greeting;
+use GetStream\VisionAgents\Generated\GreetingMode;
 use GetStream\VisionAgents\Generated\SessionVideo;
 
 /**
@@ -19,6 +21,8 @@ final readonly class Pipeline
     /**
      * @param ?string $sts a speech-to-speech target; naming one means no transcriber or voice is opened
      * @param ?string $greeting said on joining without going through the model
+     * @param ?GreetingMode $greetingMode exact, the default, or variation, which has the model
+     *     say its own variation of the greeting on every call
      * @param ?bool $backchannel murmur while a caller is still talking, the way a person does
      * @param list<string>|null $keyterms words the transcriber would otherwise get wrong
      */
@@ -35,6 +39,15 @@ final readonly class Pipeline
         public ?int $toolTimeoutMs = null,
         public ?array $keyterms = null,
         public ?SessionVideo $video = null,
+        public ?GreetingMode $greetingMode = null,
     ) {
+    }
+
+    /**
+     * The greeting as a request carries it, or null when none was set.
+     */
+    public function greeting(): ?Greeting
+    {
+        return $this->greeting === null ? null : new Greeting(text: $this->greeting, mode: $this->greetingMode);
     }
 }

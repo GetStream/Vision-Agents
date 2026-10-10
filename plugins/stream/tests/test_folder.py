@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from vision_agents.plugins.stream.folder import (
     ChannelSettings,
+    GreetingSettings,
     MCPServerSettings,
     PluginSettings,
     ToolSettings,
@@ -105,7 +106,7 @@ class TestFolder:
             "llm: llm-fast\n"
             "subagent: llm-thinking\n"
             "sandbox: daytona\n"
-            "greeting: Hello.\n"
+            "greeting:\n  text: Hello.\n  mode: variation\n"
             "keyterms:\n  - Vision Agents\n  - ''\n"
             "tags:\n  team: support\n",
         )
@@ -116,7 +117,7 @@ class TestFolder:
         assert settings.llm == "llm-fast"
         assert settings.subagent == "llm-thinking"
         assert settings.sandbox == "daytona"
-        assert settings.greeting == "Hello."
+        assert settings.greeting == GreetingSettings(text="Hello.", mode="variation")
         assert settings.keyterms == ["Vision Agents"]
         assert settings.tags == {"team": "support"}
 
@@ -502,20 +503,31 @@ class TestFolder:
 
         assert load(root).hash() != before
 
-    def test_speed_and_harness_are_read_from_the_declaration(self, tmp_path: Path):
+    def test_the_harness_is_read_from_the_declaration(self, tmp_path: Path):
         root = tmp_path / "jean"
-        write(root, "agent.yaml", "name: jean\nspeed: 1.1\nharness: default\n")
+        write(root, "agent.yaml", "name: jean\nharness: default\n")
 
-        settings = load(root).settings
+        assert load(root).settings.harness == "default"
 
-        assert settings.speed == 1.1
-        assert settings.harness == "default"
-
-    def test_a_speed_that_is_not_a_number_is_refused(self, tmp_path: Path):
+    def test_speed_is_not_something_an_agent_has(self, tmp_path: Path):
         root = tmp_path / "jean"
-        write(root, "agent.yaml", "name: jean\nspeed: fast\n")
+        write(root, "agent.yaml", "name: jean\nspeed: 0.9\n")
 
         with pytest.raises(ValueError, match="speed"):
+            load(root)
+
+    def test_a_greeting_given_as_text_alone_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ngreeting: Hello.\n")
+
+        with pytest.raises(ValueError, match="greeting"):
+            load(root)
+
+    def test_a_greeting_without_text_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ngreeting:\n  mode: exact\n")
+
+        with pytest.raises(ValueError, match="greeting"):
             load(root)
 
     def test_a_page_may_be_read_again_on_a_schedule(self, tmp_path: Path):

@@ -76,12 +76,7 @@ final class AgentSession {
   /// and rewinding to one.
   ///
   /// What is asked here shows in [conversation] at once, before the router has answered.
-  late final Responses responses = heldResponses(
-    _sessions,
-    session.id,
-    kept: session.conversationId.isNotEmpty,
-    asking: _asked,
-  );
+  late final Responses responses = heldResponses(_sessions, session.id, asking: _asked);
 
   /// Also report what somebody is part way through saying, as `hearing` events.
   final bool interim;
@@ -173,8 +168,12 @@ final class AgentSession {
   /// Abandons the reply in flight.
   void interrupt() => _held().send(const InterruptCommand());
 
-  /// Replaces the system prompt, from the next turn on.
-  void setInstructions(String instructions) => _held().send(InstructionsCommand(instructions));
+  /// Puts the agent on this session's own call, `agent:<session id>`, and returns [session]
+  /// as it now is.
+  Future<Session> startVoice() async => _session = await _sessions.startVoice(id);
+
+  /// Takes the agent off this session's call; the conversation goes on in writing.
+  Future<Session> stopVoice() async => _session = await _sessions.stopVoice(id);
 
   /// Goes back to a response and carries on from there.
   ///
@@ -293,14 +292,14 @@ final class AgentSession {
         result = ToolResultCommand(
           call.id,
           output: output,
-          commandId: call.commandId,
+          requestId: call.requestId,
           turnId: call.turnId,
         );
       } catch (error) {
         result = ToolResultCommand(
           call.id,
           error: '$error',
-          commandId: call.commandId,
+          requestId: call.requestId,
           turnId: call.turnId,
         );
       }

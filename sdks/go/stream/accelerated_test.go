@@ -127,7 +127,7 @@ func TestJoiningRendersTheAgentAsASessionToCreate(t *testing.T) {
 	})
 
 	session, err := pipeline.Join(t.Context(), Call{
-		ID: "call-1", UserID: "jean", Instructions: "Be brief.",
+		Voice: true, UserID: "jean",
 		Tags: map[string]string{"customer_id": "123"},
 	})
 	if err != nil {
@@ -140,7 +140,7 @@ func TestJoiningRendersTheAgentAsASessionToCreate(t *testing.T) {
 	}
 
 	request := backend.created(t)
-	if *request.CallId != "call-1" || *request.Llm != "gemma4" || *request.Agent != "jean" {
+	if !*request.StartVoice || *request.Llm != "gemma4" || *request.Agent != "jean" {
 		t.Errorf("the router was asked for %+v", request)
 	}
 	if (*request.Tags)["customer_id"] != "123" {
@@ -156,7 +156,7 @@ func TestAStoredConfigIsNamedRatherThanLookedUpFirst(t *testing.T) {
 		Agent:   "jean",
 		Backend: Backend{URL: backend.URL, CustomerID: "acme"},
 	})
-	if _, err := pipeline.Join(t.Context(), Call{ID: "call-1"}); err != nil {
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
 		t.Fatal(err)
 	}
 	defer pipeline.Leave(context.Background())
@@ -179,7 +179,7 @@ func TestAConfigHandedOverAsAnIDIsNamedAsOne(t *testing.T) {
 		ConfigID: "config-7",
 		Backend:  Backend{URL: backend.URL, CustomerID: "acme"},
 	})
-	if _, err := pipeline.Join(t.Context(), Call{ID: "call-1"}); err != nil {
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
 		t.Fatal(err)
 	}
 	defer pipeline.Leave(context.Background())
@@ -192,7 +192,7 @@ func TestAConfigHandedOverAsAnIDIsNamedAsOne(t *testing.T) {
 	}
 }
 
-func TestACallWithNoIDIsHeldInWriting(t *testing.T) {
+func TestACallWithoutVoiceIsHeldInWriting(t *testing.T) {
 	backend := newRouter(t, hold)
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
 
@@ -201,12 +201,8 @@ func TestACallWithNoIDIsHeldInWriting(t *testing.T) {
 	}
 	defer pipeline.Leave(context.Background())
 
-	request := backend.created(t)
-	if request.Text == nil || !*request.Text {
-		t.Error("a session with no call to join has to be a text one")
-	}
-	if request.CallId != nil {
-		t.Errorf("there is no call, but the router was sent %q", *request.CallId)
+	if request := backend.created(t); request.StartVoice != nil {
+		t.Errorf("no voice was asked for, but the router was sent start_voice=%v", *request.StartVoice)
 	}
 }
 
@@ -292,7 +288,7 @@ func TestTheModelIsOfferedEveryRegisteredFunction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := pipeline.Join(t.Context(), Call{ID: "call-1"}); err != nil {
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
 		t.Fatal(err)
 	}
 	defer pipeline.Leave(context.Background())
@@ -338,7 +334,7 @@ func TestAToolCallIsRunHereAndAnsweredOverTheSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := pipeline.Join(t.Context(), Call{ID: "call-1"}); err != nil {
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
 		t.Fatal(err)
 	}
 	defer pipeline.Leave(context.Background())
@@ -372,7 +368,7 @@ func TestAToolThatFailsSaysSoRatherThanLeavingTheModelWaiting(t *testing.T) {
 	})
 
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
-	if _, err := pipeline.Join(t.Context(), Call{ID: "call-1"}); err != nil {
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
 		t.Fatal(err)
 	}
 	defer pipeline.Leave(context.Background())
@@ -398,7 +394,7 @@ func TestWhatTheBackendDidArrivesAsEvents(t *testing.T) {
 	})
 
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
-	if _, err := pipeline.Join(t.Context(), Call{ID: "call-1"}); err != nil {
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
 		t.Fatal(err)
 	}
 	defer pipeline.Leave(context.Background())
@@ -430,7 +426,7 @@ func TestSayingSomethingSendsItDownTheSocket(t *testing.T) {
 	})
 
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
-	if _, err := pipeline.Join(t.Context(), Call{ID: "call-1"}); err != nil {
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
 		t.Fatal(err)
 	}
 	defer pipeline.Leave(context.Background())
@@ -469,7 +465,7 @@ func TestTheEventsChannelClosesWhenTheConversationEnds(t *testing.T) {
 	})
 
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
-	if _, err := pipeline.Join(t.Context(), Call{ID: "call-1"}); err != nil {
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
 		t.Fatal(err)
 	}
 	defer pipeline.Leave(context.Background())

@@ -7,6 +7,8 @@ namespace GetStream\VisionAgents\Folder;
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Generated\AgentDispatch;
 use GetStream\VisionAgents\Generated\DispatchSetting;
+use GetStream\VisionAgents\Generated\Greeting;
+use GetStream\VisionAgents\Generated\GreetingMode;
 use GetStream\VisionAgents\Generated\SessionVideo;
 
 /**
@@ -17,12 +19,11 @@ use GetStream\VisionAgents\Generated\SessionVideo;
  */
 final readonly class Declaration
 {
-    private const array STRINGS = ['name', 'description', 'mode', 'stt', 'tts', 'voice', 'llm', 'harness', 'subagent', 'search', 'greeting', 'sandbox'];
+    private const array STRINGS = ['name', 'description', 'mode', 'stt', 'tts', 'voice', 'llm', 'harness', 'subagent', 'search', 'sandbox'];
     private const array LISTS = ['plugins', 'keyterms'];
 
     /**
      * @param ?string $sts null when the declaration says nothing, empty when it turns it off
-     * @param float $speed the voice's rate of delivery, 1 being its own; 0 leaves it there
      * @param list<string> $plugins
      * @param list<string> $keyterms
      * @param array<string, string> $tags
@@ -35,12 +36,11 @@ final readonly class Declaration
         public string $tts = '',
         public ?string $sts = null,
         public string $voice = '',
-        public float $speed = 0.0,
         public string $llm = '',
         public string $harness = '',
         public string $subagent = '',
         public string $search = '',
-        public string $greeting = '',
+        public ?Greeting $greeting = null,
         public string $sandbox = '',
         public array $plugins = [],
         public array $keyterms = [],
@@ -70,11 +70,8 @@ final readonly class Declaration
                 $values[$key] = self::scalar($key, $value);
             } elseif ($key === 'sts') {
                 $values['sts'] = $value === null ? null : self::scalar($key, $value);
-            } elseif ($key === 'speed') {
-                if ($value !== null && !is_int($value) && !is_float($value)) {
-                    throw new ConfigurationException('speed is a number, 1 being the voice\'s own rate');
-                }
-                $values['speed'] = (float) $value;
+            } elseif ($key === 'greeting') {
+                $values['greeting'] = self::greeting($value);
             } elseif (in_array($key, self::LISTS, true)) {
                 $values[$key] = self::strings($key, $value);
             } elseif ($key === 'tags') {
@@ -96,12 +93,11 @@ final readonly class Declaration
             tts: self::pick($values, 'tts'),
             sts: array_key_exists('sts', $values) && is_string($values['sts']) ? $values['sts'] : null,
             voice: self::pick($values, 'voice'),
-            speed: is_float($values['speed'] ?? null) ? $values['speed'] : 0.0,
             llm: self::pick($values, 'llm'),
             harness: self::pick($values, 'harness'),
             subagent: self::pick($values, 'subagent'),
             search: self::pick($values, 'search'),
-            greeting: self::pick($values, 'greeting'),
+            greeting: ($values['greeting'] ?? null) instanceof Greeting ? $values['greeting'] : null,
             sandbox: self::pick($values, 'sandbox'),
             plugins: self::pickList($values, 'plugins'),
             keyterms: self::pickList($values, 'keyterms'),
@@ -182,6 +178,32 @@ final readonly class Declaration
             throw new ConfigurationException('video.max_frames must be an integer from 1 to 8');
         }
         return new SessionVideo(maxFrames: $frames, source: $source === '' ? null : $source);
+    }
+
+    /**
+     * What the agent opens the call with: its `text`, and a `mode` of exact or variation.
+     */
+    private static function greeting(mixed $value): ?Greeting
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (!is_array($value) || (array_is_list($value) && $value !== [])) {
+            throw new ConfigurationException('greeting is a mapping of text and mode');
+        }
+        $text = '';
+        $mode = null;
+        foreach ($value as $key => $each) {
+            if ($key === 'text') {
+                $text = self::scalar('greeting.text', $each);
+            } elseif ($key === 'mode') {
+                $named = self::scalar('greeting.mode', $each);
+                $mode = $named === '' ? null : (GreetingMode::tryFrom($named) ?? $named);
+            } else {
+                throw new ConfigurationException("\"greeting.{$key}\" is not something agent.yaml declares");
+            }
+        }
+        return new Greeting(text: $text, mode: $mode);
     }
 
     /**

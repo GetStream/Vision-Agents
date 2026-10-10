@@ -10,20 +10,18 @@ public enum Command: Sendable, Hashable {
     case say(String)
     /// Abandon the reply in flight.
     case interrupt
-    /// Replace the system prompt, from the next turn on.
-    case instructions(String)
-    /// Answer a tool call. One of `output` or `error` says how it went. A call made by a
-    /// durable command is only accepted back with its `commandID` and `turnID`.
+    /// Answer a tool call. One of `output` or `error` says how it went. A call made for a
+    /// request is only accepted back with its `requestID` and `turnID`.
     case toolResult(
-        id: String, output: String?, error: String?, commandID: String = "", turnID: String = "")
+        id: String, output: String?, error: String?, requestID: String = "", turnID: String = "")
     /// End the session.
     case close
 }
 
 extension Command: Encodable {
     private enum CodingKeys: String, CodingKey {
-        case type, text, instructions, toolCallID = "tool_call_id", output, error
-        case commandID = "command_id", turnID = "turn_id"
+        case type, text, toolCallID = "tool_call_id", output, error
+        case requestID = "request_id", turnID = "turn_id"
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -34,18 +32,15 @@ extension Command: Encodable {
             try container.encode(text, forKey: .text)
         case .interrupt:
             try container.encode("interrupt", forKey: .type)
-        case .instructions(let instructions):
-            try container.encode("instructions", forKey: .type)
-            try container.encode(instructions, forKey: .instructions)
-        case .toolResult(let id, let output, let error, let commandID, let turnID):
+        case .toolResult(let id, let output, let error, let requestID, let turnID):
             try container.encode("tool_result", forKey: .type)
             try container.encode(id, forKey: .toolCallID)
             // The router reads both fields off one struct and treats the empty string as
             // absent, so sending the empty string and sending nothing are the same thing.
             try container.encode(output ?? "", forKey: .output)
             try container.encode(error ?? "", forKey: .error)
-            if !commandID.isEmpty {
-                try container.encode(commandID, forKey: .commandID)
+            if !requestID.isEmpty {
+                try container.encode(requestID, forKey: .requestID)
             }
             if !turnID.isEmpty {
                 try container.encode(turnID, forKey: .turnID)

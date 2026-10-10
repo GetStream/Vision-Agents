@@ -134,6 +134,12 @@ module GetStream
           body: "ConnectorEventDestinationRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "createCustomModel" => {
+          method: :post, path: "/v1/agents/models",
+          path_params: [].freeze, query: [].freeze,
+          body: "CustomModelRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "createGuestUser" => {
           method: :post, path: "/v1/agents/guests",
           path_params: [].freeze, query: [].freeze,
@@ -206,6 +212,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "deleteConnector" => {
+          method: :delete, path: "/v1/agents/connectors/{id}",
+          path_params: %w[id].freeze, query: %w[force].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "deleteConnectorEventDestination" => {
           method: :delete, path: "/v1/agents/connectors/{id}/event-destinations/{destination_id}",
           path_params: %w[id destination_id].freeze, query: [].freeze,
@@ -220,6 +232,12 @@ module GetStream
         }.freeze,
         "deleteConnectorProviderApp" => {
           method: :delete, path: "/v1/agents/connectors/{id}/provider-app",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "deleteCustomModel" => {
+          method: :delete, path: "/v1/agents/models/{id}",
           path_params: %w[id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
@@ -452,15 +470,27 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "getConnectorOAuthClient" => {
+          method: :get, path: "/v1/agents/connectors/{id}/oauth-client",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "getConversationCommand" => {
-          method: :get, path: "/v1/agents/conversations/{cid}/commands/{command_id}",
-          path_params: %w[cid command_id].freeze, query: %w[agent_id].freeze,
+          method: :get, path: "/v1/agents/conversations/{cid}/commands/{request_id}",
+          path_params: %w[cid request_id].freeze, query: %w[agent_id].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
         "getConversationMessages" => {
           method: :get, path: "/v1/agents/conversations/{cid}/messages",
           path_params: %w[cid].freeze, query: %w[agent_id before].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "getCustomModel" => {
+          method: :get, path: "/v1/agents/models/{id}",
+          path_params: %w[id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -513,8 +543,8 @@ module GetStream
           socket: false, client_accessible: true
         }.freeze,
         "getSessionCommand" => {
-          method: :get, path: "/v1/agents/sessions/{id}/commands/{command_id}",
-          path_params: %w[id command_id].freeze, query: [].freeze,
+          method: :get, path: "/v1/agents/sessions/{id}/commands/{request_id}",
+          path_params: %w[id request_id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -633,8 +663,8 @@ module GetStream
           socket: false, client_accessible: false
         }.freeze,
         "interruptSessionCommand" => {
-          method: :post, path: "/v1/agents/sessions/{id}/commands/{command_id}/interrupt",
-          path_params: %w[id command_id].freeze, query: [].freeze,
+          method: :post, path: "/v1/agents/sessions/{id}/commands/{request_id}/interrupt",
+          path_params: %w[id request_id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -719,6 +749,12 @@ module GetStream
         "listConnectors" => {
           method: :get, path: "/v1/agents/connectors",
           path_params: [].freeze, query: %w[q limit cursor].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "listCustomModels" => {
+          method: :get, path: "/v1/agents/models",
+          path_params: [].freeze, query: %w[limit cursor].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1124,12 +1160,6 @@ module GetStream
           body: "SetSandboxRecipientsRequest", body_required: false,
           socket: false, client_accessible: false
         }.freeze,
-        "setSessionInstructions" => {
-          method: :put, path: "/v1/agents/sessions/{id}/instructions",
-          path_params: %w[id].freeze, query: [].freeze,
-          body: "InstructionsRequest", body_required: true,
-          socket: false, client_accessible: false
-        }.freeze,
         "setSessionSettings" => {
           method: :patch, path: "/v1/agents/sessions/{id}/settings",
           path_params: %w[id].freeze, query: [].freeze,
@@ -1142,8 +1172,20 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "startSessionVoice" => {
+          method: :post, path: "/v1/agents/sessions/{id}/voice",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
         "stopSession" => {
           method: :post, path: "/v1/agents/sessions/{id}/stop",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
+        "stopSessionVoice" => {
+          method: :delete, path: "/v1/agents/sessions/{id}/voice",
           path_params: %w[id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: true
@@ -1206,6 +1248,12 @@ module GetStream
           method: :put, path: "/v1/settings/app/stream/credentials",
           path_params: [].freeze, query: [].freeze,
           body: "StreamCredentials", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "updateCustomModel" => {
+          method: :put, path: "/v1/agents/models/{id}",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: "CustomModelRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "updateOrganizationPolicy" => {
@@ -1294,15 +1342,15 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentConfig" => {
-          properties: %w[agent_plugins channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events progressive_tools sandbox sandbox_options search skills speed sts stt sync_hash tags thinking_llm tts updated_at user_plugins video visible_tools voice].freeze,
+          properties: %w[channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins sandbox sandbox_options search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
           required: %w[created_at id mode name updated_at].freeze, open: false
         }.freeze,
         "AgentConfigPatch" => {
-          properties: %w[agent_plugins channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events progressive_tools sandbox sandbox_options search skills speed sts stt tags thinking_llm tts user_plugins video visible_tools voice].freeze,
+          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins sandbox sandbox_options search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AgentConfigRequest" => {
-          properties: %w[agent_plugins channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events progressive_tools sandbox sandbox_options search skills speed sts stt tags thinking_llm tts user_plugins video visible_tools voice].freeze,
+          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins sandbox sandbox_options search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
@@ -1341,12 +1389,16 @@ module GetStream
           properties: %w[has_more items next_cursor].freeze,
           required: %w[has_more items].freeze, open: false
         }.freeze,
+        "AgentTools" => {
+          properties: %w[progressive].freeze,
+          required: [].freeze, open: false
+        }.freeze,
         "AppSettings" => {
           properties: %w[stream].freeze,
           required: %w[stream].freeze, open: false
         }.freeze,
         "AttachNumberRequest" => {
-          properties: %w[allowed_ips call_id call_type].freeze,
+          properties: %w[allowed_ips].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AttachedNumber" => {
@@ -1402,7 +1454,7 @@ module GetStream
           required: %w[e164 vendor].freeze, open: false
         }.freeze,
         "Call" => {
-          properties: %w[agent_id call_id campaign_id config_id contact_id direction ended_at from_number id instructions llm llm_used mode review_notes review_score skills started_at sts sts_used stt stt_used summary tags thinking_llm thinking_llm_used to_number tts tts_used usage user_id voice voice_used].freeze,
+          properties: %w[agent_id call_id campaign_id config_id contact_id direction ended_at from_number id instructions llm llm_used mode review_notes review_score skills started_at sts sts_used stt stt_used subagent subagent_used summary tags to_number tts tts_used usage user_id voice voice_used].freeze,
           required: %w[agent_id call_id direction id started_at].freeze, open: false
         }.freeze,
         "CallEvent" => {
@@ -1486,28 +1538,36 @@ module GetStream
           required: %w[input_tokens output_tokens].freeze, open: false
         }.freeze,
         "CommandReceipt" => {
-          properties: %w[assistant_message_id command_id duplicate state user_message_id].freeze,
-          required: %w[assistant_message_id command_id duplicate state user_message_id].freeze, open: false
+          properties: %w[assistant_message_id duplicate request_id state user_message_id].freeze,
+          required: %w[assistant_message_id request_id duplicate state user_message_id].freeze, open: false
         }.freeze,
         "ConnectChannelRequest" => {
           properties: %w[account_id challenge kind number signing token].freeze,
           required: %w[kind number].freeze, open: false
         }.freeze,
         "Connection" => {
-          properties: %w[account_id auth_scheme connector_id created_at definition_revision expires_at granted_scopes id inputs label metadata owner revision status updated_at used_by].freeze,
-          required: %w[id connector_id definition_revision owner auth_scheme inputs metadata status granted_scopes revision created_at updated_at used_by].freeze, open: false
+          properties: %w[account_id auth_scheme client connector_id created_at definition_broken_reason definition_revision definition_status expires_at granted_scopes id inputs label last_validation metadata owner revision status updated_at used_by].freeze,
+          required: %w[id connector_id definition_revision definition_status owner auth_scheme inputs metadata status granted_scopes revision created_at updated_at used_by].freeze, open: false
+        }.freeze,
+        "ConnectionClient" => {
+          properties: %w[client_id registration].freeze,
+          required: %w[registration client_id].freeze, open: false
         }.freeze,
         "ConnectionCredentials" => {
           properties: %w[expected_revision values].freeze,
           required: %w[expected_revision].freeze, open: false
         }.freeze,
         "ConnectionInvocation" => {
-          properties: %w[binding config_id connection_id connector_id error_type id latency_ms session_id started_at tool].freeze,
+          properties: %w[arguments binding config_id connection_id connector_id error_type id latency_ms session_id started_at tool].freeze,
           required: %w[id connection_id connector_id config_id binding tool started_at latency_ms].freeze, open: false
         }.freeze,
         "ConnectionInvocationPage" => {
           properties: %w[has_more items next_cursor].freeze,
           required: %w[items has_more].freeze, open: false
+        }.freeze,
+        "ConnectionLastValidation" => {
+          properties: %w[checked_at code error status].freeze,
+          required: %w[status checked_at].freeze, open: false
         }.freeze,
         "ConnectionOwner" => {
           properties: %w[type user_id].freeze,
@@ -1546,11 +1606,15 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "Connector" => {
-          properties: %w[category client created_at custom description id inputs name revision schemes scopes setup].freeze,
-          required: %w[id revision name custom schemes inputs scopes client created_at].freeze, open: false
+          properties: %w[category channel client created_at custom description id inputs name redirect_uri revision schemes scopes setup].freeze,
+          required: %w[id revision name custom schemes inputs scopes client channel created_at].freeze, open: false
+        }.freeze,
+        "ConnectorAuditCredential" => {
+          properties: %w[access_expires_at access_fingerprint previous_access_fingerprint previous_refresh_fingerprint refresh_expires_at refresh_fingerprint rotated].freeze,
+          required: %w[rotated].freeze, open: false
         }.freeze,
         "ConnectorAuditEvent" => {
-          properties: %w[action attempt_id connection_id connector_id created_at id latency_ms owner_type reason request_id revision session_id status_code target].freeze,
+          properties: %w[action attempt_id connection_id connector_id created_at credential id latency_ms owner_type reason request_id revision session_id status_code target].freeze,
           required: %w[id connection_id connector_id owner_type action created_at].freeze, open: false
         }.freeze,
         "ConnectorAuditPage" => {
@@ -1619,7 +1683,7 @@ module GetStream
         }.freeze,
         "ConnectorToolGrant" => {
           properties: %w[name schema_digest].freeze,
-          required: %w[name schema_digest].freeze, open: false
+          required: %w[name].freeze, open: false
         }.freeze,
         "Contact" => {
           properties: %w[attempts call_id error id instructions state to_number vendor_call_id].freeze,
@@ -1638,11 +1702,11 @@ module GetStream
           required: %w[recipient channel].freeze, open: false
         }.freeze,
         "CreateResponseRequest" => {
-          properties: %w[command_id images text videos].freeze,
+          properties: %w[images request_id text videos].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateSessionRequest" => {
-          properties: %w[agent agent_id backchannel call_id call_type config_id connector_bindings context_truncated conversation_id custom description greeting history id incognito instructions keyterms languages llm max_tokens memory min_confidence model_overwrites navigating phone project_id search sts stt tags text title tool_timeout_ms tools tts user_id user_name video voice].freeze,
+          properties: %w[agent agent_id backchannel config_id connector_bindings context_truncated custom description greeting history id incognito keyterms languages llm max_tokens memory min_confidence model_overwrites navigating phone project_id search start_voice sts stt tags title tool_timeout_ms tools tts user_id user_name video voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "CreateSipTrunkRequest" => {
@@ -1652,6 +1716,18 @@ module GetStream
         "CustomConnectorRequest" => {
           properties: %w[category client description endpoint id name schemes scopes].freeze,
           required: %w[id name endpoint schemes].freeze, open: false
+        }.freeze,
+        "CustomModel" => {
+          properties: %w[base_url context_window created_at has_api_key id input_modalities model name per_million_input_tokens per_million_output_tokens retention target trains_on_data updated_at].freeze,
+          required: %w[id name target base_url model has_api_key context_window input_modalities per_million_input_tokens per_million_output_tokens created_at updated_at].freeze, open: false
+        }.freeze,
+        "CustomModelPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[has_more items].freeze, open: false
+        }.freeze,
+        "CustomModelRequest" => {
+          properties: %w[api_key base_url context_window input_modalities model name per_million_input_tokens per_million_output_tokens retention trains_on_data].freeze,
+          required: %w[name base_url model].freeze, open: false
         }.freeze,
         "DataChange" => {
           properties: %w[at key op row seq table].freeze,
@@ -1678,12 +1754,16 @@ module GetStream
           required: %w[error].freeze, open: false
         }.freeze,
         "ForkSessionRequest" => {
-          properties: %w[agent call_id config_id custom description incognito instructions messages model_overwrites project_id response_id title].freeze,
+          properties: %w[agent config_id custom description incognito messages model_overwrites project_id response_id title].freeze,
           required: [].freeze, open: false
         }.freeze,
         "GeneratedImage" => {
           properties: %w[data height media_type seed width].freeze,
           required: %w[data height media_type width].freeze, open: false
+        }.freeze,
+        "Greeting" => {
+          properties: %w[mode text].freeze,
+          required: %w[text].freeze, open: false
         }.freeze,
         "GuestUser" => {
           properties: %w[custom expires_at id name token].freeze,
@@ -1741,9 +1821,9 @@ module GetStream
           properties: %w[images instructions messages tool_definitions tool_use video].freeze,
           required: %w[images instructions messages tool_definitions tool_use video].freeze, open: false
         }.freeze,
-        "InstructionsRequest" => {
-          properties: %w[instructions].freeze,
-          required: %w[instructions].freeze, open: false
+        "InvocationArgument" => {
+          properties: %w[length name type].freeze,
+          required: %w[name type].freeze, open: false
         }.freeze,
         "KnowledgeDocument" => {
           properties: %w[source text].freeze,
@@ -1834,11 +1914,11 @@ module GetStream
           required: %w[capabilities implemented ready vendor].freeze, open: false
         }.freeze,
         "PlaceCallRequest" => {
-          properties: %w[call_id call_type custom from headers initial_digits ring_timeout_seconds tags to].freeze,
+          properties: %w[custom from headers initial_digits ring_timeout_seconds session_id tags to].freeze,
           required: %w[from to].freeze, open: false
         }.freeze,
         "PlacedCall" => {
-          properties: %w[call_id call_type status vendor vendor_call_id].freeze,
+          properties: %w[session_id status vendor vendor_call_id].freeze,
           required: %w[status vendor_call_id].freeze, open: false
         }.freeze,
         "Plugin" => {
@@ -1866,7 +1946,7 @@ module GetStream
           required: %w[title description].freeze, open: false
         }.freeze,
         "PluginWithOptions" => {
-          properties: %w[name readonly scopes tools toolsets].freeze,
+          properties: %w[name readonly scopes tools toolsets user].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "Policy" => {
@@ -1910,7 +1990,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "RespondRequest" => {
-          properties: %w[client_id command_id text].freeze,
+          properties: %w[client_id request_id text].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "ReviewPage" => {
@@ -1974,7 +2054,7 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "Session" => {
-          properties: %w[agent agent_id call_id call_type closed_at config_id context_truncated conversation_id created_at custom description forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id state sts stt text thinking_llm title tts user_id video voice].freeze,
+          properties: %w[agent agent_id call_id call_type closed_at config_id context_truncated conversation_id created_at custom description forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
           required: %w[agent_id call_id call_type created_at id modality state user_id].freeze, open: false
         }.freeze,
         "SessionConnectorBinding" => {
@@ -2002,7 +2082,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "SessionRespondCommand" => {
-          properties: %w[command_id images text type].freeze,
+          properties: %w[images request_id text type].freeze,
           required: %w[text type].freeze, open: false
         }.freeze,
         "SessionSettingsRequest" => {
@@ -2089,6 +2169,10 @@ module GetStream
           properties: %w[audio_ms_total bucket cached_input_tokens_total characters_total cost_micros_total error_count images_total input_tokens_total latency_p50_ms latency_p95_ms model output_tokens_total provider request_count uptime].freeze,
           required: %w[audio_ms_total bucket cached_input_tokens_total characters_total cost_micros_total error_count images_total input_tokens_total model output_tokens_total provider request_count].freeze, open: false
         }.freeze,
+        "StoredConnectorOAuthClient" => {
+          properties: %w[auth_method client_id connector_id created_at has_client_secret has_signing_secret provider_app_id registration updated_at].freeze,
+          required: %w[connector_id registration client_id has_client_secret has_signing_secret created_at updated_at].freeze, open: false
+        }.freeze,
         "StreamCheck" => {
           properties: %w[reattach settings].freeze,
           required: %w[settings reattach].freeze, open: false
@@ -2118,7 +2202,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "SyncAgentRequest" => {
-          properties: %w[agent_plugins base_change channels check_changes connectors dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls llm mcp_servers mode name plugin_events progressive_tools sandbox sandbox_options search simulations skills speed sts stt tags thinking_llm tts user_plugins video voice].freeze,
+          properties: %w[base_change channels check_changes connectors dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls llm mcp_servers mode name plugin_events plugins sandbox sandbox_options search simulations skills sts stt subagent tags tools tts video voice].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {
@@ -2154,11 +2238,11 @@ module GetStream
           required: %w[started_at turn_id].freeze, open: false
         }.freeze,
         "ToolApprovalCommand" => {
-          properties: %w[allowed command_id summary tool_call_id turn_id type].freeze,
-          required: %w[allowed command_id tool_call_id turn_id type].freeze, open: false
+          properties: %w[allowed request_id summary tool_call_id turn_id type].freeze,
+          required: %w[allowed request_id tool_call_id turn_id type].freeze, open: false
         }.freeze,
         "ToolResultCommand" => {
-          properties: %w[command_id error output tool_call_id turn_id type].freeze,
+          properties: %w[error output request_id tool_call_id turn_id type].freeze,
           required: %w[tool_call_id type].freeze, open: false
         }.freeze,
         "TranscriptEntity" => {
@@ -2182,8 +2266,8 @@ module GetStream
           required: %w[source].freeze, open: false
         }.freeze,
         "TransferCallRequest" => {
-          properties: %w[call_id call_type from tags to].freeze,
-          required: %w[call_id from to].freeze, open: false
+          properties: %w[from session_id tags to].freeze,
+          required: %w[from session_id to].freeze, open: false
         }.freeze,
         "TtsOptions" => {
           properties: %w[chunk_schedule data_policy emotion format languages overwrites pronunciations providers similarity speed stability style target voice volume].freeze,
@@ -2194,7 +2278,7 @@ module GetStream
           required: %w[agent_id audio_out_ms_total bucket interrupted_count turn_count].freeze, open: false
         }.freeze,
         "UpdateSessionRequest" => {
-          properties: %w[custom description instructions llm max_output_tokens sts stt temperature thinking title tts verbosity voice].freeze,
+          properties: %w[custom description llm max_output_tokens sts stt temperature thinking title tts verbosity voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "UpdateSipTrunkRequest" => {

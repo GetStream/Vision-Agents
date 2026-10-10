@@ -295,8 +295,12 @@ func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id strin
 	return policy, nil
 }
 
-// routes reports whether a "provider/model" is one some modality here routes to.
+// routes reports whether a "provider/model" is one some modality here routes to. A
+// customer's own model is taken on its word, since it may be added after the policy is.
 func (s *Server) routes(model string) bool {
+	if _, own := routing.CustomName(model); own {
+		return true
+	}
 	for _, router := range s.routers {
 		if _, ok := router.Config().Provider(model); ok {
 			return true

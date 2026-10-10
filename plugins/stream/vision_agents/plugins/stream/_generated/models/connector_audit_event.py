@@ -142,9 +142,7 @@ class ConnectorAuditEvent:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.connector_audit_credential import (
-            ConnectorAuditCredential,
-        )
+        from ..models.connector_audit_credential import ConnectorAuditCredential
 
         d = dict(src_dict)
         action = ConnectorAuditAction(d.pop("action"))

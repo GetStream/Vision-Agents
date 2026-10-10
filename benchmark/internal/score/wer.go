@@ -9,8 +9,12 @@ import (
 
 // NormalizerVersion pins the WER fold and the structured matcher used for tool
 // arguments. v2 adds date-form equivalence (1987-03-04 = 03/04/1987). v3 reads clock
-// times as spoken (7:30 = seven thirty) and matches plain plurals (peanuts = peanut).
-const NormalizerVersion = "english-basic-v3"
+// times as spoken (7:30 = seven thirty) and matches plain plurals (peanuts = peanut). v4
+// reads numbers digit by digit whichever way they were written (512-555-0142 = five one two
+// five five five zero one four two, 1987 = nineteen eighty seven, March 4 = March fourth,
+// 2pm = two PM), joins spelled letters (A L V A R E Z = Alvarez, ABC123 = a b c one two
+// three), and folds a few spellings (highchair, Dr, wanna).
+const NormalizerVersion = "english-basic-v4"
 
 var (
 	clock    = regexp.MustCompile(`\b(\d{1,2}):(\d{2})\b`)
@@ -54,6 +58,12 @@ var contractions = map[string]string{
 	"couldn't":  "could not",
 	"shouldn't": "should not",
 	"let's":     "let us",
+	"wanna":     "want to",
+	"gonna":     "going to",
+	"gotta":     "got to",
+	"highchair": "high chair",
+	"upfront":   "up front",
+	"dr":        "doctor",
 }
 
 // Alignment is the word-level edit between a reference and a hypothesis.
@@ -109,8 +119,8 @@ func ScoreWER(reference, heard string, normalize bool) Alignment {
 	return out
 }
 
-// Normalize is the english-basic-v3 preset: casefold, clock times as spoken, contractions, currency,
-// fillers, then punctuation dropped. Date-form equivalence for tool arguments
+// Normalize is the english-basic-v4 preset: casefold, clock times as spoken, contractions, currency,
+// fillers, punctuation dropped, then numbers as digits one by one and spelled letters joined. Date-form equivalence for tool arguments
 // lives in scenario.MatchStructuredValue and is pinned by the same version.
 func Normalize(text string) string {
 	text = strings.ToLower(text)
@@ -128,7 +138,116 @@ func Normalize(text string) string {
 	}
 	text = strings.Join(expanded, " ")
 	text = fillers.ReplaceAllString(text, " ")
-	return strings.Join(werWords(text, false), " ")
+	return strings.Join(joinSpelled(splitDigits(numberWords(werWords(text, false)))), " ")
+}
+
+var (
+	numberValues = map[string]int{
+		"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+		"eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+		"fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+		"nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+		"seventy": 70, "eighty": 80, "ninety": 90,
+	}
+	ordinalValues = map[string]int{
+		"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7,
+		"eighth": 8, "ninth": 9, "tenth": 10, "eleventh": 11, "twelfth": 12, "thirteenth": 13,
+		"fourteenth": 14, "fifteenth": 15, "sixteenth": 16, "seventeenth": 17,
+		"eighteenth": 18, "nineteenth": 19, "twentieth": 20, "thirtieth": 30,
+	}
+)
+
+// numberWords writes spoken numbers as digits: a tens word takes the unit after it (eighty
+// seven = 87), so a year read in pairs (nineteen eighty seven) comes out as 19 87, which the
+// digit split makes the same as 1987. "oh" is zero only after another number, as in a clock
+// time or a phone number.
+func numberWords(words []string) []string {
+	out := make([]string, 0, len(words))
+	numeric := false
+	for i := 0; i < len(words); i++ {
+		word := words[i]
+		value, ok := numberValues[word]
+		if !ok {
+			value, ok = ordinalValues[word]
+		}
+		if !ok && word == "oh" && numeric {
+			value, ok = 0, true
+		}
+		if !ok {
+			out = append(out, word)
+			numeric = false
+			continue
+		}
+		if value >= 20 && value%10 == 0 && i+1 < len(words) {
+			unit, isUnit := numberValues[words[i+1]]
+			if !isUnit {
+				unit, isUnit = ordinalValues[words[i+1]]
+			}
+			if isUnit && unit > 0 && unit < 10 {
+				value += unit
+				i++
+			}
+		}
+		out = append(out, strconv.Itoa(value))
+		numeric = true
+	}
+	return out
+}
+
+var ordinalSuffixes = map[string]bool{"st": true, "nd": true, "rd": true, "th": true}
+
+// splitDigits cuts a word where letters and digits meet (2pm = 2 pm) and writes every digit
+// as a word of its own, so 512 and five one two align digit by digit. An ordinal's suffix is
+// dropped (2nd = second = 2).
+func splitDigits(words []string) []string {
+	out := make([]string, 0, len(words))
+	for _, word := range words {
+		var letters strings.Builder
+		afterDigit := false
+		flush := func() {
+			if letters.Len() > 0 && !(afterDigit && ordinalSuffixes[letters.String()]) {
+				out = append(out, letters.String())
+			}
+			letters.Reset()
+		}
+		for _, r := range word {
+			if unicode.IsDigit(r) {
+				flush()
+				out = append(out, string(r))
+				afterDigit = true
+				continue
+			}
+			letters.WriteRune(r)
+		}
+		flush()
+	}
+	return out
+}
+
+// joinSpelled joins three or more single letters in a row into one word, so a name or an id
+// spelled out (a l v a r e z) reads the same as written (Alvarez). Two letters stay apart: "a i"
+// is more likely two words than a spelling.
+func joinSpelled(words []string) []string {
+	out := make([]string, 0, len(words))
+	for i := 0; i < len(words); {
+		j := i
+		for j < len(words) && isLetter(words[j]) {
+			j++
+		}
+		if j-i >= 3 {
+			out = append(out, strings.Join(words[i:j], ""))
+			i = j
+			continue
+		}
+		out = append(out, words[i])
+		i++
+	}
+	return out
+}
+
+func isLetter(word string) bool {
+	runes := []rune(word)
+	return len(runes) == 1 && unicode.IsLetter(runes[0])
 }
 
 func werWords(text string, fold bool) []string {

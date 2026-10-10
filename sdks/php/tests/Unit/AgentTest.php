@@ -58,10 +58,10 @@ final class AgentTest extends TestCase
         self::assertSame('ses_1', $session->id());
         $sent = $this->router->to('POST', '/v1/agents/sessions')[0]->json();
         self::assertSame('cfg_9', $sent['config_id']);
-        self::assertTrue($sent['text']);
+        self::assertArrayNotHasKey('start_voice', $sent);
         self::assertSame('support', $sent['user_id']);
         self::assertSame('support', $sent['agent_id']);
-        self::assertSame('Be brief.', $sent['instructions']);
+        self::assertArrayNotHasKey('instructions', $sent, 'instructions reach the router through sync');
         self::assertSame('openai/gpt-5.6', $sent['llm']);
         self::assertSame(['fr'], $sent['languages']);
         self::assertSame(['env' => 'production'], $sent['tags']);
@@ -86,7 +86,7 @@ final class AgentTest extends TestCase
 
         $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
         self::assertSame('default', $sent['harness']);
-        self::assertSame('openai/gpt-5.6', $sent['thinking_llm']);
+        self::assertSame('openai/gpt-5.6', $sent['subagent']);
         self::assertSame('daytona', $sent['sandbox']);
         self::assertSame(
             [['config_id' => '', 'description' => 'Work it out', 'instructions' => 'Reason it through.', 'name' => 'think', 'deadline_ms' => 30000]],
@@ -99,12 +99,12 @@ final class AgentTest extends TestCase
         $this->router->answer('GET', '/v1/agents/configs', 200, [Rows::config('cfg_9', 'support')]);
         $this->router->answer('PATCH', '/v1/agents/configs/cfg_9', 200, Rows::config('cfg_9', 'support') + ['guardrail' => 'No refunds.']);
 
-        $config = $this->router->client()->agent('support')->updateConfig(new AgentConfigPatch(guardrail: 'No refunds.', speed: 1.1, visibleTools: ['athena_*']));
+        $config = $this->router->client()->agent('support')->updateConfig(new AgentConfigPatch(guardrail: 'No refunds.', visibleTools: ['athena_*']));
 
         self::assertSame('No refunds.', $config->guardrail);
         self::assertSame('support', $this->router->to('GET', '/v1/agents/configs')[0]->params()['name']);
         self::assertSame(
-            ['guardrail' => 'No refunds.', 'speed' => 1.1, 'visible_tools' => ['athena_*']],
+            ['guardrail' => 'No refunds.', 'visible_tools' => ['athena_*']],
             $this->router->to('PATCH', '/v1/agents/configs/cfg_9')[0]->json(),
         );
     }
@@ -152,63 +152,102 @@ final class AgentTest extends TestCase
         );
     }
 
-    public function testJoinCreatesTheStreamCallFirst(): void
+    public function testJoinStartsVoiceOnTheSessionsOwnCall(): void
     {
-        $this->router->answer('POST', '/api/v2/video/call/agent/hello', 201, ['duration' => '1ms', 'created' => true]);
-        $agent = new Agent(name: 'jean', client: $this->router->client(), edge: $this->edge());
+        $agent = new Agent(name: 'jean', client: $this->router->client());
 
-        $agent->join('hello');
+        $session = $agent->join();
 
-        $received = $this->router->received();
-        self::assertSame('/api/v2/video/call/agent/hello', $received[0]->path);
-        self::assertSame('jean', Json::object($received[0]->json(), 'data')['created_by_id']);
+        self::assertSame(['/v1/agents/sessions'], array_map(static fn ($r) => $r->path, $this->router->received()), 'no Stream call is created first');
         $sent = $this->router->to('POST', '/v1/agents/sessions')[0]->json();
-        self::assertSame('hello', $sent['call_id']);
-        self::assertSame('agent', $sent['call_type']);
-        self::assertArrayNotHasKey('text', $sent);
+        self::assertTrue($sent['start_voice']);
+        self::assertArrayNotHasKey('call_id', $sent);
+        self::assertSame('ses_1', $session->call()->id);
+        self::assertSame('agent', $session->call()->type);
     }
 
-    public function testOutboundCallPlacesTheCallBeforeJoining(): void
+    public function testMonitorUrlNamesTheSessionsCallOnceVoiceIsStarted(): void
     {
-        $this->router->answer('POST', '/api/v2/video/call/agent/out', 201, ['duration' => '1ms']);
-        $this->router->answer('POST', '/v1/phone/calls', 201, ['vendor_call_id' => 'CA123', 'status' => 'queued']);
-        $agent = new Agent(name: 'jean', costTracking: ['team' => 'sales'], client: $this->router->client(), edge: $this->edge());
+        $this->router->answer('POST', '/v1/agents/sessions/ses_1/voice', 200, Rows::session('ses_1', ['call_id' => 'ses_1', 'call_type' => 'agent']));
+        $agent = new Agent(name: 'jean', client: $this->router->client(), edge: $this->edge());
+        $session = $agent->chat();
+        $session->startVoice();
 
-        $agent->outboundCall('+15550001111', '+15552223333', 'out');
+        $url = $agent->monitorUrl($session);
+
+        self::assertStringContainsString('/join/ses_1?', $url);
+    }
+
+    public function testASessionHeldInWritingHasNoMonitorUrl(): void
+    {
+        $agent = new Agent(name: 'jean', client: $this->router->client(), edge: $this->edge());
+
+        $this->expectException(ConfigurationException::class);
+        $agent->monitorUrl($agent->chat());
+    }
+
+    public function testResumeCarriesOnTheSessionById(): void
+    {
+        $this->router->answer('GET', '/v1/agents/sessions/ses_7', 200, Rows::session('ses_7'));
+        $agent = new Agent(name: 'jean', client: $this->router->client());
+
+        $session = $agent->resume('ses_7');
+
+        self::assertSame('ses_7', $session->id());
+        self::assertSame($agent, $session->agent);
+        self::assertSame([], $this->router->to('POST', '/v1/agents/sessions'));
+    }
+
+    public function testOutboundCallJoinsTheSessionThePlacedCallNames(): void
+    {
+        $this->router->answer('POST', '/v1/phone/calls', 201, ['vendor_call_id' => 'CA123', 'status' => 'queued', 'session_id' => 'ses_out']);
+        $agent = new Agent(name: 'jean', costTracking: ['team' => 'sales'], client: $this->router->client());
+
+        $agent->outboundCall('+15550001111', '+15552223333');
 
         $paths = array_map(static fn ($r) => $r->path, $this->router->received());
-        self::assertSame(['/api/v2/video/call/agent/out', '/v1/phone/calls', '/v1/agents/sessions'], $paths);
+        self::assertSame(['/v1/phone/calls', '/v1/agents/sessions'], $paths);
         self::assertSame(
-            ['from' => '+15550001111', 'to' => '+15552223333', 'call_id' => 'out', 'call_type' => 'agent', 'tags' => ['team' => 'sales']],
+            ['from' => '+15550001111', 'to' => '+15552223333', 'tags' => ['team' => 'sales']],
             $this->router->to('POST', '/v1/phone/calls')[0]->json(),
         );
         $sent = $this->router->to('POST', '/v1/agents/sessions')[0]->json();
+        self::assertSame('ses_out', $sent['id']);
+        self::assertTrue($sent['start_voice']);
         self::assertTrue($sent['navigating']);
         self::assertSame(['number' => '+15550001111', 'vendor_call_id' => 'CA123'], $sent['phone']);
     }
 
-    public function testAnswerCarriesTheNumberReached(): void
+    public function testAnswerJoinsTheSessionTheCallNames(): void
     {
         $agent = new Agent(name: 'jean', client: $this->router->client());
 
-        $agent->answer(InboundCall::fromFrame(['call_id' => 'c1', 'called_number' => '+15550001111']));
+        $agent->answer(InboundCall::fromFrame(['call_id' => 'ses_in', 'session_id' => 'ses_in', 'called_number' => '+15550001111']));
 
         $sent = $this->router->to('POST', '/v1/agents/sessions')[0]->json();
-        self::assertSame('c1', $sent['call_id']);
-        self::assertSame('default', $sent['call_type']);
+        self::assertSame('ses_in', $sent['id']);
+        self::assertTrue($sent['start_voice']);
+        self::assertArrayNotHasKey('call_id', $sent);
         self::assertSame(['number' => '+15550001111'], $sent['phone']);
     }
 
-    public function testReplyAnswersInTheChannel(): void
+    public function testACallNamingNoSessionIsRefused(): void
+    {
+        $agent = new Agent(name: 'jean', client: $this->router->client());
+
+        $this->expectException(ConfigurationException::class);
+        $agent->answer(InboundCall::fromFrame(['call_id' => 'c1']));
+    }
+
+    public function testReplyAnswersInTheAgentsConversation(): void
     {
         $agent = new Agent(name: 'jean', client: $this->router->client());
 
         $agent->reply(InboundMessage::fromFrame(['channel_id' => 'ch1', 'text' => 'hi', 'agent_id' => 'jean-7']));
 
         $sent = $this->router->to('POST', '/v1/agents/sessions')[0]->json();
-        self::assertTrue($sent['text']);
         self::assertArrayNotHasKey('incognito', $sent);
-        self::assertSame('agent:ch1', $sent['conversation_id']);
+        self::assertArrayNotHasKey('conversation_id', $sent);
         self::assertSame('jean-7', $sent['agent_id']);
     }
 
@@ -281,22 +320,24 @@ final class AgentTest extends TestCase
         (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
 
         $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
-        foreach (['dispatch', 'speed', 'harness', 'simulations'] as $absent) {
+        foreach (['dispatch', 'greeting', 'harness', 'simulations'] as $absent) {
             self::assertArrayNotHasKey($absent, $sent);
         }
     }
 
-    public function testSyncSendsSpeedHarnessAndSchedules(): void
+    public function testSyncSendsGreetingPluginsHarnessAndSchedules(): void
     {
         $this->folder();
-        file_put_contents($this->dir . '/agent.yaml', "name: jean\nspeed: 1.1\nharness: default\n");
+        file_put_contents($this->dir . '/agent.yaml', "name: jean\ngreeting:\n  text: Hello there.\n  mode: variation\nplugins: [sentry]\nharness: default\n");
         file_put_contents($this->dir . '/knowledge/urls.yaml', "- url: https://example.com/plans\n  refresh_hours: 24\n");
         $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
 
         (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
 
         $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
-        self::assertSame(1.1, $sent['speed']);
+        self::assertSame(['text' => 'Hello there.', 'mode' => 'variation'], $sent['greeting']);
+        self::assertSame(['sentry'], $sent['plugins']);
+        self::assertArrayNotHasKey('agent_plugins', $sent);
         self::assertSame('default', $sent['harness']);
         self::assertSame([['url' => 'https://example.com/plans', 'refresh_hours' => 24]], $sent['knowledge_urls']);
     }

@@ -228,6 +228,29 @@ func TestHoldThroughOverlap(t *testing.T) {
 	}
 }
 
+func TestAPauseBetweenTwoSentencesIsNotANewTurnOnTheOverlap(t *testing.T) {
+	// "One moment." then "Checking", 350 ms apart, with another table talking across the gap.
+	rate := audio.Rate
+	rec := caller.Result{
+		Agent: audio.Concat(audio.Tone(rate, 220, 12000), audio.Silence(rate*35/100), audio.Tone(rate, 220, 12000)),
+		Rate:  rate,
+		Events: []caller.Event{
+			{TurnID: "talker", Kind: scenario.TriggerDuringAgent, RecStartMs: 700, RecEndMs: 1500, OverlapSound: "talker"},
+		},
+	}
+	checks := ScoreOverlaps(rec)
+	if !SelectivityHold(checks) || !HoldThroughOverlap(checks) {
+		t.Fatalf("the agent went straight on through the talker: %+v", checks)
+	}
+
+	// An agent that stopped for the talker and came back to answer it leaves a longer gap.
+	rec.Agent = audio.Concat(audio.Tone(rate, 220, 12000), audio.Silence(rate*12/10), audio.Tone(rate, 220, 12000))
+	rec.Events[0].RecEndMs = 2300
+	if SelectivityHold(ScoreOverlaps(rec)) {
+		t.Fatal("a reply started after the agent stopped for the talker is a new turn")
+	}
+}
+
 func TestScoreOverlapsChecksEverySound(t *testing.T) {
 	rate := audio.Rate
 	rec := caller.Result{

@@ -20,8 +20,6 @@ final readonly class UpdateSessionRequest
         /** @var array<string, mixed>|null */
         public ?array $custom = null,
         public ?string $description = null,
-        // What the agent is told to be, from the next turn.
-        public ?string $instructions = null,
         // The conversation model, a provider/model or a capability shortcut.
         public ?string $llm = null,
         public ?int $maxOutputTokens = null,
@@ -46,7 +44,6 @@ final readonly class UpdateSessionRequest
         return new self(
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
-            instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
             maxOutputTokens: array_key_exists('max_output_tokens', $data) && $data['max_output_tokens'] !== null ? Json::int($data, 'max_output_tokens') : null,
             sts: array_key_exists('sts', $data) && $data['sts'] !== null ? Json::string($data, 'sts') : null,
@@ -73,9 +70,6 @@ final readonly class UpdateSessionRequest
         }
         if ($this->description !== null) {
             $out['description'] = $this->description;
-        }
-        if ($this->instructions !== null) {
-            $out['instructions'] = $this->instructions;
         }
         if ($this->llm !== null) {
             $out['llm'] = $this->llm;

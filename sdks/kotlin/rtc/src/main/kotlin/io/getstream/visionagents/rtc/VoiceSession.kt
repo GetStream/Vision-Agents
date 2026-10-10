@@ -12,7 +12,6 @@ import io.getstream.visionagents.core.AgentSession
 import io.getstream.visionagents.core.AgentTool
 import io.getstream.visionagents.core.SessionOptions
 import io.getstream.visionagents.core.VisionAgents
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,7 +29,7 @@ public data class CallCredentials(
     val token: String,
     val userId: String,
     val userName: String,
-    /** The Stream call to join, which is not the id the router holds the session by. */
+    /** The Stream call to join, `agent:<session id>`. */
     val callId: String,
     val callType: String,
 )
@@ -53,9 +52,9 @@ public class CallFailed(message: String) : Exception(message)
  *
  * Three things happen, in this order, and the order matters:
  *
- * 1. The router starts a session, which is what puts the agent on the call.
- * 2. The app's backend mints a token for joining that call, which names the Stream call to
- *    join. That is not the id the router holds the session by.
+ * 1. The router starts a session with voice on, which puts the agent on the session's own
+ *    call, `agent:<session id>`.
+ * 2. The app's backend mints a token for joining that call.
  * 3. Stream's Video SDK joins it, and audio starts flowing.
  *
  * The transcript comes over the session socket rather than out of the call, so what is said is
@@ -191,17 +190,14 @@ public class VoiceSession private constructor(
 
     public companion object {
         /**
-         * Starts an agent on a new call and prepares to join it.
-         *
-         * The call id is generated here unless one is given, so the common case, somebody
-         * tapping "talk to the agent", needs no id from anywhere.
+         * Starts an agent on the new session's own call, `agent:<session id>`, and prepares to
+         * join it.
          */
         public suspend fun start(
             context: Context,
             agents: VisionAgents,
-            callId: String = UUID.randomUUID().toString(),
             options: SessionOptions = SessionOptions(),
-        ): VoiceSession = VoiceSession(context, agents.voice(callId, options), createdLocally = true)
+        ): VoiceSession = VoiceSession(context, agents.voice(options), createdLocally = true)
 
         /**
          * Joins a call an agent is already on, without creating a session.

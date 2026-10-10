@@ -26,6 +26,8 @@ import (
 type ConnectionRecordsSuite struct {
 	RouterSuite
 	provider *fakeprovider.Server
+	// logged is what the router logged, for the line a delete leaves.
+	logged *lockedLog
 	// token is an access token the fake issued. Synthetic, fresh per suite.
 	token string
 }
@@ -35,6 +37,8 @@ func TestConnectionRecordsSuite(t *testing.T) {
 }
 
 func (s *ConnectionRecordsSuite) SetupSuite() {
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.provider = fakeprovider.New(s.T(), fakeprovider.ClientCredentials)
 	s.connectors = core.Registry{
 		Schemes:     map[string]core.Scheme{bearer.Name: bearer.New()},
@@ -168,6 +172,30 @@ func (s *ConnectionRecordsSuite) TestAStoredTokenIsNamedByItsFingerprintAndARepl
 	s.Equal(&ConnectorAuditCredential{
 		AccessFingerprint: core.Fingerprint(replacement), PreviousAccessFingerprint: core.Fingerprint(s.token),
 	}, rows[0].Credential)
+}
+
+// TestDeletingAConnectionNamesTheTokenItDropped (AI-1053 F52): the revoked row and its log line
+// carry the fingerprint of the token the delete cleared, never the token.
+func (s *ConnectionRecordsSuite) TestDeletingAConnectionNamesTheTokenItDropped() {
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections",
+		withScheme(appOwned(s.connector()), bearer.Name), &created))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials",
+		map[string]any{"expected_revision": 1, "values": map[string]string{bearer.SuppliedToken: s.token}}, nil))
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/connections/"+created.ID, nil, nil))
+
+	rows := s.audit(created.ID, 2)
+	s.Equal(ConnectorAuditAction(store.AuditGrantRevoked), rows[0].Action)
+	s.Equal(&ConnectorAuditCredential{AccessFingerprint: core.Fingerprint(s.token)}, rows[0].Credential)
+	var line string
+	for _, l := range strings.Split(s.logged.String(), "\n") {
+		if strings.Contains(l, "event=grant_revoked") && strings.Contains(l, "connection="+created.ID) {
+			line = l
+		}
+	}
+	s.Contains(line, "access_fingerprint="+core.Fingerprint(s.token))
+	s.NotContains(s.logged.String(), s.token)
 }
 
 func (s *ConnectionRecordsSuite) TestDeletingAConnectionThatNeverHadAGrantLeavesNoRow() {
@@ -347,7 +375,7 @@ func (s *ConnectionRecordsSuite) config(connector string, owner *testClient, lis
 
 // session is a text session of config choosing connection for crm.
 func (s *ConnectionRecordsSuite) session(config, connection string) CreateSessionRequest {
-	return CreateSessionRequest{ConfigId: &config, Text: pointerTo(true),
+	return CreateSessionRequest{ConfigId: &config,
 		ConnectorBindings: &[]SessionConnectorBinding{{Name: "crm", ConnectionId: connection}}}
 }
 
@@ -355,7 +383,7 @@ func (s *ConnectionRecordsSuite) session(config, connection string) CreateSessio
 // waits for the tool to run.
 func (s *ConnectionRecordsSuite) toolRanOn(as *testClient, events *websocket.Conn, id string) {
 	s.Require().Equal(http.StatusOK, as.do(http.MethodPost, "/v1/agents/sessions/"+id+"/respond",
-		RespondRequest{Text: "ask the crm", CommandId: pointerTo(s.utils.uuid())}, nil))
+		RespondRequest{Text: "ask the crm", RequestId: pointerTo(s.utils.uuid())}, nil))
 	ran := s.await(events, "tool_ran")
 	s.Require().Equal(connectorEchoText, ran["result"])
 }

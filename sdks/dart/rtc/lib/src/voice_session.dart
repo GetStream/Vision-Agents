@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'package:stream_video_flutter/stream_video_flutter.dart' as video;
 import 'package:vision_agents_core/vision_agents_core.dart';
 
@@ -15,7 +13,7 @@ final class CallCredentials {
     required this.userId,
     required this.callId,
     this.userName = '',
-    this.callType = 'default',
+    this.callType = 'agent',
   });
 
   final String apiKey;
@@ -23,7 +21,7 @@ final class CallCredentials {
   final String userId;
   final String userName;
 
-  /// The Stream call to join, which is not the id the router holds the session by.
+  /// The Stream call to join: the session's id, under the `agent` call type.
   final String callId;
   final String callType;
 }
@@ -72,9 +70,9 @@ final class CallFailure implements Exception {
 ///
 /// Three things happen, in this order, and the order matters:
 ///
-/// 1. The router starts a session, which is what puts the agent on the call.
-/// 2. The app's backend mints a token for joining that call, which names the Stream call to
-///    join. That is not the id the router holds the session by.
+/// 1. The router starts a session, which puts the agent on the session's own call,
+///    `agent:<session id>`.
+/// 2. The app's backend mints a token for joining that call.
 /// 3. Stream Video joins it, and audio starts flowing.
 ///
 /// The transcript comes over the session socket rather than out of the call, so what is said
@@ -83,18 +81,16 @@ final class CallFailure implements Exception {
 final class VoiceSession {
   VoiceSession._(this.session, {required bool createdLocally}) : _createdLocally = createdLocally;
 
-  /// Starts an agent on a new call and prepares to join it. The call id is generated unless
-  /// one is given, so a person tapping "talk to the agent" needs no id from anywhere.
+  /// Starts an agent on a new session's call and prepares to join it, so a person tapping
+  /// "talk to the agent" needs no id from anywhere.
   static Future<VoiceSession> start(
     VisionAgents agents, {
     String? agent,
-    String? callId,
     SessionOptions options = const SessionOptions(),
   }) async {
-    final id = callId ?? _callId();
     final session = await (agent == null
-        ? agents.voice(id, options)
-        : agents.agent(agent).voice(id, options));
+        ? agents.voice(options)
+        : agents.agent(agent).voice(options));
     return VoiceSession._(session, createdLocally: true);
   }
 
@@ -232,10 +228,5 @@ final class VoiceSession {
       return true;
     }
     return false;
-  }
-
-  static String _callId() {
-    final random = Random.secure();
-    return List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
   }
 }

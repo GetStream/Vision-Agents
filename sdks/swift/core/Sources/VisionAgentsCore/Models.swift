@@ -191,14 +191,35 @@ public struct ForkOptions: Sendable {
     public var agent: String?
     public var title: String?
     public var projectID: String?
-    public var instructions: String?
     /// Start the fork with none of the parent's history. Cannot be combined with
     /// `responseID`, which is a point in that history.
     public var withoutHistory = false
-    /// The call the fork joins, which a voice session needs and a text session refuses.
-    public var callID: String?
 
     public init(responseID: String? = nil) {
         self.responseID = responseID
+    }
+}
+
+/// What the agent says as it joins a call, before anyone speaks.
+public struct Greeting: Sendable, Hashable {
+    /// Empty means the agent waits to be spoken to.
+    public var text: String
+    /// Nil says it word for word, as `exact` does.
+    public var mode: Mode?
+
+    public enum Mode: String, Sendable {
+        /// Word for word.
+        case exact
+        /// The model rewords it on every call, so callers do not hear the same opening.
+        case variation
+    }
+
+    public init(_ text: String, mode: Mode? = nil) {
+        self.text = text
+        self.mode = mode
+    }
+
+    var schema: Components.Schemas.Greeting {
+        .init(mode: mode.flatMap { .init(rawValue: $0.rawValue) }, text: text)
     }
 }

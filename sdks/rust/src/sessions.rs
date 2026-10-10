@@ -91,8 +91,8 @@ pub struct Sessions {
 impl Sessions {
     /// Opens a conversation and starts watching it.
     ///
-    /// The agent is always this one. Without a `call_id` it is held in writing: a session
-    /// resource is a conversation, and a caller who wants one on a call says which call.
+    /// The agent is always this one. Without `start_voice` it is held in writing, and
+    /// [`Session::start_voice`] puts the agent on the session's call later.
     pub async fn create(
         &self,
         mut request: types::CreateSessionRequest,
@@ -100,10 +100,14 @@ impl Sessions {
     ) -> Result<Session> {
         request.agent = Some(self.agent.clone());
         request.config_id = None;
-        if request.call_id.is_none() && request.text.is_none() {
-            request.text = Some(true);
-        }
         Session::open(&self.client, request, tools, WatchOptions::default()).await
+    }
+
+    /// Carries on a conversation held in writing, by the id of the session it was held in,
+    /// and starts watching it. One that ended is reopened with what was said in it.
+    pub async fn resume(&self, id: &str, tools: Tools) -> Result<Session> {
+        let got = self.get(id).await?;
+        Session::watching(&self.client, got, tools, WatchOptions::default()).await
     }
 
     /// A page of the agent's conversations, most recently updated first, the ones that
@@ -130,8 +134,8 @@ impl Sessions {
     }
 
     /// Changes one conversation, whether or not it is still being held, and returns it as it
-    /// now is. One that ended can still be renamed and relabelled; instructions, models and
-    /// voice need it running. A field left `None` is left as it is.
+    /// now is. One that ended can still be renamed and relabelled; models and voice need it
+    /// running. A field left `None` is left as it is.
     pub async fn update(
         &self,
         id: &str,

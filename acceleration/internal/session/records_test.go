@@ -60,6 +60,8 @@ func (r *heldRecorder) SawVideo(id string) {
 	r.videos = append(r.videos, id)
 }
 
+func (r *heldRecorder) Voiced(string, string, string) {}
+
 func (r *heldRecorder) Flush(context.Context) error { return nil }
 
 // kinds is the conversation as a reader would see it: what happened, in order.

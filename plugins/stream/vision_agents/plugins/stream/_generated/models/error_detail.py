@@ -22,10 +22,12 @@ class ErrorDetail:
             better. The others are validation_failed, missing_customer, missing_organization, server_side_only,
             not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked
             to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or
-            another skill of the same agent config, already has the name, so another name will do), and <resource>_not_found
-            for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url,
-            plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client
-            should expect one it does not know.
+            another skill of the same agent config, already has the name, so another name will do), channel_connection_taken
+            (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel
+            connection's messages, so the message names that config), and <resource>_not_found for agent_config, call,
+            campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config,
+            session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does
+            not know.
         doc_url (str): Where the code is explained.
         message (str): What went wrong, for a person to read. Its wording may change; branch on code.
         type_ (ErrorType): The kind of failure, which decides the status it is answered with: invalid_request 400,

@@ -63,7 +63,7 @@ public data class AgentEvent(
             id = string("id"),
             name = string("name"),
             arguments = string("arguments"),
-            commandId = string("command_id"),
+            requestId = string("request_id"),
             turnId = turnId,
         )
 
@@ -112,8 +112,8 @@ public data class AgentEvent(
         val name: String,
         /** The arguments as the model wrote them, which is a JSON object encoded as a string. */
         val arguments: String,
-        /** Repeated on the answer, so a result cannot be adopted by another command or turn. */
-        val commandId: String,
+        /** Repeated on the answer, so a result cannot be adopted by another request or turn. */
+        val requestId: String,
         val turnId: String,
     ) {
         /** The arguments decoded, or an empty object if the model wrote something else. */

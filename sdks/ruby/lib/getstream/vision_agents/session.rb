@@ -43,7 +43,7 @@ module GetStream
       RUNNING_TOOLS = 16
       EVENTS_PATH = "/v1/agents/sessions/{id}/events"
 
-      attr_reader :created, :responses
+      attr_reader :created, :responses, :voice
 
       # Starts watching a session the router has already created.
       #
@@ -74,6 +74,7 @@ module GetStream
         @socket = socket
         @options = { interim: interim, decisions: decisions }
         @responses = Responses.new(client, id)
+        @voice = Voice.new(client, id, !created["call_id"].to_s.empty?)
         @lock = Mutex.new
         @changed = ConditionVariable.new
         @events = []
@@ -95,13 +96,10 @@ module GetStream
         @created["conversation_id"].to_s
       end
 
-      # The Stream call the conversation is on, empty for one held in writing.
-      def call_id
-        @created["call_id"].to_s
-      end
-
-      def call_type
-        @created["call_type"].to_s
+      # The Stream call the session's voice is on, agent:<session id>, whether or not voice
+      # is started.
+      def call
+        Edge::Call.new(id: id, type: Edge::DEFAULT_CALL_TYPE)
       end
 
       def live?
@@ -129,12 +127,7 @@ module GetStream
         command(type: "interrupt")
       end
 
-      # Changes what the agent is told to be, from the next turn.
-      def set_instructions(instructions)
-        command(type: "instructions", instructions: instructions)
-      end
-
-      # Continues this conversation as a new one.
+      # Continues this conversation as a new one, held in writing.
       #
       # The parent is untouched. The fork inherits this session's tools, since they are here
       # in this process and a conversation continued without them would offer the model tools
@@ -144,20 +137,19 @@ module GetStream
       #   so the fork branches from there. A persistent conversation cannot be rewound; this
       #   is how it is taken back instead.
       # @param options any other ForkSessionRequest field: agent, config_id, title,
-      #   description, project_id, custom, model_overwrites, instructions, incognito, messages,
-      #   call_id.
+      #   description, project_id, custom, model_overwrites, incognito, messages.
       def fork(response_id: nil, **options)
         body = options.merge(response_id: response_id && Responses.id_of(response_id))
         forked = @client.post("/v1/agents/sessions/{id}/fork", path: { id: id }, body: body)
         Session.watching(@client, forked, tools: @tools, **@options)
       end
 
-      # Changes this session only: its title, description, custom labels, instructions, models
-      # or voice, from the next turn. The config it started from is untouched, and a target
-      # that does not route is refused before anything changes. Server side only.
+      # Changes this session only: its title, description, custom labels, models or voice,
+      # from the next turn. The config it started from is untouched, and a target that does
+      # not route is refused before anything changes. Server side only.
       #
       # @param fields any UpdateSessionRequest field: title, description, custom,
-      #   instructions, llm, stt, tts, sts, voice, thinking, temperature, max_output_tokens,
+      #   llm, stt, tts, sts, voice, thinking, temperature, max_output_tokens,
       #   verbosity. A field left out is left as it is; an empty sts makes the session a
       #   cascade again, and an empty voice returns to the provider's default.
       # @return [Hash] the session as the router now has it.
@@ -264,7 +256,7 @@ module GetStream
       def run_tool(frame)
         call_id = frame["id"].to_s
         answer = { type: "tool_result", tool_call_id: call_id }
-        answer[:command_id] = frame["command_id"] unless frame["command_id"].to_s.empty?
+        answer[:request_id] = frame["request_id"] unless frame["request_id"].to_s.empty?
         answer[:turn_id] = frame["turn_id"] unless frame["turn_id"].to_s.empty?
 
         busy = @lock.synchronize do
@@ -333,6 +325,44 @@ module GetStream
 
       def agent_user
         @created["user_id"].to_s
+      end
+    end
+
+    # A session's voice: the agent on the call agent:<session id>. Stopping it carries the
+    # conversation on in writing, and what is said and what is typed are one conversation.
+    class Voice
+      PATH = "/v1/agents/sessions/{id}/voice"
+
+      def initialize(client, session_id, started)
+        @client = client
+        @session_id = session_id
+        @started = started
+      end
+
+      # Has the agent join the call. Starting voice that is already on does nothing.
+      #
+      # @return [Hash] the session as the router now has it.
+      def start
+        seen(@client.post(PATH, path: { id: @session_id }))
+      end
+
+      # Takes the agent off the call. Stopping voice that is off does nothing.
+      #
+      # @return [Hash] the session as the router now has it.
+      def stop
+        seen(@client.delete(PATH, path: { id: @session_id }))
+      end
+
+      # Whether the agent is on the call, as this process last saw it.
+      def started?
+        @started
+      end
+
+      private
+
+      def seen(session)
+        @started = !session["call_id"].to_s.empty?
+        session
       end
     end
   end

@@ -35,9 +35,9 @@ class Policy:
                 description: a request naming one is only routed to a model whose declared handling meets it, and if none does
                 the request is refused rather than sent somewhere that does not.
             prompt_injection (bool | Unset): Screen what every LLM response is asked for prompt injection. The newest input
-                - the user's turn and any tool results - goes to the classifier (lcm) beside the model call, so it adds nothing
-                to time to first token. The end of the response is held until the verdict, and a response whose input reads as
-                an injection fails with prompt_injection before its tool calls can be acted on.
+                - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to
+                time to first token. The end of the response is held until the verdict, and a response whose input reads as an
+                injection fails with prompt_injection before its tool calls can be acted on.
             require_own_stream_app (bool | Unset): Keep the app out of the router's own Stream app: in app mode it is never
                 written there for want of a registered Stream app of its own, and what it wrote there before can only be read.
                 True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the

@@ -151,13 +151,13 @@ class TestFolder < Minitest::Test
 
   def test_the_declaration_says_what_the_agent_is_called_and_runs_on
     write("agent.yaml", "name: receptionist\nllm: openai/gpt-5.6\nsts: \"\"\nkeyterms: [Vision Agents]\n" \
-                        "video:\n  source: camera\nspeed: 1.1\nharness: default\n")
+                        "video:\n  source: camera\ngreeting:\n  text: Hello\n  mode: exact\nharness: default\n")
 
     folder = VA::Folder.load(@root)
 
     assert_equal "receptionist", folder.name
     assert_equal "openai/gpt-5.6", folder.settings["llm"]
-    assert_equal 1.1, folder.settings["speed"]
+    assert_equal({ "text" => "Hello", "mode" => "exact" }, folder.settings["greeting"])
     assert_equal "default", folder.settings["harness"]
     assert_equal ["Vision Agents"], folder.settings["keyterms"]
     assert_equal "", folder.settings["sts"]
@@ -166,7 +166,9 @@ class TestFolder < Minitest::Test
 
   def test_a_declaration_key_nobody_knows_is_refused
     ["name: jean\nlmm: openai/gpt-5.6\n", "video:\n  max_frames: 9\n", "keyterms: Vision Agents\n",
-     "dispatch:\n  sms: enabled\n", "speed: fast\n"].each do |yaml|
+     "dispatch:\n  sms: enabled\n", "speed: 1.1\n", "thinking_llm: llm-thinking\n", "agent_plugins: [linear]\n",
+     "user_plugins: [linear]\n", "progressive_tools: true\n", "greeting: Hello\n",
+     "greeting:\n  text: Hello\n  tone: warm\n"].each do |yaml|
       write("agent.yaml", yaml)
 
       assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }

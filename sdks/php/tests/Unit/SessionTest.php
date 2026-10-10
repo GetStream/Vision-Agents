@@ -7,7 +7,9 @@ namespace GetStream\VisionAgents\Tests\Unit;
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Exception\RouterException;
 use GetStream\VisionAgents\Generated\ForkSessionRequest;
+use GetStream\VisionAgents\Generated\ImageSource;
 use GetStream\VisionAgents\Generated\SessionState;
+use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Session;
 use GetStream\VisionAgents\Tests\Support\LocalRouter;
 use GetStream\VisionAgents\Tests\Support\Rows;
@@ -33,11 +35,37 @@ final class SessionTest extends TestCase
     public function testCreateNamesTheAgentAndHoldsItInWriting(): void
     {
         self::assertSame(
-            ['agent' => 'jean', 'custom' => ['plan' => 'pro'], 'text' => true, 'title' => 'Pricing'],
+            ['agent' => 'jean', 'custom' => ['plan' => 'pro'], 'title' => 'Pricing'],
             $this->router->to('POST', '/v1/agents/sessions')[0]->json(),
         );
         self::assertSame(SessionState::Live, $this->session->created->state);
         self::assertSame('2026-09-24 10:00:00.123456', $this->session->created->createdAt->format('Y-m-d H:i:s.u'));
+        self::assertFalse($this->session->voiceStarted());
+    }
+
+    public function testCreateCanStartVoice(): void
+    {
+        $this->router->answer('POST', '/v1/agents/sessions', 201, Rows::session('ses_2', ['call_id' => 'ses_2', 'call_type' => 'default']));
+
+        $session = $this->router->client()->agent('jean')->sessions->create(startVoice: true, id: 'ses_2');
+
+        self::assertSame(['agent' => 'jean', 'id' => 'ses_2', 'start_voice' => true], $this->router->to('POST', '/v1/agents/sessions')[1]->json());
+        self::assertTrue($session->voiceStarted());
+    }
+
+    public function testVoiceStartsAndStopsOnTheSameSession(): void
+    {
+        $this->router->answer('POST', '/v1/agents/sessions/ses_1/voice', 200, Rows::session('ses_1', ['call_id' => 'ses_1', 'call_type' => 'default']));
+        $this->router->answer('DELETE', '/v1/agents/sessions/ses_1/voice', 200, Rows::session('ses_1'));
+
+        $started = $this->session->startVoice();
+        self::assertSame('ses_1', $started->callId);
+        self::assertTrue($this->session->voiceStarted());
+
+        $this->session->stopVoice();
+        self::assertFalse($this->session->voiceStarted());
+        self::assertCount(1, $this->router->to('POST', '/v1/agents/sessions/ses_1/voice'));
+        self::assertCount(1, $this->router->to('DELETE', '/v1/agents/sessions/ses_1/voice'));
     }
 
     public function testResponsesCreateAndItems(): void
@@ -49,9 +77,26 @@ final class SessionTest extends TestCase
         $items = $response->items->all();
 
         self::assertSame('resp_1', $response->id());
-        self::assertSame(['text' => 'What does it cost?'], $this->router->to('POST', '/v1/agents/sessions/ses_1/responses')[0]->json());
+        $sent = $this->router->to('POST', '/v1/agents/sessions/ses_1/responses')[0]->json();
+        self::assertSame(['text', 'request_id'], array_keys($sent));
+        self::assertSame('What does it cost?', $sent['text']);
         self::assertSame(['message', 'tool_call'], array_map(static fn ($item) => $item->kind, $items));
         self::assertSame('resp_1', $this->router->to('GET', '/v1/agents/sessions/ses_1/responses/items')[0]->params()['response_id']);
+    }
+
+    public function testEveryTextQuestionCarriesAFreshRequestIdAndOneWithImagesNone(): void
+    {
+        $this->router->answer('POST', '/v1/agents/sessions/ses_1/responses', 201, Rows::response('resp_1'));
+
+        $this->session->responses->create('first');
+        $this->session->responses->create('second');
+        $this->session->responses->create('what is this?', [new ImageSource(url: 'https://example.com/cat.png')]);
+
+        $sent = array_map(static fn ($seen) => $seen->json(), $this->router->to('POST', '/v1/agents/sessions/ses_1/responses'));
+        self::assertMatchesRegularExpression('/^[0-9a-f]{32}$/', Json::string($sent[0], 'request_id'));
+        self::assertMatchesRegularExpression('/^[0-9a-f]{32}$/', Json::string($sent[1], 'request_id'));
+        self::assertNotSame($sent[0]['request_id'], $sent[1]['request_id']);
+        self::assertArrayNotHasKey('request_id', $sent[2]);
     }
 
     public function testRewindSendsTheResponseId(): void
@@ -97,11 +142,11 @@ final class SessionTest extends TestCase
     {
         $this->router->answer('PATCH', '/v1/agents/sessions/ses_1', 200, Rows::session('ses_1', ['llm' => 'llm-thinking', 'title' => 'Plans']));
 
-        $updated = $this->session->update(title: 'Plans', instructions: 'Be brief.', llm: 'llm-thinking', thinking: 'high', sts: '');
+        $updated = $this->session->update(title: 'Plans', llm: 'llm-thinking', thinking: 'high', sts: '');
 
         self::assertSame('llm-thinking', $updated->llm);
         self::assertSame(
-            ['instructions' => 'Be brief.', 'llm' => 'llm-thinking', 'sts' => '', 'thinking' => 'high', 'title' => 'Plans'],
+            ['llm' => 'llm-thinking', 'sts' => '', 'thinking' => 'high', 'title' => 'Plans'],
             $this->router->to('PATCH', '/v1/agents/sessions/ses_1')[0]->json(),
         );
     }

@@ -56,16 +56,17 @@ func (s *CampaignSuite) TestARunnerNeedsEverythingACallIsMadeOf() {
 }
 
 func (s *CampaignSuite) TestACampaignSessionJoinsTheCallItRang() {
-	// The route sends whoever answers into the call the request names, so the agent has
-	// to join that call and not one of its own naming.
+	// The route sends whoever answers into the call of the session the call was placed
+	// for, so the session is opened under that id, with voice.
 	request := placing(store.Campaign{CustomerID: "customer-1", FromNumber: "+15550000001"},
-		store.Contact{ID: "contact-7", ToNumber: "+15550000002"}, "agent")
-	s.Equal("campaign-contact-7", request.CallID)
-	s.Equal("agent", request.CallType)
+		store.Contact{ID: "contact-7", ToNumber: "+15550000002"})
+	s.Empty(request.SessionID)
 
-	var spec session.Spec
-	meet(&spec, phone.Placed{CallID: request.CallID, CallType: request.CallType})
+	spec := session.Spec{Text: true, CustomerID: "customer-1"}
+	meet(&spec, phone.Placed{SessionID: "0b9f2a52-5c1e-4d7a-9a3e-0f6b8f1c2d3e"})
+	s.Require().NoError(spec.Normalize())
 
-	s.Equal(request.CallID, spec.CallID)
-	s.Equal(request.CallType, spec.CallType)
+	s.Equal("0b9f2a52-5c1e-4d7a-9a3e-0f6b8f1c2d3e", spec.CallID)
+	s.Equal("agent", spec.CallType)
+	s.False(spec.Text)
 }

@@ -93,7 +93,7 @@ Do not mix dirty trees into the series. `RunManifest.GitDirty` already records t
 
 ### Freeze the bench definition
 
-A metric is only comparable over time if the scenarios, contracts, and thresholds behind it did not move. `MethodologyVersion` (`voicebench-live-v5`), `scenario_hash`, and `contract_hash` already detect drift. Add a policy on top, borrowing Inworld's rule that published presets are immutable and new behaviour means a new file.
+A metric is only comparable over time if the scenarios, contracts, and thresholds behind it did not move. `MethodologyVersion` (`voicebench-live-v7`), `scenario_hash`, and `contract_hash` already detect drift. Add a policy on top, borrowing Inworld's rule that published presets are immutable and new behaviour means a new file.
 
 Keep a frozen scenario set for trend tracking. New scenarios land outside it until a version bump, so improving the bench never silently rewrites history. Bumping `MethodologyVersion` starts a new series; it does not patch the old one.
 
@@ -172,7 +172,7 @@ Acceleration is a bundled product, not a pipeline variant. Co-locating STT, LLM,
 
 Insisting on a matched provider triple would force acceleration to compete with its bundling switched off and hide the advantage it is built to win on. The headline row is acceleration as shipped against what a LiveKit or Pipecat developer actually builds today, which is OpenAI Realtime.
 
-The pipeline the bench runs is `deepgram/flux-general-en`, `gemma/gemma-4-26B-A4B-it`, `elevenlabs/eleven_v4_turbo`, subagent `openai/gpt-6.1-sol`, from `voicebench-live-v4`; v5 adds the one-minute monologue scenarios to the frozen set. Until v3 it was pinned to [`customer_support.py`](../examples/voice_agents/customer_support/customer_support.py)'s Gemini transcribe, Gemini 3.8 Flash, Inworld TTS-2 Flash and GPT-5.6 Sol. Voicebench does not reuse *that* stored config, whose instructions and skills belong to a different product; it syncs a per-pack config of its own carrying the pack's skills, so the subagent runs real skills rather than an inline prompt. Changing the triple is a methodology bump.
+The pipeline the bench runs is `deepgram/flux-general-en`, `gemma/gemma-4-26B-A4B-it`, `elevenlabs/eleven_v4_turbo`, subagent `openai/gpt-6.1-sol`, from `voicebench-live-v4`; v5 adds the one-minute monologue scenarios to the frozen set; v6 gives the restaurant callers the answers the agent is told to collect and ends coherence on the go-ahead; v7 does the same for tool_filler's high chair, and no longer scores the pause between two sentences of one reply as a turn started on an overlapping sound. Until v3 it was pinned to [`customer_support.py`](../examples/voice_agents/customer_support/customer_support.py)'s Gemini transcribe, Gemini 3.8 Flash, Inworld TTS-2 Flash and GPT-5.6 Sol. Voicebench does not reuse *that* stored config, whose instructions and skills belong to a different product; it syncs a per-pack config of its own carrying the pack's skills, so the subagent runs real skills rather than an inline prompt. Changing the triple is a methodology bump.
 
 ### Two comparison tiers
 

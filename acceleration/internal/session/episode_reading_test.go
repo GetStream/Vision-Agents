@@ -322,7 +322,7 @@ func (s *EpisodeReadingSuite) chatNow() time.Time {
 func (s *EpisodeReadingSuite) textSession(thread string, cards bool, text string) llm.ResponseParams {
 	spec := Spec{
 		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCards: cards,
-		Text: true, PersistConversation: true, ConversationID: thread,
+		Text: true, PersistConversation: true, ConversationID: thread, Thread: true,
 		LLMTarget: "en-low-latency", Instructions: "be brief",
 	}
 	created, err := s.manager.Create(persistent.RouterOpensThread(s.ctx, thread), spec)
@@ -812,19 +812,6 @@ func (s *EpisodeReadingSuite) TestWithTheCardsOffAVoiceSessionIsAsBefore() {
 	s.Nil(s.handed(off))
 	s.Equal(conversationOf(base), conversationOf(off))
 	s.Empty(namingAny(offRequests, sms.Episode.ThreadChannel, sms.Contact.ConversationID, sms.Episode.CardMessageID, "/video/call/"+"agent/"+call))
-}
-
-// A persistent voice conversation is still refused, whatever the config says of the cards: a
-// voice session reads the cards, not a conversation.
-func (s *EpisodeReadingSuite) TestAPersistentVoiceConversationIsStillRefused() {
-	for _, cards := range []bool{false, true} {
-		_, err := s.manager.Create(s.ctx, Spec{
-			CustomerID: s.customerID, ConfigID: s.configID, EpisodeCards: cards, CallID: "call-" + uuid.NewString(),
-			PersistConversation: true, LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency",
-		})
-		s.Require().Error(err)
-		s.Contains(err.Error(), "persistent conversations require text mode")
-	}
 }
 
 // Another person's cards are never read: another number of the same agent, the same number

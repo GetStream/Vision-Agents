@@ -23,6 +23,7 @@
 
 package io.getstream.visionagents.core.generated
 
+import io.getstream.visionagents.core.generated.Greeting
 import io.getstream.visionagents.core.generated.HistoryMessage
 import io.getstream.visionagents.core.generated.ModelOverwrites
 import io.getstream.visionagents.core.generated.SessionConnectorBinding
@@ -46,19 +47,15 @@ import kotlinx.serialization.encoding.Encoder
  * @param agent The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: \"docs\" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree.
  * @param agentId Keys transcripts and statistics. Empty means the call id.
  * @param backchannel Murmur while a participant is still talking, the way a person does.
- * @param callId The call to join. Required unless the session is text.
- * @param callType 
  * @param configId An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
- * @param connectorBindings The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
+ * @param connectorBindings The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A session binding given none here uses the caller's own connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller asking for the fork.
  * @param contextTruncated Older history was omitted from the model context.
- * @param conversationId Stream Chat CID to resume; returned for persistent text sessions.
  * @param custom Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
  * @param description A longer note about the conversation, searched alongside the title.
- * @param greeting Said on joining without going through the model. Empty means the agent waits to be spoken to.
- * @param history The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
- * @param id The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
+ * @param greeting 
+ * @param history The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
+ * @param id The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that does not start support- or thread- and that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7.
  * @param incognito Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
- * @param instructions The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to decide.
  * @param keyterms Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
  * @param languages Language hints, which narrow the candidates in every modality.
  * @param llm A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured.
@@ -70,10 +67,10 @@ import kotlinx.serialization.encoding.Encoder
  * @param phone 
  * @param projectId What the conversation belongs to. Also recorded as the \"project\" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
  * @param search Omit it and the config decides, or search-fast when there is no config.
- * @param sts A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
+ * @param startVoice Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started.
+ * @param sts A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
  * @param stt Omit it and the config decides, or en-low-latency when there is no config.
- * @param tags Cost labels, carried onto every request the session makes.
- * @param text Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
+ * @param tags Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
  * @param title What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
  * @param toolTimeoutMs How long the model waits for a tool result. Zero is the default.
  * @param tools 
@@ -99,28 +96,17 @@ internal data class CreateSessionRequest (
     @SerialName(value = "backchannel")
     val backchannel: kotlin.Boolean? = null,
 
-    /* The call to join. Required unless the session is text. */
-    @SerialName(value = "call_id")
-    val callId: kotlin.String? = null,
-
-    @SerialName(value = "call_type")
-    val callType: kotlin.String? = null,
-
     /* An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call. */
     @SerialName(value = "config_id")
     val configId: kotlin.String? = null,
 
-    /* The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A required binding left without one fails the session; an optional one is left out and reported with a connector_unavailable event. A fork chooses the same connections again, against the config as it is then and the caller asking for the fork. */
+    /* The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A session binding given none here uses the caller's own connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller asking for the fork. */
     @SerialName(value = "connector_bindings")
     val connectorBindings: kotlin.collections.List<SessionConnectorBinding>? = null,
 
     /* Older history was omitted from the model context. */
     @SerialName(value = "context_truncated")
     val contextTruncated: kotlin.Boolean? = null,
-
-    /* Stream Chat CID to resume; returned for persistent text sessions. */
-    @SerialName(value = "conversation_id")
-    val conversationId: kotlin.String? = null,
 
     /* Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing. */
     @Contextual @SerialName(value = "custom")
@@ -130,25 +116,20 @@ internal data class CreateSessionRequest (
     @SerialName(value = "description")
     val description: kotlin.String? = null,
 
-    /* Said on joining without going through the model. Empty means the agent waits to be spoken to. */
     @SerialName(value = "greeting")
-    val greeting: kotlin.String? = null,
+    val greeting: Greeting? = null,
 
-    /* The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth. */
+    /* The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth. */
     @SerialName(value = "history")
     val history: kotlin.collections.List<HistoryMessage>? = null,
 
-    /* The id to hold the session by, so a caller can know it before the session exists. It must be a UUID nobody has used for a session before. Omitted, the router generates a UUIDv7. */
+    /* The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that does not start support- or thread- and that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7. */
     @SerialName(value = "id")
     val id: kotlin.String? = null,
 
     /* Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from. */
     @SerialName(value = "incognito")
     val incognito: kotlin.Boolean? = null,
-
-    /* The system prompt, over what the config says. Server-side only: a device sending it is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to decide. */
-    @SerialName(value = "instructions")
-    val instructions: kotlin.String? = null,
 
     /* Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them. */
     @SerialName(value = "keyterms")
@@ -190,7 +171,11 @@ internal data class CreateSessionRequest (
     @SerialName(value = "search")
     val search: kotlin.String? = null,
 
-    /* A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides. */
+    /* Start voice as the session opens, as startSessionVoice does: the agent joins the call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started. */
+    @SerialName(value = "start_voice")
+    val startVoice: kotlin.Boolean? = null,
+
+    /* A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides. */
     @SerialName(value = "sts")
     val sts: kotlin.String? = null,
 
@@ -198,13 +183,9 @@ internal data class CreateSessionRequest (
     @SerialName(value = "stt")
     val stt: kotlin.String? = null,
 
-    /* Cost labels, carried onto every request the session makes. */
+    /* Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins. */
     @SerialName(value = "tags")
     val tags: kotlin.collections.Map<kotlin.String, kotlin.String>? = null,
-
-    /* Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket. */
-    @SerialName(value = "text")
-    val text: kotlin.Boolean? = null,
 
     /* What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it. */
     @SerialName(value = "title")

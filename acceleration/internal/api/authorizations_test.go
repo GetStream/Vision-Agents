@@ -317,6 +317,22 @@ func (s *AuthorizationsSuite) TestAReconnectForTheSameAccountReplacesTheGrant() 
 	s.Equal(1, s.get(id).DefinitionRevision, "a connector with one revision is read as on base 89966e26")
 }
 
+// TestAReconnectHidesTheLastValidationOfTheOldGrant (R1.1 of PR #874): what a validate found of
+// one grant says nothing of the grant a reconnect stores, so GET shows no last validation
+// until the next validate.
+func (s *AuthorizationsSuite) TestAReconnectHidesTheLastValidationOfTheOldGrant() {
+	id := s.connection("")
+	s.connect(id)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil, nil))
+	s.Require().NotNil(s.get(id).LastValidation)
+
+	s.connect(id)
+
+	got := s.get(id)
+	s.Equal(3, got.Revision, "new credentials")
+	s.Nil(got.LastValidation)
+}
+
 // TestAReconnectRestoresTheEventSubscriptionsItsBindingsDeclare: a connection whose
 // subscription went (dropped while it was disconnected) gets it back when a consent connects it
 // again, with no validate. The connector offers no events source here, so the subscription

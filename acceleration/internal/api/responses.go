@@ -52,8 +52,8 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	if len(videos) > maxVideos {
 		return nil, invalidRequest(fmt.Sprintf("at most %d videos go with one response", maxVideos))
 	}
-	if len(videos) > 0 && value(request.Body.CommandId) != "" {
-		return nil, invalidRequest("a command ID carries text only")
+	if len(videos) > 0 && value(request.Body.RequestId) != "" {
+		return nil, invalidRequest("a request id carries text only")
 	}
 	for index, sent := range videos {
 		frames, length, err := video.Frames(ctx, sent.Url, value(sent.MaxFrames))
@@ -67,9 +67,9 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	}
 
 	var responseID string
-	if id := value(request.Body.CommandId); id != "" {
+	if id := value(request.Body.RequestId); id != "" && found.Durable() {
 		if len(parts) > 0 {
-			return nil, invalidRequest("a command ID carries text only")
+			return nil, invalidRequest("a request id carries text only")
 		}
 		_, responseID, err = found.RespondCommand(ctx, id, request.Body.Text, "")
 		if errors.Is(err, conversation.ErrCommandConflict) {
@@ -242,7 +242,7 @@ func (s *Server) registerResponses(api huma.API) {
 		DefaultStatus: http.StatusAccepted,
 		Responses: map[string]*huma.Response{
 			"202": {Description: "The agent is answering"},
-			"409": errorResponse("The command ID was already accepted with different content"),
+			"409": errorResponse("The request id was already accepted with different content"),
 		},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.createResponse)
@@ -403,7 +403,7 @@ type AgentResponsePage struct {
 
 // CreateResponseRequest is the CreateResponseRequest schema.
 type CreateResponseRequest struct {
-	CommandId *string        `json:"command_id,omitempty" doc:"Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	RequestId *string        `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id." pattern:"^[A-Za-z0-9_-]{1,128}$"`
 	Images    *[]ImageSource `json:"images,omitempty"`
 	Text      string         `json:"text" doc:"What to answer, as though it had been said."`
 	Videos    *[]VideoSource `json:"videos,omitempty" doc:"Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole." maxItems:"2"`

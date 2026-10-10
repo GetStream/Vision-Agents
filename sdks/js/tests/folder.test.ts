@@ -72,7 +72,6 @@ describe("loadFolder", () => {
           "name: receptionist",
           'llm: "openai/gpt-5.6"',
           'sts: ""',
-          "speed: 0.9",
           "harness: default",
           "mode: voice",
           "keyterms: [Vision Agents, Stream]",
@@ -84,6 +83,9 @@ describe("loadFolder", () => {
           "  source: camera",
           "dispatch:",
           "  text: enabled",
+          "greeting:",
+          "  text: Hello, how can I help?",
+          "  mode: variation",
           "",
         ].join("\n"),
       }),
@@ -94,7 +96,6 @@ describe("loadFolder", () => {
       name: "receptionist",
       llm: "openai/gpt-5.6",
       sts: "",
-      speed: 0.9,
       harness: "default",
       mode: "voice",
       keyterms: ["Vision Agents", "Stream"],
@@ -102,6 +103,7 @@ describe("loadFolder", () => {
       tags: { team: "support" },
       video: { source: "camera", max_frames: 1 },
       dispatch: { text: "enabled" },
+      greeting: { text: "Hello, how can I help?", mode: "variation" },
     });
   });
 
@@ -111,17 +113,12 @@ describe("loadFolder", () => {
     assert.equal(folder.name, "jean");
   });
 
-  it("sends no speed for a zero one, since zero leaves the voice where it is", async () => {
-    const folder = await loadFolder(await agentDir({ "agent.yaml": "speed: 0\n" }));
-
-    assert.equal(folder.settings?.speed, undefined);
-  });
-
   it("refuses a declaration it would otherwise have to guess at", async () => {
     for (const declaration of [
       "lmm: openai/gpt-5.6\n",
-      "speed: fast\n",
-      "speed: -1\n",
+      "speed: 0.9\n",
+      "greeting: Hello\n",
+      "greeting:\n  mode: exact\n",
       "keyterms: Vision Agents\n",
       "llm:\n  - one\n  - two\n",
       "video:\n  max_frames: 9\n",

@@ -8,10 +8,15 @@ namespace GetStream\VisionAgents\Generated;
 
 use GetStream\VisionAgents\Json;
 
-final readonly class InstructionsRequest
+/**
+ * What the agent says as it joins, before anyone speaks.
+ */
+final readonly class Greeting
 {
     public function __construct(
-        public string $instructions,
+        // What the agent says on joining. Empty means the agent waits to be spoken to.
+        public string $text,
+        public GreetingMode|string|null $mode = null,
     ) {
     }
 
@@ -21,7 +26,8 @@ final readonly class InstructionsRequest
     public static function fromArray(array $data): self
     {
         return new self(
-            instructions: Json::string($data, 'instructions'),
+            text: Json::string($data, 'text'),
+            mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', GreetingMode::class) : null,
         );
     }
 
@@ -33,7 +39,10 @@ final readonly class InstructionsRequest
     public function toArray(): array
     {
         $out = [];
-        $out['instructions'] = $this->instructions;
+        $out['text'] = $this->text;
+        if ($this->mode !== null) {
+            $out['mode'] = Json::enumValue($this->mode);
+        }
         return $out;
     }
 }

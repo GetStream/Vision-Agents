@@ -20,7 +20,7 @@ class ToolApprovalCommand:
 
         Attributes:
             allowed (bool):
-            command_id (str):
+            request_id (str):
             tool_call_id (str):
             turn_id (str):
             type_ (ToolApprovalCommandType):
@@ -28,7 +28,7 @@ class ToolApprovalCommand:
     """
 
     allowed: bool
-    command_id: str
+    request_id: str
     tool_call_id: str
     turn_id: str
     type_: ToolApprovalCommandType
@@ -38,7 +38,7 @@ class ToolApprovalCommand:
     def to_dict(self) -> dict[str, Any]:
         allowed = self.allowed
 
-        command_id = self.command_id
+        request_id = self.request_id
 
         tool_call_id = self.tool_call_id
 
@@ -53,7 +53,7 @@ class ToolApprovalCommand:
         field_dict.update(
             {
                 "allowed": allowed,
-                "command_id": command_id,
+                "request_id": request_id,
                 "tool_call_id": tool_call_id,
                 "turn_id": turn_id,
                 "type": type_,
@@ -69,7 +69,7 @@ class ToolApprovalCommand:
         d = dict(src_dict)
         allowed = d.pop("allowed")
 
-        command_id = d.pop("command_id")
+        request_id = d.pop("request_id")
 
         tool_call_id = d.pop("tool_call_id")
 
@@ -81,7 +81,7 @@ class ToolApprovalCommand:
 
         tool_approval_command = cls(
             allowed=allowed,
-            command_id=command_id,
+            request_id=request_id,
             tool_call_id=tool_call_id,
             turn_id=turn_id,
             type_=type_,

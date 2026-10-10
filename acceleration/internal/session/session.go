@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -116,8 +117,21 @@ type Session struct {
 	created time.Time
 	logger  *slog.Logger
 
-	persisted  *persistent.Conversation
-	voiceAgent *agent.Agent
+	persisted *persistent.Conversation
+	// held is the agent holding the conversation: one on the call while voice is started,
+	// one in writing otherwise. Starting or stopping voice swaps it (StartVoice, StopVoice).
+	held atomic.Pointer[agent.Agent]
+	// build makes the agent for a spec, in writing or on its call, with everything Create
+	// wired up; transcribe opens what a call's lines are written into, nil when they are
+	// written nowhere.
+	build      func(ctx context.Context, spec Spec) (*agent.Agent, error)
+	transcribe func(ctx context.Context, spec Spec) Transcript
+	// typed are the texts typed into the call by a durable command, waiting for the turn
+	// that answers them, and typedTurns those turns: the conversation writes them, so the
+	// call's transcript does not write them again. Guarded by typedMu.
+	typedMu    sync.Mutex
+	typed      []string
+	typedTurns map[string]struct{}
 	tools      *bridge
 	// calls records the call's row when it moves onto other models. Nil when the
 	// deployment keeps no calls.
@@ -210,6 +224,9 @@ type recordedTurn struct {
 // ID is the handle a caller holds the session by.
 func (s *Session) ID() string { return s.id }
 
+// current is the agent holding the conversation now.
+func (s *Session) current() *agent.Agent { return s.held.Load() }
+
 // Spec is what the session was asked for.
 func (s *Session) Spec() Spec {
 	s.labelMu.Lock()
@@ -261,19 +278,19 @@ func (s *Session) Provider() (llm string, tts string) {
 // Resolved names the providers routing picked for this call. Transcription is empty until
 // somebody has been heard, because a listener is opened per speaker rather than up front.
 func (s *Session) Resolved() (stt, llm, tts, subagent string) {
-	if s.voiceAgent == nil {
+	if s.current() == nil {
 		return
 	}
-	if ears := s.voiceAgent.STT(); ears != nil {
+	if ears := s.current().STT(); ears != nil {
 		stt = ears.Provider() + "/" + ears.Model()
 	}
-	if model := s.voiceAgent.LLM(); model != nil {
+	if model := s.current().LLM(); model != nil {
 		llm = model.Provider() + "/" + model.Model()
 	}
-	if voice := s.voiceAgent.TTS(); voice != nil {
+	if voice := s.current().TTS(); voice != nil {
 		tts = voice.Provider() + "/" + voice.Model()
 	}
-	if think := s.voiceAgent.Subagent(); think != nil {
+	if think := s.current().Subagent(); think != nil {
 		subagent = think.Provider() + "/" + think.Model()
 	}
 	return stt, llm, tts, subagent
@@ -284,13 +301,13 @@ func (s *Session) Resolved() (stt, llm, tts, subagent string) {
 // the provider picked it on its side and cannot say which.
 func (s *Session) Voice() (asked, used string) {
 	asked = s.spec.Voice
-	if s.voiceAgent == nil {
+	if s.current() == nil {
 		return asked, ""
 	}
-	if voice := s.voiceAgent.TTS(); voice != nil {
+	if voice := s.current().TTS(); voice != nil {
 		used = voice.Voice()
 	}
-	if model := s.voiceAgent.STS(); model != nil {
+	if model := s.current().STS(); model != nil {
 		used = model.Voice()
 	}
 	if used == "" {
@@ -305,7 +322,7 @@ func (s *Session) Mode() string {
 	switch {
 	case s.spec.Text:
 		return "text"
-	case s.voiceAgent != nil && s.voiceAgent.Native(), s.voiceAgent == nil && s.spec.Native():
+	case s.current() != nil && s.current().Native(), s.current() == nil && s.spec.Native():
 		return "native"
 	default:
 		return "cascade"
@@ -315,10 +332,10 @@ func (s *Session) Mode() string {
 // Speech names the speech-to-speech model routing picked for a native call, and nothing
 // for a call the cascade held.
 func (s *Session) Speech() string {
-	if s.voiceAgent == nil {
+	if s.current() == nil {
 		return ""
 	}
-	model := s.voiceAgent.STS()
+	model := s.current().STS()
 	if model == nil {
 		return ""
 	}
@@ -383,7 +400,7 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 	for _, unavailable := range s.connectorsUnavailable {
 		attached.send(unavailable)
 	}
-	if replayVoiceTools && !s.spec.Text && s.persisted == nil && s.tools != nil {
+	if replayVoiceTools && !s.spec.Text && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
 			attached.send(pending)
 		}
@@ -391,14 +408,16 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 	s.mu.Unlock()
 
 	return attached.events, func() {
+		written := !s.Voicing()
 		s.mu.Lock()
 		delete(s.watchers, id)
 		// Persistent text clients own no call; a disconnected operator leaves no tool host.
 		// The session ends once nobody has watched it for detachedGrace, which is what a
 		// page left and come back to, or a login finished in another tab, has to carry on
 		// in. A reopen of the saved channel does not wait for it: Create takes the
-		// conversation over from a session nobody is watching.
-		if len(s.watchers) == 0 && s.persisted != nil && s.state != Ended {
+		// conversation over from a session nobody is watching. A call is held whoever is
+		// watching, until voice is stopped (swap).
+		if len(s.watchers) == 0 && s.persisted != nil && written && s.state != Ended {
 			if s.unwatched != nil {
 				s.unwatched.Stop()
 			}
@@ -411,10 +430,11 @@ func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 
 // endUnwatched ends a persistent text session nobody came back to watch.
 func (s *Session) endUnwatched() {
+	voicing := s.Voicing()
 	s.mu.Lock()
 	watched := len(s.watchers) > 0
 	s.mu.Unlock()
-	if watched {
+	if watched || voicing {
 		return
 	}
 	s.abandon()
@@ -437,7 +457,7 @@ func (s *Session) unwatchedFor(cid string) bool {
 
 // Say speaks a piece of text without going through the model.
 func (s *Session) Say(ctx context.Context, text string) error {
-	return s.voiceAgent.Say(ctx, text)
+	return s.current().Say(ctx, text)
 }
 
 // Respond answers a piece of text through the model, as though a participant had said it.
@@ -449,7 +469,8 @@ func (s *Session) Say(ctx context.Context, text string) error {
 func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart) (string, error) {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
-	if s.persisted != nil {
+	// Typed into a call, the text is heard there, and the call's transcript writes it.
+	if s.persisted != nil && s.spec.Text {
 		if s.spec.Caller.UserID != "" {
 			return "", stack.Wrap(errors.New("personal conversations require a command ID"))
 		}
@@ -457,9 +478,9 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 			return "", stack.Wrap(err)
 		}
 	}
-	turnID, err := s.voiceAgent.RespondTo(ctx, text, images)
+	turnID, err := s.current().RespondTo(ctx, text, images)
 	if err != nil {
-		if s.persisted != nil {
+		if s.persisted != nil && s.spec.Text {
 			s.persisted.Cancel()
 		}
 		return "", stack.Wrap(err)
@@ -471,6 +492,10 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	// asked for the answer. It happens once whichever way round the two arrive.
 	return s.openTurn(turnID, text), nil
 }
+
+// Durable is whether a question's request id is kept, so a retry of it is answered once.
+// Only a conversation stored in Stream Chat keeps them; any other answers every question.
+func (s *Session) Durable() bool { return s.persisted != nil }
 
 // RespondCommand accepts one durable text submission. The receipt may be replayed,
 // but only the first successful acceptance is allowed to invoke the model, and only
@@ -498,7 +523,10 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string)
 		}
 		delete(s.awaiting, id)
 	}
-	turnID, err := s.voiceAgent.RespondTo(ctx, text, nil)
+	if !s.spec.Text {
+		s.typeInto(text)
+	}
+	turnID, err := s.current().RespondTo(ctx, text, nil)
 	if err != nil {
 		s.persisted.Cancel()
 		return receipt, "", stack.Wrap(err)
@@ -541,7 +569,10 @@ func (s *Session) FollowUp(ctx context.Context, text string) error {
 	if err != nil {
 		return stack.Wrap(err)
 	}
-	turnID, err := s.voiceAgent.RespondTo(ctx, text, nil)
+	if !s.spec.Text {
+		s.typeInto(text)
+	}
+	turnID, err := s.current().RespondTo(ctx, text, nil)
 	if err != nil {
 		s.persisted.Cancel()
 		return stack.Wrap(err)
@@ -595,12 +626,15 @@ func (s *Session) Report(err error, context string) {
 // session's: a caller holding a session has no channel to write to, and an answer that only
 // went back over HTTP would be missing from the conversation it belongs to.
 func (s *Session) Ask(ctx context.Context, text string) (string, error) {
-	answer, err := s.voiceAgent.Ask(ctx, text)
+	answer, err := s.current().Ask(ctx, text)
 	if err != nil {
 		return "", err
 	}
-	if s.transcript != nil {
-		s.transcript.Reply(answer)
+	s.mu.Lock()
+	transcript := s.transcript
+	s.mu.Unlock()
+	if transcript != nil {
+		transcript.Reply(answer)
 	}
 	return answer, nil
 }
@@ -609,7 +643,7 @@ func (s *Session) Ask(ctx context.Context, text string) (string, error) {
 func (s *Session) Interrupt() {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
-	s.voiceAgent.Interrupt()
+	s.current().Interrupt()
 	if s.persisted != nil {
 		s.persisted.Cancel()
 	}
@@ -643,7 +677,7 @@ func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID stri
 		return stack.Wrap(fmt.Errorf("%w: a persistent conversation keeps its transcript in Chat; fork it at the response instead", ErrCannotRewind))
 	}
 
-	s.voiceAgent.Interrupt()
+	s.current().Interrupt()
 	if err := s.records.Flush(ctx); err != nil {
 		return stack.Wrap(err)
 	}
@@ -654,7 +688,7 @@ func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID stri
 	if err := recorded.RewindResponses(ctx, s.spec.CustomerID, s.id, responseID, time.Now().UTC()); err != nil {
 		return stack.Wrap(err)
 	}
-	s.voiceAgent.RestoreHistory(HistoryOf(exchanges))
+	s.current().RestoreHistory(HistoryOf(exchanges))
 	return nil
 }
 
@@ -714,7 +748,7 @@ func (s *Session) InterruptCommand(id string) (persistent.CommandReceipt, error)
 	case "completed", "cancelled", "interrupted", "failed":
 		return s.stopped(s.persisted.CancelCommand(id))
 	}
-	s.voiceAgent.Interrupt()
+	s.current().Interrupt()
 	return s.stopped(s.persisted.CancelCommand(id))
 }
 
@@ -729,19 +763,13 @@ func (s *Session) stopped(receipt persistent.CommandReceipt, err error) (persist
 
 // Busy reports whether the agent still has something to finish, which is how anything
 // driving a conversation knows a turn is over rather than merely answered once.
-func (s *Session) Busy() bool { return s.voiceAgent.Busy() }
+func (s *Session) Busy() bool { return s.current().Busy() }
 
 // Tools names what the agent may do rather than say.
-func (s *Session) Tools() []string { return s.voiceAgent.Tools() }
+func (s *Session) Tools() []string { return s.current().Tools() }
 
 // ToolDefinitions is what the conversation model is offered, as it is sent.
-func (s *Session) ToolDefinitions() []llm.Tool { return s.voiceAgent.ToolDefinitions() }
-
-// SetInstructions changes what the agent is told to be from the next turn on.
-func (s *Session) SetInstructions(text string) {
-	s.spec.Instructions = text
-	s.voiceAgent.SetInstructions(s.spec.prompt())
-}
+func (s *Session) ToolDefinitions() []llm.Tool { return s.current().ToolDefinitions() }
 
 // Settings is what a running session is moved onto. A nil field is left as it is, and an
 // empty STS moves a native session back onto the cascade.
@@ -806,7 +834,7 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 		next.ControllerTarget = defaultControllerTarget
 	}
 
-	if err := s.voiceAgent.SetSettings(ctx, agent.Settings{
+	if err := s.current().SetSettings(ctx, agent.Settings{
 		LLMTarget:        next.LLMTarget,
 		ControllerTarget: next.ControllerTarget,
 		STTTarget:        next.STTTarget,
@@ -823,6 +851,184 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 		s.calls.Changed(row(s))
 	}
 	return nil
+}
+
+// ErrVoiceUnavailable refuses starting voice on a session that cannot hold a call.
+var ErrVoiceUnavailable = errors.New("session: this session cannot start voice")
+
+// Voicing reports whether voice is started: the agent is on the call agent:<id>.
+func (s *Session) Voicing() bool {
+	s.labelMu.Lock()
+	defer s.labelMu.Unlock()
+	return !s.spec.Text
+}
+
+// StartVoice puts the agent on the call agent:<id> with the conversation so far, and
+// carries the conversation on there: what is said on the call and what is typed into it
+// are one conversation. It does nothing when voice is already started.
+func (s *Session) StartVoice(ctx context.Context) error {
+	return s.swap(ctx, true)
+}
+
+// StopVoice takes the agent off the call and carries the conversation on in writing. It
+// does nothing when voice is not started.
+func (s *Session) StopVoice(ctx context.Context) error {
+	return s.swap(ctx, false)
+}
+
+// swap moves the conversation onto a new agent, on the call or in writing, and closes the
+// one that held it. The new agent is joined before anything changes, so a call that cannot
+// be joined leaves the session as it was.
+func (s *Session) swap(ctx context.Context, voice bool) error {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	if s.State() == Ended {
+		return stack.Wrap(errors.New("session: the session has ended"))
+	}
+	s.labelMu.Lock()
+	current := s.spec
+	s.labelMu.Unlock()
+	if voice == !current.Text {
+		return nil
+	}
+	if s.build == nil {
+		return stack.Wrap(ErrVoiceUnavailable)
+	}
+	next := current.Written()
+	if voice {
+		next = current.Voiced()
+	}
+
+	old := s.current()
+	fresh, err := s.build(ctx, next)
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	// What is being said is finished first, so the history handed over ends with it.
+	finishing, cancel := context.WithTimeout(ctx, finishWithin)
+	if err := old.Finish(finishing); err != nil {
+		s.logger.Debug("the agent was still talking when voice changed", "error", err)
+	}
+	cancel()
+	fresh.RestoreHistory(old.History())
+
+	var transcript Transcript
+	if voice && s.transcribe != nil {
+		transcript = s.transcribe(ctx, next)
+	}
+	s.running.Add(1)
+	go s.consume(fresh, transcript)
+	if err := fresh.Join(context.WithoutCancel(ctx)); err != nil {
+		_ = fresh.Close()
+		return stack.Wrap(err)
+	}
+	if voice && next.Greeting != "" && len(old.History()) == 0 {
+		if err := fresh.Greet(ctx, next.Greeting, next.VaryGreeting); err != nil {
+			s.logger.Warn("could not greet the call", "session", s.id, "error", err)
+		}
+	}
+
+	s.held.Store(fresh)
+	s.labelMu.Lock()
+	s.spec.Text, s.spec.CallID, s.spec.CallType = next.Text, next.CallID, next.CallType
+	s.spec.STSTarget, s.spec.heldSTS = next.STSTarget, next.heldSTS
+	s.spec.SubagentTarget, s.spec.heldSubagent = next.SubagentTarget, next.heldSubagent
+	s.spec.STTTarget, s.spec.TTSTarget = next.STTTarget, next.TTSTarget
+	s.labelMu.Unlock()
+	s.mu.Lock()
+	s.transcript = transcript
+	if voice && s.modality == store.ModalityText {
+		s.modality = store.ModalityVoice
+	}
+	// A call is held whoever is watching the socket, so the countdown a conversation in
+	// writing ends on is stopped, and started again once the call is left unwatched.
+	if s.unwatched != nil {
+		s.unwatched.Stop()
+		s.unwatched = nil
+	}
+	if !voice && len(s.watchers) == 0 && s.persisted != nil {
+		s.unwatched = time.AfterFunc(s.detachedGrace, s.endUnwatched)
+	}
+	s.mu.Unlock()
+	if s.records != nil && voice {
+		s.records.Voiced(s.id, next.CallID, next.CallType)
+	}
+	if s.calls != nil {
+		s.calls.Changed(row(s))
+	}
+
+	if err := old.Close(); err != nil {
+		s.logger.Warn("could not close the agent voice moved off", "session", s.id, "error", err)
+	}
+	return nil
+}
+
+// typedEvent reports whether an event of the call belongs to a turn typed into it by a
+// durable command, which the conversation writes rather than the call's transcript. The
+// text is heard before its turn opens, so the line is matched by its text and the turn by
+// the prompt it opened on.
+func (s *Session) typedEvent(event Event) bool {
+	s.typedMu.Lock()
+	defer s.typedMu.Unlock()
+	switch typed := event.(type) {
+	case agent.Heard:
+		return len(s.typed) > 0 && s.typed[0] == typed.Text
+	case agent.Responding:
+		if typed.Continues != "" {
+			_, ok := s.typedTurns[typed.Continues]
+			if ok {
+				s.typedTurns[typed.TurnID] = struct{}{}
+			}
+			return ok
+		}
+		if len(s.typed) == 0 || s.typed[0] != typed.Prompt {
+			return false
+		}
+		s.typed = s.typed[1:]
+		if s.typedTurns == nil {
+			s.typedTurns = map[string]struct{}{}
+		}
+		s.typedTurns[typed.TurnID] = struct{}{}
+		return true
+	}
+	turn := turnIDOf(event)
+	if turn == "" {
+		return false
+	}
+	_, ok := s.typedTurns[turn]
+	return ok
+}
+
+// typeInto notes text a durable command is about to type into the call (typedEvent).
+func (s *Session) typeInto(text string) {
+	s.typedMu.Lock()
+	s.typed = append(s.typed, text)
+	s.typedMu.Unlock()
+}
+
+// turnIDOf is the turn an event of a reply belongs to, empty for one that belongs to none.
+func turnIDOf(event Event) string {
+	switch typed := event.(type) {
+	case agent.ResponseDelta:
+		return typed.TurnID
+	case agent.ReasoningDelta:
+		return typed.TurnID
+	case agent.Responded:
+		return typed.TurnID
+	case agent.ToolStarted:
+		return typed.TurnID
+	case agent.ToolApprovalDecided:
+		return typed.TurnID
+	case agent.ToolRan:
+		return typed.TurnID
+	case agent.Delegated:
+		return typed.TurnID
+	case agent.Interrupted:
+		return typed.TurnID
+	case agent.Spoke:
+		return typed.TurnID
+	}
+	return ""
 }
 
 // Labels is what a session is renamed to. A nil field is left as it is.
@@ -872,15 +1078,15 @@ func (s *Session) ResolveTool(id, output, failure string) bool {
 
 // ResolveToolParts is ResolveTool for a result that may carry images.
 func (s *Session) ResolveToolParts(id string, parts []llm.ContentPart, failure string) bool {
-	if s.persisted != nil && s.spec.Caller.UserID != "" {
+	if s.persisted != nil && s.spec.Text && s.spec.Caller.UserID != "" {
 		return false
 	}
 	return s.tools.Resolve(id, "", parts, failure)
 }
 
-// ResolveTurnTool correlates a non-persistent voice result with its emitted turn.
+// ResolveTurnTool correlates a result of a turn on the call with its emitted turn.
 func (s *Session) ResolveTurnTool(id, turnID string, parts []llm.ContentPart, failure string) bool {
-	if s.persisted != nil || turnID == "" {
+	if (s.persisted != nil && s.spec.Text) || turnID == "" {
 		return false
 	}
 	return s.tools.Resolve(id, turnID, parts, failure)
@@ -928,12 +1134,12 @@ func (s *Session) close() error {
 	// Hanging up mid-sentence is rude, and leaving is what throws away the audio that has
 	// not been heard yet, so the last utterance is given a moment to land first.
 	finishing, cancel := context.WithTimeout(context.Background(), finishWithin)
-	if err := s.voiceAgent.Finish(finishing); err != nil {
+	if err := s.current().Finish(finishing); err != nil {
 		s.logger.Debug("the agent was still talking when the session ended", "error", err)
 	}
 	cancel()
 
-	err := s.voiceAgent.Close()
+	err := s.current().Close()
 
 	// The fan-out ends on its own once the agent's events channel closes, and waiting
 	// for it here is what makes the last events, including what the harness abandoned on
@@ -965,16 +1171,24 @@ func (s *Session) close() error {
 	return err
 }
 
-// consume fans the agent's events out to the watchers and records the transcript.
-func (s *Session) consume() {
+// consume fans one agent's events out to the watchers and records the transcript, until
+// that agent is closed: by the session ending, or by voice starting or stopping.
+//
+// In writing every event goes to the conversation. On a call the transcript writes what
+// was said, except a turn typed by a durable command, which the conversation writes.
+func (s *Session) consume(held *agent.Agent, transcript Transcript) {
 	defer s.running.Done()
+	if transcript != nil {
+		defer transcript.Close()
+	}
 
-	for event := range s.voiceAgent.Events() {
-		if s.persisted != nil {
+	for event := range held.Events() {
+		typed := transcript == nil || s.typedEvent(event)
+		if s.persisted != nil && typed {
 			s.persisted.Observe(event)
 		}
-		if s.transcript != nil {
-			s.transcript.Record(event)
+		if transcript != nil && !typed {
+			transcript.Record(event)
 		}
 		s.remember(event)
 		s.record(event)

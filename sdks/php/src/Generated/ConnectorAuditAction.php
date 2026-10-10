@@ -7,10 +7,10 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents\Generated;
 
 /**
- * grant_created: a consent or a credentials write gave the connection a grant.
- * grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because
- * the provider refused or revoked it or the connection was deleted. token_export: the app's
- * backend exported its access credential. proxy_call: a direct call went to the provider
+ * grant_created: a consent, a credentials write or router plugins migrate gave the connection
+ * a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended,
+ * because the provider refused or revoked it or the connection was deleted. token_export: the
+ * app's backend exported its access credential. proxy_call: a direct call went to the provider
  * through the connection.
  */
 enum ConnectorAuditAction: string

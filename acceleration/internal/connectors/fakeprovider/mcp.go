@@ -67,11 +67,24 @@ var tools = []map[string]any{
 	},
 }
 
+// AnswerMCP has every MCP request answered with status and its reason phrase as plain text,
+// whatever token it carries, until AnswerMCP(0). GitHub's MCP server answers a token it does
+// not take so, with 400 Bad Request (volt E2E F60, 2026-10-09), where the fake answers 401.
+func (s *Server) AnswerMCP(status int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mcpStatus = status
+}
+
 // mcp is the MCP endpoint, a protected resource (RFC 6750) in front of a JSON-RPC server
 // that answers each POST with one JSON object (Streamable HTTP).
 func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.mcpStatus != 0 {
+		http.Error(w, http.StatusText(s.mcpStatus), s.mcpStatus)
+		return
+	}
 	metadata := `resource_metadata="` + s.URL + PathProtectedResource + `"`
 	presented, found := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !found {

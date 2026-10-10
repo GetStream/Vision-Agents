@@ -60,6 +60,15 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 // the directory says, and is part of the fingerprint, so changing either syncs again.
 func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithResponses) (*acceleration.AgentConfig, error) {
 	folder := a.folder
+	// Still sent as before, until the router stops taking them.
+	if len(folder.Settings.Plugins) > 0 || len(folder.Settings.PluginEvents) > 0 {
+		named := make([]string, 0, len(folder.Settings.Plugins))
+		for _, plugin := range folder.Settings.Plugins {
+			named = append(named, plugin.Name)
+		}
+		a.logger.Warn("agent.yaml plugins and plugin_events are deprecated: bind connectors instead",
+			"agent", a.options.Name, "plugins", named, "plugin_events", len(folder.Settings.PluginEvents))
+	}
 	skills := a.syncedSkills()
 	hash := fingerprint(folder.Declaration, a.options.Instructions, a.options.Guardrail,
 		skills, folder.Knowledge, folder.KnowledgeURLs, folder.Simulations)

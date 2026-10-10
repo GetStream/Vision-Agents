@@ -75,7 +75,17 @@ class StreamConversation(Conversation):
         Returns immediately so the caller (e.g. an LLM-delta hot path) is not
         blocked on the REST round-trip. Tasks queue on ``_sync_lock`` to
         preserve write ordering against the same channel.
+
+        A message with no sender stays in the conversation but is not written:
+        Stream Chat refuses a server-side message without a user. Text typed
+        into a call through the router arrives that way, as a line heard from
+        nobody in particular.
         """
+        if not message.user_id:
+            logger.debug(
+                "Not writing message %s to Stream Chat: it has no sender", message.id
+            )
+            return
         task = asyncio.create_task(self._sync_with_lock(message, state, completed))
         self._pending_syncs.add(task)
         task.add_done_callback(self._pending_syncs.discard)

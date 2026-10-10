@@ -22,7 +22,7 @@ module GetStream
     #   agent = GetStream::VisionAgents::Agent.new(config: "simple_voice_ai",
     #                                              cost_tracking: { env: "production" },
     #                                              memory_filter: { user_id: 123 })
-    #   agent.join("call-1") do
+    #   agent.join do
     #     agent.responses.create("greet the user in one short sentence")
     #   end
     #
@@ -48,12 +48,13 @@ module GetStream
       #   after it, which is then what a session starts from.
       # @param name [String] who the agent appears as. Defaults to the folder's or the
       #   config's name.
-      # @param instructions [String] the system prompt, over whatever the config says.
+      # @param instructions [String] the system prompt, over whatever the folder says. It
+      #   reaches the backend through #sync: a session runs on the stored config's.
       # @param guardrail [String] a guardrail.md, enforced in the backend.
       # @param pipeline [Hash] models over the config's: llm, stt, tts, sts, search, voice,
-      #   greeting, language, backchannel, max_tokens, tool_timeout_ms, keyterms, video, and
-      #   subagent, which is harness and so only reaches the config through #sync, as
-      #   thinking_llm.
+      #   greeting (its text, or a hash of text and mode, exact or variation), language,
+      #   backchannel, max_tokens, tool_timeout_ms, keyterms, video, and subagent, which is
+      #   harness and so only reaches the config through #sync.
       # @param harness [String] which harness the config runs; nil is "default". Like skills
       #   and sandbox it is agent config, written by #sync, never sent with a session.
       # @param skills [Array<Skill>] skills of your own, stored by #sync in place of the
@@ -63,8 +64,8 @@ module GetStream
       # @param memory_filter [Hash] who the memories are about, under user_id, and what
       #   narrows recall.
       # @param client [Client, Hash] the router, or the options to build one from.
-      # @param edge [Edge] creates the Stream calls the backend joins; built from the
-      #   environment the first time a call is needed.
+      # @param edge [Edge] mints the monitoring links; built from the environment the first
+      #   time one is needed.
       def initialize(config: nil, folder: nil, name: nil, instructions: nil, guardrail: nil, pipeline: {},
                      harness: nil, skills: nil, sandbox: nil, cost_tracking: nil,
                      memory_filter: nil, user_id: nil, tools: nil, client: nil, edge: nil)
@@ -92,8 +93,8 @@ module GetStream
         validate_skills
       end
 
-      # Creates the Stream calls the backend joins, built from the environment when needed,
-      # so an agent that only ever chats needs no Stream credentials.
+      # Mints the monitoring links, built from the environment when needed, so an agent that
+      # only ever chats needs no Stream credentials.
       def edge
         @lock.synchronize { @edge ||= Edge.new }
       end
@@ -113,11 +114,11 @@ module GetStream
         Knowledge.new(@config, @client)
       end
 
-      # Has the backend join a call and hold a conversation on it.
+      # Holds a conversation on the session's own call, agent:<session id>.
       #
-      # call is a call id, nil for a new call named after a random string, or an InboundCall
-      # from dispatch, which is joined as it is because the caller is already in it. It
-      # returns once the backend is in the call.
+      # call is nil for a new session, or an InboundCall from dispatch, whose session is
+      # opened because the caller is already in its call. It returns once the backend is in
+      # the call. Session#voice stops voice to carry on in writing, and starts it again.
       #
       # With a block the session is yielded and closed afterwards, the way File.open closes
       # a file: leaving the block waits for the call to end unless wait_for_end is false.
@@ -125,19 +126,22 @@ module GetStream
       # @param participant_wait_timeout [Numeric, nil] how long to wait for somebody else to
       #   be in the call before returning or yielding. 0 does not wait, nil waits for ever.
       #   An InboundCall does not wait; call wait_for_phone_participant on it instead.
-      # @param options any CreateSessionRequest field (title, custom, greeting, ...), plus
+      # @param options any CreateSessionRequest field (id, title, custom, greeting, ...), plus
       #   interim and decisions for what the events report.
-      def join(call = nil, call_type: nil, wait_for_end: true, participant_wait_timeout: :default, **options, &block)
+      def join(call = nil, wait_for_end: true, participant_wait_timeout: :default, **options, &block)
         if call.is_a?(InboundCall)
-          request = { call_id: call.call_id, call_type: call.call_type }
+          raise ConfigurationError, "the call names no session; attach its number again" if call.session_id.empty?
+
+          request = { id: call.session_id, start_voice: true }
           request[:phone] = { number: call.called_number } unless call.called_number.empty?
           session = open(request, options)
           call.attach(session)
           wait = participant_wait_timeout == :default ? 0 : participant_wait_timeout
-        else
-          created = edge.create_call(id: call, type: call_type, created_by: @user_id)
-          session = open({ call_id: created.id, call_type: created.type }, options)
+        elsif call.nil?
+          session = open({ start_voice: true }, options)
           wait = participant_wait_timeout == :default ? PARTICIPANT_WAIT : participant_wait_timeout
+        else
+          raise ConfigurationError, "a session names its own call; pass id: to choose the session's id"
         end
         await_participant(session, wait)
         hold(session, wait_for_end, &block)
@@ -145,50 +149,49 @@ module GetStream
 
       # Holds the conversation in writing rather than on a call.
       #
-      # No call is joined, nothing is transcribed and nothing is spoken; the instructions,
-      # skills and knowledge are the same. The conversation is kept in Stream Chat unless
-      # incognito: true is given. With a block the session is closed afterwards.
+      # No call is joined, nothing is transcribed and nothing is spoken until Session#voice
+      # starts it; the instructions, skills and knowledge are the same. The conversation is
+      # kept in Stream Chat unless incognito: true is given. With a block the session is
+      # closed afterwards.
       #
-      # @param conversation_id [String] the channel an earlier session was held in, to resume.
       # @param agent_id [String] the conversation being answered, which names the channel
       #   replies are written into. A worker answering several conversations has to set it.
-      def chat(conversation_id: nil, agent_id: nil, **options, &block)
-        request = { text: true, conversation_id: conversation_id, agent_id: agent_id }
-        hold(open(request, options), false, &block)
+      def chat(agent_id: nil, **options, &block)
+        hold(open({ agent_id: agent_id }, options), false, &block)
       end
 
-      # Answers a message written to an agent that is not running, in the channel it came
-      # from, so whoever wrote it is already reading the answer as it is generated.
+      # Answers a message written to an agent that is not running, in the conversation it
+      # came from, so whoever wrote it is already reading the answer as it is generated.
       def reply(message, **options, &block)
-        chat(conversation_id: message.cid,
-             agent_id: message.agent_id.empty? ? nil : message.agent_id, **options, &block)
+        chat(agent_id: message.agent_id.empty? ? nil : message.agent_id, **options, &block)
       end
 
       # Rings somebody and holds the conversation when they answer.
       #
       # The call is placed before the agent joins it: placing makes the routing rule pinned
-      # to this call, and the leg's vendor id is what lets the agent press digits. The agent
-      # is told it is navigating, so recordings are let finish and menus are answered rather
-      # than talked over.
+      # to the call of the session it returns, and the leg's vendor id is what lets the agent
+      # press digits. The agent is told it is navigating, so recordings are let finish and
+      # menus are answered rather than talked over.
       #
       # @param from [String] one of your own numbers, which is what the person sees.
       # @param to [String] who to ring.
       # @param participant_wait_timeout [Numeric, nil] how long to wait for them to answer
       #   before returning or yielding.
-      def outbound_call(from:, to:, call_id: nil, call_type: nil, ring_timeout: nil, initial_digits: nil,
-                        headers: nil, custom: nil, wait_for_end: true, participant_wait_timeout: ANSWER_WAIT,
-                        **options, &block)
+      def outbound_call(from:, to:, ring_timeout: nil, initial_digits: nil, headers: nil, custom: nil,
+                        wait_for_end: true, participant_wait_timeout: ANSWER_WAIT, **options, &block)
         if from.to_s.empty? || to.to_s.empty?
           raise ConfigurationError, "a call needs a number to ring from and one to ring"
         end
 
-        created = edge.create_call(id: call_id, type: call_type, created_by: @user_id)
         placed = @client.post("/v1/phone/calls", body: {
-                                from: from, to: to, call_id: created.id, call_type: created.type,
-                                ring_timeout_seconds: ring_timeout, initial_digits: initial_digits,
+                                from: from, to: to, ring_timeout_seconds: ring_timeout, initial_digits: initial_digits,
                                 headers: headers, custom: custom, tags: @cost_tracking
                               })
-        session = open({ call_id: created.id, call_type: created.type, navigating: true,
+        if placed["session_id"].to_s.empty?
+          raise RouterError.new(0, "placeCall", "the router placed the call for no session")
+        end
+
+        session = open({ id: placed["session_id"], start_voice: true, navigating: true,
                          phone: { number: from, vendor_call_id: placed["vendor_call_id"] }.compact }, options)
         await_participant(session, participant_wait_timeout)
         hold(session, wait_for_end, &block)
@@ -196,12 +199,9 @@ module GetStream
 
       # A link a person can open to join the call from a browser and hear the agent.
       def monitor_url(session = current)
-        if session.call_id.empty?
-          raise ConfigurationError, "a conversation held in writing has no call to watch"
-        end
+        raise ConfigurationError, "a conversation held in writing has no call to watch" unless session.voice.started?
 
-        edge.monitor_url(Edge::Call.new(id: session.call_id, type: session.call_type),
-                         user_id: "monitor-#{session.id}", name: "Monitor")
+        edge.monitor_url(session.call, user_id: "monitor-#{session.id}", name: "Monitor")
       end
 
       # Blocks until the conversation this agent is holding ends.
@@ -251,7 +251,7 @@ module GetStream
       #
       # Server side only: how an agent is configured is not a device's to change.
       #
-      # @param patch any AgentConfigPatch field: instructions, guardrail, llm, voice, speed,
+      # @param patch any AgentConfigPatch field: instructions, guardrail, llm, voice,
       #   harness, visible_tools, dispatch and the rest.
       # @return [Hash] the AgentConfig as it now is.
       def update_config(**patch)
@@ -273,10 +273,11 @@ module GetStream
       def session_request(call, options)
         request = {
           agent: @config, user_id: @user_id, user_name: @name, agent_id: @user_id,
-          instructions: @instructions, tags: @cost_tracking, memory: memory
+          tags: @cost_tracking, memory: memory
         }
         request.merge!(@pipeline.except(:language, :subagent))
         request[:languages] = [@pipeline[:language]] if @pipeline[:language]
+        request[:greeting] = { text: @pipeline[:greeting] } if @pipeline[:greeting].is_a?(String)
         request[:tools] = @tools.declarations unless @tools.empty?
         request.merge!(call.compact).merge!(options).compact
       end
@@ -370,15 +371,14 @@ module GetStream
           # when it has none, which deletes them.
           simulations: @folder&.simulations&.map(&:declaration),
           mode: presence(settings["mode"]), stt: presence(settings["stt"]), tts: presence(settings["tts"]),
-          sts: settings["sts"], voice: presence(settings["voice"]),
-          speed: (settings["speed"] unless settings["speed"].to_f.zero?), llm: presence(settings["llm"]),
+          sts: settings["sts"], voice: presence(settings["voice"]), llm: presence(settings["llm"]),
           harness: presence(@harness) || presence(settings["harness"]),
-          search: presence(settings["search"]), greeting: presence(settings["greeting"]),
-          agent_plugins: settings["plugins"]&.then { |p| p unless p.empty? },
+          search: presence(settings["search"]), greeting: settings["greeting"],
+          plugins: settings["plugins"]&.then { |p| p unless p.empty? },
           keyterms: settings["keyterms"]&.then { |k| k unless k.empty? },
           video: video && { source: video["source"], max_frames: video["max_frames"] }.compact,
           dispatch: settings["dispatch"],
-          thinking_llm: presence(@pipeline[:subagent].to_s) || presence(settings["subagent"]),
+          subagent: presence(@pipeline[:subagent].to_s) || presence(settings["subagent"]),
           sandbox: @sandbox&.provider || presence(settings["sandbox"]),
           tags: (tags unless tags.empty?)
         }
@@ -412,15 +412,22 @@ module GetStream
         @client = agent.client
       end
 
-      # Opens a conversation and starts watching it. Held in writing unless a call_id is given.
+      # Opens a conversation and starts watching it. Held in writing unless start_voice is
+      # true, which has the agent join the session's own call, agent:<session id>.
       #
-      # @param options any CreateSessionRequest field (id, a UUID to hold the session by;
-      #   title, description, project_id, custom, incognito, ...), plus interim and decisions.
+      # @param options any CreateSessionRequest field (id, up to 64 of A-Za-z0-9_- to hold
+      #   the session by; start_voice, title, description, project_id, custom, incognito,
+      #   ...), plus interim and decisions.
       def create(**options)
         watch = { interim: options.delete(:interim) || false, decisions: options.delete(:decisions) || false }
-        options[:text] = true unless options[:call_id]
         created = @client.post("/v1/agents/sessions", body: @agent.session_request({}, options))
         Session.watching(@client, created, tools: @agent.tools, **watch)
+      end
+
+      # Carries on a conversation by the id of the session it was held in, and starts
+      # watching it. One that ended is reopened with what was said in it.
+      def resume(id, interim: false, decisions: false)
+        Session.watching(@client, get(id), tools: @agent.tools, interim: interim, decisions: decisions)
       end
 
       # A page of the agent's conversations, most recently updated first, the ones that ended
@@ -456,7 +463,7 @@ module GetStream
       end
 
       # Changes one conversation, whether or not it is still being held. One that ended can
-      # still be renamed and relabelled; instructions, models and voice need it running.
+      # still be renamed and relabelled; models and voice need it running.
       # Server side only.
       #
       # @param fields any UpdateSessionRequest field; see Session#update.

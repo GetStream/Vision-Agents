@@ -18,7 +18,7 @@ final readonly class ConnectionValidation
         public ConnectionValidationStatus|string $status,
         // When the tools were listed. Absent until a validate listed them.
         public ?\DateTimeImmutable $checkedAt = null,
-        // What a program branches on when the status is not connected: connector_scope_required with needs_scopes. Mo...
+        // What a program branches on when the status is not connected: connector_scope_required with needs_scopes; co...
         public ?string $code = null,
         // Why the status is not connected, for a person to read.
         public ?string $error = null,

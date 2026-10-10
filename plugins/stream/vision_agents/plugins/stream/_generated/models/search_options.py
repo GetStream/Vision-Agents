@@ -124,9 +124,7 @@ class SearchOptions:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.search_options_output_schema import (
-            SearchOptionsOutputSchema,
-        )
+        from ..models.search_options_output_schema import SearchOptionsOutputSchema
 
         d = dict(src_dict)
         category = d.pop("category", UNSET)

@@ -84,7 +84,6 @@ public class AgentSession internal constructor(
     public val responses: Responses = Responses(
         backend,
         session.id,
-        kept = session.conversationId.isNotEmpty(),
         asked = { text -> state.update { it.said(text) } },
     )
 
@@ -127,15 +126,16 @@ public class AgentSession internal constructor(
         socket.send(Command.Say(text))
     }
 
-    /** Abandons the reply in flight, or stops the durable command named. */
-    public suspend fun interrupt(commandId: String = "") {
-        socket.send(Command.Interrupt(commandId))
+    /** Abandons the reply in flight, or stops the request named. */
+    public suspend fun interrupt(requestId: String = "") {
+        socket.send(Command.Interrupt(requestId))
     }
 
-    /** Replaces the system prompt, from the next turn on. */
-    public suspend fun setInstructions(instructions: String) {
-        socket.send(Command.Instructions(instructions))
-    }
+    /** Puts the agent on the session's call, `agent:<session id>`. See [Sessions.startVoice]. */
+    public suspend fun startVoice(): Session = Sessions(backend).startVoice(session.id).also { session = it }
+
+    /** Takes the agent off the call and carries on in writing. See [Sessions.stopVoice]. */
+    public suspend fun stopVoice(): Session = Sessions(backend).stopVoice(session.id).also { session = it }
 
     /** Renames this conversation or relabels it, and returns it as it now is. See [Sessions.update]. */
     public suspend fun update(
@@ -207,13 +207,13 @@ public class AgentSession internal constructor(
         val tool = tools[call.name] ?: return
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val result = try {
-                Command.ToolResult(call.id, output = tool.run(call.argumentValues), commandId = call.commandId, turnId = call.turnId)
+                Command.ToolResult(call.id, output = tool.run(call.argumentValues), requestId = call.requestId, turnId = call.turnId)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 // The model can only say something useful about a tool that did not work if
                 // it is told that it did not work.
-                Command.ToolResult(call.id, error = e.message ?: e.toString(), commandId = call.commandId, turnId = call.turnId)
+                Command.ToolResult(call.id, error = e.message ?: e.toString(), requestId = call.requestId, turnId = call.turnId)
             }
             try {
                 socket.send(result)

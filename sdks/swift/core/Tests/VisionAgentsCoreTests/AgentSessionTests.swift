@@ -60,6 +60,32 @@ import Testing
     #expect(session.session.title == "After")
     #expect(try await server.request().body == ["title": .string("After")])
   }
+
+  @Test(arguments: [("POST", "s1"), ("DELETE", "")])
+  func startingAndStoppingVoiceMovesTheSessionOntoAndOffItsCall(method: String, callID: String)
+    async throws
+  {
+    let server = try SessionServer(answer: .session(status: 200, callID: callID))
+    defer { server.listener.cancel() }
+    let session = AgentSession(
+      backend: Backend(url: try await server.url(), customerID: "test"),
+      session: Session(
+        .init(
+          agentId: "a1", callId: method == "POST" ? "" : "s1", callType: "agent",
+          createdAt: Date(), id: "s1", modality: .text, state: .live, userId: "jlahey")),
+      tools: [])
+
+    if method == "POST" {
+      try await session.startVoice()
+    } else {
+      try await session.stopVoice()
+    }
+
+    #expect(session.session.callID == callID)
+    let request = try await server.request()
+    #expect(request.method == method)
+    #expect(request.path == "/v1/agents/sessions/s1/voice")
+  }
 }
 
 /// A real WebSocket peer broadcasting one remote tool and one locally owned tool.

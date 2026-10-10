@@ -705,7 +705,7 @@ func (s *ChatLoginsSuite) session(config string, chosen map[string]string) Creat
 	for alias, id := range chosen {
 		selections = append(selections, SessionConnectorBinding{Name: alias, ConnectionId: id})
 	}
-	return CreateSessionRequest{ConfigId: &config, Text: pointerTo(true), ConnectorBindings: &selections}
+	return CreateSessionRequest{ConfigId: &config, ConnectorBindings: &selections}
 }
 
 // ask is the caller's backend asking the session something, by command.
@@ -716,7 +716,7 @@ func (s *ChatLoginsSuite) ask(id string) CommandReceipt {
 func (s *ChatLoginsSuite) askAs(user *testClient, id string) CommandReceipt {
 	var receipt CommandReceipt
 	s.Require().Equal(http.StatusOK, s.serverClient.actingFor(user).do(http.MethodPost, "/v1/agents/sessions/"+id+"/respond",
-		RespondRequest{Text: "Tell Nash a joke on the crm", CommandId: pointerTo(s.utils.uuid())}, &receipt))
+		RespondRequest{Text: "Tell Nash a joke on the crm", RequestId: pointerTo(s.utils.uuid())}, &receipt))
 	return receipt
 }
 
