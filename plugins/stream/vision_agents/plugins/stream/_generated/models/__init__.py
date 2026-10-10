@@ -160,6 +160,10 @@ from .create_session_request_custom import CreateSessionRequestCustom
 from .create_session_request_tags import CreateSessionRequestTags
 from .create_sip_trunk_request import CreateSipTrunkRequest
 from .custom_connector_request import CustomConnectorRequest
+from .custom_model import CustomModel
+from .custom_model_page import CustomModelPage
+from .custom_model_request import CustomModelRequest
+from .custom_model_request_trains_on_data import CustomModelRequestTrainsOnData
 from .data_change import DataChange
 from .data_change_key import DataChangeKey
 from .data_change_op import DataChangeOp
@@ -212,7 +216,6 @@ from .indexed_knowledge_document import IndexedKnowledgeDocument
 from .ingest_knowledge_request import IngestKnowledgeRequest
 from .ingested_knowledge import IngestedKnowledge
 from .input_parts import InputParts
-from .instructions_request import InstructionsRequest
 from .invocation_argument import InvocationArgument
 from .invocation_argument_type import InvocationArgumentType
 from .invocation_error_type import InvocationErrorType
@@ -587,6 +590,10 @@ __all__ = (
     "CreateSessionRequestTags",
     "CreateSipTrunkRequest",
     "CustomConnectorRequest",
+    "CustomModel",
+    "CustomModelPage",
+    "CustomModelRequest",
+    "CustomModelRequestTrainsOnData",
     "DataChange",
     "DataChangeKey",
     "DataChangeOp",
@@ -637,7 +644,6 @@ __all__ = (
     "IngestKnowledgeRequest",
     "IngestedKnowledge",
     "InputParts",
-    "InstructionsRequest",
     "InvocationArgument",
     "InvocationArgumentType",
     "InvocationErrorType",

@@ -1,25 +1,33 @@
 from http import HTTPStatus
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.custom_model_page import CustomModelPage
 from ...models.error_response import ErrorResponse
-from ...models.session import Session
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
-    id: str,
+    *,
+    limit: int | Unset = UNSET,
+    cursor: str | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["limit"] = limit
+
+    params["cursor"] = cursor
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/agents/sessions/{id}".format(
-            id=quote(str(id), safe=""),
-        ),
+        "url": "/v1/agents/models",
+        "params": params,
     }
 
     return _kwargs
@@ -27,9 +35,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorResponse | Session | None:
+) -> CustomModelPage | ErrorResponse | None:
     if response.status_code == 200:
-        response_200 = Session.from_dict(response.json())
+        response_200 = CustomModelPage.from_dict(response.json())
 
         return response_200
 
@@ -48,11 +56,6 @@ def _parse_response(
 
         return response_403
 
-    if response.status_code == 404:
-        response_404 = ErrorResponse.from_dict(response.json())
-
-        return response_404
-
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
@@ -66,7 +69,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorResponse | Session]:
+) -> Response[CustomModelPage | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -76,31 +79,30 @@ def _build_response(
 
 
 def sync_detailed(
-    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ErrorResponse | Session]:
-    """One session
+    limit: int | Unset = UNSET,
+    cursor: str | Unset = UNSET,
+) -> Response[CustomModelPage | ErrorResponse]:
+    """The language models the calling customer serves themselves
 
-     Reading a session is open to the device holding it, for the same reason listing and stopping are: it
-    is the conversation the caller is having. A session belonging to somebody else is reported as not
-    found rather than refused, so this is not a way to find out whose an id is.
-    A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
+        limit (int | Unset): Up to 200. Omitted is 25.
+        cursor (str | Unset): The `next_cursor` of the previous page. Omitted is the first page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | Session]
+        Response[CustomModelPage | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
-        id=id,
+        limit=limit,
+        cursor=cursor,
     )
 
     response = client.get_httpx_client().request(
@@ -111,61 +113,59 @@ def sync_detailed(
 
 
 def sync(
-    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> ErrorResponse | Session | None:
-    """One session
+    limit: int | Unset = UNSET,
+    cursor: str | Unset = UNSET,
+) -> CustomModelPage | ErrorResponse | None:
+    """The language models the calling customer serves themselves
 
-     Reading a session is open to the device holding it, for the same reason listing and stopping are: it
-    is the conversation the caller is having. A session belonging to somebody else is reported as not
-    found rather than refused, so this is not a way to find out whose an id is.
-    A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
+        limit (int | Unset): Up to 200. Omitted is 25.
+        cursor (str | Unset): The `next_cursor` of the previous page. Omitted is the first page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | Session
+        CustomModelPage | ErrorResponse
     """
 
     return sync_detailed(
-        id=id,
         client=client,
+        limit=limit,
+        cursor=cursor,
     ).parsed
 
 
 async def asyncio_detailed(
-    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ErrorResponse | Session]:
-    """One session
+    limit: int | Unset = UNSET,
+    cursor: str | Unset = UNSET,
+) -> Response[CustomModelPage | ErrorResponse]:
+    """The language models the calling customer serves themselves
 
-     Reading a session is open to the device holding it, for the same reason listing and stopping are: it
-    is the conversation the caller is having. A session belonging to somebody else is reported as not
-    found rather than refused, so this is not a way to find out whose an id is.
-    A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
+        limit (int | Unset): Up to 200. Omitted is 25.
+        cursor (str | Unset): The `next_cursor` of the previous page. Omitted is the first page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | Session]
+        Response[CustomModelPage | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
-        id=id,
+        limit=limit,
+        cursor=cursor,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -174,32 +174,31 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> ErrorResponse | Session | None:
-    """One session
+    limit: int | Unset = UNSET,
+    cursor: str | Unset = UNSET,
+) -> CustomModelPage | ErrorResponse | None:
+    """The language models the calling customer serves themselves
 
-     Reading a session is open to the device holding it, for the same reason listing and stopping are: it
-    is the conversation the caller is having. A session belonging to somebody else is reported as not
-    found rather than refused, so this is not a way to find out whose an id is.
-    A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
+        limit (int | Unset): Up to 200. Omitted is 25.
+        cursor (str | Unset): The `next_cursor` of the previous page. Omitted is the first page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | Session
+        CustomModelPage | ErrorResponse
     """
 
     return (
         await asyncio_detailed(
-            id=id,
             client=client,
+            limit=limit,
+            cursor=cursor,
         )
     ).parsed

@@ -35,8 +35,6 @@ class CreateSessionRequest:
             since there is no sensible answer when they disagree.
         agent_id (str | Unset): Keys transcripts and statistics. Empty means the call id.
         backchannel (bool | Unset): Murmur while a participant is still talking, the way a person does. Default: False.
-        call_id (str | Unset): The call to join. Required unless the session is text.
-        call_type (str | Unset):  Default: 'default'.
         config_id (str | Unset): An agent config to start from. Everything else in this request overrides what the
             config says, so a caller can reuse a configuration and still change one thing about this call.
         connector_bindings (list[SessionConnectorBinding] | Unset): The connection to use for each of the agent config's
@@ -49,7 +47,6 @@ class CreateSessionRequest:
             event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller
             asking for the fork.
         context_truncated (bool | Unset): Older history was omitted from the model context.
-        conversation_id (str | Unset): Stream Chat CID to resume; returned for persistent text sessions.
         custom (CreateSessionRequestCustom | Unset): Anything the caller wants to remember about the session, handed
             back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth
             writing.
@@ -61,17 +58,16 @@ class CreateSessionRequest:
             responses endpoint. The model is handed them before the first response, as a resumed conversation's history is.
             They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to
             100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more
-            is refused rather than cut. Not with conversation_id, which reads the history the router kept. Server-side only:
-            a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
-        id (str | Unset): The id to hold the session by, so a caller can know it before the session exists. It must be a
-            UUID nobody has used for a session before. Omitted, the router generates a UUIDv7.
+            is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant
+            message puts words in the agent's mouth.
+        id (str | Unset): The id to hold the session by, so a caller can know it before the session exists. It may be
+            any string of up to 64 letters, digits, - and _, such as your own record's id, that does not start support- or
+            thread- and that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a
+            UUIDv7.
         incognito (bool | Unset): Hold the conversation and record nothing about it: no session row, no turns, no
             transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it
             simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork
             from. Default: False.
-        instructions (str | Unset): The system prompt, over what the config says. Server-side only: a device sending it
-            is refused with a 403, as it is on updateSession, because what the agent is told to be is the backend's to
-            decide.
         keyterms (list[str] | Unset): Business-specific words the transcriber would otherwise get wrong. Up to 100
             terms, and providers that cannot be told about vocabulary ignore them.
         languages (list[str] | Unset): Language hints, which narrow the candidates in every modality.
@@ -95,14 +91,15 @@ class CreateSessionRequest:
         project_id (str | Unset): What the conversation belongs to. Also recorded as the "project" cost tag, so spend
             breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
         search (str | Unset): Omit it and the config decides, or search-fast when there is no config.
-        sts (str | Unset): A speech-to-speech target. Naming one makes this a native session: the model hears and speaks
-            for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
+        start_voice (bool | Unset): Start voice as the session opens, as startSessionVoice does: the agent joins the
+            call agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held
+            in writing until voice is started. Default: False.
+        sts (str | Unset): A speech-to-speech target. Naming one makes the session native once voice is started: the
+            model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the
+            config decides.
         stt (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
-        tags (CreateSessionRequestTags | Unset): Cost labels, carried onto every request the session makes.
-        text (bool | Unset): Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing
-            is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is
-            unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive
-            as response_delta and responded events on the session's socket. Default: False.
+        tags (CreateSessionRequestTags | Unset): Cost labels, carried onto every request the session makes. Merged with
+            the agent config's tags; where both name a key, this one wins.
         title (str | Unset): What to call the conversation, for a list a person reads, until the router names a
             persistent one for what was said. Never shown to the model: what a conversation is called is a label on it
             rather than part of it.
@@ -118,19 +115,15 @@ class CreateSessionRequest:
     agent: str | Unset = UNSET
     agent_id: str | Unset = UNSET
     backchannel: bool | Unset = False
-    call_id: str | Unset = UNSET
-    call_type: str | Unset = "default"
     config_id: str | Unset = UNSET
     connector_bindings: list[SessionConnectorBinding] | Unset = UNSET
     context_truncated: bool | Unset = UNSET
-    conversation_id: str | Unset = UNSET
     custom: CreateSessionRequestCustom | Unset = UNSET
     description: str | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     history: list[HistoryMessage] | Unset = UNSET
     id: str | Unset = UNSET
     incognito: bool | Unset = False
-    instructions: str | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
     languages: list[str] | Unset = UNSET
     llm: str | Unset = UNSET
@@ -142,10 +135,10 @@ class CreateSessionRequest:
     phone: SessionPhone | Unset = UNSET
     project_id: str | Unset = UNSET
     search: str | Unset = UNSET
+    start_voice: bool | Unset = False
     sts: str | Unset = UNSET
     stt: str | Unset = UNSET
     tags: CreateSessionRequestTags | Unset = UNSET
-    text: bool | Unset = False
     title: str | Unset = UNSET
     tool_timeout_ms: int | Unset = UNSET
     tools: list[SessionTool] | Unset = UNSET
@@ -163,10 +156,6 @@ class CreateSessionRequest:
 
         backchannel = self.backchannel
 
-        call_id = self.call_id
-
-        call_type = self.call_type
-
         config_id = self.config_id
 
         connector_bindings: list[dict[str, Any]] | Unset = UNSET
@@ -177,8 +166,6 @@ class CreateSessionRequest:
                 connector_bindings.append(connector_bindings_item)
 
         context_truncated = self.context_truncated
-
-        conversation_id = self.conversation_id
 
         custom: dict[str, Any] | Unset = UNSET
         if not isinstance(self.custom, Unset):
@@ -200,8 +187,6 @@ class CreateSessionRequest:
         id = self.id
 
         incognito = self.incognito
-
-        instructions = self.instructions
 
         keyterms: list[str] | Unset = UNSET
         if not isinstance(self.keyterms, Unset):
@@ -235,6 +220,8 @@ class CreateSessionRequest:
 
         search = self.search
 
+        start_voice = self.start_voice
+
         sts = self.sts
 
         stt = self.stt
@@ -242,8 +229,6 @@ class CreateSessionRequest:
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
-
-        text = self.text
 
         title = self.title
 
@@ -277,18 +262,12 @@ class CreateSessionRequest:
             field_dict["agent_id"] = agent_id
         if backchannel is not UNSET:
             field_dict["backchannel"] = backchannel
-        if call_id is not UNSET:
-            field_dict["call_id"] = call_id
-        if call_type is not UNSET:
-            field_dict["call_type"] = call_type
         if config_id is not UNSET:
             field_dict["config_id"] = config_id
         if connector_bindings is not UNSET:
             field_dict["connector_bindings"] = connector_bindings
         if context_truncated is not UNSET:
             field_dict["context_truncated"] = context_truncated
-        if conversation_id is not UNSET:
-            field_dict["conversation_id"] = conversation_id
         if custom is not UNSET:
             field_dict["custom"] = custom
         if description is not UNSET:
@@ -301,8 +280,6 @@ class CreateSessionRequest:
             field_dict["id"] = id
         if incognito is not UNSET:
             field_dict["incognito"] = incognito
-        if instructions is not UNSET:
-            field_dict["instructions"] = instructions
         if keyterms is not UNSET:
             field_dict["keyterms"] = keyterms
         if languages is not UNSET:
@@ -325,14 +302,14 @@ class CreateSessionRequest:
             field_dict["project_id"] = project_id
         if search is not UNSET:
             field_dict["search"] = search
+        if start_voice is not UNSET:
+            field_dict["start_voice"] = start_voice
         if sts is not UNSET:
             field_dict["sts"] = sts
         if stt is not UNSET:
             field_dict["stt"] = stt
         if tags is not UNSET:
             field_dict["tags"] = tags
-        if text is not UNSET:
-            field_dict["text"] = text
         if title is not UNSET:
             field_dict["title"] = title
         if tool_timeout_ms is not UNSET:
@@ -354,18 +331,12 @@ class CreateSessionRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.create_session_request_custom import (
-            CreateSessionRequestCustom,
-        )
-        from ..models.create_session_request_tags import (
-            CreateSessionRequestTags,
-        )
+        from ..models.create_session_request_custom import CreateSessionRequestCustom
+        from ..models.create_session_request_tags import CreateSessionRequestTags
         from ..models.greeting import Greeting
         from ..models.history_message import HistoryMessage
         from ..models.model_overwrites import ModelOverwrites
-        from ..models.session_connector_binding import (
-            SessionConnectorBinding,
-        )
+        from ..models.session_connector_binding import SessionConnectorBinding
         from ..models.session_memory import SessionMemory
         from ..models.session_phone import SessionPhone
         from ..models.session_tool import SessionTool
@@ -377,10 +348,6 @@ class CreateSessionRequest:
         agent_id = d.pop("agent_id", UNSET)
 
         backchannel = d.pop("backchannel", UNSET)
-
-        call_id = d.pop("call_id", UNSET)
-
-        call_type = d.pop("call_type", UNSET)
 
         config_id = d.pop("config_id", UNSET)
 
@@ -396,8 +363,6 @@ class CreateSessionRequest:
                 connector_bindings.append(connector_bindings_item)
 
         context_truncated = d.pop("context_truncated", UNSET)
-
-        conversation_id = d.pop("conversation_id", UNSET)
 
         _custom = d.pop("custom", UNSET)
         custom: CreateSessionRequestCustom | Unset
@@ -427,8 +392,6 @@ class CreateSessionRequest:
         id = d.pop("id", UNSET)
 
         incognito = d.pop("incognito", UNSET)
-
-        instructions = d.pop("instructions", UNSET)
 
         keyterms = cast(list[str], d.pop("keyterms", UNSET))
 
@@ -467,6 +430,8 @@ class CreateSessionRequest:
 
         search = d.pop("search", UNSET)
 
+        start_voice = d.pop("start_voice", UNSET)
+
         sts = d.pop("sts", UNSET)
 
         stt = d.pop("stt", UNSET)
@@ -477,8 +442,6 @@ class CreateSessionRequest:
             tags = UNSET
         else:
             tags = CreateSessionRequestTags.from_dict(_tags)
-
-        text = d.pop("text", UNSET)
 
         title = d.pop("title", UNSET)
 
@@ -512,19 +475,15 @@ class CreateSessionRequest:
             agent=agent,
             agent_id=agent_id,
             backchannel=backchannel,
-            call_id=call_id,
-            call_type=call_type,
             config_id=config_id,
             connector_bindings=connector_bindings,
             context_truncated=context_truncated,
-            conversation_id=conversation_id,
             custom=custom,
             description=description,
             greeting=greeting,
             history=history,
             id=id,
             incognito=incognito,
-            instructions=instructions,
             keyterms=keyterms,
             languages=languages,
             llm=llm,
@@ -536,10 +495,10 @@ class CreateSessionRequest:
             phone=phone,
             project_id=project_id,
             search=search,
+            start_voice=start_voice,
             sts=sts,
             stt=stt,
             tags=tags,
-            text=text,
             title=title,
             tool_timeout_ms=tool_timeout_ms,
             tools=tools,

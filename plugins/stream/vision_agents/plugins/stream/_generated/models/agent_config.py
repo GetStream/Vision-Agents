@@ -310,9 +310,7 @@ class AgentConfig:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_channels import AgentChannels
         from ..models.agent_config_tags import AgentConfigTags
-        from ..models.agent_connector_binding import (
-            AgentConnectorBinding,
-        )
+        from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_tools import AgentTools
         from ..models.greeting import Greeting

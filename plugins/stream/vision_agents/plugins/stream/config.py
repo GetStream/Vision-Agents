@@ -26,6 +26,8 @@ from ._generated.models import (
     ChannelLineRequest,
     DispatchSetting,
     ErrorResponse,
+    Greeting,
+    GreetingMode,
     Harness,
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
@@ -255,7 +257,7 @@ async def define_agent(
     if voice:
         wanted.voice = voice
     if greeting:
-        wanted.greeting = greeting
+        wanted.greeting = Greeting(text=greeting)
     if named:
         wanted.skills = [skill.name for skill in named]
     if knowledge:
@@ -337,8 +339,6 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.sts = settings.sts
     if settings.voice:
         body.voice = settings.voice
-    if settings.speed:
-        body.speed = settings.speed
     if settings.llm:
         body.llm = settings.llm
     if settings.harness:
@@ -359,8 +359,10 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
             body.dispatch.text = DispatchSetting(settings.dispatch["text"])
     if settings.search:
         body.search = settings.search
-    if settings.greeting:
-        body.greeting = settings.greeting
+    if settings.greeting is not None:
+        body.greeting = Greeting(text=settings.greeting.text)
+        if settings.greeting.mode:
+            body.greeting.mode = GreetingMode(settings.greeting.mode)
     if settings.plugins:
         body.plugins = [_plugin_entry(plugin) for plugin in settings.plugins]
     if settings.mcp_servers:

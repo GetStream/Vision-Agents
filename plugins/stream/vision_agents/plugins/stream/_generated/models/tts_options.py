@@ -155,12 +155,8 @@ class TtsOptions:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.data_policy import DataPolicy
-        from ..models.tts_options_overwrites import (
-            TtsOptionsOverwrites,
-        )
-        from ..models.tts_options_pronunciations import (
-            TtsOptionsPronunciations,
-        )
+        from ..models.tts_options_overwrites import TtsOptionsOverwrites
+        from ..models.tts_options_pronunciations import TtsOptionsPronunciations
 
         d = dict(src_dict)
         chunk_schedule = cast(list[int], d.pop("chunk_schedule", UNSET))

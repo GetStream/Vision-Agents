@@ -14,6 +14,7 @@ from ..models.session_state import SessionState
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.call_usage import CallUsage
     from ..models.model_overwrites import ModelOverwrites
     from ..models.session_custom import SessionCustom
     from ..models.session_video import SessionVideo
@@ -27,7 +28,8 @@ class Session:
     """
     Attributes:
         agent_id (str):
-        call_id (str): Empty for a text session, which joins no call.
+        call_id (str): The call the agent is on, the session's id, while voice is started. Empty while the conversation
+            is held in writing.
         call_type (str):
         created_at (datetime.datetime):
         id (str):
@@ -40,7 +42,8 @@ class Session:
         closed_at (datetime.datetime | Unset): When the session ended. Absent while it is still running.
         config_id (str | Unset): The agent config the session ran under, empty for one that spelled itself out.
         context_truncated (bool | Unset): Older history was omitted from the model context.
-        conversation_id (str | Unset): Stream Chat CID to resume; returned for persistent text sessions.
+        conversation_id (str | Unset): The Stream Chat channel the conversation is kept in, typed and spoken. Absent for
+            an incognito session.
         custom (SessionCustom | Unset):
         description (str | Unset):
         forked_from (str | Unset): The session this one continued from, empty for one opened fresh.
@@ -60,12 +63,20 @@ class Session:
             against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because
             a caller able to rewrite those could make a session impersonate a different agent.
         project_id (str | Unset):
+        review_notes (str | Unset): Why the review scored the conversation as it did. Read by a backend only.
+        review_score (int | Unset): How well the agent handled the conversation, from 1 to 5, written a few seconds
+            after it ended. Read by a backend only.
         sts (str | Unset): The provider and model holding a native conversation, once routing has picked one.
         stt (str | Unset): The provider and model transcribing, once somebody has been heard.
         subagent (str | Unset): The provider and model delegated work runs on.
+        summary (str | Unset): What a model made of the conversation, written a few seconds after it ended. A session
+            nobody spoke in has none. Read by a backend only.
         text (bool | Unset): The conversation is held in writing rather than on a call.
         title (str | Unset):
         tts (str | Unset): The provider and model speaking.
+        usage (CallUsage | Unset): What the call spent, summed over every request it made. Counted once the call is
+            over, so it is absent while one is still running. Requests that failed are included: a model that read the
+            prompt and then fell over is still billed for it.
         video (SessionVideo | Unset):
         voice (str | Unset): The voice speaking, in the provider's own terms. It is the provider's default when the
             session asked for none.
@@ -94,12 +105,16 @@ class Session:
     mode: SessionMode | Unset = UNSET
     model_overwrites: ModelOverwrites | Unset = UNSET
     project_id: str | Unset = UNSET
+    review_notes: str | Unset = UNSET
+    review_score: int | Unset = UNSET
     sts: str | Unset = UNSET
     stt: str | Unset = UNSET
     subagent: str | Unset = UNSET
+    summary: str | Unset = UNSET
     text: bool | Unset = UNSET
     title: str | Unset = UNSET
     tts: str | Unset = UNSET
+    usage: CallUsage | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     voice: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -161,17 +176,27 @@ class Session:
 
         project_id = self.project_id
 
+        review_notes = self.review_notes
+
+        review_score = self.review_score
+
         sts = self.sts
 
         stt = self.stt
 
         subagent = self.subagent
 
+        summary = self.summary
+
         text = self.text
 
         title = self.title
 
         tts = self.tts
+
+        usage: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.usage, Unset):
+            usage = self.usage.to_dict()
 
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
@@ -223,18 +248,26 @@ class Session:
             field_dict["model_overwrites"] = model_overwrites
         if project_id is not UNSET:
             field_dict["project_id"] = project_id
+        if review_notes is not UNSET:
+            field_dict["review_notes"] = review_notes
+        if review_score is not UNSET:
+            field_dict["review_score"] = review_score
         if sts is not UNSET:
             field_dict["sts"] = sts
         if stt is not UNSET:
             field_dict["stt"] = stt
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
+        if summary is not UNSET:
+            field_dict["summary"] = summary
         if text is not UNSET:
             field_dict["text"] = text
         if title is not UNSET:
             field_dict["title"] = title
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if usage is not UNSET:
+            field_dict["usage"] = usage
         if video is not UNSET:
             field_dict["video"] = video
         if voice is not UNSET:
@@ -244,6 +277,7 @@ class Session:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.call_usage import CallUsage
         from ..models.model_overwrites import ModelOverwrites
         from ..models.session_custom import SessionCustom
         from ..models.session_video import SessionVideo
@@ -320,17 +354,30 @@ class Session:
 
         project_id = d.pop("project_id", UNSET)
 
+        review_notes = d.pop("review_notes", UNSET)
+
+        review_score = d.pop("review_score", UNSET)
+
         sts = d.pop("sts", UNSET)
 
         stt = d.pop("stt", UNSET)
 
         subagent = d.pop("subagent", UNSET)
 
+        summary = d.pop("summary", UNSET)
+
         text = d.pop("text", UNSET)
 
         title = d.pop("title", UNSET)
 
         tts = d.pop("tts", UNSET)
+
+        _usage = d.pop("usage", UNSET)
+        usage: CallUsage | Unset
+        if isinstance(_usage, Unset):
+            usage = UNSET
+        else:
+            usage = CallUsage.from_dict(_usage)
 
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
@@ -365,12 +412,16 @@ class Session:
             mode=mode,
             model_overwrites=model_overwrites,
             project_id=project_id,
+            review_notes=review_notes,
+            review_score=review_score,
             sts=sts,
             stt=stt,
             subagent=subagent,
+            summary=summary,
             text=text,
             title=title,
             tts=tts,
+            usage=usage,
             video=video,
             voice=voice,
         )

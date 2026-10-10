@@ -341,28 +341,20 @@ class SyncAgentRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_channels import AgentChannels
-        from ..models.agent_connector_binding import (
-            AgentConnectorBinding,
-        )
+        from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_tools import AgentTools
         from ..models.greeting import Greeting
         from ..models.knowledge_document import KnowledgeDocument
-        from ..models.knowledge_url_declaration import (
-            KnowledgeUrlDeclaration,
-        )
+        from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
         from ..models.mcp_server import McpServer
         from ..models.plugin_event import PluginEvent
         from ..models.plugin_with_options import PluginWithOptions
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
-        from ..models.simulation_declaration import (
-            SimulationDeclaration,
-        )
+        from ..models.simulation_declaration import SimulationDeclaration
         from ..models.skill_request import SkillRequest
-        from ..models.sync_agent_request_tags import (
-            SyncAgentRequestTags,
-        )
+        from ..models.sync_agent_request_tags import SyncAgentRequestTags
 
         d = dict(src_dict)
         hash_ = d.pop("hash")

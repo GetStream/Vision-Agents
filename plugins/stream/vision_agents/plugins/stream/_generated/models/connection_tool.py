@@ -71,9 +71,7 @@ class ConnectionTool:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.connection_tool_input_schema import (
-            ConnectionToolInputSchema,
-        )
+        from ..models.connection_tool_input_schema import ConnectionToolInputSchema
 
         d = dict(src_dict)
         description = d.pop("description")

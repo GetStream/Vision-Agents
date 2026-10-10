@@ -27,6 +27,7 @@ from ._generated.models import (
     PlaceCallRequestHeaders,
     TransferCallRequest,
 )
+from ._generated.models import PlacedCall as GeneratedPlacedCall
 from ._generated.types import UNSET, Unset
 
 logger = logging.getLogger(__name__)
@@ -74,18 +75,25 @@ class Phone:
         Args:
             call: Who to call and on what terms.
 
+        A placed call is held by a session, and the answered leg is routed into that
+        session's call, ``agent:<session id>``: ``call.call_id`` is the session id to hold
+        it by, and empty has the router choose one.
+
         Returns:
             The ringing leg, and the call its answer is routed into.
 
         Raises:
             RuntimeError: If the router refused the call, saying why. A vendor whose API
                 cannot express one of the terms asked for refuses rather than dropping it.
+            ValueError: If the call names a call type other than "agent".
         """
+        if call.call_type not in ("", "agent"):
+            raise ValueError(
+                f"a placed call is held on its session's own agent call, not a {call.call_type} call"
+            )
         request = PlaceCallRequest(from_=call.from_, to=call.to)
         if call.call_id:
-            request.call_id = call.call_id
-        if call.call_type:
-            request.call_type = call.call_type
+            request.session_id = call.call_id
         if call.ring_timeout is not None:
             request.ring_timeout_seconds = int(call.ring_timeout)
         if call.initial_digits:
@@ -108,21 +116,9 @@ class Phone:
             raise RuntimeError("the router did not answer with a placed call")
 
         logger.info("calling %s, vendor call %s", call.to, placed.vendor_call_id)
-        return PlacedCall(
-            vendor_call_id=placed.vendor_call_id,
-            status=placed.status,
-            vendor=_or_empty(placed.vendor),
-            call_id=_or_empty(placed.call_id),
-            call_type=_or_empty(placed.call_type),
-        )
+        return _placed(placed)
 
-    async def transfer(
-        self,
-        from_: str,
-        to: str,
-        call_id: str,
-        call_type: Optional[str] = None,
-    ) -> PlacedCall:
+    async def transfer(self, from_: str, to: str, session_id: str) -> PlacedCall:
         """Bring a human onto a call that is already happening.
 
         A transfer is a second leg rather than a handover: the vendor dials the human
@@ -132,8 +128,7 @@ class Phone:
         Args:
             from_: The customer's number the human is dialled from, which is what they see.
             to: The human being brought onto the call.
-            call_id: The Stream call the caller and the agent are already on.
-            call_type: The Stream call type. Omit for "agent".
+            session_id: The session whose call the caller and the agent are already on.
 
         Returns:
             The ringing leg, and the call its answer is routed into.
@@ -141,9 +136,7 @@ class Phone:
         Raises:
             RuntimeError: If the router refused the transfer, saying why.
         """
-        request = TransferCallRequest(from_=from_, to=to, call_id=call_id)
-        if call_type:
-            request.call_type = call_type
+        request = TransferCallRequest(from_=from_, to=to, session_id=session_id)
 
         placed = await transfer_phone_call.asyncio(
             client=self.backend.client(), body=request
@@ -154,13 +147,7 @@ class Phone:
             raise RuntimeError("the router did not answer with a placed call")
 
         logger.info("transferring to %s, vendor call %s", to, placed.vendor_call_id)
-        return PlacedCall(
-            vendor_call_id=placed.vendor_call_id,
-            status=placed.status,
-            vendor=_or_empty(placed.vendor),
-            call_id=_or_empty(placed.call_id),
-            call_type=_or_empty(placed.call_type),
-        )
+        return _placed(placed)
 
     async def numbers(self) -> list[PhoneNumber]:
         """The numbers this customer holds, which are the ones a call can be placed from."""
@@ -267,20 +254,17 @@ class Phone:
     async def attach(
         self,
         e164: str,
-        call_id: Optional[str] = None,
-        call_type: Optional[str] = None,
         allowed_ips: Optional[list[str]] = None,
     ) -> AttachedNumber:
-        """Point a number at a Stream call.
+        """Point a number at the agent.
 
         Creates the SIP inbound trunk and routing rule and tells the vendor to send calls
-        there. This is what turns a bought number into one that reaches an agent.
+        there. This is what turns a bought number into one that reaches an agent. Every
+        caller lands in a call of their own, ``agent:<session id>``, handed to a worker as
+        an `InboundCall` naming the session to open.
 
         Args:
             e164: The number to attach.
-            call_id: The call every caller joins. Omit to give each caller their own call,
-                named after the number they rang.
-            call_type: The Stream call type. Omit for "agent".
             allowed_ips: The vendor's signalling addresses, as IPs or CIDR blocks.
 
         Returns:
@@ -291,15 +275,8 @@ class Phone:
             RuntimeError: If the router refused to attach the number, saying why.
         """
         body: AttachNumberRequest | Unset = UNSET
-        if call_id is not None or call_type is not None or allowed_ips is not None:
-            request = AttachNumberRequest()
-            if call_id is not None:
-                request.call_id = call_id
-            if call_type is not None:
-                request.call_type = call_type
-            if allowed_ips is not None:
-                request.allowed_ips = allowed_ips
-            body = request
+        if allowed_ips is not None:
+            body = AttachNumberRequest(allowed_ips=allowed_ips)
 
         attached = await attach_phone_number.asyncio(
             e164=e164, client=self.backend.client(), body=body
@@ -330,6 +307,18 @@ class Phone:
             raise RuntimeError(released.error.message)
 
         logger.info("released %s", e164)
+
+
+def _placed(placed: GeneratedPlacedCall) -> PlacedCall:
+    """The core's view of a placed call: the answered leg lands in its session's call."""
+    session_id = _or_empty(placed.session_id)
+    return PlacedCall(
+        vendor_call_id=placed.vendor_call_id,
+        status=placed.status,
+        vendor=_or_empty(placed.vendor),
+        call_id=session_id,
+        call_type="agent" if session_id else "",
+    )
 
 
 def _or_empty(value: object) -> str:

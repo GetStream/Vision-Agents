@@ -20,28 +20,24 @@ T = TypeVar("T", bound="TransferCallRequest")
 class TransferCallRequest:
     """
     Attributes:
-        call_id (str): The Stream call the caller and the agent are already on.
         from_ (str): The customer's number the human is dialled from, which is what they see.
+        session_id (str): The session whose call the caller and the agent are on. The human is brought into it.
         to (str): The human being brought onto the call.
-        call_type (str | Unset): The Stream call type. Omit for "agent".
         tags (TransferCallRequestTags | Unset):
     """
 
-    call_id: str
     from_: str
+    session_id: str
     to: str
-    call_type: str | Unset = UNSET
     tags: TransferCallRequestTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        call_id = self.call_id
-
         from_ = self.from_
 
-        to = self.to
+        session_id = self.session_id
 
-        call_type = self.call_type
+        to = self.to
 
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
@@ -51,13 +47,11 @@ class TransferCallRequest:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "call_id": call_id,
                 "from": from_,
+                "session_id": session_id,
                 "to": to,
             }
         )
-        if call_type is not UNSET:
-            field_dict["call_type"] = call_type
         if tags is not UNSET:
             field_dict["tags"] = tags
 
@@ -65,18 +59,14 @@ class TransferCallRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.transfer_call_request_tags import (
-            TransferCallRequestTags,
-        )
+        from ..models.transfer_call_request_tags import TransferCallRequestTags
 
         d = dict(src_dict)
-        call_id = d.pop("call_id")
-
         from_ = d.pop("from")
 
-        to = d.pop("to")
+        session_id = d.pop("session_id")
 
-        call_type = d.pop("call_type", UNSET)
+        to = d.pop("to")
 
         _tags = d.pop("tags", UNSET)
         tags: TransferCallRequestTags | Unset
@@ -86,10 +76,9 @@ class TransferCallRequest:
             tags = TransferCallRequestTags.from_dict(_tags)
 
         transfer_call_request = cls(
-            call_id=call_id,
             from_=from_,
+            session_id=session_id,
             to=to,
-            call_type=call_type,
             tags=tags,
         )
 

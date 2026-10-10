@@ -113,7 +113,7 @@ def sync_detailed(
     works afterwards in the same session. While that step-up is open, calls refused for the same access
     send no second event.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
-    message snapshot: id, command_id, question_id, role, text, state, response_started_at,
+    message snapshot: id, request_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
     tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
     execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end
@@ -128,15 +128,15 @@ def sync_detailed(
     queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
     turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy;
     tool_ran also includes tool_call_id.
-    A respond command carrying command_id emits command_accepted with a nested command receipt
-    (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
+    A respond command carrying request_id emits command_accepted with a nested command receipt
+    (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
     model again; reuse with different text emits an error. Commands with IDs currently accept text only.
     After restart an interrupted command is reported, not rerun.
-    An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its
+    An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its
     terminal receipt. A stop arriving after its command finished replays that command's receipt and
     leaves the command running now alone; an unknown command is reported as an error. Without
-    `command_id` the frame stops whichever reply is current, which is what a caller with no command to
+    `request_id` the frame stops whichever reply is current, which is what a caller with no command to
     name means by it.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
@@ -150,14 +150,13 @@ def sync_detailed(
     must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers
     should leave this disabled. Persistent text command recovery is unchanged.
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
-    (optionally naming a `command_id`), `instructions` or `close` to act on the session. `instructions`
-    is server-side only: from an end user's device it changes nothing and is answered with an `error`
-    frame, `context` `command`, as `updateSession` refuses it. A `tool_call` is the only frame that must
+    (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are
+    its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
     be answered: everything else is a report. Tool calls made by durable personal commands carry
-    `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
+    `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
     another command or turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
-    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
@@ -230,7 +229,7 @@ def sync(
     works afterwards in the same session. While that step-up is open, calls refused for the same access
     send no second event.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
-    message snapshot: id, command_id, question_id, role, text, state, response_started_at,
+    message snapshot: id, request_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
     tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
     execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end
@@ -245,15 +244,15 @@ def sync(
     queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
     turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy;
     tool_ran also includes tool_call_id.
-    A respond command carrying command_id emits command_accepted with a nested command receipt
-    (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
+    A respond command carrying request_id emits command_accepted with a nested command receipt
+    (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
     model again; reuse with different text emits an error. Commands with IDs currently accept text only.
     After restart an interrupted command is reported, not rerun.
-    An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its
+    An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its
     terminal receipt. A stop arriving after its command finished replays that command's receipt and
     leaves the command running now alone; an unknown command is reported as an error. Without
-    `command_id` the frame stops whichever reply is current, which is what a caller with no command to
+    `request_id` the frame stops whichever reply is current, which is what a caller with no command to
     name means by it.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
@@ -267,14 +266,13 @@ def sync(
     must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers
     should leave this disabled. Persistent text command recovery is unchanged.
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
-    (optionally naming a `command_id`), `instructions` or `close` to act on the session. `instructions`
-    is server-side only: from an end user's device it changes nothing and is answered with an `error`
-    frame, `context` `command`, as `updateSession` refuses it. A `tool_call` is the only frame that must
+    (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are
+    its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
     be answered: everything else is a report. Tool calls made by durable personal commands carry
-    `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
+    `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
     another command or turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
-    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
@@ -342,7 +340,7 @@ async def asyncio_detailed(
     works afterwards in the same session. While that step-up is open, calls refused for the same access
     send no second event.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
-    message snapshot: id, command_id, question_id, role, text, state, response_started_at,
+    message snapshot: id, request_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
     tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
     execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end
@@ -357,15 +355,15 @@ async def asyncio_detailed(
     queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
     turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy;
     tool_ran also includes tool_call_id.
-    A respond command carrying command_id emits command_accepted with a nested command receipt
-    (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
+    A respond command carrying request_id emits command_accepted with a nested command receipt
+    (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
     model again; reuse with different text emits an error. Commands with IDs currently accept text only.
     After restart an interrupted command is reported, not rerun.
-    An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its
+    An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its
     terminal receipt. A stop arriving after its command finished replays that command's receipt and
     leaves the command running now alone; an unknown command is reported as an error. Without
-    `command_id` the frame stops whichever reply is current, which is what a caller with no command to
+    `request_id` the frame stops whichever reply is current, which is what a caller with no command to
     name means by it.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
@@ -379,14 +377,13 @@ async def asyncio_detailed(
     must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers
     should leave this disabled. Persistent text command recovery is unchanged.
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
-    (optionally naming a `command_id`), `instructions` or `close` to act on the session. `instructions`
-    is server-side only: from an end user's device it changes nothing and is answered with an `error`
-    frame, `context` `command`, as `updateSession` refuses it. A `tool_call` is the only frame that must
+    (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are
+    its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
     be answered: everything else is a report. Tool calls made by durable personal commands carry
-    `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
+    `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
     another command or turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
-    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
@@ -457,7 +454,7 @@ async def asyncio(
     works afterwards in the same session. While that step-up is open, calls refused for the same access
     send no second event.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
-    message snapshot: id, command_id, question_id, role, text, state, response_started_at,
+    message snapshot: id, request_id, question_id, role, text, state, response_started_at,
     state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
     tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
     execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end
@@ -472,15 +469,15 @@ async def asyncio(
     queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool,
     turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy;
     tool_ran also includes tool_call_id.
-    A respond command carrying command_id emits command_accepted with a nested command receipt
-    (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
+    A respond command carrying request_id emits command_accepted with a nested command receipt
+    (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text returns the existing IDs without invoking the
     model again; reuse with different text emits an error. Commands with IDs currently accept text only.
     After restart an interrupted command is reported, not rerun.
-    An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its
+    An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its
     terminal receipt. A stop arriving after its command finished replays that command's receipt and
     leaves the command running now alone; an unknown command is reported as an error. Without
-    `command_id` the frame stops whichever reply is current, which is what a caller with no command to
+    `request_id` the frame stops whichever reply is current, which is what a caller with no command to
     name means by it.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
@@ -494,14 +491,13 @@ async def asyncio(
     must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers
     should leave this disabled. Persistent text command recovery is unchanged.
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
-    (optionally naming a `command_id`), `instructions` or `close` to act on the session. `instructions`
-    is server-side only: from an end user's device it changes nothing and is answered with an `error`
-    frame, `context` `command`, as `updateSession` refuses it. A `tool_call` is the only frame that must
+    (optionally naming a `request_id`) or `close` to act on the session. A session's instructions are
+    its agent config's, so there is no command to change them. A `tool_call` is the only frame that must
     be answered: everything else is a report. Tool calls made by durable personal commands carry
-    `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
+    `request_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by
     another command or turn.
     A call to a tool declared with an `approval` waits for a person. The client reports their answer
-    with `tool_approval` (`tool_call_id`, `command_id`, `turn_id`, `allowed`, and optionally a `summary`
+    with `tool_approval` (`tool_call_id`, `request_id`, `turn_id`, `allowed`, and optionally a `summary`
     shown when they declined), before it answers the call with `tool_result`.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,

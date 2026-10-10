@@ -51,9 +51,9 @@ class AgentConfigRequest:
             a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session
             runs as it always did. Left out on an update, the stored setting stays.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
-        guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then
-            the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty
-            means every turn is answered.
+        guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or
+            llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the
+            model. Empty means every turn is answered.
         harness (Harness | Unset): Which harness the agent's sessions run: what hands work to the subagent, loads
             skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the
             default, the only one there is.
@@ -315,12 +315,8 @@ class AgentConfigRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_channels import AgentChannels
-        from ..models.agent_config_request_tags import (
-            AgentConfigRequestTags,
-        )
-        from ..models.agent_connector_binding import (
-            AgentConnectorBinding,
-        )
+        from ..models.agent_config_request_tags import AgentConfigRequestTags
+        from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_tools import AgentTools
         from ..models.greeting import Greeting

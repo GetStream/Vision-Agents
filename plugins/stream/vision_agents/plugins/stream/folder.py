@@ -174,6 +174,16 @@ class ToolSettings:
 
 
 @dataclass
+class GreetingSettings:
+    """What the agent says as it joins, before anyone speaks."""
+
+    text: str = ""
+    mode: str = ""
+    """exact, the default, or variation, which has the model say its own variation of
+    the text on every call."""
+
+
+@dataclass
 class Settings:
     """What `agent.yaml` declares.
 
@@ -189,14 +199,13 @@ class Settings:
     tts: str = ""
     sts: str | None = None
     voice: str = ""
-    speed: float = 0.0
-    """The voice's rate of delivery, 1 being its own. Zero leaves it there."""
     llm: str = ""
     harness: str = ""
     subagent: str = ""
     """The model a voice agent hands its skills to. A text agent runs on its llm alone."""
     search: str = ""
-    greeting: str = ""
+    greeting: GreetingSettings | None = None
+    """What the agent opens the call with. None leaves the stored one."""
     sandbox: str = ""
     sandbox_options: SandboxSettings | None = None
     """How the sandbox is built. None when the file says nothing about it."""
@@ -430,12 +439,6 @@ def _declare(path: Path) -> Settings:
             settings.sts = _word(value)
         elif field_name == "voice":
             settings.voice = _word(value)
-        elif field_name == "speed":
-            if value is not None and (
-                isinstance(value, bool) or not isinstance(value, (int, float))
-            ):
-                raise ValueError(f"{path} should give speed as a number")
-            settings.speed = float(value or 0)
         elif field_name == "llm":
             settings.llm = _word(value)
         elif field_name == "harness":
@@ -445,7 +448,7 @@ def _declare(path: Path) -> Settings:
         elif field_name == "search":
             settings.search = _word(value)
         elif field_name == "greeting":
-            settings.greeting = _word(value)
+            settings.greeting = _greeting(path, value)
         elif field_name == "sandbox":
             settings.sandbox = _word(value)
         elif field_name == "sandbox_options":
@@ -567,6 +570,20 @@ def _plugins(path: Path, field_name: str, value: object) -> list[PluginSettings]
             )
         )
     return named
+
+
+def _greeting(path: Path, value: object) -> GreetingSettings | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should give greeting as a mapping with text and mode")
+    extra = set(value) - {"text", "mode"}
+    if extra:
+        raise ValueError(f"{path} unknown greeting setting: {sorted(extra)[0]}")
+    text = _word(value.get("text"))
+    if not text:
+        raise ValueError(f"{path} should give the greeting's text")
+    return GreetingSettings(text=text, mode=_word(value.get("mode")))
 
 
 def _tools(path: Path, value: object) -> ToolSettings | None:

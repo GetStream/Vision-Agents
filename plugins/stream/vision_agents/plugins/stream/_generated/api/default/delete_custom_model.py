@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import httpx
@@ -7,7 +7,6 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.error_response import ErrorResponse
-from ...models.session import Session
 from ...types import Response
 
 
@@ -16,8 +15,8 @@ def _get_kwargs(
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/v1/agents/sessions/{id}".format(
+        "method": "delete",
+        "url": "/v1/agents/models/{id}".format(
             id=quote(str(id), safe=""),
         ),
     }
@@ -27,11 +26,10 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorResponse | Session | None:
-    if response.status_code == 200:
-        response_200 = Session.from_dict(response.json())
-
-        return response_200
+) -> Any | ErrorResponse | None:
+    if response.status_code == 204:
+        response_204 = cast(Any, None)
+        return response_204
 
     if response.status_code == 400:
         response_400 = ErrorResponse.from_dict(response.json())
@@ -66,7 +64,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorResponse | Session]:
+) -> Response[Any | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,24 +77,21 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ErrorResponse | Session]:
-    """One session
+) -> Response[Any | ErrorResponse]:
+    """Delete a model
 
-     Reading a session is open to the device holding it, for the same reason listing and stopping are: it
-    is the conversation the caller is having. A session belonging to somebody else is reported as not
-    found rather than refused, so this is not a way to find out whose an id is.
-    A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+     Sessions that name it are refused from then on.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
+        id (str): The resource, as returned when it was created.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | Session]
+        Response[Any | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -114,24 +109,21 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> ErrorResponse | Session | None:
-    """One session
+) -> Any | ErrorResponse | None:
+    """Delete a model
 
-     Reading a session is open to the device holding it, for the same reason listing and stopping are: it
-    is the conversation the caller is having. A session belonging to somebody else is reported as not
-    found rather than refused, so this is not a way to find out whose an id is.
-    A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+     Sessions that name it are refused from then on.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
+        id (str): The resource, as returned when it was created.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | Session
+        Any | ErrorResponse
     """
 
     return sync_detailed(
@@ -144,24 +136,21 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ErrorResponse | Session]:
-    """One session
+) -> Response[Any | ErrorResponse]:
+    """Delete a model
 
-     Reading a session is open to the device holding it, for the same reason listing and stopping are: it
-    is the conversation the caller is having. A session belonging to somebody else is reported as not
-    found rather than refused, so this is not a way to find out whose an id is.
-    A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+     Sessions that name it are refused from then on.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
+        id (str): The resource, as returned when it was created.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | Session]
+        Response[Any | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -177,24 +166,21 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> ErrorResponse | Session | None:
-    """One session
+) -> Any | ErrorResponse | None:
+    """Delete a model
 
-     Reading a session is open to the device holding it, for the same reason listing and stopping are: it
-    is the conversation the caller is having. A session belonging to somebody else is reported as not
-    found rather than refused, so this is not a way to find out whose an id is.
-    A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+     Sessions that name it are refused from then on.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
+        id (str): The resource, as returned when it was created.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | Session
+        Any | ErrorResponse
     """
 
     return (

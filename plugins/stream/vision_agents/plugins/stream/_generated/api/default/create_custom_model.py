@@ -1,28 +1,25 @@
 from http import HTTPStatus
-from typing import Any, cast
-from urllib.parse import quote
+from typing import Any
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.custom_model import CustomModel
+from ...models.custom_model_request import CustomModelRequest
 from ...models.error_response import ErrorResponse
-from ...models.instructions_request import InstructionsRequest
 from ...types import Response
 
 
 def _get_kwargs(
-    id: str,
     *,
-    body: InstructionsRequest,
+    body: CustomModelRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
-        "method": "put",
-        "url": "/v1/agents/sessions/{id}/instructions".format(
-            id=quote(str(id), safe=""),
-        ),
+        "method": "post",
+        "url": "/v1/agents/models",
     }
 
     _kwargs["json"] = body.to_dict()
@@ -35,10 +32,11 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Any | ErrorResponse | None:
-    if response.status_code == 204:
-        response_204 = cast(Any, None)
-        return response_204
+) -> CustomModel | ErrorResponse | None:
+    if response.status_code == 201:
+        response_201 = CustomModel.from_dict(response.json())
+
+        return response_201
 
     if response.status_code == 400:
         response_400 = ErrorResponse.from_dict(response.json())
@@ -55,15 +53,20 @@ def _parse_response(
 
         return response_403
 
-    if response.status_code == 404:
-        response_404 = ErrorResponse.from_dict(response.json())
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
 
-        return response_404
+        return response_409
 
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
+
+    if response.status_code == 501:
+        response_501 = ErrorResponse.from_dict(response.json())
+
+        return response_501
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -73,7 +76,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Any | ErrorResponse]:
+) -> Response[CustomModel | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -83,31 +86,30 @@ def _build_response(
 
 
 def sync_detailed(
-    id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: InstructionsRequest,
-) -> Response[Any | ErrorResponse]:
-    """Change what the agent is told to be
+    body: CustomModelRequest,
+) -> Response[CustomModel | ErrorResponse]:
+    """Add a model of the customer's own
 
-     Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt
-    it started with, because rewriting it mid-sentence would have the agent change character in the
-    middle of a thought.
+     A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on
+    Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or
+    session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A
+    shared router only dials public https endpoints.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
-        body (InstructionsRequest):
+        body (CustomModelRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | ErrorResponse]
+        Response[CustomModel | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
-        id=id,
         body=body,
     )
 
@@ -119,62 +121,60 @@ def sync_detailed(
 
 
 def sync(
-    id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: InstructionsRequest,
-) -> Any | ErrorResponse | None:
-    """Change what the agent is told to be
+    body: CustomModelRequest,
+) -> CustomModel | ErrorResponse | None:
+    """Add a model of the customer's own
 
-     Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt
-    it started with, because rewriting it mid-sentence would have the agent change character in the
-    middle of a thought.
+     A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on
+    Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or
+    session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A
+    shared router only dials public https endpoints.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
-        body (InstructionsRequest):
+        body (CustomModelRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | ErrorResponse
+        CustomModel | ErrorResponse
     """
 
     return sync_detailed(
-        id=id,
         client=client,
         body=body,
     ).parsed
 
 
 async def asyncio_detailed(
-    id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: InstructionsRequest,
-) -> Response[Any | ErrorResponse]:
-    """Change what the agent is told to be
+    body: CustomModelRequest,
+) -> Response[CustomModel | ErrorResponse]:
+    """Add a model of the customer's own
 
-     Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt
-    it started with, because rewriting it mid-sentence would have the agent change character in the
-    middle of a thought.
+     A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on
+    Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or
+    session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A
+    shared router only dials public https endpoints.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
-        body (InstructionsRequest):
+        body (CustomModelRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | ErrorResponse]
+        Response[CustomModel | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
-        id=id,
         body=body,
     )
 
@@ -184,32 +184,31 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: InstructionsRequest,
-) -> Any | ErrorResponse | None:
-    """Change what the agent is told to be
+    body: CustomModelRequest,
+) -> CustomModel | ErrorResponse | None:
+    """Add a model of the customer's own
 
-     Deprecated: use updateSession. Applies from the next turn. The reply being spoken keeps the prompt
-    it started with, because rewriting it mid-sentence would have the agent change character in the
-    middle of a thought.
+     A model the customer serves behind an OpenAI-compatible chat completions endpoint: a fine-tune on
+    Baseten, a vLLM or SGLang deployment, a provider the router does not route. A router config or
+    session names it as `custom/<name>`, and the router calls it as it calls the models it routes. A
+    shared router only dials public https endpoints.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The session, as returned when it was created.
-        body (InstructionsRequest):
+        body (CustomModelRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | ErrorResponse
+        CustomModel | ErrorResponse
     """
 
     return (
         await asyncio_detailed(
-            id=id,
             client=client,
             body=body,
         )

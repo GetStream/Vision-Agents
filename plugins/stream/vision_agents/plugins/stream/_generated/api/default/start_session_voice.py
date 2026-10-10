@@ -16,8 +16,8 @@ def _get_kwargs(
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/v1/agents/sessions/{id}".format(
+        "method": "post",
+        "url": "/v1/agents/sessions/{id}/voice".format(
             id=quote(str(id), safe=""),
         ),
     }
@@ -42,11 +42,6 @@ def _parse_response(
         response_401 = ErrorResponse.from_dict(response.json())
 
         return response_401
-
-    if response.status_code == 403:
-        response_403 = ErrorResponse.from_dict(response.json())
-
-        return response_403
 
     if response.status_code == 404:
         response_404 = ErrorResponse.from_dict(response.json())
@@ -80,13 +75,16 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorResponse | Session]:
-    """One session
+    """Start voice on a session
 
-     Reading a session is open to the device holding it, for the same reason listing and stopping are: it
-    is the conversation the caller is having. A session belonging to somebody else is reported as not
-    found rather than refused, so this is not a way to find out whose an id is.
-    A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+     The agent joins the call agent:<session id>, which joining creates, with the conversation so far,
+    and returns once it is there. What is said on the call and what is typed into the session are one
+    conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models
+    are the ones the session was opened with, or the defaults, and a native config speaks with its
+    speech-to-speech model.
+
+    Starting voice on a session that is already on its call changes nothing. A conversation in writing
+    that ended is carried on under the same id, as a message to it is.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -115,13 +113,16 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ErrorResponse | Session | None:
-    """One session
+    """Start voice on a session
 
-     Reading a session is open to the device holding it, for the same reason listing and stopping are: it
-    is the conversation the caller is having. A session belonging to somebody else is reported as not
-    found rather than refused, so this is not a way to find out whose an id is.
-    A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+     The agent joins the call agent:<session id>, which joining creates, with the conversation so far,
+    and returns once it is there. What is said on the call and what is typed into the session are one
+    conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models
+    are the ones the session was opened with, or the defaults, and a native config speaks with its
+    speech-to-speech model.
+
+    Starting voice on a session that is already on its call changes nothing. A conversation in writing
+    that ended is carried on under the same id, as a message to it is.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -145,13 +146,16 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorResponse | Session]:
-    """One session
+    """Start voice on a session
 
-     Reading a session is open to the device holding it, for the same reason listing and stopping are: it
-    is the conversation the caller is having. A session belonging to somebody else is reported as not
-    found rather than refused, so this is not a way to find out whose an id is.
-    A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+     The agent joins the call agent:<session id>, which joining creates, with the conversation so far,
+    and returns once it is there. What is said on the call and what is typed into the session are one
+    conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models
+    are the ones the session was opened with, or the defaults, and a native config speaks with its
+    speech-to-speech model.
+
+    Starting voice on a session that is already on its call changes nothing. A conversation in writing
+    that ended is carried on under the same id, as a message to it is.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -178,13 +182,16 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ErrorResponse | Session | None:
-    """One session
+    """Start voice on a session
 
-     Reading a session is open to the device holding it, for the same reason listing and stopping are: it
-    is the conversation the caller is having. A session belonging to somebody else is reported as not
-    found rather than refused, so this is not a way to find out whose an id is.
-    A session that ended is read too. A backend is also given its summary, review and usage, which a
-    device asks the backend for.
+     The agent joins the call agent:<session id>, which joining creates, with the conversation so far,
+    and returns once it is there. What is said on the call and what is typed into the session are one
+    conversation, kept in the same Stream Chat channel: a typed question is answered aloud. The models
+    are the ones the session was opened with, or the defaults, and a native config speaks with its
+    speech-to-speech model.
+
+    Starting voice on a session that is already on its call changes nothing. A conversation in writing
+    that ended is carried on under the same id, as a message to it is.
 
     Args:
         id (str): The session, as returned when it was created.

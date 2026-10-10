@@ -105,9 +105,7 @@ class UseCaseReview:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.use_case_review_vendor_payload import (
-            UseCaseReviewVendorPayload,
-        )
+        from ..models.use_case_review_vendor_payload import UseCaseReviewVendorPayload
 
         d = dict(src_dict)
         actor = ReviewActor(d.pop("actor"))
