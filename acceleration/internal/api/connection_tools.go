@@ -344,7 +344,7 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 	if validation.CheckedAt != nil {
 		record.CheckedAt = *validation.CheckedAt
 	}
-	if status := exchange.Status(); record.Code == "" && validation.Status != validationConnected && status >= http.StatusBadRequest {
+	if status := exchange.Status(); record.Code == "" && status >= http.StatusBadRequest {
 		record.Code = strconv.Itoa(status)
 	}
 	if err := s.store.PutConnectorConnectionValidation(ctx, record); err != nil {

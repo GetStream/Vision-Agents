@@ -62,7 +62,7 @@ type Connection struct {
 // (store.ConnectorConnectionValidation, AI-1052).
 type ConnectionLastValidation struct {
 	Status    ConnectionValidationStatus `json:"status"`
-	Code      string                     `json:"code,omitempty" doc:"The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the validate did not find the connection connected and the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies."`
+	Code      string                     `json:"code,omitempty" doc:"The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies."`
 	Error     string                     `json:"error,omitempty" doc:"Why the status is not connected, for a person to read, as the validate answered it. It never holds a credential."`
 	CheckedAt time.Time                  `json:"checked_at" doc:"When the validate ran."`
 }
