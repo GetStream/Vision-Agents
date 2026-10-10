@@ -30,8 +30,9 @@ class ConnectionLastValidation:
             code (str | Unset): The validate's code (connector_credential_rejected, connector_scope_required) when it had
                 one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when
                 neither applies.
-            error (str | Unset): Why the status is not connected, for a person to read, as the validate answered it. It
-                never holds a credential.
+            error (str | Unset): Why the status is not connected, for a person to read: the validate's error with every
+                value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold
+                anything else the provider wrote.
     """
 
     checked_at: datetime.datetime
