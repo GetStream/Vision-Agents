@@ -1,54 +1,28 @@
 import Foundation
 import Observation
 import StreamVideo
-import VisionAgentsCore
+@_spi(Stream) import VisionAgentsCore
 
-/// Credentials for joining the Stream call an agent is on.
-///
-/// Minting these is server-side only, so they come from the app's own backend rather than
-/// from this device. A backend holding the Go or Python SDK asks the router for a call token
-/// and hands down what is here.
-public struct CallCredentials: Sendable, Hashable {
-    public let apiKey: String
-    public let token: String
-    public let userID: String
-    public let userName: String
-    /// The Stream call to join, which is not the id the router holds the session by.
-    public let callID: String
-    public let callType: String
+private let kind = "video"
 
-    public init(
-        apiKey: String,
-        token: String,
-        userID: String,
-        userName: String,
-        callID: String,
-        callType: String
-    ) {
-        self.apiKey = apiKey
-        self.token = token
-        self.userID = userID
-        self.userName = userName
-        self.callID = callID
-        self.callType = callType
+extension VisionAgents {
+    /// Hands over the app's own Stream Video client, so every call is joined on it.
+    ///
+    /// An app with a `StreamVideo` of its own must hand it over: building another makes that
+    /// one the process's current instance, which Stream's call views and CallKit read. It is
+    /// never disconnected here.
+    public func use(_ video: StreamVideo) {
+        backend.give(kind, video)
     }
 }
 
-/// Asks the app's backend for credentials to join the call a session is holding.
-///
-/// It is a closure rather than a value because a token expires an hour in, and a long call
-/// that was handed one value would drop when it did.
-public typealias CallCredentialsProvider = @Sendable (_ sessionID: String) async throws ->
-    CallCredentials
-
 /// A spoken conversation: the agent on a call, and this device on the same call.
 ///
-/// Three things happen, in this order, and the order matters:
+/// Two things happen, in this order:
 ///
 /// 1. The router starts a session, which is what puts the agent on the call.
-/// 2. The app's backend mints a token for joining that call, which names the Stream call to
-///    join. That is not the id the router holds the session by.
-/// 3. Stream's Video SDK joins it, and audio starts flowing.
+/// 2. Stream's Video SDK joins the session's call as the user `setUser` named, and audio
+///    starts flowing.
 ///
 /// The transcript comes over the session socket rather than out of the call, so what is said
 /// is readable even before anybody is listening to it. That is `session`, which is the same
@@ -73,7 +47,6 @@ public final class VoiceSession {
     public private(set) var failure: (any Error)?
 
     private let agents: VisionAgents
-    private var video: StreamVideo?
     /// True when this device called `start`, false when it attached to a session something
     /// else started. Leaving closes only a session this device owns.
     private let createdLocally: Bool
@@ -122,35 +95,21 @@ public final class VoiceSession {
     /// caller is pointing at. Both are join settings rather than changed afterwards, so no
     /// front-facing frame is ever published.
     ///
-    /// `credentials` is asked for the token to join with, and asked again when it expires.
-    // Escaping because the token provider outlives this call: it is what refreshes the
-    // token an hour in, so the closure is kept rather than only asked once here.
-    public func join(camera: Bool = false, credentials: @escaping CallCredentialsProvider) async {
+    /// It joins on the `StreamVideo` handed over with `use`, or else on one built for the
+    /// agents' key and user, which every voice session then shares.
+    public func join(camera: Bool = false) async {
         guard call == nil else { return }
         do {
-            let joining = try await credentials(session.id)
+            let backend = agents.backend
+            let video = try await backend.shared(
+                kind, open: { build(backend, $0) }, disconnect: { await $0.disconnect() })
+            if let user = backend.user, video.user.id != user.id {
+                throw AgentsError.configuration(
+                    "the video client is connected as \(video.user.id) but setUser named "
+                        + "\(user.id): connect it as the same user, or the call is somebody else's")
+            }
 
-            // The token provider is what the SDK calls when the token expires, which it does
-            // an hour in. Handing it a closure that asks the backend again is what keeps a
-            // long call from dropping; handing it the same expired token, as the convenience
-            // initialiser does by default, would not.
-            let video = StreamVideo(
-                apiKey: joining.apiKey,
-                user: User(id: joining.userID, name: joining.userName),
-                token: UserToken(rawValue: joining.token),
-                tokenProvider: { [session] result in
-                    Task {
-                        do {
-                            let refreshed = try await credentials(session.id)
-                            result(.success(UserToken(rawValue: refreshed.token)))
-                        } catch {
-                            result(.failure(error))
-                        }
-                    }
-                })
-            self.video = video
-
-            let call = video.call(callType: joining.callType, callId: joining.callID)
+            let call = video.call(callType: session.session.callType, callId: session.session.callID)
             // Created rather than only joined: which of the two arrives first is a race, and
             // the agent's own join creates it the same way.
             try await call.join(
@@ -217,10 +176,29 @@ public final class VoiceSession {
     private func leaveCall(closeSession: Bool) async {
         call?.leave()
         call = nil
-        video = nil
         isCameraEnabled = false
         if closeSession {
             await session.close()
         }
     }
+}
+
+/// A client for the agents' user. The token provider is what the SDK calls when the token
+/// expires, an hour in, so asking the agents again is what keeps a long call from dropping.
+private func build(_ backend: Backend, _ credentials: StreamCredentials) -> StreamVideo {
+    let user = credentials.user
+    return StreamVideo(
+        apiKey: credentials.apiKey,
+        user: .init(
+            id: user.id, name: user.name.isEmpty ? nil : user.name, imageURL: URL(string: user.image)),
+        token: UserToken(rawValue: credentials.token),
+        tokenProvider: { result in
+            Task {
+                do {
+                    result(.success(UserToken(rawValue: try await backend.streamCredentials(refresh: true).token)))
+                } catch {
+                    result(.failure(error))
+                }
+            }
+        })
 }

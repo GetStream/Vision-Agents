@@ -5,10 +5,9 @@ import VisionAgentsUI
 
 /// A spoken conversation, with what was said written out as it happens.
 ///
-/// Tapping talk does three things: the router starts a session, which puts the agent on a
-/// call; this app's own backend mints a token for that call, because a device may not; and
-/// this device joins it. The transcript underneath comes off the session socket rather than
-/// out of the call.
+/// Tapping talk does two things: the router starts a session, which puts the agent on a call,
+/// and this device joins it as the user `setUser` named, with the same token. The transcript
+/// underneath comes off the session socket rather than out of the call.
 struct VoiceView: View {
     let agent: String
 
@@ -22,7 +21,7 @@ struct VoiceView: View {
                 TranscriptView(turns: voice.session.turns)
                     .frame(maxHeight: .infinity)
                 AgentStatusView(state: voice.session.state)
-                VoiceCallView(voice: voice, credentials: Demo.callCredentials)
+                VoiceCallView(voice: voice)
                     .task { await voice.session.start() }
                     .padding(.bottom)
             } else {

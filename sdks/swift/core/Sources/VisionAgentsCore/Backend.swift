@@ -20,6 +20,15 @@ public struct User: Sendable, Hashable {
     }
 }
 
+/// The one identity Stream's own SDKs connect with: the app's key, the user `setUser` named
+/// and their token. It is the identity the router is reached with, so chat and video need
+/// nothing of their own.
+public struct StreamCredentials: Sendable, Hashable {
+    public let apiKey: String
+    public let user: User
+    public let token: String
+}
+
 /// Hands over a token for the user, and a fresh one when asked again.
 ///
 /// A provider rather than a string, because a token expires and an hour-long conversation
@@ -39,7 +48,8 @@ public struct Backend: Sendable {
     /// The router's base URL, with no path.
     public let url: URL
 
-    /// The app's public API key. Empty for a local router reached by customer id.
+    /// The app's public API key. Beside a customer id it is Stream's alone: the router is still
+    /// reached by customer id, and the key is what chat and video connect with.
     public let apiKey: String
 
     /// Which tenant's agents, calls and configs these are, on a local router.
@@ -59,9 +69,9 @@ public struct Backend: Sendable {
     }
 
     /// A router running locally with nothing in front of it.
-    public init(url: URL, customerID: String, urlSession: URLSession = .shared) {
+    public init(url: URL, customerID: String, apiKey: String = "", urlSession: URLSession = .shared) {
         self.url = url
-        apiKey = ""
+        self.apiKey = apiKey
         self.customerID = customerID
         self.urlSession = urlSession
     }
@@ -86,6 +96,59 @@ public struct Backend: Sendable {
         identity.clear()
     }
 
+    /// The key, user and token for Stream Chat, Stream Video or any other Stream product.
+    ///
+    /// `refresh` is for a token the caller was told has expired: the one held is dropped and
+    /// the provider asked again, unless a fresh one is already on its way, so two clients
+    /// refreshing at once fetch one token.
+    public func streamCredentials(refresh: Bool = false) async throws -> StreamCredentials {
+        guard !apiKey.isEmpty, let user = identity.user else {
+            throw AgentsError.configuration(
+                "Stream Chat and Video need the app's Stream key and a user: build VisionAgents "
+                    + "with apiKey and call setUser")
+        }
+        if refresh {
+            identity.refresh()
+        }
+        return StreamCredentials(apiKey: apiKey, user: user, token: try await identity.token())
+    }
+
+    /// Records a Stream client the app owns, so it is used rather than another being built.
+    /// It is never disconnected here, and it stays across `setUser`.
+    @_spi(Stream)
+    public func give<Client: Sendable>(_ kind: String, _ client: Client) {
+        identity.give(kind, client)
+    }
+
+    /// The client the app gave for `kind`, or the one built for the current key and user.
+    ///
+    /// Built once however many sessions ask, keyed before any token is asked for, so a second
+    /// session mints nothing. One that failed to open is not kept.
+    @_spi(Stream)
+    public func shared<Client: Sendable>(
+        _ kind: String,
+        open: @escaping @Sendable (StreamCredentials) async throws -> Client,
+        disconnect: @escaping @Sendable (Client) async -> Void
+    ) async throws -> Client {
+        if let given: Client = identity.given(kind) {
+            return given
+        }
+        guard !apiKey.isEmpty, let user = identity.user else {
+            throw AgentsError.configuration(
+                "\(kind) connects to Stream rather than to the router, so it needs the app's "
+                    + "Stream key and a user: build VisionAgents with apiKey and call setUser")
+        }
+        return try await identity.built(
+            "\(kind):\(apiKey):\(user.id)",
+            open: { try await open(try await streamCredentials()) },
+            disconnect: disconnect)
+    }
+
+    /// Disconnects every Stream client built here. The ones the app gave are left alone.
+    func disconnectStream() async {
+        await identity.disconnectBuilt()
+    }
+
     /// The headers every request and every socket handshake carries.
     ///
     /// `Stream-Auth-Type: jwt` says this caller is somebody's device rather than their
@@ -95,12 +158,12 @@ public struct Backend: Sendable {
     /// Stream's proxy and the router read it.
     func headers() async throws -> [String: String] {
         var headers = ["Stream-Auth-Type": "jwt"]
-        if !apiKey.isEmpty {
+        if customerID.isEmpty {
+            guard !apiKey.isEmpty else {
+                throw AgentsError.configuration("pass an apiKey, or a customerID for a local router")
+            }
             headers["Authorization"] = "Bearer \(try await identity.token())"
             return headers
-        }
-        guard !customerID.isEmpty else {
-            throw AgentsError.configuration("pass an apiKey, or a customerID for a local router")
         }
         headers["X-Customer-Id"] = customerID
         if let user = identity.user {
@@ -112,13 +175,13 @@ public struct Backend: Sendable {
     /// Drops the token held, so the next request asks the provider again. Reports whether
     /// there is a provider to ask, which is whether a retry could go any differently.
     func expireToken() -> Bool {
-        !apiKey.isEmpty && identity.expire()
+        customerID.isEmpty && identity.expire()
     }
 
     /// The query every request and socket carries: the API key, which is the public half of
     /// the credential. The token is never here, because a URL ends up in every log it passes.
     var credentialQuery: [URLQueryItem] {
-        if !apiKey.isEmpty { return [URLQueryItem(name: "api_key", value: apiKey)] }
+        if customerID.isEmpty { return [URLQueryItem(name: "api_key", value: apiKey)] }
         return [URLQueryItem(name: "customer_id", value: customerID)]
     }
 
@@ -134,7 +197,8 @@ public struct Backend: Sendable {
     }
 }
 
-/// The user a backend acts for, and their token, shared by every copy of that backend.
+/// The user a backend acts for, their token and the Stream clients connected as them, shared
+/// by every copy of that backend.
 ///
 /// A token is fetched once however many requests are waiting for it, and kept until a 401
 /// says it expired.
@@ -143,6 +207,17 @@ final class Identity: Sendable {
         var user: User?
         var provider: TokenProvider?
         var token: Task<String, any Error>?
+        /// Whether `token` has finished, which is what makes it one a refresh may drop.
+        var fetched = false
+        /// The app's own clients by kind, kept whoever signs in.
+        var given: [String: any Sendable] = [:]
+        /// The clients built here, by kind, key and user.
+        var built: [String: Built] = [:]
+    }
+
+    private struct Built {
+        let opening: Task<any Sendable, any Error>
+        let disconnect: @Sendable (any Sendable) async -> Void
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
@@ -150,11 +225,13 @@ final class Identity: Sendable {
     var user: User? { state.withLock { $0.user } }
 
     func set(_ user: User, token: @escaping TokenProvider) {
-        state.withLock { $0 = State(user: user, provider: token) }
+        state.withLock {
+            $0 = State(user: user, provider: token, given: $0.given, built: $0.built)
+        }
     }
 
     func clear() {
-        state.withLock { $0 = State() }
+        state.withLock { $0 = State(given: $0.given, built: $0.built) }
     }
 
     func expire() -> Bool {
@@ -164,12 +241,23 @@ final class Identity: Sendable {
         }
     }
 
+    /// Drops the token held, unless the one held is still being fetched.
+    func refresh() {
+        state.withLock {
+            if $0.fetched {
+                $0.token = nil
+                $0.fetched = false
+            }
+        }
+    }
+
     func token() async throws -> String {
         let pending: Task<String, any Error>? = state.withLock {
             if let token = $0.token { return token }
             guard let provider = $0.provider else { return nil }
             let token = Task { try await provider() }
             $0.token = token
+            $0.fetched = false
             return token
         }
         guard let pending else {
@@ -177,11 +265,60 @@ final class Identity: Sendable {
                 "an api key needs a user token to go with it; call setUser first")
         }
         do {
-            return try await pending.value
+            let token = try await pending.value
+            state.withLock { if $0.token == pending { $0.fetched = true } }
+            return token
         } catch {
             // A token that could not be had is asked for again next time, not remembered.
             state.withLock { if $0.token == pending { $0.token = nil } }
             throw error
+        }
+    }
+
+    func give<Client: Sendable>(_ kind: String, _ client: Client) {
+        state.withLock { $0.given[kind] = client }
+    }
+
+    func given<Client: Sendable>(_ kind: String) -> Client? {
+        state.withLock { $0.given[kind] as? Client }
+    }
+
+    func built<Client: Sendable>(
+        _ key: String,
+        open: @escaping @Sendable () async throws -> Client,
+        disconnect: @escaping @Sendable (Client) async -> Void
+    ) async throws -> Client {
+        let opening = state.withLock {
+            if let built = $0.built[key] { return built.opening }
+            let opening = Task<any Sendable, any Error> { try await open() }
+            $0.built[key] = Built(
+                opening: opening,
+                disconnect: { client in
+                    if let client = client as? Client { await disconnect(client) }
+                })
+            return opening
+        }
+        do {
+            guard let client = try await opening.value as? Client else {
+                throw AgentsError.configuration("\(key) was opened as another kind of client")
+            }
+            return client
+        } catch {
+            state.withLock { if $0.built[key]?.opening == opening { $0.built[key] = nil } }
+            throw error
+        }
+    }
+
+    func disconnectBuilt() async {
+        let built = state.withLock {
+            let built = Array($0.built.values)
+            $0.built = [:]
+            return built
+        }
+        for entry in built {
+            // One that never opened has nothing to disconnect, and its opener was told why.
+            guard let client = try? await entry.opening.value else { continue }
+            await entry.disconnect(client)
         }
     }
 }

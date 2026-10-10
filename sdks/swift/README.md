@@ -1,20 +1,21 @@
 # Swift SDKs
 
-Three iOS packages for talking to an agent from a phone. They are separate packages, not
+Four iOS packages for talking to an agent from a phone. They are separate packages, not
 products of one, because SPM resolves every dependency a manifest declares whether or not you
 use the product it belongs to — and `StreamWebRTC` is a 47 MB binary. An app that only holds a
-text conversation should not download it.
+text conversation should not download it, nor Stream Chat unless it shows the channel.
 
 | Package | Module | Depends on | What it is |
 | --- | --- | --- | --- |
 | `core/` | `VisionAgentsCore` | OpenAPI runtime, URLSession | The generated client, the session socket, and the conversation state |
 | `ui/` | `VisionAgentsUI` | `core` | SwiftUI views over that state |
 | `rtc/` | `VisionAgentsRTC` | `core`, `stream-video-swift` | Joining the call, so the conversation can be spoken |
+| `chat/` | `VisionAgentsChat` | `core`, `stream-chat-swift` 5.3+ | The Stream Chat channel a text conversation is kept in |
 
 iOS 17 is the floor. It is `@Observable`'s floor, and the alternative was an `ObservableObject`
 path beside it to serve devices that will not be running a new SDK anyway.
 
-`ui` and `rtc` reach `core` with `.package(path: "../core")`, which works in this repository and
+`ui`, `rtc` and `chat` reach `core` with `.package(path: "../core")`, which works in this repository and
 cannot survive publication: SPM has no way to depend on a subdirectory of a tagged repository.
 Shipping these means splitting each into its own repository from CI, or a package registry.
 
@@ -35,7 +36,10 @@ _ = try await session.responses.create("And on Sundays?")
 
 // Out loud. The agent joins a call and so does this device.
 let voice = try await VoiceSession.start(agents: agents, agent: "myagent")
-await voice.join(credentials: yourBackend.callCredentials)
+await voice.join()
+
+// The Stream Chat channel the text session is kept in, with VisionAgentsChat.
+let channel = try await session.chat()
 ```
 
 `VisionAgents(apiKey:)` reaches Stream's hosted router; pass `url:` for another. The token
@@ -44,8 +48,21 @@ again after a 401. The key goes in the query string and the token in the `Author
 header, never in a URL. A router running locally with nothing in front of it is reached by
 customer id instead: `VisionAgents(url: URL(string: "http://localhost:8080")!, customerID: "acme")`.
 
-`join` is handed a closure rather than minting its own token for the same reason the app has
-no secret: minting a call token is server-side only.
+Stream is set up once. The key, the user and the token from `setUser` are the one identity for
+the router, Stream Chat and Stream Video, so `join()` and `chat()` need nothing more. Each
+builds one client per key and user, connected as that user and shared by every session, and
+asks for a fresh token when Stream says the one it has expired. `agents.disconnect()` closes
+them; closing a session does not. An app that already has a `ChatClient` or a `StreamVideo`
+hands it over instead, and it is used rather than a second one, and never disconnected here:
+
+```swift
+agents.use(chatClient)   // VisionAgentsChat
+agents.use(streamVideo)  // VisionAgentsRTC
+```
+
+One connected as somebody other than the user `setUser` named is refused. Beside a customer id,
+`apiKey:` is Stream's alone: the router is still reached by customer id, and chat and video
+connect with the key.
 
 With `VisionAgentsUI` a whole conversation is one view:
 
@@ -139,13 +156,12 @@ What that leaves out, and where it went instead:
 | Not here | Ask your backend for |
 | --- | --- |
 | Writing a config, defining skills, ingesting knowledge | The agent id, which is all the app needs |
-| A token to join the agent's call | `CallCredentials`, which `join` is handed |
-| A Stream Chat token | Credentials, if you bring the dependency |
+| A Stream user token | The token `setUser` is handed, which also joins calls and opens chat |
 | What was said on an earlier call, the call records | Whatever of it the app should see |
 | Transcription, a voice, a model on their own | Nothing: a pipeline of your own is a backend |
 
 [`examples/voice_agents/swift_demo`](../../examples/voice_agents/swift_demo) shows both halves:
-`configure/` writes the agent and `backend/` mints the call tokens.
+`configure/` writes the agent and `backend/` signs the user's Stream token.
 
 Every request and socket handshake sends `Stream-Auth-Type: jwt`, which is what declares this
 caller a device. It is sent even against a local router with no proxy in front, where the
@@ -218,11 +234,12 @@ That enables `LiveTests`, which creates a real session, asks the model something
 a tool call to come back. Without `VISION_AGENTS_URL` they are skipped, which is the Swift
 answer to `@pytest.mark.integration`.
 
-The iOS packages are built rather than tested, since they are views and a WebRTC wrapper:
+The iOS packages are built rather than tested, since they are views and wrappers over Stream's
+SDKs. `chat` is iOS only: Stream Chat does not build for macOS under Swift 6.
 
 ```bash
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer   # if xcode-select points at the CLI tools
-for pkg in core ui rtc; do
+for pkg in core ui rtc chat; do
   (cd sdks/swift/$pkg && xcodebuild -scheme vision-agents-$pkg \
      -destination 'generic/platform=iOS Simulator' build)
 done

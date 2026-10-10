@@ -175,6 +175,18 @@ import Testing
         #expect(url.absoluteString == "wss://accelerate.gcp.stream-io-api.com/v1/agents/sessions/s1/events?api_key=key")
     }
 
+    @Test func aKeyBesideACustomerIsStreamsAlone() async throws {
+        let backend = Backend(url: URL(string: "http://localhost:8080")!, customerID: "acme", apiKey: "key")
+        backend.setUser(User(id: "jlahey"), token: "t1")
+
+        let headers = try await backend.headers()
+        #expect(headers["X-Customer-Id"] == "acme")
+        #expect(headers["X-Stream-User-Id"] == "jlahey")
+        #expect(headers["Authorization"] == nil)
+        #expect(backend.socketURL(path: "/v1/agents/sessions/s1/events").query == "customer_id=acme")
+        #expect(try await backend.streamCredentials() == StreamCredentials(apiKey: "key", user: User(id: "jlahey"), token: "t1"))
+    }
+
     @Test func aSecureRouterGetsASecureSocket() {
         let secure = Backend(url: URL(string: "https://router.example.com")!, customerID: "acme")
 

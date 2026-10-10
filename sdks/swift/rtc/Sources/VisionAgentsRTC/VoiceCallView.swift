@@ -9,18 +9,10 @@ import VisionAgentsCore
 public struct VoiceCallView: View {
     private let voice: VoiceSession
     private let camera: Bool
-    private let credentials: CallCredentialsProvider
 
-    /// `credentials` is asked for the token this device joins the call with. Minting one is
-    /// server-side only, so it comes from the app's own backend.
-    public init(
-        voice: VoiceSession,
-        camera: Bool = false,
-        credentials: @escaping CallCredentialsProvider
-    ) {
+    public init(voice: VoiceSession, camera: Bool = false) {
         self.voice = voice
         self.camera = camera
-        self.credentials = credentials
     }
 
     public var body: some View {
@@ -77,6 +69,6 @@ public struct VoiceCallView: View {
                 .clipShape(.circle)
             }
         }
-        .task { await voice.join(camera: camera, credentials: credentials) }
+        .task { await voice.join(camera: camera) }
     }
 }

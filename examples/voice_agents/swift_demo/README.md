@@ -9,13 +9,14 @@ instructions.md      what the agent is told
 skills/              what it can go away and think about
 knowledge/           what it can look things up in
 configure/main.go    the backend half: pushes all of the above, then exits
-backend/main.go      the backend half that stays up: mints the token a phone joins a call with
+backend/main.go      the backend half that stays up: signs the Stream token the phone is its user with
 app/                 the phone half: chat, voice, and a tool that runs on the device
 ```
 
 ## Run it
 
-Start the router and its Postgres and Redis, from the repo root:
+Start the router and its Postgres and Redis, from the repo root, with `ROUTER_AUTH_MODE=noauth`
+in the repo `.env` so it trusts the customer id it is given:
 
 ```bash
 docker compose up --build
@@ -46,12 +47,12 @@ knowledge  policy.md (774 characters)
 Put that config id in `Demo.agentID` in `app/SwiftDemo/Demo.swift`. The app is told which
 agent it talks to rather than looking it up, because reading the configs is server-side only.
 
-Leave the other backend running, which is what mints the token the phone joins a call with:
+Leave the other backend running, which signs the Stream token the phone is its user with. It
+takes the secret of the Stream app the router runs in, and `Demo.streamAPIKey` takes that app's
+`STREAM_API_KEY`:
 
 ```bash
-STREAM_ACCELERATION_URL=http://localhost:8080 \
-STREAM_ACCELERATION_CUSTOMER_ID=examples \
-go run ./backend
+STREAM_API_SECRET=<the router's STREAM_API_SECRET> go run ./backend
 ```
 
 Then open `app/SwiftDemo.xcodeproj` and run it on a simulator. Ask about an order in the Chat
@@ -62,10 +63,11 @@ keeps its instructions and its skill and loses the returns policy.
 
 ## What each half is allowed to do
 
-`configure` and `backend` send only `X-Customer-Id`, which a router with no proxy in front of
-it reads as a backend, so they may write configs, define skills, ingest knowledge and mint call
-tokens. The app sends `Stream-Auth-Type: jwt` as well, which declares it a device, and the
-router answers 403 for all four.
+`configure` sends only `X-Customer-Id`, which a router with no proxy in front of it reads as a
+backend, so it may write configs, define skills and ingest knowledge. The app sends
+`Stream-Auth-Type: jwt` as well, which declares it a device, and the router answers 403 for all
+three. `backend` never talks to the router: it holds the Stream secret, which is all signing a
+user's token takes.
 
 The router is server-side only by default, and opens five operations: search, and opening,
 listing, closing and watching a session. That is everything the app does. Nothing in the Swift
@@ -87,24 +89,23 @@ nothing.
 - **Chat** is a text session: no call is joined, nothing is transcribed or spoken, and the
   replies still come through the same model with the same instructions, skills and knowledge a
   call would have had. They arrive one delta at a time over the session socket.
-- **Voice** starts a session, which puts the agent on a call, asks `backend` for a token for
-  that call, and joins it. Note that `Session.id` addresses the router and `Session.call_id` is
+- **Voice** starts a session, which puts the agent on a call, and joins it over Stream Video as
+  the user `setUser` named, with the token `backend` signed. Note that `Session.id` addresses the router and `Session.call_id` is
   what the video SDK joins — they are not the same id.
 - **`lookup_order`** is a tool the model calls that runs in `Demo.swift`. Its data never leaves
   the phone; the agent asks, and only sees the answer. Ask about order `A-1042` or `A-1043`.
 
 ## No auth
 
-Four constants in `app/SwiftDemo/Demo.swift`: the router's URL, this backend's URL, the
-customer id and the agent id. That is the whole configuration, because the router is running in
-the mode where it trusts the customer id it is given. In front of a real deployment the
-customer id would come from your own backend along with a token, and nothing else in the app
-would change.
+Five constants in `app/SwiftDemo/Demo.swift`: the router's URL, this backend's URL, the
+customer id, the Stream key and the agent id. That is the whole configuration, because the
+router is running in the mode where it trusts the customer id it is given, and the key is
+Stream Video's alone. In front of a real deployment the router is reached by the key and the
+same token, and nothing else in the app would change.
 
-Naming no user makes this app an anonymous caller, and a session belongs to whoever opened it,
-so it reaches its own sessions and nothing else. A deployment verifying tokens gets the same
-boundary drawn around the `user_id` its token names instead, which is what stops one person
-reading another's conversation.
+The app is the user `demo-caller`, and a session belongs to whoever opened it, so it reaches
+its own sessions and nothing else. A deployment verifying tokens draws the same boundary around
+the `user_id` its token names, which is what stops one person reading another's conversation.
 
 The simulator reaches your Mac's localhost, so it works as it stands. On a device, put your
 Mac's address on the network in `Demo.routerURL`; `NSAllowsLocalNetworking` in `Info.plist` is

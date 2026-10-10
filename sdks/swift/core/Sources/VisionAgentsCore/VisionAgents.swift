@@ -63,9 +63,10 @@ public struct VisionAgents: Sendable {
         backend = Backend(apiKey: apiKey, url: url, urlSession: urlSession)
     }
 
-    /// A router running locally with nothing in front of it.
-    public init(url: URL, customerID: String, urlSession: URLSession = .shared) {
-        backend = Backend(url: url, customerID: customerID, urlSession: urlSession)
+    /// A router running locally with nothing in front of it. `apiKey` is only for Stream Chat
+    /// and Video, which connect with it as the user `setUser` names.
+    public init(url: URL, customerID: String, apiKey: String = "", urlSession: URLSession = .shared) {
+        backend = Backend(url: url, customerID: customerID, apiKey: apiKey, urlSession: urlSession)
     }
 
     public init(backend: Backend) {
@@ -88,6 +89,13 @@ public struct VisionAgents: Sendable {
     /// Forgets the user, which is what signing out is.
     public func clearUser() {
         backend.clearUser()
+    }
+
+    /// Disconnects the Stream Chat and Video clients built for the app's sessions. Clients the
+    /// app handed over with `use` are its own and stay connected; closing a session
+    /// disconnects nothing.
+    public func disconnect() async {
+        await backend.disconnectStream()
     }
 
     /// One agent, by the name its config was synced under.
@@ -146,7 +154,7 @@ public struct VisionAgents: Sendable {
             configId: options.configID.flatMap { $0.isEmpty ? nil : $0 },
             conversationId: options.conversationID,
             description: options.description,
-            greeting: options.greeting,
+            greeting: options.greeting.map { .init(text: $0) },
             id: options.id.flatMap { $0.isEmpty ? nil : $0 },
             incognito: options.incognito,
             instructions: options.instructions,

@@ -39,7 +39,8 @@ public final class AgentSession {
             asked: { [weak self] text in self?.conversation.said(text) })
     }
 
-    private let backend: Backend
+    /// Where the session lives and who is asking, for the chat package to connect as.
+    @_spi(Stream) public let backend: Backend
     private let socket: SessionSocket
     private let tools: [String: AgentTool]
     private var pump: Task<Void, Never>?

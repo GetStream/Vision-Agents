@@ -12,9 +12,8 @@ let package = Package(
     ],
     // Deliberately no Stream SDK here. The live conversation comes off the session socket and
     // the stored one comes from the router, which reads the chat channel on the caller's
-    // behalf, so a chat SDK would be a second way to do what this already does. Callers who
-    // want Stream Chat itself get the credentials from `chatToken` and bring their own
-    // dependency. Stream's Video SDK is a real requirement and lives in the RTC package.
+    // behalf, so a chat SDK would be a second way to do what this already does. Stream Chat
+    // lives in the chat package and Stream Video in the RTC package, each opted into.
     dependencies: [
         .package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.12.1"),
         .package(url: "https://github.com/apple/swift-openapi-urlsession", from: "1.3.1"),
