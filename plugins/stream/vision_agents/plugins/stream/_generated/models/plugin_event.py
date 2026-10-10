@@ -63,9 +63,7 @@ class PluginEvent:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.plugin_event_arguments import (
-            PluginEventArguments,
-        )
+        from ..models.plugin_event_arguments import PluginEventArguments
 
         d = dict(src_dict)
         event = d.pop("event")

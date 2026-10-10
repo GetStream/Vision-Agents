@@ -146,15 +146,12 @@ func (s *TenancyGuardSuite) TestTheDeploymentAppsHooksStartNothingForACustomerOn
 	}
 }
 
-func (s *TenancyGuardSuite) TestASessionWithNoStreamAppIsPinnedToNone() {
-	// A call needs no conversation kept, so a customer with no app can still hold one.
+func (s *TenancyGuardSuite) TestAVoiceSessionForACustomerWithNoAppIsRefusedToo() {
 	s.useApp(s.numberedApp(streamAppID()))
-	call := s.utils.callID()
 
-	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call})
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions",
+		CreateSessionRequest{StartVoice: pointerTo(true)})
 
-	s.Require().Eventually(func() bool {
-		stored, err := s.store.StoredSession(context.Background(), s.customerID(), created.Id)
-		return err == nil && stored.StreamAppPK == store.ForeignStreamApp
-	}, settleFor, 10*time.Millisecond, "the session is not left reading as the deployment app's")
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "register this app's Stream keys")
 }

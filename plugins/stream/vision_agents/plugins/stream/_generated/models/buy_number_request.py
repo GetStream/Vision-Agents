@@ -62,9 +62,7 @@ class BuyNumberRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.buy_number_request_tags import (
-            BuyNumberRequestTags,
-        )
+        from ..models.buy_number_request_tags import BuyNumberRequestTags
 
         d = dict(src_dict)
         e164 = d.pop("e164")

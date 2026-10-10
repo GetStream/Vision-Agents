@@ -14,9 +14,8 @@ final readonly class PlacedCall
         // The vendor's own word for where the call is, e.g. "queued".
         public string $status,
         public string $vendorCallId,
-        // The Stream call the answered leg is routed into. An agent that is not in it hears nothing when the person p...
-        public ?string $callId = null,
-        public ?string $callType = null,
+        // The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, an...
+        public ?string $sessionId = null,
         // Who is placing the call.
         public ?string $vendor = null,
     ) {
@@ -30,8 +29,7 @@ final readonly class PlacedCall
         return new self(
             status: Json::string($data, 'status'),
             vendorCallId: Json::string($data, 'vendor_call_id'),
-            callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
-            callType: array_key_exists('call_type', $data) && $data['call_type'] !== null ? Json::string($data, 'call_type') : null,
+            sessionId: array_key_exists('session_id', $data) && $data['session_id'] !== null ? Json::string($data, 'session_id') : null,
             vendor: array_key_exists('vendor', $data) && $data['vendor'] !== null ? Json::string($data, 'vendor') : null,
         );
     }
@@ -46,11 +44,8 @@ final readonly class PlacedCall
         $out = [];
         $out['status'] = $this->status;
         $out['vendor_call_id'] = $this->vendorCallId;
-        if ($this->callId !== null) {
-            $out['call_id'] = $this->callId;
-        }
-        if ($this->callType !== null) {
-            $out['call_type'] = $this->callType;
+        if ($this->sessionId !== null) {
+            $out['session_id'] = $this->sessionId;
         }
         if ($this->vendor !== null) {
             $out['vendor'] = $this->vendor;

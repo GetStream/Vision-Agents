@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/danielgtaylor/huma/v2"
@@ -120,6 +121,7 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		Action: store.AuditCreated, Changes: auditDiff(nil, stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
+	s.warnPluginsSaved(config)
 	return &createAgentConfigResponse{Body: stored}, nil
 }
 
@@ -213,6 +215,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		Action: store.AuditUpdated, Changes: auditDiff(agentConfigOf(existing), stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
+	s.warnPluginsSaved(config)
 	return &updateAgentConfigResponse{Body: stored}, nil
 }
 
@@ -401,18 +404,44 @@ var (
 	}
 )
 
+// errChannelConnectionTaken is a save that would have a second live agent config bind a
+// channel connection, such as a Slack bot's, as fixed: one agent answers each message that
+// comes in on it, so the connection belongs to the live config that bound it first (AI-1049).
+// A test copy is not refused, since it answers nothing. channelConnectionTaken names the
+// config that has it.
+var errChannelConnectionTaken = APIError{
+	Type: ErrorTypeConflict, Code: codeChannelConnectionTaken,
+	Message: "another agent already answers on this channel connection",
+}
+
+// channelConnectionTaken is errChannelConnectionTaken naming the binding, the connection and
+// the config that has the connection, and how to fix it.
+func channelConnectionTaken(taken *store.ChannelConnectionTakenError) APIError {
+	failure := errChannelConnectionTaken
+	failure.Message = fmt.Sprintf("connector binding %q names connection %q (%s), and agent config %q (%s) "+
+		"already answers its messages: one agent answers a channel connection. Remove the binding from %q, "+
+		"or bind this agent to another connection",
+		taken.Binding, taken.ConnectionID, taken.ConnectorID, taken.OwnerName, taken.OwnerID, taken.OwnerName)
+	return failure
+}
+
 // storeFailure answers err from storing an agent config, a skill, a router config or a
 // voice. A name that another live one of its kind has is taken, a 409 the caller fixes by
-// choosing another name. A record or a connection that is not there is the invalid request
-// it has always been answered with. Anything else is the database failing rather than the
+// choosing another name. A record, a connection or a custom connector that is not there, such
+// as one deleted after the request was checked, is the invalid request it has always been
+// answered with. A channel connection another live agent config binds is a 409 naming that
+// config. Anything else is the database failing rather than the
 // caller, so err goes back as it is, to be answered as a 500 and recorded with its stack.
 func storeFailure(err error, taken APIError) error {
+	if owned, ok := errors.AsType[*store.ChannelConnectionTakenError](err); ok {
+		return channelConnectionTaken(owned)
+	}
 	switch {
 	case errors.Is(err, store.ErrNameTaken):
 		return taken
 	case errors.Is(err, store.ErrNoAgentConfig), errors.Is(err, store.ErrNoSkill),
 		errors.Is(err, store.ErrNoRouterConfig), errors.Is(err, store.ErrNoVoice),
-		errors.Is(err, store.ErrNoConnectorConnection):
+		errors.Is(err, store.ErrNoConnectorConnection), errors.Is(err, store.ErrNoConnectorDefinition):
 		return invalidRequest(err.Error())
 	}
 	return err
@@ -883,6 +912,21 @@ func sandboxOptionsOf(config sandbox.Config) *SandboxOptions {
 		MemoryGb:  &config.MemoryGB,
 		DiskGb:    &config.DiskGB,
 	}
+}
+
+// warnPluginsSaved logs a config stored with plugins or plugin_events, which connectors
+// replace, so the configs still on them can be counted before the fields go. unbound is how
+// many plugin entries no binding replaces: a migrated config keeps its entries beside the
+// bindings that replaced them, and a session ignores those (session.UnboundPlugins), so only
+// an unbound entry is real use.
+func (s *Server) warnPluginsSaved(config store.AgentConfig) {
+	if len(config.Plugins) == 0 && len(config.PluginEvents) == 0 {
+		return
+	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathConfigSave,
+		"customer", config.CustomerID, "config", config.ID,
+		"plugin", store.PluginNames(config.Plugins), "unbound", len(session.UnboundPlugins(config)),
+		"plugin_events", len(config.PluginEvents))
 }
 
 // pluginEventsComplaint reports what is wrong with the events a config subscribes to, if
@@ -1622,8 +1666,8 @@ type AgentConfigRequest struct {
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
 	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty" doc:"Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
+	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
+	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused."`
 	Channels           *AgentChannels           `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels."`
@@ -1633,7 +1677,7 @@ type AgentConfigRequest struct {
 	Skills             *[]string                `json:"skills,omitempty" doc:"Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set."`
 	Sts                *string                  `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
 	Stt                *string                  `json:"stt,omitempty" doc:"A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it."`
-	Tags               *map[string]string       `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes."`
+	Tags               *map[string]string       `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds."`
 	Subagent           *string                  `json:"subagent,omitempty" doc:"The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent."`
 	Tts                *string                  `json:"tts,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
@@ -1657,8 +1701,8 @@ type AgentConfig struct {
 	Mode               AgentMode                `json:"mode"`
 	Name               string                   `json:"name"`
 	Tools              *AgentTools              `json:"tools,omitempty"`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty"`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty"`
+	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
+	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty"`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The bindings exactly as they were written. Absent when there are none."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`

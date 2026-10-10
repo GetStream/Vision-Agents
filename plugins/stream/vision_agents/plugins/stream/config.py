@@ -27,6 +27,7 @@ from ._generated.models import (
     DispatchSetting,
     ErrorResponse,
     Greeting,
+    GreetingMode,
     Harness,
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
@@ -358,8 +359,10 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
             body.dispatch.text = DispatchSetting(settings.dispatch["text"])
     if settings.search:
         body.search = settings.search
-    if settings.greeting:
-        body.greeting = Greeting(text=settings.greeting)
+    if settings.greeting is not None:
+        body.greeting = Greeting(text=settings.greeting.text)
+        if settings.greeting.mode:
+            body.greeting.mode = GreetingMode(settings.greeting.mode)
     if settings.plugins:
         body.plugins = [_plugin_entry(plugin) for plugin in settings.plugins]
     if settings.mcp_servers:

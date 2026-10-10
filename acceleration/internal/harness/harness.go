@@ -470,10 +470,12 @@ func (h *Harness) SetOverwrites(overwrites llmoptions.LLM) {
 }
 
 // resumption is what a turn nobody prompted is asked, when the conversation so far ends
-// with the agent's own words. What came back is already in the instructions, so this only
-// has to say that it has.
-const resumption = "The work you handed over has come back, and is in your instructions. " +
-	"Tell the caller what it found."
+// with the agent's own words. What came back, if anything did, is already in the
+// instructions. It states no outcome: the note that prompted the turn may say that nothing
+// ran, and told that work had come back, Gemma told a caller "You're all set" for a booking
+// it never made.
+const resumption = "Carry on with the caller from what is in your instructions. Say only " +
+	"what a tool or your colleague actually returned."
 
 // answerable returns a history with something at the end of it to reply to.
 //
@@ -756,7 +758,8 @@ func (h *Harness) actUnknown(found directive) {
 	h.logger.Debug("the model asked for a skill that does not exist", "skill", found.skill)
 	h.mu.Lock()
 	h.notes = append(h.notes, noted{text: fmt.Sprintf(
-		"There is no skill named %s. Carry on with the caller.", found.skill)})
+		"There is no skill named %s, so nothing was done. If the caller asked for something "+
+			"to be done, call its tool now; do not tell them it is done.", found.skill)})
 	h.mu.Unlock()
 }
 

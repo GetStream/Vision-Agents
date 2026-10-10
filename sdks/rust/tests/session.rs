@@ -28,16 +28,7 @@ async fn open(server: &Server, tools: Tools) -> (Session, support::Accepted) {
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
     let client = server.client();
     let opening = tokio::spawn(async move {
-        Session::open(
-            &client,
-            types::CreateSessionRequest {
-                text: Some(true),
-                ..Default::default()
-            },
-            tools,
-            WatchOptions::default(),
-        )
-        .await
+        Session::open(&client, Default::default(), tools, WatchOptions::default()).await
     });
     let socket = server.accept().await;
     (opening.await.unwrap().unwrap(), socket)
@@ -83,9 +74,16 @@ async fn a_tool_declared_whole_carries_its_title_and_who_runs_it() {
                 "display_title": "Finding you", "executor": "client"}])
     );
     socket
-        .send(json!({"type": "tool_call", "id": "t1", "name": "locate", "arguments": "{}"}))
+        .send(
+            json!({"type": "tool_call", "id": "t1", "name": "locate", "arguments": "{}",
+                     "request_id": "req-1", "turn_id": "turn-1"}),
+        )
         .await;
-    assert_eq!(socket.expect("tool_result").await["output"], "Oslo");
+    assert_eq!(
+        socket.expect("tool_result").await,
+        json!({"type": "tool_result", "tool_call_id": "t1", "output": "Oslo",
+               "request_id": "req-1", "turn_id": "turn-1"})
+    );
 }
 
 #[tokio::test]
@@ -95,17 +93,12 @@ async fn commands_are_sent_on_the_socket() {
 
     session.say("hello").await.unwrap();
     session.interrupt().await.unwrap();
-    session.set_instructions("be brief").await.unwrap();
 
     assert_eq!(
         socket.next().await.unwrap(),
         json!({"type": "say", "text": "hello"})
     );
     assert_eq!(socket.next().await.unwrap(), json!({"type": "interrupt"}));
-    assert_eq!(
-        socket.next().await.unwrap(),
-        json!({"type": "instructions", "instructions": "be brief"})
-    );
 }
 
 #[tokio::test]
@@ -330,18 +323,69 @@ async fn a_turn_is_created_and_read_back() {
     assert_eq!(listed.items.len(), 1);
     assert!(!listed.has_more);
     assert_eq!(items.len(), 2);
-    assert_eq!(
-        server
-            .request(Method::POST, "/v1/agents/sessions/s1/responses")
-            .body,
-        json!({"text": "what is on today"})
-    );
+    let sent = server
+        .request(Method::POST, "/v1/agents/sessions/s1/responses")
+        .body;
+    assert_eq!(sent["text"], "what is on today");
+    assert_eq!(sent.as_object().unwrap().len(), 2);
     assert_eq!(
         server
             .request(Method::GET, "/v1/agents/sessions/s1/responses/items")
             .query,
         "response_id=r1&limit=200"
     );
+}
+
+#[tokio::test]
+async fn every_text_question_carries_a_fresh_request_id_and_one_with_media_none() {
+    let server = Server::start().await;
+    let (session, _socket) = open(&server, Tools::new()).await;
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/s1/responses",
+        201,
+        response("r1", "s1"),
+    );
+
+    session.responses.create("first").await.unwrap();
+    session
+        .responses
+        .create_with(&types::CreateResponseRequest {
+            text: "second".into(),
+            request_id: Some("mine".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    session
+        .responses
+        .create_with(&types::CreateResponseRequest {
+            text: "what is this?".into(),
+            images: Some(vec![types::ImageSource {
+                url: "https://example.com/cat.png".into(),
+                ..Default::default()
+            }]),
+            request_id: Some("mine".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    let sent: Vec<_> = server
+        .requests(Method::POST, "/v1/agents/sessions/s1/responses")
+        .into_iter()
+        .map(|seen| seen.body)
+        .collect();
+    let ids: Vec<&str> = sent[..2]
+        .iter()
+        .map(|body| body["request_id"].as_str().unwrap())
+        .collect();
+    for id in &ids {
+        assert_eq!(id.len(), 32);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+    assert_ne!(ids[0], ids[1]);
+    assert!(sent[2].get("request_id").is_none());
 }
 
 #[tokio::test]
@@ -566,6 +610,100 @@ async fn an_agents_conversations_are_listed_searched_and_opened_by_name() {
     );
     assert_eq!(
         server.request(Method::POST, "/v1/agents/sessions").body,
-        json!({"agent": "docs", "text": true, "title": "Plans"})
+        json!({"agent": "docs", "title": "Plans"})
+    );
+}
+
+#[tokio::test]
+async fn a_session_asked_to_start_voice_is_on_its_call() {
+    let server = Server::start().await;
+    server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
+    let agent = server.client().agent("docs");
+
+    let opening = tokio::spawn(async move {
+        agent
+            .sessions
+            .create(
+                types::CreateSessionRequest {
+                    start_voice: Some(true),
+                    ..Default::default()
+                },
+                Tools::new(),
+            )
+            .await
+    });
+    let _socket = server.accept().await;
+    let session = opening.await.unwrap().unwrap();
+
+    assert_eq!(
+        server.request(Method::POST, "/v1/agents/sessions").body,
+        json!({"agent": "docs", "start_voice": true})
+    );
+    assert!(session.voice_started());
+}
+
+#[tokio::test]
+async fn voice_is_started_and_stopped_on_a_session_held_in_writing() {
+    let server = Server::start().await;
+    let mut written = session("s1");
+    written["call_id"] = json!("");
+    server.route(Method::POST, "/v1/agents/sessions", 201, written.clone());
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/s1/voice",
+        200,
+        session("s1"),
+    );
+    server.route(Method::DELETE, "/v1/agents/sessions/s1/voice", 200, written);
+    let client = server.client();
+    let opening = tokio::spawn(async move {
+        Session::open(
+            &client,
+            Default::default(),
+            Tools::new(),
+            WatchOptions::default(),
+        )
+        .await
+    });
+    let _socket = server.accept().await;
+    let session = opening.await.unwrap().unwrap();
+
+    assert!(!session.voice_started());
+    let started = session.start_voice().await.unwrap();
+    assert!(session.voice_started());
+    assert_eq!(started.call_id, "call");
+    session.stop_voice().await.unwrap();
+
+    assert!(!session.voice_started());
+    assert_eq!(
+        server
+            .requests(Method::POST, "/v1/agents/sessions/s1/voice")
+            .len(),
+        1
+    );
+    assert_eq!(
+        server
+            .requests(Method::DELETE, "/v1/agents/sessions/s1/voice")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_conversation_is_resumed_by_the_id_of_its_session() {
+    let server = Server::start().await;
+    server.route(Method::GET, "/v1/agents/sessions/s1", 200, session("s1"));
+    let agent = server.client().agent("docs");
+
+    let resuming = tokio::spawn(async move { agent.sessions.resume("s1", Tools::new()).await });
+    let socket = server.accept().await;
+    let resumed = resuming.await.unwrap().unwrap();
+
+    assert_eq!(resumed.id(), "s1");
+    assert_eq!(socket.path, "/v1/agents/sessions/s1/events");
+    assert!(
+        server
+            .requests(Method::POST, "/v1/agents/sessions")
+            .is_empty()
     );
 }

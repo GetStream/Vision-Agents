@@ -490,7 +490,6 @@ const SCALARS = new Set([
   "harness",
   "subagent",
   "search",
-  "greeting",
   "sandbox",
 ]);
 const LISTS = new Set(["plugins", "keyterms"]);
@@ -510,10 +509,13 @@ const LISTS = new Set(["plugins", "keyterms"]);
  *   max_frames: 2
  * dispatch:
  *   text: enabled
+ * greeting:
+ *   text: Hello, how can I help?
+ *   mode: variation
  * ```
  *
  * Parsed by hand for the same reason urls.yaml is: the declaration is flat but for two lists
- * and three small mappings, and a YAML library would land in every browser bundle. A key
+ * and four small mappings, and a YAML library would land in every browser bundle. A key
  * nobody knows is refused rather than dropped, since a misspelled `llm` that goes quietly is
  * a config running on a model the file does not name.
  */
@@ -562,6 +564,8 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       declared.video = video(mapping(nested, inline, key, where), where);
     } else if (key === "dispatch") {
       declared.dispatch = dispatch(mapping(nested, inline, key, where), where);
+    } else if (key === "greeting") {
+      declared.greeting = greeting(mapping(nested, inline, key, where), where);
     } else {
       throw new ConfigurationError(
         `${where} declares ${JSON.stringify(key)}, which is not something an agent has`,
@@ -683,6 +687,20 @@ function dispatch(declared: Record<string, string>, where: string): Schemas["Age
   const incoming = declared["incoming_call"] as Schemas["DispatchSetting"] | "" | undefined;
   const text = declared["text"] as Schemas["DispatchSetting"] | "" | undefined;
   return { ...(incoming ? { incoming_call: incoming } : {}), ...(text ? { text } : {}) };
+}
+
+/** What the agent says as it joins: `text`, and a `mode` of `exact` or `variation`. */
+function greeting(declared: Record<string, string>, where: string): Schemas["Greeting"] {
+  for (const key of Object.keys(declared)) {
+    if (key !== "text" && key !== "mode") {
+      throw new ConfigurationError(`${where}: unknown greeting setting ${JSON.stringify(key)}`);
+    }
+  }
+  if (!declared["text"]) {
+    throw new ConfigurationError(`${where}: a greeting needs text`);
+  }
+  const mode = declared["mode"] as Schemas["GreetingMode"] | "" | undefined;
+  return { text: declared["text"], ...(mode ? { mode } : {}) };
 }
 
 /** `.agent_sync`: the fingerprint a directory was last synced under, and when. */

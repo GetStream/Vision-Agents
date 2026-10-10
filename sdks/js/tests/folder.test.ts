@@ -83,6 +83,9 @@ describe("loadFolder", () => {
           "  source: camera",
           "dispatch:",
           "  text: enabled",
+          "greeting:",
+          "  text: Hello, how can I help?",
+          "  mode: variation",
           "",
         ].join("\n"),
       }),
@@ -100,6 +103,7 @@ describe("loadFolder", () => {
       tags: { team: "support" },
       video: { source: "camera", max_frames: 1 },
       dispatch: { text: "enabled" },
+      greeting: { text: "Hello, how can I help?", mode: "variation" },
     });
   });
 
@@ -115,6 +119,8 @@ describe("loadFolder", () => {
       "speed: 0.9\n",
       "speed: fast\n",
       "speed: -1\n",
+      "greeting: Hello\n",
+      "greeting:\n  mode: exact\n",
       "keyterms: Vision Agents\n",
       "llm:\n  - one\n  - two\n",
       "video:\n  max_frames: 9\n",

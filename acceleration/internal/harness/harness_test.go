@@ -1296,7 +1296,10 @@ func (s *HarnessSuite) TestASkillTheModelInventedIsIgnored() {
 	s.True(s.harness.Pending(), "the caller was told an answer was coming")
 
 	s.respond("turn-2", "")
-	s.Contains(s.fast.requests()[1].Instructions, "no skill named teleport")
+	follow := s.fast.requests()[1]
+	s.Contains(follow.Instructions, "no skill named teleport, so nothing was done")
+	last := follow.Input[len(follow.Input)-1]
+	s.NotContains(last.Content, "come back", "a turn after nothing ran is not told that work came back")
 }
 
 func (s *HarnessSuite) TestASkillThatNamesAToolIsAskedAsOne() {

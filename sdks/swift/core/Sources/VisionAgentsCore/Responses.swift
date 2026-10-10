@@ -9,20 +9,16 @@ public struct Responses: Sendable {
     public let sessionID: String
 
     private let backend: Backend
-    /// A conversation kept in Stream Chat, whose every question is a command the router can
-    /// tell apart from a retry.
-    private let kept: Bool
     /// Shows what was asked in the transcript of the `AgentSession` asking it, since a
     /// conversation in writing is never heard back.
     private let asked: (@MainActor @Sendable (String) -> Void)?
 
     init(
-        backend: Backend, sessionID: String, kept: Bool = false,
+        backend: Backend, sessionID: String,
         asked: (@MainActor @Sendable (String) -> Void)? = nil
     ) {
         self.backend = backend
         self.sessionID = sessionID
-        self.kept = kept
         self.asked = asked
     }
 
@@ -30,16 +26,10 @@ public struct Responses: Sendable {
     ///
     /// It returns as soon as the agent has started answering rather than when it has finished,
     /// so the result is a handle on an answer in progress: `items(responseID:)` reads what has
-    /// been written down so far. `commandID` names the question so a retry with the same id and
-    /// text starts no second turn; a conversation kept in Stream Chat gets a fresh one when
-    /// none is given.
-    public func create(
-        _ text: String, images: [ImageSource] = [], commandID: String? = nil
-    ) async throws -> Response {
-        // A command carries text only, so a question with images goes without one.
-        let commandID = commandID ?? (kept && images.isEmpty ? UUID().uuidString : nil)
-        let body = Components.Schemas.CreateResponseRequest(
-            commandId: commandID, images: images.isEmpty ? nil : images.map(\.schema), text: text)
+    /// been written down so far. A text question carries a fresh request id, so a retry of the
+    /// same request starts no second turn.
+    public func create(_ text: String, images: [ImageSource] = []) async throws -> Response {
+        let body = Self.body(text, images: images)
         await asked?(text)
         let output = try await backend.call {
             try await $0.createResponse(path: .init(id: sessionID), body: .json(body))
@@ -50,6 +40,13 @@ public struct Responses: Sendable {
         default:
             throw AgentsError.undescribedSuccess
         }
+    }
+
+    static func body(_ text: String, images: [ImageSource]) -> Components.Schemas.CreateResponseRequest {
+        // The router refuses a request id on a question with images.
+        .init(
+            images: images.isEmpty ? nil : images.map(\.schema),
+            requestId: images.isEmpty ? UUID().uuidString : nil, text: text)
     }
 
     /// One page of the turns so far, oldest first.

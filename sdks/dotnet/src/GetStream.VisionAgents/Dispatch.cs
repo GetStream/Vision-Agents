@@ -202,7 +202,7 @@ public sealed class Dispatch
     /// <remarks>
     /// The response is created with this worker's own credential, acting for whoever wrote
     /// the message, so it reaches a conversation that belongs to them and goes to the model
-    /// rather than back to a worker. It carries the message's command, so the answer lands on it.
+    /// rather than back to a worker. It carries the message's request id, so the answer lands on it.
     /// </remarks>
     /// <exception cref="InvalidOperationException">No session is holding the message.</exception>
     public async Task<Response> AnswerAsync(InboundMessage message, CancellationToken cancellationToken = default)
@@ -213,7 +213,7 @@ public sealed class Dispatch
         }
         using var acting = Client.ActingFor(message.UserId);
         return await new Responses(acting, message.SessionId)
-            .CreateAsync(message.Text, commandId: message.CommandId, cancellationToken: cancellationToken).ConfigureAwait(false);
+            .AnswerAsync(message.Text, null, message.RequestId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -308,6 +308,7 @@ public sealed class Dispatch
     {
         CallId = frame.Text("call_id"),
         CallType = frame.Text("call_type") is { Length: > 0 } type ? type : Edge.DefaultCallType,
+        SessionId = frame.Text("session_id"),
         CalledNumber = frame.Text("called_number"),
         CallerNumber = frame.Text("caller_number"),
         Custom = CustomOf(frame),
@@ -321,7 +322,7 @@ public sealed class Dispatch
         AgentId = frame.Text("agent_id"),
         ConfigId = frame.Text("config_id"),
         SessionId = frame.Text("session_id"),
-        CommandId = frame.Text("command_id"),
+        RequestId = frame.Text("request_id"),
         Text = frame.Text("text"),
         MessageId = frame.Text("message_id"),
         UserId = frame.Text("user_id"),

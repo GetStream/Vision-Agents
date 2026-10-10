@@ -243,14 +243,16 @@ agent, _ := agents.New(agents.Options{
     },
 })
 
-call, _ := agent.Join(ctx, edge.Call{})
+call, _ := agent.Join(ctx)
 defer call.Close(ctx)
 
 fmt.Println(call.MonitorURL())
 ```
 
-`Join` creates a Stream call and has the backend join it, and `MonitorURL` is a link a person
-can open to talk to the agent from a browser. A modality is either a capability shortcut such
+`Join` opens a session with voice on, and the backend joins the session's own call,
+`agent:<session id>`. `MonitorURL` is a link a person can open to talk to the agent from a
+browser. `session.Voice.Stop(ctx)` carries the conversation on in writing, and
+`session.Voice.Start(ctx)` puts the agent back on the call. A modality is either a capability shortcut such
 as `en-low-latency`, which the backend routes and fails over, or a concrete `provider/model`.
 Leaving one empty takes the backend's default.
 
@@ -275,8 +277,10 @@ fmt.Println(call.MonitorURL())
 ```
 
 `MonitorURL` is a link a person can open to be on the other end of the call from a browser.
-Ringing somebody instead is `agent.StartCall(ctx, number, "+15551234567")`, which tells the
-backend it is navigating so recordings are let finish and menus are answered.
+Every caller gets a session of their own, which `WaitForCall` opens when the router hands the
+call over; a worker answering many uses `agent.Answer(ctx, call)` from a dispatch `OnCall`
+handler. Ringing somebody instead is `agent.StartCall(ctx, number, "+15551234567")`, which
+tells the backend it is navigating so recordings are let finish and menus are answered.
 
 `PurchaseAnyNumber` starts a monthly charge. An agent that answers the same number every day
 should buy it once and pass it to `WaitForCall`.

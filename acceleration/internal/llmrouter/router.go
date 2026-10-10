@@ -58,6 +58,9 @@ type Options struct {
 	Quota *quota.Limiter
 	// Gate enforces the customer's policies. Nil enforces nothing.
 	Gate routing.Gate
+	// Models resolves the custom/<name> models customers serve themselves. Nil leaves
+	// none.
+	Models routing.ModelResolver
 	// Screen judges each response's input for prompt injection. Nil screens nothing.
 	Screen Screen
 	// ReplyHedge is how long a reply may say nothing before the same request is asked of
@@ -121,6 +124,7 @@ func New(options Options) (*Router, error) {
 		Registry: options.Registry,
 		Store:    options.Store,
 		Live:     options.Live,
+		Models:   options.Models,
 		Gate:     options.Gate,
 		Logger:   options.Logger,
 	})

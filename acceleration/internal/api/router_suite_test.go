@@ -152,6 +152,8 @@ type RouterSuite struct {
 	// denied are the app ids the suite refuses registration to.
 	denied []string
 	server *httptest.Server
+	// router is the suite's router itself, for what cmd/router calls on it besides serving.
+	router *Server
 	app    testApp
 
 	// streams, modalities and conversations are what the suite's router was built from,
@@ -216,6 +218,9 @@ type RouterSuite struct {
 	// ROUTER_CONNECTORS_ENABLED unset has, for a control suite to set before it starts the
 	// harness. The suite's store, resolver and sealer are still built.
 	connectorsOff bool
+	// proxyCallsPerMinute caps one customer's direct calls to one connector, for a suite about
+	// the connection proxy to set before it starts the harness. Zero caps nothing.
+	proxyCallsPerMinute int64
 	// eventSecrets and bridge are the connector events endpoint's secrets and channel
 	// bridge, for a suite about connector events to set before it starts the harness. Nil
 	// takes no events and drops messages, as a deployment without them does.
@@ -498,6 +503,7 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorResolver:     s.resolver,
 		ConnectorTransports:   serverTransports,
 		ConnectorLimiter:      connectorLimiter,
+		ProxyCallsPerMinute:   s.proxyCallsPerMinute,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
@@ -511,6 +517,7 @@ func (s *RouterSuite) SetupSuite() {
 	listener.Start()
 	public.PublicURL = listener.URL
 	s.server = listener
+	s.router = server
 	s.T().Cleanup(s.server.Close)
 }
 
@@ -694,9 +701,15 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	// A model that runs crm's echo through a waiting binding's call_tool whenever somebody
 	// asks it something, a follow-up after a login included (chat_logins_test.go).
 	reasoning.Register("logging-in", func(routing.Spec) (llmrouter.Provider, error) { return &loggingInLLM{}, nil })
+	// A customer's own model, answering with where it was told to go, so a test reads back
+	// that the stored endpoint and key reached the provider.
+	reasoning.Register(routing.CustomProvider, func(spec routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: spec.Endpoint.BaseURL + " " + spec.Endpoint.Model + " " + spec.Endpoint.APIKey}, nil
+	})
 	reasoner, err := llmrouter.New(llmrouter.Options{
 		Config: reasoningConfig(), Registry: reasoning, Store: s.store, Live: s.live,
 		Quota: limiter, Gate: gate, Logger: logger,
+		Models: llmrouter.NewCustomModels(s.configs, s.sealer, false),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(reasoner.Close)
@@ -1214,8 +1227,9 @@ func (s *RouterSuite) await(connection *websocket.Conn, wanted string) map[strin
 // createSession opens a session the router must accept.
 func (c *testClient) createSession(request CreateSessionRequest) Session {
 	var created Session
-	c.suite.Require().Equal(http.StatusCreated,
-		c.do(http.MethodPost, "/v1/agents/sessions", request, &created))
+	status, payload := c.call(http.MethodPost, "/v1/agents/sessions", request)
+	c.suite.Require().Equal(http.StatusCreated, status, string(payload))
+	c.suite.Require().NoError(json.Unmarshal(payload, &created))
 	return created
 }
 
@@ -1328,6 +1342,16 @@ func (d testData) createAgentConfig() AgentConfig {
 	return created
 }
 
+// instructedAgent is the id of an agent config of the suite's app told instructions.
+func (d testData) instructedAgent(instructions string) *string {
+	var created AgentConfig
+	d.suite.Require().Equal(http.StatusCreated, d.suite.serverClient.do(
+		http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+			Name: "agent-" + d.suite.utils.uuid(), Instructions: &instructions,
+		}, &created))
+	return &created.Id
+}
+
 // createUser is a client signed in as a new end user of the suite's app.
 func (d testData) createUser() *testClient {
 	return d.signedInAs(d.suite.utils.uuid())
@@ -1374,8 +1398,8 @@ func pointerTo[T any](value T) *T { return &value }
 
 // textSession asks for a conversation in writing, which needs no call.
 func textSession(id *string) CreateSessionRequest {
-	target, text := "en-low-latency", true
-	return CreateSessionRequest{Id: id, Text: &text, Llm: &target}
+	target := "en-low-latency"
+	return CreateSessionRequest{Id: id, Llm: &target}
 }
 
 // inProject lists the sessions in one project, which is how a test sharing a fixture's app

@@ -28,7 +28,7 @@ func (s *SessionCommandsSuite) TestAResponseCanBeAskedForAsANamedCommand() {
 
 	s.Require().Equal(http.StatusAccepted, s.serverClient.do(
 		http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
-		CreateResponseRequest{CommandId: &command, Text: "First question"}, nil))
+		CreateResponseRequest{RequestId: &command, Text: "First question"}, nil))
 
 	s.Equal("thinking", s.receipt(opened.Id, command).State,
 		"the response is the command, so its receipt says it is being answered")
@@ -40,7 +40,7 @@ func (s *SessionCommandsSuite) TestTheSameCommandAskedTwiceWhileItRunsIsAConflic
 
 	status, _ := s.serverClient.call(http.MethodPost,
 		"/v1/agents/sessions/"+opened.Id+"/responses",
-		CreateResponseRequest{CommandId: &command, Text: "Another question"})
+		CreateResponseRequest{RequestId: &command, Text: "Another question"})
 
 	s.Equal(http.StatusConflict, status)
 }
@@ -50,11 +50,22 @@ func (s *SessionCommandsSuite) TestACommandCarriesTextAndNothingElse() {
 
 	status, _ := s.serverClient.call(http.MethodPost,
 		"/v1/agents/sessions/"+opened.Id+"/responses", CreateResponseRequest{
-			CommandId: &command, Text: "What is this?",
+			RequestId: &command, Text: "What is this?",
 			Images: &[]ImageSource{{Url: "https://example.com/a.png"}},
 		})
 
 	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *SessionCommandsSuite) TestASessionThatKeepsNothingAnswersAQuestionCarryingARequestID() {
+	// Every SDK sends a request id with every question, whatever the session keeps.
+	request := textSession(nil)
+	request.Incognito = pointerTo(true)
+	opened, command := s.serverClient.createSession(request), s.utils.uuid()
+
+	s.Equal(http.StatusAccepted, s.serverClient.do(
+		http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{RequestId: &command, Text: "First question"}, nil))
 }
 
 func (s *SessionCommandsSuite) TestACommandLeftAloneFinishesOnItsOwn() {
@@ -139,7 +150,7 @@ func (s *SessionCommandsSuite) TestTheSocketStopsTheCommandItNames() {
 	asked := s.submit(opened.Id, command, "First question")
 
 	s.Require().NoError(watching.WriteJSON(map[string]any{
-		"type": "interrupt", "command_id": command,
+		"type": "interrupt", "request_id": command,
 	}))
 
 	s.Require().NoError(watching.SetReadDeadline(time.Now().Add(settleFor)))
@@ -151,7 +162,7 @@ func (s *SessionCommandsSuite) TestTheSocketStopsTheCommandItNames() {
 		}
 		receipt, ok := received["command"].(map[string]any)
 		s.Require().True(ok)
-		s.Equal(command, receipt["command_id"])
+		s.Equal(command, receipt["request_id"])
 		s.Equal("cancelled", receipt["state"])
 		s.Equal(asked.AssistantMessageId, receipt["assistant_message_id"])
 		return
@@ -171,7 +182,7 @@ func (s *SessionCommandsSuite) submit(id, command, text string) CommandReceipt {
 	var receipt CommandReceipt
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost,
 		"/v1/agents/sessions/"+id+"/respond",
-		RespondRequest{CommandId: &command, Text: text}, &receipt))
+		RespondRequest{RequestId: &command, Text: text}, &receipt))
 	return receipt
 }
 

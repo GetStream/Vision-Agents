@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 )
 
 // CallHookPath is where the router receives the call events Stream sends. It is here rather
@@ -72,7 +74,7 @@ func (s *Stream) CallHooks(ctx context.Context) ([]CallHook, error) {
 // tells an operator running this twice that nothing was duplicated.
 func (s *Stream) PointCallHook(ctx context.Context, url string) (bool, error) {
 	var updated bool
-	err := s.ChangeHooks(ctx, func(hooks []getstream.EventHook) ([]getstream.EventHook, bool, error) {
+	err := s.ChangeHooks(ctx, func(hooks []chat.Hook) ([]chat.Hook, bool, error) {
 		var err error
 		hooks, updated, err = WithCallHook(hooks, url)
 		return hooks, err == nil, err
@@ -93,7 +95,7 @@ func (s *Stream) RemoveCallHook(ctx context.Context, url string) (bool, error) {
 		return false, errors.New("phone: a url is required")
 	}
 	var removed bool
-	err := s.ChangeHooks(ctx, func(hooks []getstream.EventHook) ([]getstream.EventHook, bool, error) {
+	err := s.ChangeHooks(ctx, func(hooks []chat.Hook) ([]chat.Hook, bool, error) {
 		hooks, removed = WithoutHook(hooks, url)
 		return hooks, removed, nil
 	})
@@ -107,17 +109,17 @@ func (s *Stream) RemoveCallHook(ctx context.Context, url string) (bool, error) {
 // refuses the whole update over one whose url does not resolve (AI-990 F22). Moving off a
 // tunnel that is gone in several updates is then refused at the first, which still holds
 // the tunnel's other hook; the final list in one update holds neither.
-func (s *Stream) ChangeHooks(ctx context.Context, change func([]getstream.EventHook) ([]getstream.EventHook, bool, error)) error {
-	response, err := s.client.GetApp(ctx, &getstream.GetAppRequest{})
+func (s *Stream) ChangeHooks(ctx context.Context, change func([]chat.Hook) ([]chat.Hook, bool, error)) error {
+	read, err := chat.ReadHooks(ctx, s.client)
 	if err != nil {
 		return fmt.Errorf("phone: get app: %w", err)
 	}
 
-	hooks, changed, err := change(response.Data.App.EventHooks)
+	hooks, changed, err := change(read)
 	if err != nil || !changed {
 		return err
 	}
-	if _, err := s.client.UpdateApp(ctx, &getstream.UpdateAppRequest{EventHooks: hooks}); err != nil {
+	if err := chat.WriteHooks(ctx, s.client, hooks); err != nil {
 		return fmt.Errorf("phone: update app: %w; %s", err, unresolvableHint)
 	}
 	return nil
@@ -133,7 +135,7 @@ const unresolvableHint = "if Stream says a hook's url does not resolve, that hoo
 // them, or a new one added.
 //
 // Reports whether a hook at url was updated rather than one added.
-func WithCallHook(hooks []getstream.EventHook, url string) ([]getstream.EventHook, bool, error) {
+func WithCallHook(hooks []chat.Hook, url string) ([]chat.Hook, bool, error) {
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return nil, false, errors.New("phone: a call hook needs a url to deliver to")
@@ -152,18 +154,18 @@ func WithCallHook(hooks []getstream.EventHook, url string) ([]getstream.EventHoo
 		hooks[index].HookType = ptr(webhookHookType)
 		return hooks, true, nil
 	}
-	return append(hooks, getstream.EventHook{
+	return append(hooks, chat.Hook{EventHook: getstream.EventHook{
 		HookType:   ptr(webhookHookType),
 		WebhookUrl: &url,
 		Enabled:    &enabled,
 		EventTypes: callHookEvents,
-	}), false, nil
+	}}), false, nil
 }
 
 // WithoutHook is hooks less every hook delivering to url, whatever it asks for, and whether
 // there was one.
-func WithoutHook(hooks []getstream.EventHook, url string) ([]getstream.EventHook, bool) {
-	kept := make([]getstream.EventHook, 0, len(hooks))
+func WithoutHook(hooks []chat.Hook, url string) ([]chat.Hook, bool) {
+	kept := make([]chat.Hook, 0, len(hooks))
 	for _, hook := range hooks {
 		if value(hook.WebhookUrl) == url {
 			continue

@@ -70,19 +70,19 @@ class TestDispatch < LocalRouterTest
     end
   end
 
-  def test_a_message_carries_the_session_and_command_it_was_written_to
+  def test_a_message_carries_the_session_and_request_it_was_written_to
     handled = Thread::Queue.new
     dispatch.wait_for_message { |message| handled << message }
 
     run_until_closed do |peer|
-      peer.send_frame(type: "message", work_id: "wk1", session_id: "sess_1", command_id: "cmd_1",
+      peer.send_frame(type: "message", work_id: "wk1", session_id: "sess_1", request_id: "req_1",
                       agent_id: "support", text: "hi", user_id: "ada")
       assert_equal({ "type" => "done", "work_id" => "wk1" }, peer.receive_type("done"))
     end
 
     message = handled.pop(timeout: 5)
     assert_equal "sess_1", message.session_id
-    assert_equal "cmd_1", message.command_id
+    assert_equal "req_1", message.request_id
     assert_equal "", message.channel_id
   end
 
@@ -90,14 +90,14 @@ class TestDispatch < LocalRouterTest
     @router.on(:post, "/v1/agents/sessions/sess_1/responses", body: { "id" => "resp_1", "session_id" => "sess_1" })
     server = VA::Client.new(url: @router.url, api_key: "key", api_secret: "secret")
     worker = VA::Dispatch.new(client: server)
-    message = VA::InboundMessage.from({ "session_id" => "sess_1", "command_id" => "cmd_1", "text" => "hi",
+    message = VA::InboundMessage.from({ "session_id" => "sess_1", "request_id" => "req_1", "text" => "hi",
                                         "user_id" => "ada" })
 
     answered = worker.answer(message)
 
     assert_equal "resp_1", answered.id
     request = @router.last(:post, "/v1/agents/sessions/sess_1/responses")
-    assert_equal({ "text" => "hi", "command_id" => "cmd_1" }, request.json)
+    assert_equal({ "text" => "hi", "request_id" => "req_1" }, request.json)
     assert_equal "ada", request.headers["x-stream-user-id"]
     assert_equal "server", request.headers["stream-auth-type"]
     assert_raises(VA::ConfigurationError) { worker.answer(VA::InboundMessage.from({ "text" => "hi" })) }

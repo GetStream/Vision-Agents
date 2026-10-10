@@ -70,7 +70,7 @@ stream property. Answering a tool call does not depend on anybody listening: it 
 - **No automatic reconnection.** `respond` and `tool_result` are not idempotent and the protocol
   has nothing to resume from. `AgentSession.connection` reports `Disconnected(failure)` and the
   caller decides.
-- A tool result echoes `command_id` and `turn_id` only when the call carried a `command_id`; a
+- A tool result echoes `request_id` and `turn_id` only when the call carried a `request_id`; a
   bare `turn_id` routes to a path that fails for a persisted session.
 
 Frames in tests are quoted verbatim from `frameOf` in

@@ -38,7 +38,10 @@ class Router:
         app.router.add_patch("/v1/agents/configs/{id}", self._patch_config)
         app.router.add_post("/v1/agents/sessions", self._create)
         app.router.add_post("/v1/agents/sessions/query", self._query)
+        app.router.add_get("/v1/agents/sessions/{id}", self._get)
         app.router.add_patch("/v1/agents/sessions/{id}", self._update)
+        app.router.add_post("/v1/agents/sessions/{id}/voice", self._voice)
+        app.router.add_delete("/v1/agents/sessions/{id}/voice", self._voice)
         app.router.add_delete("/v1/agents/sessions/{id}", self._no_content)
         app.router.add_post("/v1/agents/sessions/{id}/stop", self._no_content)
         app.router.add_delete("/v1/agents/sessions/{id}/memories", self._no_content)
@@ -84,7 +87,23 @@ class Router:
 
     async def _create(self, request: web.Request) -> web.Response:
         await self._record(request)
-        return web.json_response(status=201, data=self._session("session-1"))
+        created = self._session("session-1")
+        if self.bodies["POST /v1/agents/sessions"].get("start_voice"):
+            created["call_id"] = created["id"]
+            created["call_type"] = "agent"
+        return web.json_response(status=201, data=created)
+
+    async def _get(self, request: web.Request) -> web.Response:
+        await self._record(request)
+        return web.json_response(self._session(request.match_info["id"]))
+
+    async def _voice(self, request: web.Request) -> web.Response:
+        await self._record(request)
+        session = self._session(request.match_info["id"])
+        if request.method == "POST":
+            session["call_id"] = session["id"]
+            session["call_type"] = "agent"
+        return web.json_response(session)
 
     async def _query(self, request: web.Request) -> web.Response:
         await self._record(request)
@@ -310,9 +329,67 @@ class TestSessions:
         assert body["project_id"] == "docs"
         assert body["custom"] == {"ticket": "4721"}
         assert body["model_overwrites"] == {"thinking": "high"}
-        # No call was named, so the conversation is held in writing and kept.
-        assert body["text"] is True
+        # No voice was asked for, so the conversation is held in writing and kept.
+        assert body["start_voice"] is False
         assert body["incognito"] is False
+        for field in ("call_id", "call_type", "text", "instructions"):
+            assert field not in body
+
+    async def test_a_session_asked_to_start_voice_is_on_its_call(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create(
+            stream.SessionOptions(id="chosen-id_1", start_voice=True)
+        )
+        try:
+            assert session.voice.started
+        finally:
+            await session.close()
+
+        body = router.body("POST", "/v1/agents/sessions")
+        assert body["id"] == "chosen-id_1"
+        assert body["start_voice"] is True
+
+    async def test_voice_starts_and_stops_on_a_session(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create()
+        try:
+            assert not session.voice.started
+
+            started = await session.voice.start()
+            assert started.call_id == "session-1"
+            assert session.voice.started
+
+            await session.voice.stop()
+            assert not session.voice.started
+        finally:
+            await session.close()
+
+        assert router.requests("POST", "/v1/agents/sessions/session-1/voice") == 1
+        assert router.requests("DELETE", "/v1/agents/sessions/session-1/voice") == 1
+
+    async def test_a_session_held_in_writing_has_no_call_to_join(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create()
+        try:
+            with pytest.raises(ValueError, match="held in writing"):
+                session.video()
+        finally:
+            await session.close()
+
+    async def test_a_conversation_is_resumed_by_its_session_id(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.resume("earlier-1")
+        try:
+            assert session.id == "earlier-1"
+        finally:
+            await session.close()
+
+        assert router.requests("GET", "/v1/agents/sessions/earlier-1") == 1
+        assert router.requests("POST", "/v1/agents/sessions") == 0
 
     async def test_an_incognito_session_asks_the_router_to_keep_nothing(
         self, api: stream.Client, router: Router
@@ -517,20 +594,18 @@ class TestResponses:
         assert not turns.has_more
         assert router.requests("GET", "/v1/agents/sessions/session-9/responses") == 1
 
-    async def test_a_stored_text_conversation_names_every_question(
+    async def test_every_text_question_is_named_afresh(
         self, api: stream.Client, router: Router
     ):
-        # The router requires a command id on a user's stored text conversation, and every
-        # text conversation is stored unless it is incognito.
+        # A request id makes a retry of the same question answered once; the router refuses
+        # one alongside images.
         path = "/v1/agents/sessions/session-1/responses"
         session = await api.agent("docs").sessions.create()
         try:
             await session.responses.create("First question")
-            first = router.body("POST", path)["command_id"]
+            first = router.body("POST", path)["request_id"]
             await session.responses.create("Second question")
-            second = router.body("POST", path)["command_id"]
-            await session.responses.create("Retried question", command_id="request-7")
-            retried = router.body("POST", path)["command_id"]
+            second = router.body("POST", path)["request_id"]
             await session.responses.create(
                 "What is this?",
                 images=[stream.ImageSource(url="https://example.com/a.png")],
@@ -540,17 +615,17 @@ class TestResponses:
             await session.close()
 
         assert len(first) == 36
-        assert first != second, "two questions are two commands"
-        assert retried == "request-7"
-        assert "command_id" not in pictured, "a command carries text only"
+        assert first != second, "two questions are two requests"
+        assert "request_id" not in pictured, "a request id carries text only"
 
-    async def test_a_session_keeping_no_conversation_names_no_command(
+    async def test_a_session_keeping_no_conversation_is_named_a_request_too(
         self, api: stream.Client, router: Router
     ):
+        # The router ignores a request id where it keeps no conversation, so it is always sent.
         await api.agent("docs").sessions.responses("session-9").create("Anyone there?")
 
         body = router.body("POST", "/v1/agents/sessions/session-9/responses")
-        assert "command_id" not in body
+        assert len(body["request_id"]) == 36
 
     async def test_rewinding_carries_on_from_the_response_given(
         self, api: stream.Client, router: Router

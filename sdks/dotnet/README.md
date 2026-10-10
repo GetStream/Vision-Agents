@@ -62,8 +62,12 @@ await foreach (var happened in session.EventsAsync())
 record Weather(string City);
 ```
 
-`JoinAsync` creates the Stream call through getstream-net and has the backend join it.
-`ChatAsync` holds the same conversation in writing. `Config = "docs"` starts from a config
+`JoinAsync` opens a session with voice on, and the backend joins the session's own call,
+`agent:<session id>`. `ChatAsync` holds the same conversation in writing;
+`session.Voice.StartAsync()` puts the agent on the call and `session.Voice.StopAsync()` carries
+it on in writing again. `agent.ResumeAsync(sessionId)` carries on a conversation held earlier.
+`Instructions` reach the backend when the agent syncs: a session runs on the stored config's.
+`Config = "docs"` starts from a config
 stored under that name, and `ConfigId` from one by id. The harness is written onto the config
 when it syncs, and every session under that config runs with it. The model asks for a tool over
 the session socket, this process runs it, and the answer or the exception goes back the same way.
@@ -80,6 +84,10 @@ On the phone:
 var answered = await agent.WaitForCallAsync("+15551234567");
 var placed = await agent.OutboundCallAsync(from: "+15551234567", to: "+15557654321");
 ```
+
+Every caller gets a session of their own, which `WaitForCallAsync` joins when the router hands
+the call over; a worker answering many uses `agent.JoinAsync(call)` from a dispatch
+`WaitForCall` handler. A placed call names the session the agent then joins.
 
 ## Dispatch
 
@@ -112,7 +120,7 @@ await dispatch.RunAsync(stopping);
 
 `GetOrCreateAgentAsync` keeps one agent per channel, so the second message on it goes to
 the agent that answered the first. An agent whose agent.yaml says `dispatch: {text: enabled}`
-hands what end users write to the worker with the running `SessionId` (and `CommandId`);
+hands what end users write to the worker with the running `SessionId` (and `RequestId`);
 `AnswerAsync` has the model answer it with the worker's credential acting for the writer, and
 `GetOrCreateAgentAsync` refuses such a message. The router is told each call and message is
 `done`, with the exception's message if the handler threw. `RunAsync` returns when the token
@@ -137,7 +145,7 @@ reason.
 
 ```
 agents/jean/
-  agent.yaml            required: what it runs on (llm, stt, tts, speed, harness, tags, dispatch, ...)
+  agent.yaml            required: what it runs on (llm, stt, tts, greeting, plugins, harness, tags, dispatch, ...)
   instructions.md
   guardrail.md
   skills/think.md

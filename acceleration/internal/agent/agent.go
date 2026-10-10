@@ -376,6 +376,9 @@ type Agent struct {
 	// audioHistory retains one bounded PCM window per active participant for optional EOT.
 	audioHistory map[string]*pcm16leRing
 	eotGates     map[string]*eotGate
+	// learnedTerms are names the caller said and the agent has said back, which the
+	// transcriber is told to expect for the rest of the call (keyterms.go).
+	learnedTerms []string
 	// voices is the diarised label of the first voice heard on each participant's track,
 	// which is taken to be the caller's. A later turn in a different voice is somebody
 	// else at the same microphone: the track says who joined the call, and it is the
@@ -1113,30 +1116,6 @@ func (a *Agent) Interrupt() {
 	if stopped, ok := a.stopPlayback(participant, turnID, time.Time{}, "manual", "api"); ok {
 		a.abandon(turnID)
 		a.finishInterrupt(stopped)
-	}
-}
-
-// SetInstructions changes what the agent is told to be from the next turn on. The reply
-// being spoken keeps the prompt it was started with, because rewriting it mid-sentence
-// would have the agent change character in the middle of a thought.
-func (a *Agent) SetInstructions(text string) {
-	a.mu.Lock()
-	a.prompt = text
-	instructions := a.instructions()
-	if a.native() {
-		instructions = a.nativeInstructions(a.harness != nil)
-	}
-	model := a.sts
-	a.mu.Unlock()
-
-	// A native model holds the prompt itself, so it is told. One that took its
-	// instructions only when the session opened refuses, and the refusal is reported
-	// rather than swallowed: a caller who changed the prompt and heard nothing of it would
-	// believe the agent had changed.
-	if model != nil {
-		if err := model.SetInstructions(instructions); err != nil {
-			a.fail(err, "sts")
-		}
 	}
 }
 
@@ -3187,6 +3166,7 @@ func (a *Agent) finish(response llm.Response) {
 	if currentHarness != nil {
 		currentHarness.Remember(response)
 	}
+	a.learnTerms(said, history)
 
 	// Remembering happens off the turn path: extraction takes longer than a turn and the
 	// next thing the participant says must not wait for it.

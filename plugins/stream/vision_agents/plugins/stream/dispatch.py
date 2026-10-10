@@ -18,7 +18,7 @@ from vision_agents.core.utils.utils import await_or_run
 
 from ._backend import Backend
 from ._socket import Socket
-from .responses import Responses, RouterError
+from .responses import RouterError, _create_response
 from .sessions import _tools
 
 if TYPE_CHECKING:
@@ -279,8 +279,8 @@ class Dispatch:
                 "no session is holding this message; open one with get_or_create_agent"
             )
         backend = replace(self.backend, acting_for=message.user_id)
-        await Responses(backend, message.session_id).create(
-            message.text, command_id=message.command_id
+        await _create_response(
+            backend, message.session_id, message.text, request_id=message.request_id
         )
 
     async def run(self) -> None:
@@ -651,6 +651,7 @@ def _call_of(frame: dict[str, object]) -> InboundCall:
     return InboundCall(
         call_id=str(frame.get("call_id", "")),
         call_type=str(frame.get("call_type") or "default"),
+        session_id=str(frame.get("session_id", "")),
         called_number=str(frame.get("called_number", "")),
         caller_number=str(frame.get("caller_number", "")),
         custom=_custom_of(frame),
@@ -672,7 +673,7 @@ def _message_of(frame: dict[str, object]) -> InboundMessage:
         user_name=str(frame.get("user_name", "")),
         at=_time_of(at) if isinstance(at, str) else None,
         session_id=str(frame.get("session_id", "")),
-        command_id=str(frame.get("command_id", "")),
+        request_id=str(frame.get("request_id", "")),
     )
 
 

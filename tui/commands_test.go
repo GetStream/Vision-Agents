@@ -110,9 +110,9 @@ func TestResumeNeedsToBeToldWhatToResume(t *testing.T) {
 		t.Error("a bare /resume opened a conversation anyway")
 	}
 
-	settle(m, ask(m, "/resume agent:support-42"))
-	if m.conversationID != "agent:support-42" {
-		t.Errorf("the conversation opened is %q", m.conversationID)
+	settle(m, ask(m, "/resume session-42"))
+	if m.sessionID != "session-42" {
+		t.Errorf("the session opened is %q", m.sessionID)
 	}
 }
 

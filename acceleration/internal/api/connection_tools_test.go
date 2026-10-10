@@ -15,6 +15,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
@@ -67,7 +68,7 @@ func (s *ConnectionToolsSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.connectors = core.Registry{
 		Schemes: map[string]core.Scheme{oauth2code.Name: code, oauth2cc.Name: clientCredentials,
-			bearer.Name: bearer.New(), none.Name: none.New()},
+			bearer.Name: bearer.New(), none.Name: none.New(), apikey.Name: apikey.New()},
 		ToolSources: map[string]core.ToolSource{mcp.Kind: mcp.New()},
 	}
 	s.connectorHTTP = s.provider.Client()

@@ -131,9 +131,24 @@ type stubSTT struct {
 
 	mu    sync.Mutex
 	heard []audio.PcmData
+	// terms is the last vocabulary it was retuned to.
+	terms []string
 }
 
 func newStubSTT() *stubSTT { return &stubSTT{emitter: stt.NewEmitter(64)} }
+
+func (s *stubSTT) SetKeyterms(terms []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.terms = append([]string(nil), terms...)
+	return nil
+}
+
+func (s *stubSTT) keyterms() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.terms...)
+}
 
 func (s *stubSTT) Start(context.Context) error { return nil }
 
@@ -1798,6 +1813,24 @@ func (s *AgentSuite) TestADirectionIsSpokenButNeverRead() {
 	history := s.agent.History()
 	s.Require().Len(history, 2)
 	s.Equal("That is a good one.", history[1].Content)
+}
+
+func (s *AgentSuite) TestANameBothSidesHaveSaidIsExpectedFromThenOn() {
+	// Flux heard "Chen" once, the agent said it back, and the caller's next "Yes, Chen" came
+	// back as "Yes. Ten". Once both have said it, the transcriber is told to expect it.
+	s.join(true)
+	s.model.reply = []string{"Two at 7:30 for Chen. ", "I'm checking with Mia now."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "a table for two at seven thirty, name Chen")
+
+	s.eventually(func() bool { return len(s.ears.keyterms()) > 0 }, "the transcriber was never retuned")
+	terms := s.ears.keyterms()
+	s.Contains(terms, "Chen")
+	s.NotContains(terms, "Mia", "a name only the agent said is not reinforced")
+	s.NotContains(terms, "Two", "a word that only opens a sentence is not a name")
+	s.NotContains(terms, "I", "nor is a contraction")
 }
 
 func (s *AgentSuite) TestADirectionIsTakenOutOfWhatAVoiceCannotAct() {

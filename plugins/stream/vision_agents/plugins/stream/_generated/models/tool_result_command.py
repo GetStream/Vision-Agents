@@ -24,17 +24,17 @@ class ToolResultCommand:
     Attributes:
         tool_call_id (str):
         type_ (ToolResultCommandType):
-        command_id (str | Unset):
         error (str | Unset):
         output (list[ImageContentPart | TextContentPart] | str | Unset):
+        request_id (str | Unset):
         turn_id (str | Unset):
     """
 
     tool_call_id: str
     type_: ToolResultCommandType
-    command_id: str | Unset = UNSET
     error: str | Unset = UNSET
     output: list[ImageContentPart | TextContentPart] | str | Unset = UNSET
+    request_id: str | Unset = UNSET
     turn_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -44,8 +44,6 @@ class ToolResultCommand:
         tool_call_id = self.tool_call_id
 
         type_ = self.type_.value
-
-        command_id = self.command_id
 
         error = self.error
 
@@ -72,6 +70,8 @@ class ToolResultCommand:
         else:
             output = self.output
 
+        request_id = self.request_id
+
         turn_id = self.turn_id
 
         field_dict: dict[str, Any] = {}
@@ -82,12 +82,12 @@ class ToolResultCommand:
                 "type": type_,
             }
         )
-        if command_id is not UNSET:
-            field_dict["command_id"] = command_id
         if error is not UNSET:
             field_dict["error"] = error
         if output is not UNSET:
             field_dict["output"] = output
+        if request_id is not UNSET:
+            field_dict["request_id"] = request_id
         if turn_id is not UNSET:
             field_dict["turn_id"] = turn_id
 
@@ -102,8 +102,6 @@ class ToolResultCommand:
         tool_call_id = d.pop("tool_call_id")
 
         type_ = ToolResultCommandType(d.pop("type"))
-
-        command_id = d.pop("command_id", UNSET)
 
         error = d.pop("error", UNSET)
 
@@ -159,14 +157,16 @@ class ToolResultCommand:
 
         output = _parse_output(d.pop("output", UNSET))
 
+        request_id = d.pop("request_id", UNSET)
+
         turn_id = d.pop("turn_id", UNSET)
 
         tool_result_command = cls(
             tool_call_id=tool_call_id,
             type_=type_,
-            command_id=command_id,
             error=error,
             output=output,
+            request_id=request_id,
             turn_id=turn_id,
         )
 

@@ -24,6 +24,9 @@ type Digest struct {
 	// Scenarios are the scripts the calls followed, by id, so the report can set what the
 	// caller said beside what the agent heard. Without them it shows what was heard alone.
 	Scenarios map[string]scenario.Scenario
+	// STT is the speech-to-text bench on the same caller lines, one row per target, when the
+	// run included it: the agent's hearing measured alone, apart from its turn-taking.
+	STT []STTSummary
 }
 
 // DigestRow is one headline metric across the runs.

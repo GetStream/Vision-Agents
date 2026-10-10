@@ -129,7 +129,7 @@ final class AgentEvent {
           id: _text(fields['id']),
           name: _text(fields['name']),
           arguments: _text(fields['arguments']),
-          commandId: _text(fields['command_id']),
+          requestId: _text(fields['request_id']),
           turnId: turnId,
         )
       : null;
@@ -144,7 +144,7 @@ final class ToolCall {
     required this.id,
     required this.name,
     required this.arguments,
-    this.commandId = '',
+    this.requestId = '',
     this.turnId = '',
   });
 
@@ -154,9 +154,9 @@ final class ToolCall {
   /// The arguments as the model wrote them, which is a JSON object encoded as a string.
   final String arguments;
 
-  /// The durable command that made this call, which its result has to repeat. Empty for
+  /// The request that made this call, which its result has to repeat. Empty for
   /// most calls.
-  final String commandId;
+  final String requestId;
   final String turnId;
 
   /// The arguments decoded, or an empty map if the model wrote something else.

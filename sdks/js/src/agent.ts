@@ -1,6 +1,7 @@
 import type { BackendOptions } from "./backend.js";
 import { Client, type Schemas } from "./client.js";
-import { DEFAULT_CALL_TYPE, Edge, type Call } from "./edge.js";
+import { Dispatch } from "./dispatch.js";
+import { DEFAULT_CALL_TYPE, Edge } from "./edge.js";
 import { ConfigurationError, RouterError } from "./errors.js";
 import { Session, type SessionOptions } from "./session.js";
 import { Tools } from "./tools.js";
@@ -73,6 +74,8 @@ export interface Pipeline {
   language?: string;
   /** Said on joining without going through the model. Empty waits to be spoken to. */
   greeting?: string;
+  /** `exact`, the default, or `variation`, which has the model reword the greeting each call. */
+  greetingMode?: Schemas["GreetingMode"];
   /** Murmur while a caller is still talking, the way a person does. */
   backchannel?: boolean;
   maxTokens?: number;
@@ -98,7 +101,7 @@ export interface Declaration {
   /** The model a voice agent hands its skills to. A text agent runs on its llm alone. */
   subagent?: string;
   search?: string;
-  greeting?: string;
+  greeting?: Schemas["Greeting"];
   sandbox?: Schemas["Sandbox"];
   plugins?: string[];
   keyterms?: string[];
@@ -148,7 +151,7 @@ export interface Folder {
 export interface AgentOptions {
   /** What the agent is called. It names the stored config and is who it appears as. */
   name?: string;
-  /** The system prompt. */
+  /** The system prompt. It reaches the backend with `sync`: a session runs on the stored config's. */
   instructions?: string;
   /**
    * A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose.
@@ -171,17 +174,12 @@ export interface AgentOptions {
   tools?: Tools;
   /** The router this agent talks to. */
   client?: Client | BackendOptions;
-  /** Creates the Stream calls the backend joins. Built from the environment when needed. */
+  /** Signs the link a person opens to join a session's call. Built from the environment when needed. */
   edge?: Edge;
 }
 
-/** How a text conversation is held. */
+/** How a conversation is held. */
 export interface ChatOptions extends SessionOptions {
-  /**
-   * The Stream Chat channel to resume. Left empty the backend creates one, since every text
-   * conversation is kept unless it is incognito.
-   */
-  conversationId?: string;
   /**
    * The conversation being answered, which names the channel replies are written into.
    *
@@ -246,22 +244,21 @@ export class Agent {
     return this.options.guardrail || this.folder?.guardrail || "";
   }
 
-  /** Creates the Stream calls the backend joins, built from the environment when needed. */
+  /** Signs the link a person opens to join a session's call, built from the environment when needed. */
   get edge(): Edge {
     this.edgeImpl ??= new Edge();
     return this.edgeImpl;
   }
 
   /**
-   * Has the backend join a call and hold a conversation on it.
+   * Holds a conversation on the session's own call, `agent:<session id>`.
    *
-   * An empty call id creates one named after a random string, which is what a one-off
-   * conversation wants. It resolves once the backend is in the call, so an agent that has
-   * joined is one that is already listening.
+   * It resolves once the backend is in the call, so an agent that has joined is one that is
+   * already listening. `session.voice.stop()` carries the conversation on in writing.
    */
-  async join(call: Partial<Call> = {}, options: SessionOptions = {}): Promise<Session> {
-    const created = await this.edge.createCall(call, { id: this.userId, name: this.name });
-    return this.open({ call_id: created.id, call_type: created.type }, options);
+  join(options: ChatOptions = {}): Promise<Session> {
+    const { agentId, ...rest } = options;
+    return this.open({ start_voice: true, ...(agentId ? { agent_id: agentId } : {}) }, rest);
   }
 
   /**
@@ -270,12 +267,12 @@ export class Agent {
    * They join as a listener of their own rather than as the agent, so opening it twice puts
    * two people in the call instead of taking the first one's place.
    */
-  monitorURL(session: Session): Promise<string> {
+  async monitorURL(session: Session): Promise<string> {
+    if (!session.voice.started) {
+      throw new ConfigurationError("a conversation held in writing has no call to watch");
+    }
     return this.edge.monitorURLFor(
-      {
-        id: session.created.call_id ?? "",
-        type: session.created.call_type ?? DEFAULT_CALL_TYPE,
-      },
+      { id: session.id, type: DEFAULT_CALL_TYPE },
       { id: `monitor-${session.id}`, name: "Monitor" },
     );
   }
@@ -283,34 +280,39 @@ export class Agent {
   /**
    * Holds the conversation in writing rather than on a call.
    *
-   * No call is joined, nothing is transcribed and nothing is spoken. Everything between
-   * hearing a question and answering it is unchanged: the same instructions, the same
-   * skills handed to the same slower model, the same knowledge base.
+   * No call is joined, nothing is transcribed and nothing is spoken until
+   * `session.voice.start()`. Everything between hearing a question and answering it is
+   * unchanged: the same instructions, the same skills handed to the same slower model, the
+   * same knowledge base.
    */
   chat(options: ChatOptions = {}): Promise<Session> {
-    const { conversationId, agentId, ...rest } = options;
-    return this.open(
-      {
-        text: true,
-        ...(conversationId ? { conversation_id: conversationId } : {}),
-        ...(agentId ? { agent_id: agentId } : {}),
-      },
-      rest,
-    );
+    const { agentId, ...rest } = options;
+    return this.open(agentId ? { agent_id: agentId } : {}, rest);
+  }
+
+  /**
+   * Carries on a conversation held in writing, by the id of the session it was held in, and
+   * starts watching it. One that ended is reopened with what was said in it.
+   */
+  resume(id: string, options: SessionOptions = {}): Promise<Session> {
+    return this.client.agent(this.name).sessions.resume(id, { tools: this.tools, ...options });
   }
 
   /**
    * Answers a call that arrived on the dispatch socket.
    *
-   * The call already exists — somebody rang a number and the router put them in it — so
-   * nothing is created here. The number they reached is carried into the session, which is
-   * what lets the agent transfer them.
+   * Somebody rang a number and the router put them in the call of the session it names, so
+   * that session is opened here with voice on. The number they reached is carried into it,
+   * which is what lets the agent transfer them.
    */
-  answer(call: InboundCall, options: SessionOptions = {}): Promise<Session> {
+  async answer(call: InboundCall, options: SessionOptions = {}): Promise<Session> {
+    if (!call.sessionId) {
+      throw new ConfigurationError("the call names no session; attach its number again");
+    }
     return this.open(
       {
-        call_id: call.callId,
-        call_type: call.callType,
+        id: call.sessionId,
+        start_voice: true,
         ...(call.calledNumber ? { phone: { number: call.calledNumber } } : {}),
       },
       options,
@@ -320,15 +322,11 @@ export class Agent {
   /**
    * Answers a message written to an agent that is not running.
    *
-   * The reply is written into the channel the message came from, so whoever wrote it is
+   * The reply is written as the agent the message was addressed to, so whoever wrote it is
    * already reading the answer as it is generated.
    */
   reply(message: InboundMessage, options: SessionOptions = {}): Promise<Session> {
-    return this.chat({
-      ...options,
-      conversationId: `${message.channelType}:${message.channelId}`,
-      agentId: message.agentId,
-    });
+    return this.chat({ ...options, agentId: message.agentId });
   }
 
   /**
@@ -342,24 +340,24 @@ export class Agent {
       throw new ConfigurationError("a call needs a number to ring from and one to ring");
     }
 
-    const call = await this.edge.createCall({}, { id: this.userId, name: this.name });
-    // Placing the call makes its own routing rule pinned to the call named here, so the
-    // answered leg arrives in the call this agent is about to join. Attaching the number
-    // first would be a second rule for the same number.
+    // Placing the call makes its own routing rule pinned to the call of the session it names,
+    // so the answered leg arrives in the call this agent is about to join. Attaching the
+    // number first would be a second rule for the same number.
     const placed = await this.client.post("/v1/phone/calls", {
       body: {
         from,
         to,
-        call_id: call.id,
-        call_type: call.type,
         ...(this.options.costTracking ? { tags: this.options.costTracking } : {}),
       },
     });
+    if (!placed.session_id) {
+      throw new RouterError(0, "startCall", "the router placed the call for no session");
+    }
 
     return this.open(
       {
-        call_id: call.id,
-        call_type: call.type,
+        id: placed.session_id,
+        start_voice: true,
         navigating: true,
         phone: { number: from, vendor_call_id: placed.vendor_call_id },
       },
@@ -370,10 +368,10 @@ export class Agent {
   /**
    * Answers the next call to a number.
    *
-   * The number is pointed at a fresh Stream call, the agent joins it, and this waits until
-   * somebody rings and says something. The session it returns is the conversation with
-   * whoever that was, from their second sentence: the one that unblocked this is read here
-   * and does not arrive again on `events`.
+   * The number is attached, so every caller lands in a call of their own, and this waits for
+   * the router to hand the next one over, then until the caller says something. The session
+   * it returns is the conversation with whoever that was, from their second sentence: the
+   * one that unblocked this is read here and does not arrive again on `events`.
    *
    * For more than one call at a time, wait on the dispatch socket instead.
    */
@@ -382,16 +380,42 @@ export class Agent {
       throw new ConfigurationError("there is no number to answer on");
     }
 
-    const call = await this.edge.createCall({}, { id: this.userId, name: this.name });
     await this.client.post("/v1/phone/numbers/{e164}/attach", {
       path: { e164: number },
-      body: { call_id: call.id, call_type: call.type },
+      body: {},
     });
 
-    const session = await this.open(
-      { call_id: call.id, call_type: call.type, phone: { number } },
-      options,
-    );
+    const dispatch = new Dispatch({ client: this.client, capacity: 1 });
+    let arrived: (call: InboundCall) => void = () => undefined;
+    const ringing = new Promise<InboundCall>((resolve) => {
+      arrived = resolve;
+    });
+    let taken = false;
+    dispatch.onCall((call) => {
+      if (call.calledNumber !== number) {
+        throw new Error(`this agent is waiting on ${number}, not ${call.calledNumber}`);
+      }
+      if (taken) {
+        throw new Error("this agent is already answering a call");
+      }
+      taken = true;
+      arrived(call);
+    });
+    const running = dispatch.run();
+    const stopped = running.then(() => {
+      throw new RouterError(0, "waitForCall", "stopped waiting before anybody rang");
+    });
+    // Stopping after the call arrived ends `run` too, which is not a failure.
+    stopped.catch(() => undefined);
+    let call: InboundCall;
+    try {
+      call = await Promise.race([ringing, stopped]);
+    } finally {
+      dispatch.stop();
+    }
+    await running;
+
+    const session = await this.answer(call, options);
     for await (const event of session.events()) {
       if (event.kind === "heard") {
         return session;
@@ -448,7 +472,7 @@ export class Agent {
       ...(pipeline.tts ? { tts: pipeline.tts } : {}),
       ...(pipeline.sts ? { sts: pipeline.sts } : {}),
       ...(pipeline.voice ? { voice: pipeline.voice } : {}),
-      ...(pipeline.greeting ? { greeting: { text: pipeline.greeting } } : {}),
+      ...greetingOf(pipeline),
       ...(pipeline.video ? { video: pipeline.video } : {}),
       ...(harness ? { harness } : {}),
       ...(thinking ? { subagent: thinking } : {}),
@@ -483,7 +507,6 @@ export class Agent {
       user_id: this.userId,
       user_name: this.name,
       agent_id: this.userId,
-      ...(this.instructions ? { instructions: this.instructions } : {}),
       ...(await this.pipelineRequest(pipeline)),
       ...(this.options.costTracking ? { tags: this.options.costTracking } : {}),
       ...(this.memoryRequest()),
@@ -502,7 +525,7 @@ export class Agent {
       ...(pipeline.tts ? { tts: pipeline.tts } : {}),
       ...(pipeline.sts ? { sts: pipeline.sts } : {}),
       ...(pipeline.voice ? { voice: pipeline.voice } : {}),
-      ...(pipeline.greeting ? { greeting: { text: pipeline.greeting } } : {}),
+      ...greetingOf(pipeline),
       ...(pipeline.language ? { languages: [pipeline.language] } : {}),
       ...(pipeline.backchannel === undefined ? {} : { backchannel: pipeline.backchannel }),
       ...(pipeline.maxTokens ? { max_tokens: pipeline.maxTokens } : {}),
@@ -583,6 +606,19 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),
     ...(declared.dispatch ? { dispatch: declared.dispatch } : {}),
+  };
+}
+
+/** The pipeline's greeting as the wire takes it, or nothing when it has none. */
+function greetingOf(pipeline: Pipeline): { greeting?: Schemas["Greeting"] } {
+  if (!pipeline.greeting) {
+    return {};
+  }
+  return {
+    greeting: {
+      text: pipeline.greeting,
+      ...(pipeline.greetingMode ? { mode: pipeline.greetingMode } : {}),
+    },
   };
 }
 

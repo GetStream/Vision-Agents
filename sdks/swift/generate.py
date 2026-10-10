@@ -51,7 +51,9 @@ OPERATIONS = [
     "querySessions",
     "rewindSession",
     "search",
+    "startSessionVoice",
     "stopSession",
+    "stopSessionVoice",
     "updateSession",
 ]
 

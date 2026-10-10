@@ -405,10 +405,10 @@ public sealed class ClientTests
         using var client = Fixtures.Client(router);
 
         await client.PostAsync<Models.Session>("/v1/agents/sessions",
-            new CreateSessionRequest { ConversationId = "agent:1", Incognito = true }, TestContext.Current.CancellationToken);
+            new CreateSessionRequest { StartVoice = true, Incognito = true }, TestContext.Current.CancellationToken);
 
         var body = router.Only("POST", "/v1/agents/sessions").Body!.AsObject();
-        Assert.Equal(["conversation_id", "incognito"], body.Select(pair => pair.Key).Order());
+        Assert.Equal(["incognito", "start_voice"], body.Select(pair => pair.Key).Order());
         Assert.Equal(JsonValueKind.True, body["incognito"]!.GetValueKind());
     }
 

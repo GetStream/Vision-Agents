@@ -46,23 +46,26 @@ void main() {
       expect((await asked).id, 'r1');
       expect(router.last('POST /v1/agents/sessions/s1/responses').json, {
         'text': 'What are your hours?',
+        'request_id': matches(RegExp(r'^[0-9a-f]{32}$')),
       });
       await chat.close();
     });
 
-    test('a conversation kept in chat names each question, unless it shows an image', () async {
-      router
-        ..answer('POST /v1/agents/sessions', Answer(201, sessionJson(conversationId: 'agent:c1')))
-        ..answer('POST /v1/agents/sessions/s1/responses', Answer(202, responseJson('r1')));
+    test('names each question with a fresh request id, unless it shows an image', () async {
+      router.answer('POST /v1/agents/sessions/s1/responses', Answer(202, responseJson('r1')));
       final chat = await agents.chat();
 
       await chat.responses.create('Hello');
-      final named = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
+      final first = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
+      await chat.responses.create('Hello');
+      final again = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
       await chat.responses.create('Look', images: [const AgentImage('https://x/cat.png')]);
       final shown = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
 
-      expect(named['command_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
-      expect(shown.containsKey('command_id'), isFalse);
+      expect(first['request_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(again['request_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(again['request_id'], isNot(first['request_id']));
+      expect(shown.containsKey('request_id'), isFalse);
       await chat.close();
     });
 
@@ -136,7 +139,7 @@ void main() {
 
       socket.send(
         '{"type":"tool_call","id":"c1","name":"lookup_order",'
-        r'"arguments":"{\"order_id\":\"A-1042\"}","command_id":"","turn_id":"t1"}',
+        r'"arguments":"{\"order_id\":\"A-1042\"}","request_id":"","turn_id":"t1"}',
       );
 
       expect(await socket.next(), {
@@ -171,7 +174,7 @@ void main() {
       await chat.close();
     });
 
-    test("repeats a durable command's ids, so no other command can adopt the result", () async {
+    test("repeats a request's ids, so no other request can adopt the result", () async {
       final chat = await agents.chat(
         SessionOptions(
           tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon')],
@@ -180,7 +183,7 @@ void main() {
       final socket = await router.socket();
 
       socket.send(
-        '{"type":"tool_call","id":"c1","name":"now","arguments":"{}","command_id":"cmd-1","turn_id":"t1"}',
+        '{"type":"tool_call","id":"c1","name":"now","arguments":"{}","request_id":"cmd-1","turn_id":"t1"}',
       );
 
       expect(await socket.next(), {
@@ -188,7 +191,7 @@ void main() {
         'tool_call_id': 'c1',
         'output': 'noon',
         'error': '',
-        'command_id': 'cmd-1',
+        'request_id': 'cmd-1',
         'turn_id': 't1',
       });
       await chat.close();
@@ -227,7 +230,7 @@ void main() {
 
       socket
         ..send('{"type":"tool_call","id":"c1","name":"slow","arguments":"{}"}')
-        ..send('{"type":"tool_cancel","id":"c1","command_id":"","turn_id":""}');
+        ..send('{"type":"tool_cancel","id":"c1","request_id":"","turn_id":""}');
       await cancelled;
       release.complete('too late');
       socket.send('{"type":"tool_call","id":"c2","name":"fast","arguments":"{}"}');
@@ -362,6 +365,26 @@ void main() {
       expect(renamed.title, 'Billing');
       expect(chat.session.title, 'Billing');
       expect(chat.session.description, 'Refund');
+      expect(chat.isConnected, isTrue);
+      await chat.close();
+    });
+
+    test('voice puts a written conversation on its call and takes it off again', () async {
+      router
+        ..answer(
+          'POST /v1/agents/sessions/s1/voice',
+          Answer(200, {...sessionJson(), 'call_id': 's1', 'text': false}),
+        )
+        ..answer('DELETE /v1/agents/sessions/s1/voice', Answer(200, sessionJson()));
+      final chat = await agents.chat();
+
+      await chat.startVoice();
+      expect(chat.session.callId, 's1');
+      expect(chat.session.isText, isFalse);
+
+      await chat.stopVoice();
+      expect(chat.session.callId, isEmpty);
+      expect(chat.session.isText, isTrue);
       expect(chat.isConnected, isTrue);
       await chat.close();
     });

@@ -1,6 +1,8 @@
 package llmrouter
 
 import (
+	"github.com/openai/openai-go/v3/option"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/anthropic"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/atlascloud"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/baidu"
@@ -8,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/cerebras"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/cloudflare"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/coreweave"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/custom"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/deepinfra"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/deepseek"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/digitalocean"
@@ -76,6 +79,22 @@ func DefaultRegistry() *Registry {
 
 	registry.Register(xai.ProviderName, func(spec routing.Spec) (Provider, error) {
 		return Started(xai.New(xai.Options{Model: spec.Model, ReasoningEffort: spec.ReasoningEffort, Logger: spec.Logger}))
+	})
+
+	registry.Register(custom.ProviderName, func(spec routing.Spec) (Provider, error) {
+		endpoint := spec.Endpoint
+		var client option.HTTPClient
+		if endpoint.Client != nil {
+			client = endpoint.Client
+		}
+		return Started(custom.New(custom.Options{
+			Name:       spec.Model,
+			Model:      endpoint.Model,
+			BaseURL:    endpoint.BaseURL,
+			APIKey:     endpoint.APIKey,
+			HTTPClient: client,
+			Logger:     spec.Logger,
+		}))
 	})
 
 	// The hosts of open-weight models. They serve the same weights over the same

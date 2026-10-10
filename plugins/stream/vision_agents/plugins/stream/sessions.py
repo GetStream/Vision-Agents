@@ -18,7 +18,9 @@ from ._generated.api.default import (
     fork_session,
     get_session,
     query_sessions,
+    start_session_voice,
     stop_session,
+    stop_session_voice,
     update_session,
 )
 from ._generated.models import (
@@ -90,8 +92,9 @@ class SessionOptions:
     so they can find it again, which models to overrule, and whether to keep it at all.
 
     Attributes:
-        id: The UUID to hold the session by, for a caller that wants to know it before the
-            session exists. Empty lets the router generate one. One already taken is a 409.
+        id: The id to hold the session by, up to 64 of ``A-Za-z0-9_-``, for a caller that
+            wants to know it before the session exists. Empty lets the router generate one.
+            One already taken is a 409.
         title: What a person finds the conversation by later. Searched.
         description: A longer note, searched alongside the title.
         project_id: Groups conversations, and is carried as a cost label too.
@@ -100,14 +103,12 @@ class SessionOptions:
             cannot be searched for, listed or forked afterwards, which is the point of it.
             Otherwise a text conversation is kept in Stream Chat, so it outlives the session.
         model_overwrites: What to change about the models for this conversation alone.
-        call_id: The call to join. Empty holds the conversation in writing.
-        call_type: The Stream call type. Empty leaves the backend's default.
-        conversation_id: The channel an earlier session was held in, to resume.
+        start_voice: Have the agent join the session's own call, ``agent:<session id>``, as
+            soon as it opens. False holds the conversation in writing, and
+            ``Session.voice`` starts it later.
         history: The conversation so far, oldest first, for a backend that keeps its own
             thread: the model is handed it before the first response and the router
-            records none of it. Up to 100 messages; not with conversation_id. Server side
-            only.
-        instructions: Overrides the agent's own system prompt for this conversation.
+            records none of it. Up to 100 messages. Server side only.
         user_id: Who the conversation belongs to, for a backend opening one on somebody's
             behalf. A client acting for a user leaves it empty: the token already says who.
         connector_bindings: The connection to use for each of the agent's connector
@@ -126,11 +127,8 @@ class SessionOptions:
     incognito: bool = False
     model_overwrites: Optional[ModelOverwrites] = None
 
-    call_id: str = ""
-    call_type: str = ""
-    conversation_id: str = ""
+    start_voice: bool = False
     history: Optional[list[HistoryMessage]] = None
-    instructions: str = ""
     user_id: str = ""
     connector_bindings: Optional[dict[str, str]] = None
 
@@ -140,12 +138,10 @@ class SessionOptions:
 
 @dataclass
 class ForkOptions:
-    """What to change about a conversation while continuing it.
+    """What to change about a conversation while continuing it. A fork is held in writing.
 
     Attributes:
         agent: Continue with a different agent, which is one of the reasons to fork.
-        call_id: The call the fork joins, required when the parent held one and refused when
-            it did not: a voice conversation cannot be forked into a written one.
         messages: Carry the parent's history across. False starts the same configuration over
             from nothing, which is what comparing two answers to one opening question wants.
         response_id: Carry the history only up to the end of this response, so the fork
@@ -157,10 +153,8 @@ class ForkOptions:
     description: str = ""
     project_id: str = ""
     custom: Optional[dict[str, Any]] = None
-    instructions: str = ""
     incognito: bool = False
     model_overwrites: Optional[ModelOverwrites] = None
-    call_id: str = ""
     messages: bool = True
     response_id: str = ""
 
@@ -205,8 +199,8 @@ class Sessions:
         """Open a conversation and start watching it.
 
         Returns once the backend is holding the conversation, so a session that has opened is
-        one that is already listening. Without a ``call_id`` it is held in writing, which is
-        what a conversation somebody comes back to usually is.
+        one that is already listening. Without ``start_voice`` it is held in writing, which
+        is what a conversation somebody comes back to usually is.
         """
         options = options or SessionOptions()
         row = await _unwrapped(
@@ -216,6 +210,16 @@ class Sessions:
             f"opening a session with {self._agent}",
         )
         return await Session.watching(self._backend, row, self._functions, options)
+
+    async def resume(
+        self, id: str, options: Optional[SessionOptions] = None
+    ) -> "Session":
+        """Carry on a conversation held in writing, by the id of the session it was held
+        in, and start watching it. One that ended is reopened with what was said in it."""
+        row = await self.get(id)
+        return await Session.watching(
+            self._backend, row, self._functions, options or SessionOptions()
+        )
 
     async def query(self, query: Optional[Query] = None) -> SessionPage:
         """A page of the agent's conversations, most recently updated first, the ones that
@@ -259,7 +263,6 @@ class Sessions:
         title: Optional[str] = None,
         description: Optional[str] = None,
         custom: Optional[dict[str, Any]] = None,
-        instructions: Optional[str] = None,
         llm: Optional[str] = None,
         stt: Optional[str] = None,
         tts: Optional[str] = None,
@@ -274,9 +277,9 @@ class Sessions:
 
         Server side only. A field left as None is left as it is; an empty ``sts`` makes the
         session a cascade again, and an empty ``voice`` returns to the provider's default.
-        One that ended can still be renamed and relabelled; instructions, models and voice
-        need it running, and take over from its next turn. The agent config it started from
-        is untouched.
+        One that ended can still be renamed and relabelled; models and voice need it
+        running, and take over from its next turn. The agent config it started from is
+        untouched.
 
         Args:
             thinking: ``none``, ``minimal``, ``low``, ``medium`` or ``high``.
@@ -286,7 +289,6 @@ class Sessions:
         for name, value in (
             ("title", title),
             ("description", description),
-            ("instructions", instructions),
             ("llm", llm),
             ("stt", stt),
             ("tts", tts),
@@ -341,13 +343,11 @@ class Sessions:
             "title",
             "description",
             "project_id",
-            "instructions",
-            "call_type",
         ):
             if getattr(options, name):
                 setattr(request, name, getattr(options, name))
-        if options.conversation_id:
-            request.conversation_id = options.conversation_id
+        if options.start_voice:
+            request.start_voice = True
         if options.history:
             request.history = options.history
         if options.user_id:
@@ -361,13 +361,6 @@ class Sessions:
             request.model_overwrites = options.model_overwrites
         if options.custom:
             request.custom = CreateSessionRequestCustom.from_dict(options.custom)
-
-        if options.call_id:
-            request.call_id = options.call_id
-        else:
-            # Held in writing unless a call was named, which is what this surface is mostly
-            # for: a conversation somebody comes back to.
-            request.text = True
 
         if options.incognito:
             request.incognito = True
@@ -400,6 +393,46 @@ class Sessions:
         return body
 
 
+class Voice:
+    """The agent talking on a session's call, ``agent:<session id>``.
+
+    Typed and spoken turns are one conversation, with one history and one channel, whether
+    voice is on or not.
+    """
+
+    def __init__(self, backend: Backend, session_id: str, started: bool = False):
+        self._backend = backend
+        self._session_id = session_id
+        self._started = started
+
+    @property
+    def started(self) -> bool:
+        """Whether the agent is on the call, as far as this process knows."""
+        return self._started
+
+    async def start(self) -> SessionRow:
+        """Have the agent join the call and carry the conversation on there. Starting
+        voice that is already on does nothing."""
+        row = await _unwrapped(
+            start_session_voice.asyncio(
+                self._session_id, client=self._backend.client()
+            ),
+            f"starting voice on the session {self._session_id}",
+        )
+        self._started = True
+        return row
+
+    async def stop(self) -> SessionRow:
+        """Take the agent off the call and carry the conversation on in writing. Stopping
+        voice that is off does nothing."""
+        row = await _unwrapped(
+            stop_session_voice.asyncio(self._session_id, client=self._backend.client()),
+            f"stopping voice on the session {self._session_id}",
+        )
+        self._started = False
+        return row
+
+
 class Session:
     """One conversation, held in the acceleration backend.
 
@@ -416,9 +449,8 @@ class Session:
         socket: Socket,
     ):
         self.created = created
-        self.responses = Responses(
-            backend, created.id, kept=bool(created.conversation_id)
-        )
+        self.responses = Responses(backend, created.id)
+        self.voice = Voice(backend, created.id, started=bool(created.call_id))
 
         self._backend = backend
         self._functions = functions
@@ -502,10 +534,6 @@ class Session:
         """Abandon the reply being spoken."""
         await self._command({"type": "interrupt"})
 
-    async def set_instructions(self, instructions: str) -> None:
-        """Change what the agent is told to be, from the next turn."""
-        await self._command({"type": "instructions", "instructions": instructions})
-
     async def fork(self, options: Optional[ForkOptions] = None) -> "Session":
         """Continue this conversation as a new one.
 
@@ -526,8 +554,6 @@ class Session:
             "title",
             "description",
             "project_id",
-            "instructions",
-            "call_id",
             "response_id",
         ):
             if getattr(options, name):
@@ -554,7 +580,6 @@ class Session:
         title: Optional[str] = None,
         description: Optional[str] = None,
         custom: Optional[dict[str, Any]] = None,
-        instructions: Optional[str] = None,
         llm: Optional[str] = None,
         stt: Optional[str] = None,
         tts: Optional[str] = None,
@@ -565,14 +590,13 @@ class Session:
         max_output_tokens: Optional[int] = None,
         verbosity: Optional[str] = None,
     ) -> SessionRow:
-        """Change this conversation: its title, description, custom labels, instructions,
-        models or voice. See ``Sessions.update``."""
+        """Change this conversation: its title, description, custom labels, models or
+        voice. See ``Sessions.update``."""
         return await self._sessions().update(
             self.id,
             title=title,
             description=description,
             custom=custom,
-            instructions=instructions,
             llm=llm,
             stt=stt,
             tts=tts,
@@ -615,19 +639,17 @@ class Session:
         return client.chat.channel(kind, name)
 
     def video(self):
-        """The Stream call the agent is on, ready to be joined.
+        """The Stream call the agent is on, ``agent:<session id>``, ready to be joined.
 
         A conversation held in writing joins no call, and asking for one says so rather than
         handing back a call nobody is in.
         """
-        if not self.created.call_id:
+        if not self.voice.started:
             raise ValueError(
                 f"the session {self.id} is held in writing, so there is no call to join"
             )
         client = self._stream()
-        return client.video.call(
-            str(self.created.call_type or "agent"), str(self.created.call_id)
-        )
+        return client.video.call("agent", self.id)
 
     async def close(self) -> None:
         """Stop the conversation. Safe to call after it has already ended. What it recorded
@@ -733,8 +755,8 @@ class Session:
             "type": "tool_result",
             "tool_call_id": frame.get("id", ""),
         }
-        # A durable command's result is only accepted back with the command and turn it names.
-        for key in ("command_id", "turn_id"):
+        # A durable request's result is only accepted back with the request and turn it names.
+        for key in ("request_id", "turn_id"):
             if frame.get(key):
                 result[key] = frame[key]
         try:

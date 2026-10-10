@@ -31,6 +31,7 @@ from ._generated.models import (
     CreateSessionRequest,
     CreateSessionRequestTags,
     Greeting,
+    GreetingMode,
     Session,
     SessionMemory,
     SessionMemoryFilter,
@@ -81,6 +82,7 @@ class Accelerated(OmniLLM):
         config: str = "",
         language: Optional[str] = None,
         greeting: str = "",
+        greeting_mode: str = "",
         backchannel: bool = False,
         max_tokens: int = 0,
         tool_timeout: float = 0.0,
@@ -108,6 +110,8 @@ class Accelerated(OmniLLM):
             language: A language hint, which narrows the candidates in every modality.
             greeting: Said on joining without going through the model. Empty means the
                 agent waits to be spoken to.
+            greeting_mode: "exact", the default, or "variation", which has the model say
+                its own variation of the greeting on every call.
             backchannel: Murmur while a caller is still talking, the way a person does.
             max_tokens: A ceiling on a reply. Zero leaves the backend's default.
             tool_timeout: How long the model waits for one of your functions before
@@ -134,6 +138,7 @@ class Accelerated(OmniLLM):
         self.config = config
         self.language = language
         self.greeting = greeting
+        self.greeting_mode = greeting_mode
         self.backchannel = backchannel
         self.max_tokens = max_tokens
         self.tool_timeout = tool_timeout
@@ -234,9 +239,9 @@ class Accelerated(OmniLLM):
         command: dict[str, Any] = {"type": "respond", "text": text}
         if images:
             command["images"] = [image.as_image_dict() for image in images]
-        elif self.backend.acting_for and self._persisted():
-            # A conversation kept for an end user takes each message once, by its id.
-            command["command_id"] = uuid4().hex
+        else:
+            # Each message is taken once, by its id; the router refuses one alongside images.
+            command["request_id"] = uuid4().hex
         await self._command(command)
 
     async def simple_response(
@@ -291,10 +296,6 @@ class Accelerated(OmniLLM):
     async def stop_watching_video_track(self) -> None:
         """Nothing was being watched."""
 
-    def _persisted(self) -> bool:
-        """Whether the router keeps this conversation, which it names when it does."""
-        return self.session is not None and bool(self.session.conversation_id)
-
     async def _config_id(self, name: str) -> str:
         """Find the id of the stored config called `name`.
 
@@ -323,19 +324,17 @@ class Accelerated(OmniLLM):
             backchannel=self.backchannel,
         )
         if call.call_id:
-            request.call_id = call.call_id
-            request.call_type = call.call_type
-        else:
-            # Nothing to join, so the conversation is held in writing and the agent id is
-            # the channel it is written in.
-            request.text = True
+            # A session's call is agent:<session id>, so holding the session by the call's
+            # id puts the backend's agent in the call this one joined.
+            request.id = call.call_id
+            request.start_voice = True
         # Anything named here wins over the stored config, so a field this agent does not
         # decide is left out rather than sent empty: sending it would replace what the
         # config says with nothing.
-        if call.instructions:
-            request.instructions = call.instructions
         if self.greeting:
             request.greeting = Greeting(text=self.greeting)
+            if self.greeting_mode:
+                request.greeting.mode = GreetingMode(self.greeting_mode)
         if self.model:
             request.llm = self.model
         if self.stt:
@@ -494,8 +493,8 @@ class Accelerated(OmniLLM):
         call_id = frame.get("id", "")
         name = frame.get("name", "")
         result: dict[str, Any] = {"type": "tool_result", "tool_call_id": call_id}
-        # A durable command's result is only accepted back with the command and turn it names.
-        for key in ("command_id", "turn_id"):
+        # A durable request's result is only accepted back with the request and turn it names.
+        for key in ("request_id", "turn_id"):
             if frame.get(key):
                 result[key] = frame[key]
 

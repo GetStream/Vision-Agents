@@ -25,6 +25,9 @@ class Connector:
     is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
 
         Attributes:
+            channel (bool): The connector is an inbound channel: its manifest reads messages a provider delivers to the
+                router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A
+                dashboard warns on it before a delete that would end those replies.
             client (ConnectorClient): How the OAuth client a connection uses is registered, and how the client authenticates
                 at the token endpoint.
             created_at (datetime.datetime): When this revision was stored.
@@ -39,9 +42,14 @@ class Connector:
             scopes (list[str] | None): The scopes a consent asks for.
             category (str | Unset):
             description (str | Unset):
+            redirect_uri (str | Unset): The redirect URI an OAuth client registered for this connector has to list: where
+                every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by
+                /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when
+                ROUTER_PUBLIC_URL is not set, since no consent can start then.
             setup (ConnectorSetup | Unset): What a person does at the provider before the first consent.
     """
 
+    channel: bool
     client: ConnectorClient
     created_at: datetime.datetime
     custom: bool
@@ -53,10 +61,13 @@ class Connector:
     scopes: list[str] | None
     category: str | Unset = UNSET
     description: str | Unset = UNSET
+    redirect_uri: str | Unset = UNSET
     setup: ConnectorSetup | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        channel = self.channel
+
         client = self.client.to_dict()
 
         created_at = self.created_at.isoformat()
@@ -97,6 +108,8 @@ class Connector:
 
         description = self.description
 
+        redirect_uri = self.redirect_uri
+
         setup: dict[str, Any] | Unset = UNSET
         if not isinstance(self.setup, Unset):
             setup = self.setup.to_dict()
@@ -105,6 +118,7 @@ class Connector:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "channel": channel,
                 "client": client,
                 "created_at": created_at,
                 "custom": custom,
@@ -120,6 +134,8 @@ class Connector:
             field_dict["category"] = category
         if description is not UNSET:
             field_dict["description"] = description
+        if redirect_uri is not UNSET:
+            field_dict["redirect_uri"] = redirect_uri
         if setup is not UNSET:
             field_dict["setup"] = setup
 
@@ -132,6 +148,8 @@ class Connector:
         from ..models.connector_setup import ConnectorSetup
 
         d = dict(src_dict)
+        channel = d.pop("channel")
+
         client = ConnectorClient.from_dict(d.pop("client"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
@@ -200,6 +218,8 @@ class Connector:
 
         description = d.pop("description", UNSET)
 
+        redirect_uri = d.pop("redirect_uri", UNSET)
+
         _setup = d.pop("setup", UNSET)
         setup: ConnectorSetup | Unset
         if isinstance(_setup, Unset):
@@ -208,6 +228,7 @@ class Connector:
             setup = ConnectorSetup.from_dict(_setup)
 
         connector = cls(
+            channel=channel,
             client=client,
             created_at=created_at,
             custom=custom,
@@ -219,6 +240,7 @@ class Connector:
             scopes=scopes,
             category=category,
             description=description,
+            redirect_uri=redirect_uri,
             setup=setup,
         )
 

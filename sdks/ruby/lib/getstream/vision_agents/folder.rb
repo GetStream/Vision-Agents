@@ -133,10 +133,10 @@ module GetStream
       # not in a binary.
       READABLE = %w[.md .mdx .txt .rst .yaml .yml].freeze
 
-      SETTING_STRINGS = %w[name description mode stt tts sts voice llm harness subagent search greeting
-                           sandbox].freeze
+      SETTING_STRINGS = %w[name description mode stt tts sts voice llm harness subagent search sandbox].freeze
       SETTING_LISTS = %w[plugins keyterms].freeze
-      SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[speed tags video dispatch]).freeze
+      SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[greeting tags video dispatch]).freeze
+      GREETING_KEYS = %w[text mode].freeze
       VIDEO_KEYS = %w[source max_frames].freeze
       DISPATCH_KEYS = %w[incoming_call text].freeze
       PAGE_KEYS = %w[url title description refresh_hours].freeze
@@ -279,13 +279,21 @@ module GetStream
           raise ConfigurationError, "#{file}: tags should be a mapping" unless value.is_a?(Hash)
 
           value.to_h { |name, label| [name.to_s, label.to_s] }
-        when "speed"
-          raise ConfigurationError, "#{file}: speed should be a number" unless value.is_a?(Numeric)
-
-          value
+        when "greeting" then greeting(value, file)
         when "video" then video(value, file)
         when "dispatch" then dispatch(value, file)
         end
+      end
+
+      # What the agent says as it joins: text, and a mode of exact, said word for word, or
+      # variation, which the model rewords on every call. The router checks the mode.
+      def self.greeting(value, file)
+        raise ConfigurationError, "#{file}: greeting should be a mapping of text and mode" unless value.is_a?(Hash)
+
+        unknown = value.keys.map(&:to_s) - GREETING_KEYS
+        raise ConfigurationError, "#{file}: greeting has no #{unknown.join(", ")}" unless unknown.empty?
+
+        value.to_h { |key, setting| [key.to_s, setting&.to_s] }.compact
       end
 
       # What the agent leaves to the application's own dispatch worker, each "enabled" or

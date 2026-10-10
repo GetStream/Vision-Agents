@@ -89,17 +89,11 @@ void main() {
 
       final created = router.bodies.single;
       expect(created['agent'], 'support');
-      expect('${created['call_id']}', matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(created['start_voice'], isTrue);
+      expect(created.containsKey('call_id'), isFalse);
       expect(created.containsKey('text'), isFalse);
       expect(voice.session.isConnected, isTrue);
       expect(voice.state.value.isJoined, isFalse);
-      await voice.end();
-    });
-
-    test('starting on a call that is named uses that call', () async {
-      final voice = await VoiceSession.start(agents, callId: 'front-door');
-
-      expect(router.bodies.single['call_id'], 'front-door');
       await voice.end();
     });
 

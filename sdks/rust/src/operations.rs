@@ -850,6 +850,19 @@ impl Client {
         )
         .await
     }
+    /// Delete a custom connector
+    ///
+    /// `DELETE /v1/agents/connectors/{id}` (`deleteConnector`).
+    pub async fn delete_connector(&self, id: &str, query: &DeleteConnectorQuery) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/agents/connectors/{id}", id = segment(id)),
+            Some(query),
+            None::<&()>,
+            "deleteConnector",
+        )
+        .await
+    }
     /// List a connector's event destinations
     ///
     /// `GET /v1/agents/connectors/{id}/event-destinations` (`listConnectorEventDestinations`).
@@ -932,6 +945,22 @@ impl Client {
         )
         .await
     }
+    /// Read the OAuth client the router keeps for the app and a connector
+    ///
+    /// `GET /v1/agents/connectors/{id}/oauth-client` (`getConnectorOAuthClient`).
+    pub async fn get_connector_o_auth_client(
+        &self,
+        id: &str,
+    ) -> Result<types::StoredConnectorOAuthClient> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/connectors/{id}/oauth-client", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getConnectorOAuthClient",
+        )
+        .await
+    }
     /// Set the app's own OAuth client for a connector
     ///
     /// `PUT /v1/agents/connectors/{id}/oauth-client` (`setConnectorOAuthClient`).
@@ -994,19 +1023,19 @@ impl Client {
     }
     /// What a command in this conversation ended as
     ///
-    /// `GET /v1/agents/conversations/{cid}/commands/{command_id}` (`getConversationCommand`).
+    /// `GET /v1/agents/conversations/{cid}/commands/{request_id}` (`getConversationCommand`).
     pub async fn get_conversation_command(
         &self,
         cid: &str,
-        command_id: &str,
+        request_id: &str,
         query: &GetConversationCommandQuery,
     ) -> Result<types::CommandReceipt> {
         self.send(
             Method::GET,
             &format!(
-                "/v1/agents/conversations/{cid}/commands/{command_id}",
+                "/v1/agents/conversations/{cid}/commands/{request_id}",
                 cid = segment(cid),
-                command_id = segment(command_id)
+                request_id = segment(request_id)
             ),
             Some(query),
             None::<&()>,
@@ -1259,6 +1288,81 @@ impl Client {
         )
         .await
     }
+    /// The language models the calling customer serves themselves
+    ///
+    /// `GET /v1/agents/models` (`listCustomModels`).
+    pub async fn list_custom_models(
+        &self,
+        query: &ListCustomModelsQuery,
+    ) -> Result<types::CustomModelPage> {
+        self.send(
+            Method::GET,
+            "/v1/agents/models",
+            Some(query),
+            None::<&()>,
+            "listCustomModels",
+        )
+        .await
+    }
+    /// Add a model of the customer's own
+    ///
+    /// `POST /v1/agents/models` (`createCustomModel`).
+    pub async fn create_custom_model(
+        &self,
+        body: &types::CustomModelRequest,
+    ) -> Result<types::CustomModel> {
+        self.send(
+            Method::POST,
+            "/v1/agents/models",
+            None::<&()>,
+            Some(body),
+            "createCustomModel",
+        )
+        .await
+    }
+    /// One of the customer's models
+    ///
+    /// `GET /v1/agents/models/{id}` (`getCustomModel`).
+    pub async fn get_custom_model(&self, id: &str) -> Result<types::CustomModel> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/models/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getCustomModel",
+        )
+        .await
+    }
+    /// Replace a model
+    ///
+    /// `PUT /v1/agents/models/{id}` (`updateCustomModel`).
+    pub async fn update_custom_model(
+        &self,
+        id: &str,
+        body: &types::CustomModelRequest,
+    ) -> Result<types::CustomModel> {
+        self.send(
+            Method::PUT,
+            &format!("/v1/agents/models/{id}", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "updateCustomModel",
+        )
+        .await
+    }
+    /// Delete a model
+    ///
+    /// `DELETE /v1/agents/models/{id}` (`deleteCustomModel`).
+    pub async fn delete_custom_model(&self, id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/agents/models/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "deleteCustomModel",
+        )
+        .await
+    }
     /// The hosted MCP servers an agent may attach
     ///
     /// `GET /v1/agents/plugins` (`listPlugins`).
@@ -1375,18 +1479,18 @@ impl Client {
     }
     /// What is known about one durable command
     ///
-    /// `GET /v1/agents/sessions/{id}/commands/{command_id}` (`getSessionCommand`).
+    /// `GET /v1/agents/sessions/{id}/commands/{request_id}` (`getSessionCommand`).
     pub async fn get_session_command(
         &self,
         id: &str,
-        command_id: &str,
+        request_id: &str,
     ) -> Result<types::CommandReceipt> {
         self.send(
             Method::GET,
             &format!(
-                "/v1/agents/sessions/{id}/commands/{command_id}",
+                "/v1/agents/sessions/{id}/commands/{request_id}",
                 id = segment(id),
-                command_id = segment(command_id)
+                request_id = segment(request_id)
             ),
             None::<&()>,
             None::<&()>,
@@ -1396,18 +1500,18 @@ impl Client {
     }
     /// Stop one named command, and nothing else
     ///
-    /// `POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt` (`interruptSessionCommand`).
+    /// `POST /v1/agents/sessions/{id}/commands/{request_id}/interrupt` (`interruptSessionCommand`).
     pub async fn interrupt_session_command(
         &self,
         id: &str,
-        command_id: &str,
+        request_id: &str,
     ) -> Result<types::CommandReceipt> {
         self.send(
             Method::POST,
             &format!(
-                "/v1/agents/sessions/{id}/commands/{command_id}/interrupt",
+                "/v1/agents/sessions/{id}/commands/{request_id}/interrupt",
                 id = segment(id),
-                command_id = segment(command_id)
+                request_id = segment(request_id)
             ),
             None::<&()>,
             None::<&()>,
@@ -1429,23 +1533,6 @@ impl Client {
             None::<&()>,
             body,
             "forkSession",
-        )
-        .await
-    }
-    /// Change what the agent is told to be
-    ///
-    /// `PUT /v1/agents/sessions/{id}/instructions` (`setSessionInstructions`).
-    pub async fn set_session_instructions(
-        &self,
-        id: &str,
-        body: &types::InstructionsRequest,
-    ) -> Result<()> {
-        self.send(
-            Method::PUT,
-            &format!("/v1/agents/sessions/{id}/instructions", id = segment(id)),
-            None::<&()>,
-            Some(body),
-            "setSessionInstructions",
         )
         .await
     }
@@ -1609,6 +1696,32 @@ impl Client {
             None::<&()>,
             None::<&()>,
             "listSessionTools",
+        )
+        .await
+    }
+    /// Start voice on a session
+    ///
+    /// `POST /v1/agents/sessions/{id}/voice` (`startSessionVoice`).
+    pub async fn start_session_voice(&self, id: &str) -> Result<types::Session> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/sessions/{id}/voice", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "startSessionVoice",
+        )
+        .await
+    }
+    /// Stop voice on a session
+    ///
+    /// `DELETE /v1/agents/sessions/{id}/voice` (`stopSessionVoice`).
+    pub async fn stop_session_voice(&self, id: &str) -> Result<types::Session> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/agents/sessions/{id}/voice", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "stopSessionVoice",
         )
         .await
     }
@@ -3127,6 +3240,13 @@ pub struct FinishConnectorConsentQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
+/// The query string `deleteConnector` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct DeleteConnectorQuery {
+    /// Delete it even while connections or agent config bindings use it. Its connections are deleted with it, and the bindings are left in place, naming a connector that no longer exists.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
+}
 /// The query string `listConnectorEventDestinations` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ListConnectorEventDestinationsQuery {
@@ -3190,6 +3310,16 @@ pub struct ListAgentLogsQuery {
     pub cursor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+}
+/// The query string `listCustomModels` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListCustomModelsQuery {
+    /// Up to 200. Omitted is 25.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The `next_cursor` of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 /// The query string `listPlugins` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

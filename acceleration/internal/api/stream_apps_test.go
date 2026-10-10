@@ -178,8 +178,7 @@ func (s *StreamAppsSuite) TestAGuestIsCreatedInTheCallingApp() {
 func (s *StreamAppsSuite) TestASessionRecordsTheAppItWasCreatedIn() {
 	// The rows a session leaves behind say which app it was in, so what is finished or read
 	// back later is done there, wherever the customer acts by then.
-	call := s.utils.callID()
-	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call, CallType: pointerTo("agent")})
+	created := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true)})
 
 	s.Require().Eventually(func() bool {
 		stored, err := s.store.StoredSession(context.Background(), s.customerID(), created.Id)
@@ -191,41 +190,33 @@ func (s *StreamAppsSuite) TestASessionRecordsTheAppItWasCreatedIn() {
 	}, settleFor, 10*time.Millisecond, "the call row carries its app")
 }
 
-func (s *StreamAppsSuite) TestAnInboundCallOnALegacyNumberJoinsTheDeploymentAppsCall() {
-	// The number was attached before the customer had an app of its own, so callers still
-	// land in the deployment's app, and that is where the agent has to be.
-	call := s.attached(0)
+func (s *StreamAppsSuite) TestAPlacedCallMadeInTheDeploymentAppIsJoinedThere() {
+	// The call was placed before the customer had an app of its own, so the person who
+	// answers lands in the deployment's app, and that is where the agent has to be.
+	id := s.placedIn(0)
 
-	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call, CallType: pointerTo("agent")})
+	created := s.serverClient.createSession(CreateSessionRequest{Id: &id, StartVoice: pointerTo(true)})
 
 	s.Equal(int64(0), s.pinOf(created.Id))
 }
 
-func (s *StreamAppsSuite) TestAnInboundCallOnANumberInTheCustomersAppJoinsThere() {
-	call := s.attached(4242)
+func (s *StreamAppsSuite) TestAPlacedCallMadeInTheCustomersAppIsJoinedThere() {
+	id := s.placedIn(4242)
 
-	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call, CallType: pointerTo("agent")})
+	created := s.serverClient.createSession(CreateSessionRequest{Id: &id, StartVoice: pointerTo(true)})
 
 	s.Equal(int64(4242), s.pinOf(created.Id))
 }
 
-// attached is the call a number the customer holds routes callers into, attached in the
-// app given.
-func (s *StreamAppsSuite) attached(app int64) string { return s.attachedIn(app) }
-
-// attachedIn is the call a number the customer holds routes callers into, attached in the
-// app given.
-func (s *RouterSuite) attachedIn(app int64) string {
-	ctx := context.Background()
-	e164 := s.utils.number()
-	call := "phone-" + e164
-	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
-		E164: e164, Vendor: "telnyx", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+// placedIn is the id of a session a call was placed for in the app given: the answered
+// leg's lines are in that app, routed into the session's call.
+func (s *StreamAppsSuite) placedIn(app int64) string {
+	id := s.utils.uuid()
+	s.Require().NoError(s.store.RecordCallResource(context.Background(), &store.CallResource{
+		TrunkID: "trunk-" + s.utils.uuid(), RouteID: "route-" + s.utils.uuid(),
+		CallType: "agent", CallID: id, CustomerID: s.customerID(), StreamAppPK: app,
 	}))
-	s.Require().NoError(s.store.AttachNumber(ctx, s.customerID(), e164, store.NumberAttachment{
-		TrunkID: "trunk-" + s.utils.uuid(), StreamAppPK: app, CallType: "agent", CallID: call,
-	}))
-	return call
+	return id
 }
 
 // pinOf is the app a session was pinned to, read off its row once it is written.

@@ -68,9 +68,8 @@ func build(_ context.Context, message agents.InboundMessage) (*agents.Agent, err
 	llm := stream.Accelerated(stream.Config{ConfigID: message.ConfigID, LLM: "llm-fast"})
 
 	agent, err := agents.New(agents.Options{
-		Name:         "jean",
-		Instructions: "You are Jean, a friendly assistant. Keep answers to a sentence or two.",
-		LLM:          llm,
+		Name: "jean",
+		LLM:  llm,
 		// Whatever the channel was created with arrives unread, which is where a worker
 		// finds what the conversation is for and the router has no opinion about. Whoever
 		// created the channel decided what is in it, so it is a claim rather than a fact:

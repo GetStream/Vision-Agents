@@ -709,6 +709,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 		if policies != nil {
 			screen = policies.Screener(judging)
 		}
+		var models routing.ModelResolver
+		if configs != nil {
+			models = llmrouter.NewCustomModels(configs, secrets, settings.Models.PrivateEndpoints)
+		}
 		chat, err := llmrouter.New(llmrouter.Options{
 			Config:     section,
 			Registry:   llmrouter.DefaultRegistry(),
@@ -716,6 +720,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Live:       liveClient,
 			Quota:      limiter,
 			Gate:       gate,
+			Models:     models,
 			Screen:     screen,
 			ReplyHedge: settings.Agent.ReplyHedge,
 			Logger:     logger,
@@ -990,43 +995,44 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 
 	options := api.Options{
-		Routers:           routers,
-		Voices:            voiceService,
-		VoiceLibrary:      buildLibrary(logger),
-		KnowledgeURLs:     pages,
-		Store:             pgStore,
-		Configs:           configs,
-		Users:             endUsers,
-		Live:              liveClient,
-		Phone:             telephony,
-		Sessions:          sessions,
-		Relay:             sessionRelay,
-		Directory:         directory,
-		Streams:           streams,
-		Stream:            streamClients,
-		ProxyDeclaresKind: settings.Auth.ProxyDeclaresKind,
-		TrustAPIKeyHeader: settings.Stream.TrustAPIKeyHeader,
-		DenyRegistration:  settings.Stream.DenyRegistration,
-		HookSecret:        settings.Stream.APISecret,
-		Campaigns:         campaigns,
-		Simulations:       simulations,
-		PluginEvents:      events,
-		DLC:               registrations,
-		Gate:              dlcGate,
-		OpsKey:            settings.Auth.OpsKey,
-		Dispatch:          workers,
-		Quota:             limiter,
-		Policies:          policies,
-		Connectors:        connectors,
-		ConnectorSecrets:  connectorSecrets,
-		TrustedProxies:    trustedProxies,
-		AuthMode:          authMode,
-		DataRetention:     settings.DataMove.Retention,
-		CORSOrigins:       settings.CORSOrigins,
-		PublicURL:         settings.PublicURL,
-		DashboardURL:      settings.DashboardURL,
-		Auth:              authenticator,
-		Logger:            logger,
+		Routers:               routers,
+		Voices:                voiceService,
+		VoiceLibrary:          buildLibrary(logger),
+		KnowledgeURLs:         pages,
+		Store:                 pgStore,
+		Configs:               configs,
+		Users:                 endUsers,
+		Live:                  liveClient,
+		Phone:                 telephony,
+		Sessions:              sessions,
+		Relay:                 sessionRelay,
+		Directory:             directory,
+		Streams:               streams,
+		Stream:                streamClients,
+		ProxyDeclaresKind:     settings.Auth.ProxyDeclaresKind,
+		TrustAPIKeyHeader:     settings.Stream.TrustAPIKeyHeader,
+		DenyRegistration:      settings.Stream.DenyRegistration,
+		HookSecret:            settings.Stream.APISecret,
+		Campaigns:             campaigns,
+		Simulations:           simulations,
+		PluginEvents:          events,
+		DLC:                   registrations,
+		Gate:                  dlcGate,
+		OpsKey:                settings.Auth.OpsKey,
+		Dispatch:              workers,
+		Quota:                 limiter,
+		Policies:              policies,
+		Connectors:            connectors,
+		ConnectorSecrets:      connectorSecrets,
+		TrustedProxies:        trustedProxies,
+		AuthMode:              authMode,
+		DataRetention:         settings.DataMove.Retention,
+		PrivateModelEndpoints: settings.Models.PrivateEndpoints,
+		CORSOrigins:           settings.CORSOrigins,
+		PublicURL:             settings.PublicURL,
+		DashboardURL:          settings.DashboardURL,
+		Auth:                  authenticator,
+		Logger:                logger,
 	}
 	// A nil *resolver.Resolver in the interface would not be a nil interface, so the absence
 	// stays absent, and the events endpoint takes no events without it.
@@ -1036,6 +1042,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		// The proxy holds a connection's direct calls after a provider's 429, as the session's
 		// dispatcher holds its tool calls.
 		options.ConnectorLimiter = connectorLimiter
+		options.ProxyCallsPerMinute = settings.Connectors.ProxyCallsPerMinute
 		options.ConnectorEventSecrets = api.ConnectorEventSecrets(os.Getenv)
 		// The events endpoint hands it a provider app's messages; the conversation held on a
 		// thread channel, the agent's finished replies to them. Its texts pass the gate
@@ -1164,6 +1171,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// App mode's counterpart of warnWithoutMessageHook: the Stream apps provider apps are
+	// pinned to, read once, within the one attempt's time the deployment's own check gets.
+	go func() {
+		attempt, cancel := context.WithTimeout(ctx, learnTimeout)
+		defer cancel()
+		server.WarnWithoutMessageHooks(attempt)
+	}()
 
 	address := settings.Addr
 

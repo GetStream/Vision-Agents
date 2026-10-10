@@ -25,9 +25,11 @@ final readonly class ConnectorAuditEvent
         public ConnectionOwnerType|string $ownerType,
         // The authorization attempt a consent finished. Absent once the connection's user was deleted.
         public ?string $attemptId = null,
+        // The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that en...
+        public ?ConnectorAuditCredential $credential = null,
         // How long a proxy_call took until the provider's answer, in milliseconds. Absent for a grant.
         public ?int $latencyMs = null,
-        // Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the prov...
+        // Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted for a delete; for...
         public ?string $reason = null,
         // The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the...
         public ?string $requestId = null,
@@ -55,6 +57,7 @@ final readonly class ConnectorAuditEvent
             id: Json::string($data, 'id'),
             ownerType: Json::enum($data, 'owner_type', ConnectionOwnerType::class),
             attemptId: array_key_exists('attempt_id', $data) && $data['attempt_id'] !== null ? Json::string($data, 'attempt_id') : null,
+            credential: array_key_exists('credential', $data) && $data['credential'] !== null ? ConnectorAuditCredential::fromArray(Json::object($data, 'credential')) : null,
             latencyMs: array_key_exists('latency_ms', $data) && $data['latency_ms'] !== null ? Json::int($data, 'latency_ms') : null,
             reason: array_key_exists('reason', $data) && $data['reason'] !== null ? Json::string($data, 'reason') : null,
             requestId: array_key_exists('request_id', $data) && $data['request_id'] !== null ? Json::string($data, 'request_id') : null,
@@ -81,6 +84,9 @@ final readonly class ConnectorAuditEvent
         $out['owner_type'] = Json::enumValue($this->ownerType);
         if ($this->attemptId !== null) {
             $out['attempt_id'] = $this->attemptId;
+        }
+        if ($this->credential !== null) {
+            $out['credential'] = $this->credential->toArray();
         }
         if ($this->latencyMs !== null) {
             $out['latency_ms'] = $this->latencyMs;

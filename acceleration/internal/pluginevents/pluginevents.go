@@ -365,6 +365,10 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 		s.logger.Info("ignoring a plugin event notification", "plugin", sub.PluginID, "type", delivered.Type)
 		return Reply{Status: http.StatusOK, Body: map[string]string{}}
 	}
+	// Only a signed event is counted: not a stranger posting to the URL, nor the server
+	// checking the callback.
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathEventDelivery,
+		"customer", sub.CustomerID, "config", sub.ConfigID, "plugin", sub.PluginID, "event", sub.Event)
 	if delivered.Name != sub.Event || delivered.EventID == "" {
 		return Reply{Status: http.StatusBadRequest, Body: failure("not an event this subscription is for")}
 	}

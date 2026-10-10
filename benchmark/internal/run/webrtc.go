@@ -10,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/livekitrtc"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/streamrtc"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/target"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
 )
 
@@ -30,6 +31,10 @@ func runWebRTC(ctx context.Context, cfg Config, sc scenario.Scenario, audioMap m
 	callType := cfg.CallType
 	if callType == "" {
 		callType = "default"
+	}
+	// An acceleration session's agent is on the call agent:<session id>, whatever was asked for.
+	if cfg.TargetName == target.AccelerationName {
+		callType = "agent"
 	}
 
 	media, err := dial(ctx, cfg, callID, callType)

@@ -66,7 +66,9 @@ where it is just `$eq` with the other value.
   name into SQL; it is looked up in the allow-list and the column comes from there.
 - Only allow what an index serves. If `(customer_id, agent, created_at, id)` exists, `agent`
   gets `$eq` and `$in`; a field with no index gets nothing until it has one. Custom fields
-  get `$eq`/`$contains` only, which a GIN index on the JSONB column answers.
+  get `$eq`/`$contains` only, as containment (`@>`), which a `jsonb_path_ops` GIN index on
+  the JSONB column answers. Never `$exists` on a custom key: key-exists (`?`, `?|`, `?&`)
+  needs the default `jsonb_ops` index, which is several times larger.
 - `$and`/`$or` nest one level deep at most, and `$in` takes at most 100 values. Deeper trees
   are a 400; they are how a list becomes a table scan.
 - Scope is not a filter. The handler ANDs the customer, and for end users the user, onto

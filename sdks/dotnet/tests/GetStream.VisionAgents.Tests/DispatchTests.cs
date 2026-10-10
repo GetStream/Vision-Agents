@@ -66,7 +66,7 @@ public sealed class DispatchTests
     }
 
     [Fact]
-    public async Task AMessageWrittenToARunningSessionCarriesItsSessionAndCommand()
+    public async Task AMessageWrittenToARunningSessionCarriesItsSessionAndRequest()
     {
         await using var router = await TestRouter.StartAsync();
         JsonObject? done = null;
@@ -74,7 +74,7 @@ public sealed class DispatchTests
         {
             await peer.SendAsync(new
             {
-                type = "message", work_id = "w1", agent_id = "support", session_id = "s1", command_id = "cmd-1", user_id = "ada", text = "hi",
+                type = "message", work_id = "w1", agent_id = "support", session_id = "s1", request_id = "req-1", user_id = "ada", text = "hi",
             });
             done = await peer.ReceiveAsync("done");
         });
@@ -90,7 +90,7 @@ public sealed class DispatchTests
         await dispatch.RunAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("message", router.Only("GET", "/v1/dispatch").Query["handles"]);
-        Assert.Equal(("s1", "cmd-1", "", "hi"), (handed!.SessionId, handed.CommandId, handed.ChannelId, handed.Text));
+        Assert.Equal(("s1", "req-1", "", "hi"), (handed!.SessionId, handed.RequestId, handed.ChannelId, handed.Text));
         Assert.Equal("w1", done.Text("work_id"));
         Assert.Null(done!["error"]);
     }
@@ -104,12 +104,12 @@ public sealed class DispatchTests
         var dispatch = new Dispatch(new DispatchOptions { Client = client });
 
         var response = await dispatch.AnswerAsync(
-            new InboundMessage { ChannelId = "", SessionId = "s1", CommandId = "cmd-1", UserId = "ada", Text = "what does it cost?" },
+            new InboundMessage { ChannelId = "", SessionId = "s1", RequestId = "req-1", UserId = "ada", Text = "what does it cost?" },
             TestContext.Current.CancellationToken);
 
         Assert.Equal("r1", response.Id);
         var seen = router.Only("POST", "/v1/agents/sessions/s1/responses");
-        Assert.Equal(("what does it cost?", "cmd-1"), (seen.Body.Text("text"), seen.Body.Text("command_id")));
+        Assert.Equal(("what does it cost?", "req-1"), (seen.Body.Text("text"), seen.Body.Text("request_id")));
         Assert.Equal(("ada", "server"), (seen.Headers["X-Stream-User-Id"], seen.Headers["Stream-Auth-Type"]));
         Assert.True(Fixtures.Claims(seen.Headers["Authorization"])["server"]!.GetValue<bool>());
     }
@@ -126,7 +126,7 @@ public sealed class DispatchTests
             TestContext.Current.CancellationToken);
 
         var seen = router.Only("POST", "/v1/agents/sessions/s1/responses");
-        Assert.Null(seen.Body!["command_id"]);
+        Assert.Matches("^[0-9a-f]{32}$", seen.Body.Text("request_id"));
         Assert.Equal("ada", seen.Headers["X-Stream-User-Id"]);
         var claims = Fixtures.Claims(seen.Headers["Authorization"]);
         Assert.True(claims["server"]!.GetValue<bool>());
@@ -233,7 +233,7 @@ public sealed class DispatchTests
         var opened = router.Only("POST", "/v1/agents/sessions").Body;
         Assert.Equal(("support", "support-ch1"), (opened.Text("agent"), opened.Text("agent_id")));
         Assert.Null(opened!["incognito"]);
-        Assert.True(opened["text"]!.GetValue<bool>());
+        Assert.Null(opened["start_voice"]);
     }
 
     [Fact]

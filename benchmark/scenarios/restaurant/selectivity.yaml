@@ -23,7 +23,7 @@ turns:
       kind: during_agent_after_ms
       after_ms: 500
   - id: confirm
-    text: "Yes, Chen, two people, 7:30, no allergies. That other table is not talking to you."
+    text: "Yes, Chen, two people, 7:30, no allergies. Inside is fine, no high chair. That other table is not talking to you."
     trigger:
       kind: after_agent_turn
       delay_ms: 400

@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -163,6 +165,39 @@ func (s *StreamsSuite) TestAHistoryOfWhatTheModelCalledIsTakenBack() {
 
 	// A history the socket refused would come back as an error instead of an answer.
 	s.Equal(said, s.until(answering, "delta")["text"])
+}
+
+func (s *StreamsSuite) TestAModelOfTheCustomersOwnAnswersAtItsEndpointWithItsKey() {
+	name := "own-" + s.utils.uuid()
+	sealed, err := s.sealer.SealWithAAD("sk-own", []byte(s.customerID()))
+	s.Require().NoError(err)
+	s.Require().NoError(s.configs.CreateCustomModel(context.Background(), &store.CustomModel{
+		CustomerID: s.customerID(), Name: name, BaseURL: "https://8.8.8.8/v1", Model: "acme/tuned-27b",
+		APIKeySealed: sealed, KEKVersion: s.sealer.CurrentVersion(),
+	}))
+
+	answering := s.start("/v1/llm/stream", frame{"target": "custom/" + name})
+	started := s.nextFrame(answering)
+	s.Equal("started", started["type"])
+	s.Equal("custom", started["provider"])
+
+	s.Require().NoError(answering.WriteJSON(frame{"type": "respond", "id": "r1",
+		"messages": []frame{{"role": "user", "content": "hello"}}}))
+
+	s.Equal("https://8.8.8.8/v1 acme/tuned-27b sk-own", s.until(answering, "complete")["text"])
+}
+
+func (s *StreamsSuite) TestAnotherCustomersModelIsNotOneThisCustomerCanName() {
+	name := "theirs-" + s.utils.uuid()
+	s.Require().NoError(s.configs.CreateCustomModel(context.Background(), &store.CustomModel{
+		CustomerID: s.utils.uuid(), Name: name, BaseURL: "https://8.8.8.8/v1", Model: "acme/tuned-27b",
+	}))
+
+	answering := s.start("/v1/llm/stream", frame{"target": "custom/" + name})
+
+	refused := s.nextFrame(answering)
+	s.Equal("error", refused["type"])
+	s.Contains(refused["error"], "not one of this customer's models")
 }
 
 func (s *StreamsSuite) TestAPictureAModelCannotSeeIsRefusedRatherThanSentAnyway() {

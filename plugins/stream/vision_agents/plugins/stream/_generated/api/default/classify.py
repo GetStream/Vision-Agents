@@ -92,11 +92,11 @@ def sync_detailed(
 ) -> Response[ClassifyResult | ErrorResponse]:
     """Ask a classifier typed questions about a piece of text
 
-     The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to
-    the classifier at once and each comes back as a typed answer with the distribution behind it: the
-    probability a noul is true, which option of a choice fits, where a score lands. There is no
-    generated text, so there is nothing to stream: routed, failed over and billed like search, one
-    request one stat row.
+     The decision_model modality, reachable on its own rather than only inside a guardrail. Every
+    question is put to the decision model at once and each comes back as a typed answer with the
+    distribution behind it: the probability a noul is true, which option of a choice fits, where a score
+    lands. There is no generated text, so there is nothing to stream: routed, failed over and billed
+    like search, one request one stat row.
     Questions are answered independently and share the state's tokens between them, so ask everything
     that might matter in one request. A question that comes back unanswered fails the request rather
     than reading as a zero.
@@ -133,11 +133,11 @@ def sync(
 ) -> ClassifyResult | ErrorResponse | None:
     """Ask a classifier typed questions about a piece of text
 
-     The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to
-    the classifier at once and each comes back as a typed answer with the distribution behind it: the
-    probability a noul is true, which option of a choice fits, where a score lands. There is no
-    generated text, so there is nothing to stream: routed, failed over and billed like search, one
-    request one stat row.
+     The decision_model modality, reachable on its own rather than only inside a guardrail. Every
+    question is put to the decision model at once and each comes back as a typed answer with the
+    distribution behind it: the probability a noul is true, which option of a choice fits, where a score
+    lands. There is no generated text, so there is nothing to stream: routed, failed over and billed
+    like search, one request one stat row.
     Questions are answered independently and share the state's tokens between them, so ask everything
     that might matter in one request. A question that comes back unanswered fails the request rather
     than reading as a zero.
@@ -169,11 +169,11 @@ async def asyncio_detailed(
 ) -> Response[ClassifyResult | ErrorResponse]:
     """Ask a classifier typed questions about a piece of text
 
-     The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to
-    the classifier at once and each comes back as a typed answer with the distribution behind it: the
-    probability a noul is true, which option of a choice fits, where a score lands. There is no
-    generated text, so there is nothing to stream: routed, failed over and billed like search, one
-    request one stat row.
+     The decision_model modality, reachable on its own rather than only inside a guardrail. Every
+    question is put to the decision model at once and each comes back as a typed answer with the
+    distribution behind it: the probability a noul is true, which option of a choice fits, where a score
+    lands. There is no generated text, so there is nothing to stream: routed, failed over and billed
+    like search, one request one stat row.
     Questions are answered independently and share the state's tokens between them, so ask everything
     that might matter in one request. A question that comes back unanswered fails the request rather
     than reading as a zero.
@@ -208,11 +208,11 @@ async def asyncio(
 ) -> ClassifyResult | ErrorResponse | None:
     """Ask a classifier typed questions about a piece of text
 
-     The lcm modality, reachable on its own rather than only inside a guardrail. Every question is put to
-    the classifier at once and each comes back as a typed answer with the distribution behind it: the
-    probability a noul is true, which option of a choice fits, where a score lands. There is no
-    generated text, so there is nothing to stream: routed, failed over and billed like search, one
-    request one stat row.
+     The decision_model modality, reachable on its own rather than only inside a guardrail. Every
+    question is put to the decision model at once and each comes back as a typed answer with the
+    distribution behind it: the probability a noul is true, which option of a choice fits, where a score
+    lands. There is no generated text, so there is nothing to stream: routed, failed over and billed
+    like search, one request one stat row.
     Questions are answered independently and share the state's tokens between them, so ask everything
     that might matter in one request. A question that comes back unanswered fails the request rather
     than reading as a zero.
