@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -320,8 +321,8 @@ func (s *Server) putConnectionCredentials(ctx context.Context, request *putConne
 	return s.getConnection(ctx, &connectionRequest{ID: connection.ID})
 }
 
-// validateConnection resolves the connection's credential, lists its tools through each of its
-// sources, stores the list, and compares the granted scopes with what the tools need.
+// validateConnection checks the connection (checkConnection) and records what it found as the
+// connection's last validation (AI-1052), which GET and list show.
 func (s *Server) validateConnection(ctx context.Context, request *validateConnectionRequest) (*validationResponse, error) {
 	connection, err := s.reachableConnection(ctx, request.ID)
 	if err != nil {
@@ -330,10 +331,37 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 	if s.connectorResolver == nil || s.connectorTransports == nil {
 		return nil, errConnectionToolsOff
 	}
+	// The exchange is what the connection's client saw of the provider's answers: its last
+	// status is what the static rule (refusedStatic) and the record's code read.
+	observed, exchange := core.WithExchange(ctx)
+	response, err := s.checkConnection(observed, connection, request.Body, exchange)
+	if err != nil {
+		return nil, err
+	}
+	validation := response.Body
+	record := &store.ConnectorConnectionValidation{ConnectionID: connection.ID, Status: string(validation.Status),
+		Code: validation.Code, Error: validation.Error, CheckedAt: time.Now().UTC().Truncate(time.Microsecond)}
+	if validation.CheckedAt != nil {
+		record.CheckedAt = *validation.CheckedAt
+	}
+	if status := exchange.Status(); record.Code == "" && validation.Status != validationConnected && status >= http.StatusBadRequest {
+		record.Code = strconv.Itoa(status)
+	}
+	if err := s.store.PutConnectorConnectionValidation(ctx, record); err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
+// checkConnection resolves the connection's credential, lists its tools through each of its
+// sources, stores the list, and compares the granted scopes with what the tools need. ctx
+// carries exchange.
+func (s *Server) checkConnection(ctx context.Context, connection store.ConnectorConnection, body *ConnectionValidationRequest, exchange *core.Exchange) (*validationResponse, error) {
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
 	// The resolver refuses a connection that is not connected before anything is sent, and
 	// moves one whose renewal the provider refused; either way the row says what to do.
-	if _, err := s.connectorResolver.Resolve(ctx, ref, core.CredentialRequest{}); err != nil {
+	credential, err := s.connectorResolver.Resolve(ctx, ref, core.CredentialRequest{})
+	if err != nil {
 		return s.validationAfter(ctx, connection, err)
 	}
 	scheme, found := s.connectors.Schemes[connection.AuthScheme]
@@ -357,14 +385,23 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 		}
 		listed, err := source.Discover(ctx, binding)
 		if err != nil {
+			if refusedStatic(s.connectors.Schemes, connection.AuthScheme, exchange.Status()) {
+				// The 401 path's move (core.Transports invalidates a refused credential nothing
+				// renews), so the row and the validate say the same: replace the token or key.
+				// Invalidate leaves a connection whose credentials changed since Resolve alone.
+				moveErr := s.connectorResolver.Invalidate(ctx, ref, credential, core.Outcome{Kind: core.OutcomeInvalidGrant})
+				if moveErr != nil {
+					return nil, moveErr
+				}
+			}
 			return s.validationAfter(ctx, connection, err)
 		}
 		specs = append(specs, listed...)
 	}
 
 	var checked []string
-	if request.Body != nil {
-		checked = request.Body.Tools
+	if body != nil {
+		checked = body.Tools
 	}
 	missing, err := missingScopes(specs, checked, connection.GrantedScopes)
 	if err != nil {
@@ -438,6 +475,19 @@ func missingScopes(specs []core.ToolSpec, names, granted []string) ([]string, er
 	}
 	slices.Sort(missing)
 	return missing, nil
+}
+
+// refusedStatic says a validate whose provider last answered status moves a connection of
+// scheme to needs_reauthorization (Kanat, 2026-10-10, AI-1052): a bearer or api_key credential
+// answered with any 4xx (RFC 9110 section 15.5, client errors) but 429. A provider can refuse a
+// token it does not take with something other than 401: GitHub's MCP server answers a wrong
+// token with 400 Bad Request (E2E F60). A 429 (RFC 6585 section 4) says to wait, not that the
+// credential is wrong. A 5xx, a timeout or no answer says nothing about the credential, and
+// keeps the status. OAuth grants keep the 401-only rule, as tool calls do (core.Transports):
+// a reconnect, not a new token, is their remedy, and a 4xx on validate does not prove one is due.
+func refusedStatic(schemes map[string]core.Scheme, scheme string, status int) bool {
+	return core.IsStatic(schemes, scheme) && status >= http.StatusBadRequest && status < http.StatusInternalServerError &&
+		status != http.StatusTooManyRequests
 }
 
 // validationAfter is what a validate reports after the resolver or a source failed: the
