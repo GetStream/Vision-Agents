@@ -1828,6 +1828,10 @@ components:
           type: object
         label:
           type: string
+        last_validation:
+          $ref: '#/components/schemas/ConnectionLastValidation'
+          description: What the last validate (POST .../validate) found. Absent until the first one.
+          readOnly: true
         metadata:
           additionalProperties:
             type: string
@@ -1968,6 +1972,25 @@ components:
       required:
         - items
         - has_more
+      type: object
+    ConnectionLastValidation:
+      description: What a connection's last validate found, kept so it is still shown after the validate's answer is gone. A validate whose provider refused a bearer or api_key credential with any 4xx but 429 also moves the connection to needs_reauthorization.
+      properties:
+        checked_at:
+          description: When the validate ran.
+          format: date-time
+          type: string
+        code:
+          description: The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+          type: string
+        error:
+          description: Why the status is not connected, for a person to read, as the validate answered it. It never holds a credential.
+          type: string
+        status:
+          $ref: '#/components/schemas/ConnectionValidationStatus'
+      required:
+        - status
+        - checked_at
       type: object
     ConnectionOwner:
       additionalProperties: false
