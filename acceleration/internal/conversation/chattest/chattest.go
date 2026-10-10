@@ -398,6 +398,35 @@ func (db *store) unresolvableHook(hooks []json.RawMessage) string {
 	return ""
 }
 
+// numberTimes is a hook with its created_at and updated_at as GET /api/v2/app writes a
+// time, integer nanoseconds (GetStream/chat lib/core/api/encoding/json.go), every other
+// field as it was sent.
+func numberTimes(hook json.RawMessage) json.RawMessage {
+	decoder := json.NewDecoder(strings.NewReader(string(hook)))
+	if open, err := decoder.Token(); err != nil || open != json.Delim('{') {
+		return hook
+	}
+	out := []byte{'{'}
+	for decoder.More() {
+		key, _ := decoder.Token()
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return hook
+		}
+		name, _ := key.(string)
+		var at time.Time
+		if (name == "created_at" || name == "updated_at") && json.Unmarshal(value, &at) == nil && !at.IsZero() {
+			value = json.RawMessage(fmt.Sprint(at.UnixNano()))
+		}
+		if len(out) > 1 {
+			out = append(out, ',')
+		}
+		encoded, _ := json.Marshal(name)
+		out = append(append(append(out, encoded...), ':'), value...)
+	}
+	return append(out, '}')
+}
+
 // messagesIn returns a channel's messages in the order they were written.
 func (db *store) messagesIn(id string) []map[string]any {
 	messages := []map[string]any{}
@@ -458,6 +487,20 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(raw, &update)
 		if update.EventHooks != nil {
 			hooks := *update.EventHooks
+			// Stream decodes each hook's times into a time.Time, which takes only text
+			// (GetStream/chat monolith/types/event_hook.go; update_app.go): a number, which is
+			// how GET /api/v2/app writes one, is refused as invalid input.
+			for index, hook := range hooks {
+				var times struct {
+					CreatedAt time.Time `json:"created_at"`
+					UpdatedAt time.Time `json:"updated_at"`
+				}
+				if err := json.Unmarshal(hook, &times); err != nil {
+					refuse(w, "UpdateApp failed with error: "+err.Error())
+					return
+				}
+				hooks[index] = numberTimes(hook)
+			}
 			if refused := db.unresolvableHook(hooks); refused != "" {
 				// The status and code are unverified: the refusal was seen only as the Go
 				// client's error text, which carries the message alone.
