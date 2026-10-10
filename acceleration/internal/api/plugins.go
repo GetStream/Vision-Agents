@@ -67,6 +67,8 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 	if err != nil {
 		return nil, errUnknownConfig
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathListConfig,
+		"customer", customerID, "config", config.ID)
 
 	conns, err := s.store.PluginConnections(ctx, customerID, request.Id)
 	if err != nil {
@@ -210,6 +212,8 @@ func (s *Server) setPluginClient(ctx context.Context, request *setPluginClientRe
 	if plugin.Auth != "oauth" {
 		return nil, invalidRequest(plugin.Name + " has no OAuth login to set a client for")
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathClientSet,
+		"customer", customerID, "config", config.ID, "plugin", plugin.ID, "via", plugins.ViaPlugins)
 
 	owner := plugins.Owner{CustomerID: customerID, ConfigID: request.Id}
 	client := store.PluginClient{
@@ -258,6 +262,8 @@ func (s *Server) deletePluginClient(ctx context.Context, request *deletePluginCl
 	if _, err := s.configs.AgentConfig(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownConfig
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathClientDelete,
+		"customer", customerID, "config", request.Id, "plugin", request.PluginId, "via", plugins.Via(request.PluginId))
 	err := s.store.DeletePluginClient(ctx, customerID, request.Id, request.PluginId)
 	if errors.Is(err, store.ErrUnknownPluginClient) {
 		return nil, notFound("no client is set for this plugin")
@@ -296,7 +302,7 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 		return nil, err
 	}
 	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathLogin,
-		"customer", customerID, "config", config.ID, "plugin", plugin.ID)
+		"customer", customerID, "config", config.ID, "plugin", plugin.ID, "via", plugins.Via(plugin.ID))
 
 	instance := ""
 	if request.Body != nil {
@@ -348,6 +354,8 @@ func (s *Server) disconnectPlugin(ctx context.Context, request *disconnectPlugin
 	if _, ok := plugins.Lookup(string(request.PluginId)); !ok && !slices.ContainsFunc(config.MCPServers, named) {
 		return nil, errUnknownPlugin
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathDisconnect,
+		"customer", customerID, "config", config.ID, "plugin", string(request.PluginId), "via", plugins.Via(string(request.PluginId)))
 	// A user plugin has no login of the app's to drop, only its name and its client.
 	user := userOnly(config, string(request.PluginId))
 	if err := s.store.DeletePluginConnection(ctx, customerID, request.Id, string(request.PluginId)); err != nil && !user {
@@ -414,7 +422,7 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathCallback,
-		"customer", conn.CustomerID, "config", conn.ConfigID, "plugin", conn.PluginID)
+		"customer", conn.CustomerID, "config", conn.ConfigID, "plugin", conn.PluginID, "via", plugins.Via(conn.PluginID))
 
 	token, err := auth.Exchange(r.Context(), plugins.Owner{CustomerID: conn.CustomerID, ConfigID: conn.ConfigID}, plugins.Pending{
 		PluginID:      conn.PluginID,

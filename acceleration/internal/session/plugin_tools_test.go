@@ -460,7 +460,7 @@ func (s *UserPluginsSuite) TestASessionOfferingEachUserAPluginWarnsOfTheDeprecat
 	s.Empty(tools)
 	lines := s.deprecations(logged.String(), plugins.PathSessionTools)
 	s.Require().Len(lines, 1)
-	s.Contains(lines[0], "plugin=[google_calendar]")
+	s.Contains(lines[0], "plugin=[google_calendar] mcp_server=[]")
 }
 
 func (s *UserPluginsSuite) TestASessionOnServersWithPluginLoginsWarnsOfTheDeprecation() {
@@ -480,7 +480,7 @@ func (s *UserPluginsSuite) TestASessionOnServersWithPluginLoginsWarnsOfTheDeprec
 	s.Equal([]string{"notes__list_events"}, toolNames(tools), "opened as before")
 	lines := s.deprecations(logged.String(), plugins.PathSessionTools)
 	s.Require().Len(lines, 1)
-	s.Contains(lines[0], "plugin=\"[notes diary]\"", "the app's login and each user's are both the plugin system's")
+	s.Contains(lines[0], "plugin=[] mcp_server=\"[notes diary]\"", "the app's login and each user's are both the plugin system's, as MCP servers")
 }
 
 func (s *UserPluginsSuite) TestAnEndUserAskedToLogInWarnsOfTheDeprecation() {
@@ -492,7 +492,7 @@ func (s *UserPluginsSuite) TestAnEndUserAskedToLogInWarnsOfTheDeprecation() {
 	s.asksToConnect(result)
 	lines := s.deprecations(logged.String(), plugins.PathLogin)
 	s.Require().Len(lines, 1)
-	s.Contains(lines[0], "customer="+s.runner.customerID+" config="+s.runner.configID+" plugin=google_calendar")
+	s.Contains(lines[0], "customer="+s.runner.customerID+" config="+s.runner.configID+" plugin=google_calendar via=plugins")
 }
 
 // deprecations are the lines logged for a use of the plugin system on path by the suite's config.

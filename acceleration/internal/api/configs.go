@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/danielgtaylor/huma/v2"
@@ -889,14 +890,18 @@ func sandboxOptionsOf(config sandbox.Config) *SandboxOptions {
 }
 
 // warnPluginsSaved logs a config stored with plugins or plugin_events, which connectors
-// replace, so the configs still on them can be counted before the fields go.
+// replace, so the configs still on them can be counted before the fields go. unbound is how
+// many plugin entries no binding replaces: a migrated config keeps its entries beside the
+// bindings that replaced them, and a session ignores those (session.UnboundPlugins), so only
+// an unbound entry is real use.
 func (s *Server) warnPluginsSaved(config store.AgentConfig) {
 	if len(config.Plugins) == 0 && len(config.PluginEvents) == 0 {
 		return
 	}
 	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathConfigSave,
 		"customer", config.CustomerID, "config", config.ID,
-		"plugin", store.PluginNames(config.Plugins), "plugin_events", len(config.PluginEvents))
+		"plugin", store.PluginNames(config.Plugins), "unbound", len(session.UnboundPlugins(config)),
+		"plugin_events", len(config.PluginEvents))
 }
 
 // pluginEventsComplaint reports what is wrong with the events a config subscribes to, if

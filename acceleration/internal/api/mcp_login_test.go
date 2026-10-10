@@ -187,10 +187,24 @@ func (s *MCPLoginSuite) TestTheAppsLoginWarnsOfTheDeprecationWhereItStartsAndFin
 
 	started := deprecations(s.logged, plugins.PathLogin, created.Id)
 	s.Require().Len(started, 1)
-	s.Contains(started[0], "customer="+s.customerID()+" config="+created.Id+" plugin=crm")
-	s.Len(deprecations(s.logged, plugins.PathCallback, created.Id), 1)
+	s.Contains(started[0], "customer="+s.customerID()+" config="+created.Id+" plugin=crm via=mcp_servers")
+	callback := deprecations(s.logged, plugins.PathCallback, created.Id)
+	s.Require().Len(callback, 1)
+	s.Contains(callback[0], "plugin=crm via=mcp_servers")
 	s.NotContains(s.logged.String(), "crm-token")
 	s.Equal([]PluginConnection{{PluginId: "crm", Name: "crm", Status: PluginConnectionStatusConnected}}, s.logins(created.Id))
+}
+
+func (s *MCPLoginSuite) TestDroppingTheAppsLoginToAServerWarnsOfTheDeprecationAsAnMCPServer() {
+	created := s.create([]map[string]any{{"name": "crm", "url": crmURL}})
+	s.Require().Equal(http.StatusFound, s.callback(s.authorize(created.Id, "crm").Query().Get("state")))
+
+	status, _ := s.serverClient.call(http.MethodDelete, "/v1/agents/configs/"+created.Id+"/plugins/crm", nil)
+
+	s.Equal(http.StatusNoContent, status)
+	lines := deprecations(s.logged, plugins.PathDisconnect, created.Id)
+	s.Require().Len(lines, 1)
+	s.Contains(lines[0], "customer="+s.customerID()+" config="+created.Id+" plugin=crm via=mcp_servers")
 }
 
 func (s *MCPLoginSuite) TestALoginThatIsRefusedWarnsOfNothing() {

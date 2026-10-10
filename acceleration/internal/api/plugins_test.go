@@ -402,7 +402,7 @@ func (s *PluginsSuite) TestCreatingAConfigWithPluginsWarnsOfTheDeprecationAndSto
 
 	lines := deprecations(s.logged, plugins.PathConfigSave, created.Id)
 	s.Require().Len(lines, 1)
-	s.Contains(lines[0], "customer="+s.customerID()+" config="+created.Id+" plugin=[linear] plugin_events=0")
+	s.Contains(lines[0], "customer="+s.customerID()+" config="+created.Id+" plugin=[linear] unbound=1 plugin_events=0")
 	s.Equal([]string{"linear"}, s.storedPlugins(created.Id), "stored as before")
 }
 
@@ -469,11 +469,50 @@ func (s *PluginsSuite) TestAFinishedEndUserLoginWarnsOfTheDeprecationAndIsStored
 	s.Equal(http.StatusOK, status)
 	lines := deprecations(s.logged, plugins.PathCallback, agent.Id)
 	s.Require().Len(lines, 1)
-	s.Contains(lines[0], "customer="+s.customerID()+" config="+agent.Id+" plugin=google_calendar")
+	s.Contains(lines[0], "customer="+s.customerID()+" config="+agent.Id+" plugin=google_calendar via=plugins")
 	s.NotContains(s.logged.String(), "alices-token")
 	alices, err := s.store.UserPluginConnection(s.T().Context(), s.customerID(), agent.Id, "alice", "google_calendar")
 	s.Require().NoError(err)
 	s.Equal(store.PluginConnected, alices.Status)
+}
+
+func (s *PluginsSuite) TestEveryOtherUseOfThePluginAPIWarnsOfTheDeprecation() {
+	agent := s.data.createAgentConfig()
+	clientURL := "/v1/agents/configs/" + agent.Id + "/plugins/google_calendar"
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, clientURL+"/client",
+		SetPluginClientRequest{ClientId: "acme-client", ClientSecret: pointerTo("acme-secret"), User: pointerTo(true)}, nil))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+agent.Id+"/plugins", nil, nil))
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, clientURL+"/client", nil, nil))
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, clientURL, nil, nil))
+
+	prefix := "customer=" + s.customerID() + " config=" + agent.Id
+	set := deprecations(s.logged, plugins.PathClientSet, agent.Id)
+	s.Require().Len(set, 1)
+	s.Contains(set[0], prefix+" plugin=google_calendar via=plugins")
+	listed := deprecations(s.logged, plugins.PathListConfig, agent.Id)
+	s.Require().Len(listed, 1)
+	s.Contains(listed[0], prefix)
+	deleted := deprecations(s.logged, plugins.PathClientDelete, agent.Id)
+	s.Require().Len(deleted, 1)
+	s.Contains(deleted[0], prefix+" plugin=google_calendar via=plugins")
+	disconnected := deprecations(s.logged, plugins.PathDisconnect, agent.Id)
+	s.Require().Len(disconnected, 1)
+	s.Contains(disconnected[0], prefix+" plugin=google_calendar via=plugins")
+	s.NotContains(s.logged.String(), "acme-secret")
+}
+
+func (s *PluginsSuite) TestARefusedUseOfThePluginAPIWarnsOfNothing() {
+	agent := s.data.createAgentConfig()
+
+	status, _ := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+agent.Id+"/plugins/carrier-pigeon/client",
+		SetPluginClientRequest{ClientId: "x"})
+	s.Equal(http.StatusNotFound, status)
+	status, _ = s.serverClient.failure(http.MethodDelete, "/v1/agents/configs/"+agent.Id+"/plugins/carrier-pigeon", nil)
+	s.Equal(http.StatusNotFound, status)
+
+	s.Empty(deprecations(s.logged, plugins.PathClientSet, agent.Id))
+	s.Empty(deprecations(s.logged, plugins.PathDisconnect, agent.Id))
 }
 
 // storedPlugins are the names of the plugins the config is stored with.
@@ -492,7 +531,7 @@ func deprecations(logged *lockedLog, path, configID string) []string {
 	var found []string
 	for _, line := range strings.Split(logged.String(), "\n") {
 		if strings.Contains(line, `level=WARN msg="`+plugins.DeprecatedUse+`" path=`+path+" ") &&
-			strings.Contains(line, " config="+configID+" ") {
+			strings.Contains(line+" ", " config="+configID+" ") {
 			found = append(found, line)
 		}
 	}

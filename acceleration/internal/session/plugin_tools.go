@@ -107,8 +107,16 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, pluginAuth *
 		}
 	}
 	if len(used) > 0 {
+		catalog, servers := []string{}, []string{}
+		for _, name := range used {
+			if plugins.Via(name) == plugins.ViaPlugins {
+				catalog = append(catalog, name)
+			} else {
+				servers = append(servers, name)
+			}
+		}
 		logger.Warn(plugins.DeprecatedUse, "path", plugins.PathSessionTools,
-			"customer", spec.CustomerID, "config", spec.ConfigID, "plugin", used)
+			"customer", spec.CustomerID, "config", spec.ConfigID, "plugin", catalog, "mcp_server", servers)
 	}
 	if len(wanted) == 0 {
 		return nil, nil, unconnected
@@ -433,7 +441,7 @@ func (r *userPluginRunner) connect(ctx context.Context, plugin plugins.Plugin) (
 // to pass on as the plugin being unavailable here rather than as a fault to fix.
 func (r *userPluginRunner) authorize(ctx context.Context, plugin plugins.Plugin) (string, error) {
 	r.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathLogin,
-		"customer", r.customerID, "config", r.configID, "plugin", plugin.ID)
+		"customer", r.customerID, "config", r.configID, "plugin", plugin.ID, "via", plugins.Via(plugin.ID))
 	owner := plugins.Owner{CustomerID: r.customerID, ConfigID: r.configID}
 	pending, err := r.auth.StartAuthorize(ctx, owner, plugin, "")
 	if errors.Is(err, plugins.ErrClientRequired) {
