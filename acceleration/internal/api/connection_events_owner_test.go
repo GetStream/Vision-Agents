@@ -29,6 +29,20 @@ func (s *ConnectionEventsSuite) TestATestCopyOfAWatcherSubscribesToNothing() {
 	s.Never(func() bool { return len(s.held(connection)) != 1 }, time.Second, 50*time.Millisecond)
 }
 
+// TestATestCopyAloneSubscribesToNothing: a test copy never subscribes, even when no live config
+// declares the event.
+func (s *ConnectionEventsSuite) TestATestCopyAloneSubscribesToNothing() {
+	connection := s.connection()
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "copy-" + s.utils.uuid(), "mode": "text", "llm": "noted/noted-model",
+		"connectors": []map[string]any{s.binding(connection, issueCreated)}, "tags": map[string]string{store.DraftOfTag: s.utils.uuid()},
+	}, nil))
+
+	s.validate(connection)
+
+	s.Never(func() bool { return len(s.held(connection)) > 0 || len(s.atTheFake(connection)) > 0 }, time.Second, 50*time.Millisecond)
+}
+
 // TestASecondConfigDeclaringTheSameEventIsSubscribedOnce: two live configs bind one connection
 // (it is no channel, so both may) and declare one event. The oldest is subscribed, and an
 // event opens one conversation.

@@ -33,6 +33,19 @@ func (s *SlackChannelSuite) TestATestCopyOfTheAgentLeavesItAnswering() {
 	s.Require().True(found)
 	custom, _ := data["custom"].(map[string]any)
 	s.Equal(s.config.ID, custom[ConfigField], "the live config answers, not its test copy")
+	s.NotContains(s.logged.String(), "more than one agent config binds the connection", "a test copy is no second config")
+}
+
+// TestATestCopyAloneOnTheBotAnswersNothing: a test copy never answers a channel message, even
+// when no live config binds the connection.
+func (s *SlackChannelSuite) TestATestCopyAloneOnTheBotAnswersNothing() {
+	s.tagged(s.config.ID, `{"`+store.DraftOfTag+`":"`+s.utils.uuid()+`"}`)
+
+	status, _ := s.deliver(s.message("U0000ALICE", "Can you check the build?", "1759740000.004950", ""), 0)
+
+	s.Equal(http.StatusOK, status)
+	s.nothingLinked()
+	s.Contains(s.logged.String(), `msg="dropped an inbound message: one agent config must bind the connection it came in on"`)
 }
 
 // TestASecondAgentBindingTheBotIsRefusedNamingTheFirst: create, update, patch, sync and
@@ -97,6 +110,22 @@ func (s *SlackChannelSuite) TestASessionBindingOfTheBotIsNotRefused() {
 	})
 }
 
+// TestTwoAgentsMayBindAConnectionWhoseChannelReadsNoMessages: slack's channel block reads
+// signals only (slack.yaml: «Nobody writes to this connector»), so its connection answers no
+// message, and any number of configs may bind it, as on base.
+func (s *SlackChannelSuite) TestTwoAgentsMayBindAConnectionWhoseChannelReadsNoMessages() {
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned("slack"), &created))
+	for range 2 {
+		body := map[string]any{"name": "slack-tools-" + s.utils.uuid(), "mode": "text", "connectors": []map[string]any{{
+			"name": "slack", "connector_id": "slack", "tools": []map[string]any{},
+			"connection": map[string]any{"type": "fixed", "connection_id": created.ID},
+		}}}
+		status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/configs", body)
+		s.Equal(http.StatusCreated, status, string(payload))
+	}
+}
+
 // TestAConnectionTwoAgentsAlreadySharedIsAnsweredByTheOldest: configs that both bound the
 // connection before the 409 existed are not silenced: the oldest answers, the router warns
 // naming the other, and the other can still be saved with its binding.
@@ -118,12 +147,13 @@ func (s *SlackChannelSuite) TestAConnectionTwoAgentsAlreadySharedIsAnsweredByThe
 		map[string]any{"instructions": "Be brief."}, nil), "a save that keeps the binding is not a new bind")
 }
 
-// TestTwoAgentsBindingTheBotAtOnceAreOneOwner: two routers saving at once take turns, so one
-// save is stored and the other is the 409.
+// TestTwoAgentsBindingTheBotAtOnceAreOneOwner: saves at once, as from several routers, take
+// turns, so one is stored and the others are the 409. 64 at once stored 3 with the lock taken
+// out, in each of 3 runs; 16 at once stored 1 (author log).
 func (s *SlackChannelSuite) TestTwoAgentsBindingTheBotAtOnceAreOneOwner() {
 	bot := s.connectedBot("T0000RACE"+strings.ToUpper(s.utils.uuid()[:8]), "xoxb-synthetic-race")
-	const pairs = 8
-	statuses := make([]int, 2*pairs)
+	const writers = 64
+	statuses := make([]int, writers)
 	var started, done sync.WaitGroup
 	started.Add(1)
 	for i := range statuses {
@@ -172,14 +202,7 @@ func (s *SlackChannelSuite) TestAPluginMigrationCannotGiveTheBotASecondAgent() {
 // AI-1049, the oldest answers, and who a chat's replies reach is read with it (replyTo), so a
 // STOP keeps the reply away as it does with one config.
 func (s *LinqChannelSuite) TestAReplyAfterAStopOnALineTwoAgentsSharedIsNotSent() {
-	_, err := s.store.DB().ExecContext(context.Background(), "UPDATE agent_configs SET tags = ? WHERE id = ?",
-		`{"`+store.DraftOfTag+`":"`+s.config.ID+`"}`, s.config.ID)
-	s.Require().NoError(err)
-	newer := store.AgentConfig{CustomerID: s.customerID(), Name: "linq-newer-" + s.utils.uuid(), Mode: store.AgentModeText,
-		LLM: "noted/noted-model", Connectors: s.config.Connectors}
-	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &newer))
-	_, err = s.store.DB().ExecContext(context.Background(), "UPDATE agent_configs SET tags = '{}' WHERE id = ?", s.config.ID)
-	s.Require().NoError(err)
+	s.sharedAsBefore()
 	chat, person := s.utils.uuid(), "+12025550198"
 	s.deliver(s.received(chat, s.line, person, "Hi"), time.Now())
 	channel := s.threadChannel(chat)
@@ -238,5 +261,31 @@ func (s *SlackChannelSuite) sharedAsBefore() string {
 // tagged sets a config's tags in its row.
 func (s *SlackChannelSuite) tagged(configID, tags string) {
 	_, err := s.store.DB().ExecContext(context.Background(), "UPDATE agent_configs SET tags = ? WHERE id = ?", tags, configID)
+	s.Require().NoError(err)
+}
+
+// TestAnIMessageOnALineTwoAgentsSharedIsAnswered: the oldest config answers in the chat.
+func (s *LinqChannelSuite) TestAnIMessageOnALineTwoAgentsSharedIsAnswered() {
+	s.sharedAsBefore()
+	chat := s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, "+12025550197", "Hi, is my order ready?"), time.Now()))
+	channel := s.threadChannel(chat)
+	s.written(channel, 1)
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+
+	s.Equal("Noted.", s.took(1)[0].text)
+}
+
+// sharedAsBefore is a second live config binding the line, as a save before AI-1049 could
+// store one: made while the suite's config is tagged a test copy, which the store now needs.
+func (s *LinqChannelSuite) sharedAsBefore() {
+	_, err := s.store.DB().ExecContext(context.Background(), "UPDATE agent_configs SET tags = ? WHERE id = ?",
+		`{"`+store.DraftOfTag+`":"`+s.config.ID+`"}`, s.config.ID)
+	s.Require().NoError(err)
+	newer := store.AgentConfig{CustomerID: s.customerID(), Name: "linq-newer-" + s.utils.uuid(), Mode: store.AgentModeText,
+		LLM: "noted/noted-model", Connectors: s.config.Connectors}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &newer))
+	_, err = s.store.DB().ExecContext(context.Background(), "UPDATE agent_configs SET tags = '{}' WHERE id = ?", s.config.ID)
 	s.Require().NoError(err)
 }
