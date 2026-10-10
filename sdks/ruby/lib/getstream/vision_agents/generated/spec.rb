@@ -212,6 +212,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "deleteConnector" => {
+          method: :delete, path: "/v1/agents/connectors/{id}",
+          path_params: %w[id].freeze, query: %w[force].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "deleteConnectorEventDestination" => {
           method: :delete, path: "/v1/agents/connectors/{id}/event-destinations/{destination_id}",
           path_params: %w[id destination_id].freeze, query: [].freeze,
@@ -1540,7 +1546,7 @@ module GetStream
           required: %w[kind number].freeze, open: false
         }.freeze,
         "Connection" => {
-          properties: %w[account_id auth_scheme client connector_id created_at definition_broken_reason definition_revision definition_status expires_at granted_scopes id inputs label metadata owner revision status updated_at used_by].freeze,
+          properties: %w[account_id auth_scheme client connector_id created_at definition_broken_reason definition_revision definition_status expires_at granted_scopes id inputs label last_validation metadata owner revision status updated_at used_by].freeze,
           required: %w[id connector_id definition_revision definition_status owner auth_scheme inputs metadata status granted_scopes revision created_at updated_at used_by].freeze, open: false
         }.freeze,
         "ConnectionClient" => {
@@ -1558,6 +1564,10 @@ module GetStream
         "ConnectionInvocationPage" => {
           properties: %w[has_more items next_cursor].freeze,
           required: %w[items has_more].freeze, open: false
+        }.freeze,
+        "ConnectionLastValidation" => {
+          properties: %w[checked_at code error status].freeze,
+          required: %w[status checked_at].freeze, open: false
         }.freeze,
         "ConnectionOwner" => {
           properties: %w[type user_id].freeze,
@@ -1596,8 +1606,8 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "Connector" => {
-          properties: %w[category client created_at custom description id inputs name revision schemes scopes setup].freeze,
-          required: %w[id revision name custom schemes inputs scopes client created_at].freeze, open: false
+          properties: %w[category channel client created_at custom description id inputs name redirect_uri revision schemes scopes setup].freeze,
+          required: %w[id revision name custom schemes inputs scopes client channel created_at].freeze, open: false
         }.freeze,
         "ConnectorAuditCredential" => {
           properties: %w[access_expires_at access_fingerprint previous_access_fingerprint previous_refresh_fingerprint refresh_expires_at refresh_fingerprint rotated].freeze,

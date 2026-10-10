@@ -796,7 +796,10 @@ public sealed class Agent : IAsyncDisposable
             ? new Greeting { Text = greeting.Text, Mode = VisionAgentsClient.Blank(greeting.Mode) }
             : null;
         request.Sandbox = VisionAgentsClient.Blank(declared.Sandbox);
+        // Deprecated for connectors, but still what the router reads until plugins are removed.
+#pragma warning disable CS0612
         request.Plugins = declared.Plugins.Count > 0 ? [.. declared.Plugins] : null;
+#pragma warning restore CS0612
         request.Keyterms = declared.Keyterms.Count > 0 ? [.. declared.Keyterms] : null;
         request.Tags = declared.Tags.Count > 0 ? new Dictionary<string, string>(declared.Tags) : null;
         request.Video = declared.Video is { } video

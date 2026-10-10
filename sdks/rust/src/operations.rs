@@ -850,6 +850,19 @@ impl Client {
         )
         .await
     }
+    /// Delete a custom connector
+    ///
+    /// `DELETE /v1/agents/connectors/{id}` (`deleteConnector`).
+    pub async fn delete_connector(&self, id: &str, query: &DeleteConnectorQuery) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/agents/connectors/{id}", id = segment(id)),
+            Some(query),
+            None::<&()>,
+            "deleteConnector",
+        )
+        .await
+    }
     /// List a connector's event destinations
     ///
     /// `GET /v1/agents/connectors/{id}/event-destinations` (`listConnectorEventDestinations`).
@@ -3226,6 +3239,13 @@ pub struct FinishConnectorConsentQuery {
     pub iss: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+/// The query string `deleteConnector` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct DeleteConnectorQuery {
+    /// Delete it even while connections or agent config bindings use it. Its connections are deleted with it, and the bindings are left in place, naming a connector that no longer exists.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
 }
 /// The query string `listConnectorEventDestinations` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

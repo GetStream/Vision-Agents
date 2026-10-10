@@ -142,8 +142,10 @@ pub struct AgentConfig {
     pub mcp_servers: ::std::option::Option<::std::vec::Vec<McpServer>>,
     pub mode: AgentMode,
     pub name: ::std::string::String,
+    ///Deprecated: use the events of a fixed binding under connectors.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
+    ///Deprecated: use connectors, a binding to a connector.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -217,8 +219,10 @@ pub struct AgentConfigPatch {
     ///What the config is called, which is unique among the customer's own.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
+    ///Deprecated: use the events of a fixed binding under connectors.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
+    ///Deprecated: use connectors, a binding to a connector.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -292,10 +296,10 @@ pub struct AgentConfigRequest {
     pub mode: ::std::option::Option<AgentMode>,
     ///What the config is called, which is unique among the customer's own.
     pub name: ::std::string::String,
-    ///MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+    ///Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
-    ///Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+    ///Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -317,7 +321,7 @@ pub struct AgentConfigRequest {
     ///The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub subagent: ::std::option::Option<::std::string::String>,
-    ///Cost labels, carried onto every request a session using it makes.
+    ///Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds.
     #[serde(
         default,
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
@@ -369,7 +373,7 @@ pub struct AgentConnectorSelection {
     #[serde(rename = "type")]
     pub type_: AgentConnectorSelectionType,
 }
-///fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected.
+///fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2319,7 +2323,7 @@ pub struct Connection {
     ///Why the connector marked definition_revision broken. Present only when definition_status is broken.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub definition_broken_reason: ::std::option::Option<::std::string::String>,
-    ///The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there; until then it keeps this one.
+    ///The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again (PUT .../credentials) moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one.
     pub definition_revision: i64,
     pub definition_status: ConnectionDefinitionStatus,
     ///When the current credential expires. Absent when there is none or it does not.
@@ -2332,6 +2336,9 @@ pub struct Connection {
     pub inputs: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub label: ::std::option::Option<::std::string::String>,
+    ///What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub last_validation: ::std::option::Option<ConnectionLastValidation>,
     ///What the provider said about the account when it was connected, such as a workspace id. Empty until then.
     pub metadata: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
     pub owner: ConnectionOwner,
@@ -2364,7 +2371,7 @@ pub struct ConnectionCredentials {
     )]
     pub values: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
 }
-///current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until a consent connects it again, on the latest revision.
+///current when the connection reads its connector's latest revision, outdated when a later one exists, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2453,6 +2460,19 @@ pub struct ConnectionInvocationPage {
     ///Pass as cursor for the next page. Absent on the last one.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub next_cursor: ::std::option::Option<::std::string::String>,
+}
+///What a connection's last validate found, kept so it is still shown after the validate's answer is gone. A validate whose provider refused a bearer or api_key credential with any 4xx but 429 also moves the connection to needs_reauthorization.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ConnectionLastValidation {
+    ///When the validate ran.
+    pub checked_at: ::std::string::String,
+    ///The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub code: ::std::option::Option<::std::string::String>,
+    ///Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<::std::string::String>,
+    pub status: ConnectionValidationStatus,
 }
 ///Whose a connection is: the app's, which any of its agents may be bound to, or one user's.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -2657,7 +2677,7 @@ pub struct ConnectionValidation {
     ///When the tools were listed. Absent until a validate listed them.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub checked_at: ::std::option::Option<::std::string::String>,
-    ///What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, which only new credentials (PUT .../credentials) fix. More may be added.
+    ///What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub code: ::std::option::Option<::std::string::String>,
     pub connection_id: ::std::string::String,
@@ -2680,7 +2700,7 @@ pub struct ConnectionValidationRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tools: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
 }
-///connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, new credentials. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+///connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2748,6 +2768,8 @@ impl ::std::convert::TryFrom<::std::string::String> for ConnectionValidationStat
 pub struct Connector {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub category: ::std::option::Option<::std::string::String>,
+    ///The connector is an inbound channel: its manifest reads messages a provider delivers to the router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A dashboard warns on it before a delete that would end those replies.
+    pub channel: bool,
     pub client: ConnectorClient,
     ///When this revision was stored.
     pub created_at: ::std::string::String,
@@ -2761,6 +2783,9 @@ pub struct Connector {
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub inputs: ::std::option::Option<::std::vec::Vec<ConnectorInput>>,
     pub name: ::std::string::String,
+    ///The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub redirect_uri: ::std::option::Option<::std::string::String>,
     ///The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
     pub revision: i64,
     ///How a connection may authenticate, such as oauth2_code.
@@ -2871,7 +2896,7 @@ pub struct ConnectorAuditEvent {
     pub connection_id: ::std::string::String,
     pub connector_id: ::std::string::String,
     pub created_at: ::std::string::String,
-    ///The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens.
+    ///The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a user's erasure, a connector's delete, and a connection whose scheme does not name its tokens. A connection delete's row names the tokens it ended.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub credential: ::std::option::Option<ConnectorAuditCredential>,
     pub id: ::std::string::String,
@@ -3162,7 +3187,7 @@ pub struct ConnectorEventDestinationSecret {
     ///The Standard Webhooks signing secret, whsec_ and 32 random bytes in base64. Shown this once: keep it, no later response carries it.
     pub secret: ::std::string::String,
 }
-///Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there.
+///Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there. A Slack reply that does not mention the bot, in a thread the agent is not in yet, is unhandled when it arrives. If the mention that starts the thread arrives within 10 minutes, as when Slack retries the mention, the agent answers the reply too. The forward is not taken back, and no event says that the agent answered it.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -4216,7 +4241,7 @@ pub enum Equals {
 ///`ErrorDetail`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ErrorDetail {
-    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
     pub code: ::std::string::String,
     ///Where the code is explained.
     pub doc_url: ::std::string::String,
@@ -9480,10 +9505,10 @@ pub struct SyncAgentRequest {
     pub mode: ::std::option::Option<AgentMode>,
     ///What the config is called, which is also the directory's name.
     pub name: ::std::string::String,
-    ///MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+    ///Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
-    ///Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
+    ///Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]

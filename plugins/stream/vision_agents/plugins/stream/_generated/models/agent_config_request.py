@@ -93,7 +93,10 @@ class AgentConfigRequest:
         subagent (str | Unset): The slower model a voice agent hands its skills to, while the voice model keeps talking.
             Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the
             default subagent.
-        tags (AgentConfigRequestTags | Unset): Cost labels, carried onto every request a session using it makes.
+        tags (AgentConfigRequestTags | Unset): Cost labels, carried onto every request a session using it makes. A
+            config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel
+            connection and subscribes to no event, which stay with the live config, and it may bind a channel connection
+            another config binds.
         tools (AgentTools | Unset): How an agent is offered its plugin, MCP server and connector tools.
         tts (str | Unset):
         video (SessionVideo | Unset):

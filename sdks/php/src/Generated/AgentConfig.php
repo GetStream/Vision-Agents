@@ -33,8 +33,10 @@ final readonly class AgentConfig
         public ?string $llm = null,
         /** @var list<McpServer>|null */
         public ?array $mcpServers = null,
+        // Deprecated: use the events of a fixed binding under connectors.
         /** @var list<PluginEvent>|null */
         public ?array $pluginEvents = null,
+        // Deprecated: use connectors, a binding to a connector.
         /** @var list<mixed>|null */
         public ?array $plugins = null,
         public Sandbox|string|null $sandbox = null,

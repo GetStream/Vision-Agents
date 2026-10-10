@@ -234,10 +234,18 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string Name { get; set; } = default!;
 
+        /// <summary>
+        /// Deprecated: use the events of a fixed binding under connectors.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
+        [System.Obsolete]
         public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
 
+        /// <summary>
+        /// Deprecated: use connectors, a binding to a connector.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
+        [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("sandbox")]
@@ -363,10 +371,18 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string? Name { get; set; } = default!;
 
+        /// <summary>
+        /// Deprecated: use the events of a fixed binding under connectors.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
+        [System.Obsolete]
         public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
 
+        /// <summary>
+        /// Deprecated: use connectors, a binding to a connector.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
+        [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("sandbox")]
@@ -490,15 +506,17 @@ namespace GetStream.VisionAgents.Models
         public string Name { get; set; } = default!;
 
         /// <summary>
-        /// MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+        /// Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
+        [System.Obsolete]
         public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
 
         /// <summary>
-        /// Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+        /// Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
+        [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("sandbox")]
@@ -538,7 +556,7 @@ namespace GetStream.VisionAgents.Models
         public string? Subagent { get; set; } = default!;
 
         /// <summary>
-        /// Cost labels, carried onto every request a session using it makes.
+        /// Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tags")]
         public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
@@ -2718,7 +2736,7 @@ namespace GetStream.VisionAgents.Models
         public string? DefinitionBrokenReason { get; set; } = default!;
 
         /// <summary>
-        /// The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there; until then it keeps this one.
+        /// The connector's revision the connection reads: the one its grant was made on. Every consent runs on the connector's latest revision, and one that connects the connection moves it there. Saving a bearer or api_key connection's token or key again (PUT .../credentials) moves it there too, when that revision still takes the connection's scheme and inputs. Until then it keeps this one.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("definition_revision")]
         public long DefinitionRevision { get; set; } = default!;
@@ -2746,6 +2764,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("label")]
         public string? Label { get; set; } = default!;
+
+        /// <summary>
+        /// What the last validate (POST .../validate) of the connection's current credentials found. Absent until the first one, and again once new credentials are stored (a token saved, a consent finished, a refresh).
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("last_validation")]
+        public ConnectionLastValidation? LastValidation { get; set; } = default!;
 
         /// <summary>
         /// What the provider said about the account when it was connected, such as a workspace id. Empty until then.
@@ -2920,6 +2944,45 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("next_cursor")]
         public string? NextCursor { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// What a connection's last validate found, kept so it is still shown after the validate's answer is gone. A validate whose provider refused a bearer or api_key credential with any 4xx but 429 also moves the connection to needs_reauthorization.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ConnectionLastValidation
+    {
+
+        /// <summary>
+        /// When the validate ran.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("checked_at")]
+        public System.DateTimeOffset CheckedAt { get; set; } = default!;
+
+        /// <summary>
+        /// The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("code")]
+        public string? Code { get; set; } = default!;
+
+        /// <summary>
+        /// Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("status")]
+        public string Status { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -3171,7 +3234,7 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset? CheckedAt { get; set; } = default!;
 
         /// <summary>
-        /// What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, which only new credentials (PUT .../credentials) fix. More may be added.
+        /// What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string? Code { get; set; } = default!;
@@ -3236,6 +3299,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("category")]
         public string? Category { get; set; } = default!;
 
+        /// <summary>
+        /// The connector is an inbound channel: its manifest reads messages a provider delivers to the router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A dashboard warns on it before a delete that would end those replies.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("channel")]
+        public bool Channel { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("client")]
         public ConnectorClient Client { get; set; } = new ConnectorClient();
 
@@ -3268,6 +3337,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string Name { get; set; } = default!;
+
+        /// <summary>
+        /// The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("redirect_uri")]
+        public System.Uri? RedirectUri { get; set; } = default!;
 
         /// <summary>
         /// The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected.
@@ -3393,7 +3468,7 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset CreatedAt { get; set; } = default!;
 
         /// <summary>
-        /// The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens.
+        /// The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a user's erasure, a connector's delete, and a connection whose scheme does not name its tokens. A connection delete's row names the tokens it ended.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("credential")]
         public ConnectorAuditCredential? Credential { get; set; } = default!;
@@ -4821,7 +4896,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
+        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string Code { get; set; } = default!;
@@ -10131,15 +10206,17 @@ namespace GetStream.VisionAgents.Models
         public string Name { get; set; } = default!;
 
         /// <summary>
-        /// MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+        /// Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
+        [System.Obsolete]
         public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
 
         /// <summary>
-        /// Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
+        /// Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
+        [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("sandbox")]

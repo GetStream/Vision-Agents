@@ -16,6 +16,8 @@ use GetStream\VisionAgents\Json;
 final readonly class Connector
 {
     public function __construct(
+        // The connector is an inbound channel: its manifest reads messages a provider delivers to the router, which a...
+        public bool $channel,
         public ConnectorClient $client,
         // When this revision was stored.
         public \DateTimeImmutable $createdAt,
@@ -37,6 +39,8 @@ final readonly class Connector
         public array $scopes,
         public ?string $category = null,
         public ?string $description = null,
+        // The redirect URI an OAuth client registered for this connector has to list: where every consent of this dep...
+        public ?string $redirectUri = null,
         // What a person does at the provider before the first consent, such as registering an OAuth client. Absent wh...
         public ?ConnectorSetup $setup = null,
     ) {
@@ -48,6 +52,7 @@ final readonly class Connector
     public static function fromArray(array $data): self
     {
         return new self(
+            channel: Json::bool($data, 'channel'),
             client: ConnectorClient::fromArray(Json::object($data, 'client')),
             createdAt: Json::date($data, 'created_at'),
             custom: Json::bool($data, 'custom'),
@@ -59,6 +64,7 @@ final readonly class Connector
             scopes: Json::strings($data, 'scopes'),
             category: array_key_exists('category', $data) && $data['category'] !== null ? Json::string($data, 'category') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
+            redirectUri: array_key_exists('redirect_uri', $data) && $data['redirect_uri'] !== null ? Json::string($data, 'redirect_uri') : null,
             setup: array_key_exists('setup', $data) && $data['setup'] !== null ? ConnectorSetup::fromArray(Json::object($data, 'setup')) : null,
         );
     }
@@ -71,6 +77,7 @@ final readonly class Connector
     public function toArray(): array
     {
         $out = [];
+        $out['channel'] = $this->channel;
         $out['client'] = $this->client->toArray();
         $out['created_at'] = Json::dateValue($this->createdAt);
         $out['custom'] = $this->custom;
@@ -85,6 +92,9 @@ final readonly class Connector
         }
         if ($this->description !== null) {
             $out['description'] = $this->description;
+        }
+        if ($this->redirectUri !== null) {
+            $out['redirect_uri'] = $this->redirectUri;
         }
         if ($this->setup !== null) {
             $out['setup'] = $this->setup->toArray();

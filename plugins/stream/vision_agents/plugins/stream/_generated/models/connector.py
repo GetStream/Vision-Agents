@@ -25,6 +25,9 @@ class Connector:
     is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
 
         Attributes:
+            channel (bool): The connector is an inbound channel: its manifest reads messages a provider delivers to the
+                router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A
+                dashboard warns on it before a delete that would end those replies.
             client (ConnectorClient): How the OAuth client a connection uses is registered, and how the client authenticates
                 at the token endpoint.
             created_at (datetime.datetime): When this revision was stored.
@@ -46,6 +49,7 @@ class Connector:
             setup (ConnectorSetup | Unset): What a person does at the provider before the first consent.
     """
 
+    channel: bool
     client: ConnectorClient
     created_at: datetime.datetime
     custom: bool
@@ -62,6 +66,8 @@ class Connector:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        channel = self.channel
+
         client = self.client.to_dict()
 
         created_at = self.created_at.isoformat()
@@ -112,6 +118,7 @@ class Connector:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "channel": channel,
                 "client": client,
                 "created_at": created_at,
                 "custom": custom,
@@ -141,6 +148,8 @@ class Connector:
         from ..models.connector_setup import ConnectorSetup
 
         d = dict(src_dict)
+        channel = d.pop("channel")
+
         client = ConnectorClient.from_dict(d.pop("client"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
@@ -219,6 +228,7 @@ class Connector:
             setup = ConnectorSetup.from_dict(_setup)
 
         connector = cls(
+            channel=channel,
             client=client,
             created_at=created_at,
             custom=custom,

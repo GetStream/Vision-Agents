@@ -48,10 +48,10 @@ final readonly class SyncAgentRequest
         /** @var list<McpServer>|null */
         public ?array $mcpServers = null,
         public AgentMode|string|null $mode = null,
-        // MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+        // Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its p...
         /** @var list<PluginEvent>|null */
         public ?array $pluginEvents = null,
-        // Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects ea...
+        // Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object...
         /** @var list<mixed>|null */
         public ?array $plugins = null,
         public Sandbox|string|null $sandbox = null,

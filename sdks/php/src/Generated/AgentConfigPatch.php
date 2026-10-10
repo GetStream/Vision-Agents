@@ -36,8 +36,10 @@ final readonly class AgentConfigPatch
         public AgentMode|string|null $mode = null,
         // What the config is called, which is unique among the customer's own.
         public ?string $name = null,
+        // Deprecated: use the events of a fixed binding under connectors.
         /** @var list<PluginEvent>|null */
         public ?array $pluginEvents = null,
+        // Deprecated: use connectors, a binding to a connector.
         /** @var list<mixed>|null */
         public ?array $plugins = null,
         public Sandbox|string|null $sandbox = null,

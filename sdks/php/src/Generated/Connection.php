@@ -48,6 +48,8 @@ final readonly class Connection
         // When the current credential expires. Absent when there is none or it does not.
         public ?\DateTimeImmutable $expiresAt = null,
         public ?string $label = null,
+        // What the last validate (POST .../validate) of the connection's current credentials found. Absent until the...
+        public ?ConnectionLastValidation $lastValidation = null,
     ) {
     }
 
@@ -76,6 +78,7 @@ final readonly class Connection
             definitionBrokenReason: array_key_exists('definition_broken_reason', $data) && $data['definition_broken_reason'] !== null ? Json::string($data, 'definition_broken_reason') : null,
             expiresAt: array_key_exists('expires_at', $data) && $data['expires_at'] !== null ? Json::date($data, 'expires_at') : null,
             label: array_key_exists('label', $data) && $data['label'] !== null ? Json::string($data, 'label') : null,
+            lastValidation: array_key_exists('last_validation', $data) && $data['last_validation'] !== null ? ConnectionLastValidation::fromArray(Json::object($data, 'last_validation')) : null,
         );
     }
 
@@ -115,6 +118,9 @@ final readonly class Connection
         }
         if ($this->label !== null) {
             $out['label'] = $this->label;
+        }
+        if ($this->lastValidation !== null) {
+            $out['last_validation'] = $this->lastValidation->toArray();
         }
         return $out;
     }
