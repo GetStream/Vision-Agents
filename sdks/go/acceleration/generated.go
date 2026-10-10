@@ -2495,10 +2495,16 @@ type AgentConfig struct {
 	McpServers         *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
-	Mode         AgentMode      `json:"mode"`
-	Name         string         `json:"name"`
+	Mode AgentMode `json:"mode"`
+	Name string    `json:"name"`
+
+	// PluginEvents Deprecated: use the events of a fixed binding under connectors.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
-	Plugins      *[]PluginEntry `json:"plugins,omitempty"`
+
+	// Plugins Deprecated: use connectors, a binding to a connector.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2556,9 +2562,15 @@ type AgentConfigPatch struct {
 	Mode *AgentMode `json:"mode,omitempty"`
 
 	// Name What the config is called, which is unique among the customer's own.
-	Name         *string        `json:"name,omitempty"`
+	Name *string `json:"name,omitempty"`
+
+	// PluginEvents Deprecated: use the events of a fixed binding under connectors.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
-	Plugins      *[]PluginEntry `json:"plugins,omitempty"`
+
+	// Plugins Deprecated: use connectors, a binding to a connector.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -2626,10 +2638,12 @@ type AgentConfigRequest struct {
 	// Name What the config is called, which is unique among the customer's own.
 	Name string `json:"name"`
 
-	// PluginEvents MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+	// PluginEvents Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
-	// Plugins Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+	// Plugins Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
@@ -6724,10 +6738,12 @@ type SyncAgentRequest struct {
 	// Name What the config is called, which is also the directory's name.
 	Name string `json:"name"`
 
-	// PluginEvents MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+	// PluginEvents Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
-	// Plugins Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
+	// Plugins Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
@@ -7959,9 +7975,13 @@ type PatchAgentConfigJSONRequestBody = AgentConfigPatch
 type UpdateAgentConfigJSONRequestBody = AgentConfigRequest
 
 // AuthorizePluginJSONRequestBody defines body for AuthorizePlugin for application/json ContentType.
+//
+// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type AuthorizePluginJSONRequestBody = AuthorizePluginRequest
 
 // SetPluginClientJSONRequestBody defines body for SetPluginClient for application/json ContentType.
+//
+// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type SetPluginClientJSONRequestBody = SetPluginClientRequest
 
 // CreateConnectionJSONRequestBody defines body for CreateConnection for application/json ContentType.
@@ -8794,63 +8814,79 @@ type ClientInterface interface {
 
 	// ListConfigPlugins The plugin logins this agent holds
 	//
-	// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
+	// Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
 	//
 	// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DisconnectPlugin Drop a plugin login
 	//
+	// Deprecated: use deleteConnection.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	DisconnectPlugin(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizePluginWithBody Start a plugin login
 	//
-	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+	// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	AuthorizePluginWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizePlugin Start a plugin login
 	//
-	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+	// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	AuthorizePlugin(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeletePluginClient Drop the OAuth client an agent logs a plugin in with
 	//
+	// Deprecated: use deleteConnectorOAuthClient.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	DeletePluginClient(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetPluginClientWithBody Set the OAuth client an agent logs a plugin in with
 	//
-	// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+	// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetPluginClientWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetPluginClient Set the OAuth client an agent logs a plugin in with
 	//
-	// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+	// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetPluginClient(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnections List connections
@@ -9431,30 +9467,38 @@ type ClientInterface interface {
 
 	// ListPlugins The hosted MCP servers an agent may attach
 	//
-	// A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
+	// Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
 	//
 	// Corresponds with GET /v1/agents/plugins (the `ListPlugins` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ListPlugins(ctx context.Context, params *ListPluginsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PluginOAuthCallback Finish a plugin login
 	//
-	// The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
+	// Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
 	//
 	// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginOAuthCallback(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReceivePluginEvent Receive a plugin's MCP event
 	//
-	// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+	// Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
 	//
 	// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ReceivePluginEvent(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetPluginLogo A plugin's logo
 	//
-	// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+	// Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
 	//
 	// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateSessionWithBody Join a call as a voice agent
@@ -11671,9 +11715,10 @@ func (c *Client) GetAgentChanges(ctx context.Context, id string, reqEditors ...R
 
 // ListConfigPlugins The plugin logins this agent holds
 //
-// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
+// Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
 //
 // Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListConfigPluginsRequest(c.Server, id)
 	if err != nil {
@@ -11688,9 +11733,11 @@ func (c *Client) ListConfigPlugins(ctx context.Context, id string, reqEditors ..
 
 // DisconnectPlugin Drop a plugin login
 //
+// Deprecated: use deleteConnection.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) DisconnectPlugin(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDisconnectPluginRequest(c.Server, id, pluginId)
 	if err != nil {
@@ -11705,12 +11752,13 @@ func (c *Client) DisconnectPlugin(ctx context.Context, id string, pluginId strin
 
 // AuthorizePluginWithBody Start a plugin login
 //
-// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) AuthorizePluginWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizePluginRequestWithBody(c.Server, id, pluginId, contentType, body)
 	if err != nil {
@@ -11725,12 +11773,13 @@ func (c *Client) AuthorizePluginWithBody(ctx context.Context, id string, pluginI
 
 // AuthorizePlugin Start a plugin login
 //
-// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) AuthorizePlugin(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizePluginRequest(c.Server, id, pluginId, body)
 	if err != nil {
@@ -11745,9 +11794,11 @@ func (c *Client) AuthorizePlugin(ctx context.Context, id string, pluginId string
 
 // DeletePluginClient Drop the OAuth client an agent logs a plugin in with
 //
+// Deprecated: use deleteConnectorOAuthClient.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) DeletePluginClient(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeletePluginClientRequest(c.Server, id, pluginId)
 	if err != nil {
@@ -11762,12 +11813,13 @@ func (c *Client) DeletePluginClient(ctx context.Context, id string, pluginId str
 
 // SetPluginClientWithBody Set the OAuth client an agent logs a plugin in with
 //
-// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) SetPluginClientWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetPluginClientRequestWithBody(c.Server, id, pluginId, contentType, body)
 	if err != nil {
@@ -11782,12 +11834,13 @@ func (c *Client) SetPluginClientWithBody(ctx context.Context, id string, pluginI
 
 // SetPluginClient Set the OAuth client an agent logs a plugin in with
 //
-// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) SetPluginClient(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetPluginClientRequest(c.Server, id, pluginId, body)
 	if err != nil {
@@ -12998,9 +13051,10 @@ func (c *Client) GetAgentLog(ctx context.Context, id string, reqEditors ...Reque
 
 // ListPlugins The hosted MCP servers an agent may attach
 //
-// A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
+// Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
 //
 // Corresponds with GET /v1/agents/plugins (the `ListPlugins` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) ListPlugins(ctx context.Context, params *ListPluginsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListPluginsRequest(c.Server, params)
 	if err != nil {
@@ -13015,9 +13069,10 @@ func (c *Client) ListPlugins(ctx context.Context, params *ListPluginsParams, req
 
 // PluginOAuthCallback Finish a plugin login
 //
-// The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
+// Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
 //
 // Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) PluginOAuthCallback(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPluginOAuthCallbackRequest(c.Server, params)
 	if err != nil {
@@ -13032,9 +13087,10 @@ func (c *Client) PluginOAuthCallback(ctx context.Context, params *PluginOAuthCal
 
 // ReceivePluginEvent Receive a plugin's MCP event
 //
-// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+// Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
 //
 // Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) ReceivePluginEvent(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReceivePluginEventRequest(c.Server, token)
 	if err != nil {
@@ -13049,9 +13105,10 @@ func (c *Client) ReceivePluginEvent(ctx context.Context, token string, reqEditor
 
 // GetPluginLogo A plugin's logo
 //
-// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+// Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
 //
 // Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPluginLogoRequest(c.Server, pluginId)
 	if err != nil {
@@ -26176,69 +26233,85 @@ type ClientWithResponsesInterface interface {
 
 	// ListConfigPluginsWithResponse The plugin logins this agent holds
 	//
-	// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
+	// Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ListConfigPluginsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error)
 
 	// DisconnectPluginWithResponse Drop a plugin login
 	//
+	// Deprecated: use deleteConnection.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	DisconnectPluginWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error)
 
 	// AuthorizePluginWithBodyWithResponse Start a plugin login
 	//
-	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+	// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	AuthorizePluginWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
 
 	// AuthorizePluginWithResponse Start a plugin login
 	//
-	// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+	// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	AuthorizePluginWithResponse(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
 
 	// DeletePluginClientWithResponse Drop the OAuth client an agent logs a plugin in with
 	//
+	// Deprecated: use deleteConnectorOAuthClient.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	DeletePluginClientWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DeletePluginClientResponse, error)
 
 	// SetPluginClientWithBodyWithResponse Set the OAuth client an agent logs a plugin in with
 	//
-	// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+	// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetPluginClientWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error)
 
 	// SetPluginClientWithResponse Set the OAuth client an agent logs a plugin in with
 	//
-	// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+	// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	SetPluginClientWithResponse(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error)
 
 	// ListConnectionsWithResponse List connections
@@ -26893,38 +26966,46 @@ type ClientWithResponsesInterface interface {
 
 	// ListPluginsWithResponse The hosted MCP servers an agent may attach
 	//
-	// A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
+	// Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/plugins (the `ListPlugins` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ListPluginsWithResponse(ctx context.Context, params *ListPluginsParams, reqEditors ...RequestEditorFn) (*ListPluginsResponse, error)
 
 	// PluginOAuthCallbackWithResponse Finish a plugin login
 	//
-	// The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
+	// Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginOAuthCallbackWithResponse(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*PluginOAuthCallbackResponse, error)
 
 	// ReceivePluginEventWithResponse Receive a plugin's MCP event
 	//
-	// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+	// Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ReceivePluginEventWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceivePluginEventResponse, error)
 
 	// GetPluginLogoWithResponse A plugin's logo
 	//
-	// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+	// Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetPluginLogoWithResponse(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*GetPluginLogoResponse, error)
 
 	// CreateSessionWithBodyWithResponse Join a call as a voice agent
@@ -44348,11 +44429,13 @@ func (c *ClientWithResponses) GetAgentChangesWithResponse(ctx context.Context, i
 
 // ListConfigPluginsWithResponse The plugin logins this agent holds
 //
-// The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
+// Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) ListConfigPluginsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error) {
 	rsp, err := c.ListConfigPlugins(ctx, id, reqEditors...)
 	if err != nil {
@@ -44363,11 +44446,14 @@ func (c *ClientWithResponses) ListConfigPluginsWithResponse(ctx context.Context,
 
 // DisconnectPluginWithResponse Drop a plugin login
 //
+// Deprecated: use deleteConnection.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) DisconnectPluginWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error) {
 	rsp, err := c.DisconnectPlugin(ctx, id, pluginId, reqEditors...)
 	if err != nil {
@@ -44378,12 +44464,14 @@ func (c *ClientWithResponses) DisconnectPluginWithResponse(ctx context.Context, 
 
 // AuthorizePluginWithBodyWithResponse Start a plugin login
 //
-// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) AuthorizePluginWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
 	rsp, err := c.AuthorizePluginWithBody(ctx, id, pluginId, contentType, body, reqEditors...)
 	if err != nil {
@@ -44394,12 +44482,13 @@ func (c *ClientWithResponses) AuthorizePluginWithBodyWithResponse(ctx context.Co
 
 // AuthorizePluginWithResponse Start a plugin login
 //
-// Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
 	rsp, err := c.AuthorizePlugin(ctx, id, pluginId, body, reqEditors...)
 	if err != nil {
@@ -44410,11 +44499,14 @@ func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, i
 
 // DeletePluginClientWithResponse Drop the OAuth client an agent logs a plugin in with
 //
+// Deprecated: use deleteConnectorOAuthClient.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) DeletePluginClientWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DeletePluginClientResponse, error) {
 	rsp, err := c.DeletePluginClient(ctx, id, pluginId, reqEditors...)
 	if err != nil {
@@ -44425,12 +44517,14 @@ func (c *ClientWithResponses) DeletePluginClientWithResponse(ctx context.Context
 
 // SetPluginClientWithBodyWithResponse Set the OAuth client an agent logs a plugin in with
 //
-// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) SetPluginClientWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error) {
 	rsp, err := c.SetPluginClientWithBody(ctx, id, pluginId, contentType, body, reqEditors...)
 	if err != nil {
@@ -44441,12 +44535,13 @@ func (c *ClientWithResponses) SetPluginClientWithBodyWithResponse(ctx context.Co
 
 // SetPluginClientWithResponse Set the OAuth client an agent logs a plugin in with
 //
-// The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) SetPluginClientWithResponse(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error) {
 	rsp, err := c.SetPluginClient(ctx, id, pluginId, body, reqEditors...)
 	if err != nil {
@@ -45479,11 +45574,13 @@ func (c *ClientWithResponses) GetAgentLogWithResponse(ctx context.Context, id st
 
 // ListPluginsWithResponse The hosted MCP servers an agent may attach
 //
-// A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
+// Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/plugins (the `ListPlugins` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) ListPluginsWithResponse(ctx context.Context, params *ListPluginsParams, reqEditors ...RequestEditorFn) (*ListPluginsResponse, error) {
 	rsp, err := c.ListPlugins(ctx, params, reqEditors...)
 	if err != nil {
@@ -45494,11 +45591,13 @@ func (c *ClientWithResponses) ListPluginsWithResponse(ctx context.Context, param
 
 // PluginOAuthCallbackWithResponse Finish a plugin login
 //
-// The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
+// Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) PluginOAuthCallbackWithResponse(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*PluginOAuthCallbackResponse, error) {
 	rsp, err := c.PluginOAuthCallback(ctx, params, reqEditors...)
 	if err != nil {
@@ -45509,11 +45608,13 @@ func (c *ClientWithResponses) PluginOAuthCallbackWithResponse(ctx context.Contex
 
 // ReceivePluginEventWithResponse Receive a plugin's MCP event
 //
-// Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+// Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) ReceivePluginEventWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceivePluginEventResponse, error) {
 	rsp, err := c.ReceivePluginEvent(ctx, token, reqEditors...)
 	if err != nil {
@@ -45524,11 +45625,13 @@ func (c *ClientWithResponses) ReceivePluginEventWithResponse(ctx context.Context
 
 // GetPluginLogoWithResponse A plugin's logo
 //
-// The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+// Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) GetPluginLogoWithResponse(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*GetPluginLogoResponse, error) {
 	rsp, err := c.GetPluginLogo(ctx, pluginId, reqEditors...)
 	if err != nil {

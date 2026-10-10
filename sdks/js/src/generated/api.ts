@@ -613,7 +613,8 @@ export type paths = {
         };
         /**
          * The plugin logins this agent holds
-         * @description The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
+         * @deprecated
+         * @description Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
          */
         readonly get: operations["listConfigPlugins"];
         readonly put?: never;
@@ -636,7 +637,9 @@ export type paths = {
         readonly post?: never;
         /**
          * Drop a plugin login
-         * @description Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         * @deprecated
+         * @description Deprecated: use deleteConnection.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly delete: operations["disconnectPlugin"];
         readonly options?: never;
@@ -655,7 +658,8 @@ export type paths = {
         readonly put?: never;
         /**
          * Start a plugin login
-         * @description Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
+         * @deprecated
+         * @description Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["authorizePlugin"];
@@ -675,14 +679,17 @@ export type paths = {
         readonly get?: never;
         /**
          * Set the OAuth client an agent logs a plugin in with
-         * @description The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
+         * @deprecated
+         * @description Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly put: operations["setPluginClient"];
         readonly post?: never;
         /**
          * Drop the OAuth client an agent logs a plugin in with
-         * @description Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         * @deprecated
+         * @description Deprecated: use deleteConnectorOAuthClient.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly delete: operations["deletePluginClient"];
         readonly options?: never;
@@ -1524,7 +1531,8 @@ export type paths = {
         };
         /**
          * The hosted MCP servers an agent may attach
-         * @description A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
+         * @deprecated
+         * @description Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
          */
         readonly get: operations["listPlugins"];
         readonly put?: never;
@@ -1544,7 +1552,8 @@ export type paths = {
         };
         /**
          * A plugin's logo
-         * @description The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+         * @deprecated
+         * @description Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
          */
         readonly get: operations["getPluginLogo"];
         readonly put?: never;
@@ -1564,7 +1573,8 @@ export type paths = {
         };
         /**
          * Finish a plugin login
-         * @description The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
+         * @deprecated
+         * @description Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
          */
         readonly get: operations["pluginOAuthCallback"];
         readonly put?: never;
@@ -1586,7 +1596,8 @@ export type paths = {
         readonly put?: never;
         /**
          * Receive a plugin's MCP event
-         * @description Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
+         * @deprecated
+         * @description Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
          */
         readonly post: operations["receivePluginEvent"];
         readonly delete?: never;
@@ -3674,7 +3685,15 @@ export type components = {
             readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode: components["schemas"]["AgentMode"];
             readonly name: string;
+            /**
+             * @deprecated
+             * @description Deprecated: use the events of a fixed binding under connectors.
+             */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            /**
+             * @deprecated
+             * @description Deprecated: use connectors, a binding to a connector.
+             */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
@@ -3717,7 +3736,15 @@ export type components = {
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name?: string;
+            /**
+             * @deprecated
+             * @description Deprecated: use the events of a fixed binding under connectors.
+             */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            /**
+             * @deprecated
+             * @description Deprecated: use connectors, a binding to a connector.
+             */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
@@ -3761,9 +3788,15 @@ export type components = {
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name: string;
-            /** @description MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through. */
+            /**
+             * @deprecated
+             * @description Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+             */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
-            /** @description Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one. */
+            /**
+             * @deprecated
+             * @description Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+             */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];
@@ -7363,9 +7396,15 @@ export type components = {
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is also the directory's name. */
             readonly name: string;
-            /** @description MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives. */
+            /**
+             * @deprecated
+             * @description Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+             */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
-            /** @description Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it. */
+            /**
+             * @deprecated
+             * @description Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
+             */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             readonly sandbox?: components["schemas"]["Sandbox"];
             readonly sandbox_options?: components["schemas"]["SandboxOptions"];

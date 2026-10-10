@@ -61,10 +61,10 @@ def sync_detailed(
 ) -> Response[ErrorResponse]:
     """A plugin's logo
 
-     The image a card uses to show which plugin it is asking about, as an SVG. The path is
-    unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no
-    credential of this API's to send, and because the catalog is the same built-in list for every
-    customer, so there is nothing of anybody's here.
+     Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show
+    which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an
+    `<img>` in a chat client or a browser, which has no credential of this API's to send, and because
+    the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
 
     Args:
         plugin_id (str):
@@ -95,10 +95,10 @@ def sync(
 ) -> ErrorResponse | None:
     """A plugin's logo
 
-     The image a card uses to show which plugin it is asking about, as an SVG. The path is
-    unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no
-    credential of this API's to send, and because the catalog is the same built-in list for every
-    customer, so there is nothing of anybody's here.
+     Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show
+    which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an
+    `<img>` in a chat client or a browser, which has no credential of this API's to send, and because
+    the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
 
     Args:
         plugin_id (str):
@@ -124,10 +124,10 @@ async def asyncio_detailed(
 ) -> Response[ErrorResponse]:
     """A plugin's logo
 
-     The image a card uses to show which plugin it is asking about, as an SVG. The path is
-    unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no
-    credential of this API's to send, and because the catalog is the same built-in list for every
-    customer, so there is nothing of anybody's here.
+     Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show
+    which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an
+    `<img>` in a chat client or a browser, which has no credential of this API's to send, and because
+    the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
 
     Args:
         plugin_id (str):
@@ -156,10 +156,10 @@ async def asyncio(
 ) -> ErrorResponse | None:
     """A plugin's logo
 
-     The image a card uses to show which plugin it is asking about, as an SVG. The path is
-    unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no
-    credential of this API's to send, and because the catalog is the same built-in list for every
-    customer, so there is nothing of anybody's here.
+     Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show
+    which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an
+    `<img>` in a chat client or a browser, which has no credential of this API's to send, and because
+    the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
 
     Args:
         plugin_id (str):

@@ -83,7 +83,8 @@ def sync_detailed(
 ) -> Response[Any | ErrorResponse]:
     """Drop the OAuth client an agent logs a plugin in with
 
-     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+     Deprecated: use deleteConnectorOAuthClient.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -117,7 +118,8 @@ def sync(
 ) -> Any | ErrorResponse | None:
     """Drop the OAuth client an agent logs a plugin in with
 
-     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+     Deprecated: use deleteConnectorOAuthClient.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -146,7 +148,8 @@ async def asyncio_detailed(
 ) -> Response[Any | ErrorResponse]:
     """Drop the OAuth client an agent logs a plugin in with
 
-     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+     Deprecated: use deleteConnectorOAuthClient.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -178,7 +181,8 @@ async def asyncio(
 ) -> Any | ErrorResponse | None:
     """Drop the OAuth client an agent logs a plugin in with
 
-     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+     Deprecated: use deleteConnectorOAuthClient.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
