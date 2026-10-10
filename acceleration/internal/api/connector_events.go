@@ -315,7 +315,9 @@ func (s *Server) receiveEvent(w http.ResponseWriter, r *http.Request, body []byt
 	}
 	// Answered 200 like any verified delivery, so the provider does not send it again.
 	for _, rule := range event.Skipped {
-		s.logger.Debug("skipped a connector event's message", "connector", manifest.ID, "rule", rule)
+		// Info: a skip makes a delivered event vanish, which at a quieter level looks like the bot ignored it (AI-1053 F67).
+		s.logger.Info("skipped a connector event's message", "connector", manifest.ID,
+			"provider_app", app.ProviderAppID, "rule", rule)
 	}
 	for _, signal := range event.Signals {
 		if err := s.revokeAccount(r.Context(), manifest, signal, app.CustomerID); err != nil {
