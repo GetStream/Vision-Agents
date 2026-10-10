@@ -78,6 +78,10 @@ type Options struct {
 	// ThoughtChannel is set for a model that writes its thinking into the answer as
 	// Gemma's thought channel, so it is reported as thinking and never spoken.
 	ThoughtChannel bool
+	// ToolCallText is set for a model whose server can hand its native tool-call syntax back
+	// as text, as vLLM does with Gemma 4, so a call written as text is still made and never
+	// spoken.
+	ToolCallText bool
 	// Timeout bounds one response.
 	Timeout time.Duration
 	// HTTPClient replaces the default transport.
@@ -181,7 +185,10 @@ func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Strea
 			Provider:   l.options.Provider,
 			Model:      l.options.StatsModel,
 		},
-		&puller{llm: l, id: id, upstream: upstream, cancel: cancel, channel: l.channelSplitter()},
+		&puller{
+			llm: l, id: id, upstream: upstream, cancel: cancel,
+			channel: l.channelSplitter(), toolText: l.toolCallSplitter(params),
+		},
 	), nil
 }
 
@@ -239,6 +246,19 @@ func (l *LLM) channelSplitter() *channelSplitter {
 	return &channelSplitter{}
 }
 
+// toolCallSplitter is what takes tool calls written as text out of one reply, or nil for a
+// model that never writes them or a request that offers no tools.
+func (l *LLM) toolCallSplitter(params llm.ResponseParams) *toolCallSplitter {
+	if !l.options.ToolCallText || len(params.Tools) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(params.Tools))
+	for _, tool := range params.Tools {
+		names = append(names, tool.Name)
+	}
+	return newToolCallSplitter(names)
+}
+
 // forget releases a response that has settled.
 func (l *LLM) forget(id uint64) {
 	l.mu.Lock()
@@ -254,6 +274,9 @@ type puller struct {
 	cancel   context.CancelFunc
 	// channel takes the thought channel out of the answer, when the model writes one.
 	channel *channelSplitter
+	// toolText takes tool calls written as text out of the answer, and textCalls counts them.
+	toolText  *toolCallSplitter
+	textCalls int
 
 	err  error
 	done bool
@@ -313,12 +336,41 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 // text records a piece of the answer, as thinking when it is inside the thought channel.
 func (p *puller) text(w *llm.ResponseWriter, delta string) {
 	if p.channel == nil {
-		w.OutputText(delta)
+		p.answer(w, delta)
 		return
 	}
 	answer, thought := p.channel.Write(delta)
 	w.ReasoningText(thought)
-	w.OutputText(answer)
+	p.answer(w, answer)
+}
+
+// answer records a piece of what the model said, making any tool call written in it.
+func (p *puller) answer(w *llm.ResponseWriter, text string) {
+	if p.toolText == nil {
+		w.OutputText(text)
+		return
+	}
+	text, calls := p.toolText.Write(text)
+	w.OutputText(text)
+	for _, call := range calls {
+		p.textCall(w, call)
+	}
+}
+
+// textCall makes a tool call the model wrote as text. One that does not read whole is kept
+// as thinking: it is not something to say to the caller either.
+func (p *puller) textCall(w *llm.ResponseWriter, call string) {
+	name, arguments, ok := parseGemmaCall(call)
+	if !ok {
+		p.llm.logger.Warn("a tool call written as text could not be read", "text", call)
+		w.ReasoningText(call)
+		return
+	}
+	id := fmt.Sprintf("call_text_%d_%d", p.id, p.textCalls)
+	// Real calls stream under indexes from 0, so these take negative ones.
+	index := -1 - int64(p.textCalls)
+	p.textCalls++
+	w.FunctionCall(p.slot(index, id), id, name, arguments, "")
 }
 
 // slot is where a tool call fragment is recorded. Gemini streams every parallel call under
@@ -355,7 +407,14 @@ func (p *puller) finish(w *llm.ResponseWriter) {
 	if p.channel != nil {
 		answer, thought := p.channel.Flush()
 		w.ReasoningText(thought)
+		p.answer(w, answer)
+	}
+	if p.toolText != nil {
+		answer, unfinished := p.toolText.Flush()
 		w.OutputText(answer)
+		if unfinished != "" {
+			p.textCall(w, unfinished)
+		}
 	}
 
 	if err := p.upstream.Err(); err != nil && !errors.Is(err, context.Canceled) {
