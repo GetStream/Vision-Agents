@@ -38,7 +38,7 @@ class LocalRouterTest < Minitest::Test
   def serve_session(id = "sess_1", created: {}, &script)
     @router.on(:post, "/v1/agents/sessions") do |request|
       { "id" => id, "user_id" => "agent-user", "status" => "running" }
-        .merge(created).merge("call_id" => request.json["call_id"].to_s)
+        .merge(created).merge("call_id" => request.json["start_voice"] ? id : "")
     end
     @router.on_socket("/v1/agents/sessions/#{id}/events") do |peer|
       script ? script.call(peer) : peer.receive_type("close", timeout: 10)
