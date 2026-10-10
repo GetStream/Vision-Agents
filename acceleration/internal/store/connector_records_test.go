@@ -175,9 +175,9 @@ func (s *StoreSuite) TestDeletingAUsersConnectionsRemovesEveryOneOfThemAndNothin
 
 	s.Require().NoError(err)
 	s.ElementsMatch([]DeletedConnection{
-		{ID: live.ID, ConnectorID: "acme", HadGrant: true},
-		{ID: gone.ID, ConnectorID: "acme"},
-		{ID: pending.ID, ConnectorID: "acme"},
+		{ID: live.ID, ConnectorID: "acme", OwnerType: OwnerUser, HadGrant: true},
+		{ID: gone.ID, ConnectorID: "acme", OwnerType: OwnerUser},
+		{ID: pending.ID, ConnectorID: "acme", OwnerType: OwnerUser},
 	}, deleted)
 	var left int
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,

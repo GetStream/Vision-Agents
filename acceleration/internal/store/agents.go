@@ -15,7 +15,8 @@ import (
 
 // CreateAgentConfig stores a new config and fills in its id and timestamps. Each connection
 // it binds as fixed has to be live, and stays locked until the config is stored
-// (lockBoundConnections).
+// (lockBoundConnections). A channel connection another live config binds is refused with a
+// *ChannelConnectionTakenError (refuseSecondChannelAgent).
 func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) error {
 	if config.CustomerID == "" {
 		return stack.Wrap(errors.New("store: customer id is required"))
@@ -37,6 +38,16 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 			return err
 		}
 		if err := refuseUnbindable(missing, nil); err != nil {
+			return err
+		}
+		undefined, err := lockCustomDefinitions(ctx, tx, config.CustomerID, boundConnectors(config.Connectors))
+		if err != nil {
+			return err
+		}
+		if err := refuseUndefined(undefined, nil); err != nil {
+			return err
+		}
+		if err := refuseSecondChannelAgent(ctx, tx, config, nil, false); err != nil {
 			return err
 		}
 		if _, err := tx.NewInsert().Model(config).Exec(ctx); err != nil {
@@ -66,7 +77,8 @@ var configColumns = []string{
 // update is what the config now is rather than what changed about it. A connection it binds
 // as fixed is locked as CreateAgentConfig locks it, and has to be live unless the stored
 // config binds it already: a forced delete leaves that binding behind on purpose, and a save
-// that keeps it is not a new bind.
+// that keeps it is not a new bind. A new bind of a channel connection another live config
+// binds is refused as CreateAgentConfig refuses it.
 func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) error {
 	if config.CustomerID == "" || config.ID == "" {
 		return stack.Wrap(errors.New("store: a customer and a config id are required"))
@@ -83,9 +95,13 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 		if err != nil {
 			return err
 		}
+		undefined, err := lockCustomDefinitions(ctx, tx, config.CustomerID, boundConnectors(config.Connectors))
+		if err != nil {
+			return err
+		}
 		var stored AgentConfig
-		if len(missing) > 0 {
-			err := tx.NewSelect().Model(&stored).Column("connectors").
+		if len(missing) > 0 || len(undefined) > 0 || bindsAnyFixed(config.Connectors) {
+			err := tx.NewSelect().Model(&stored).Column("connectors", "tags").
 				Where("id = ?", config.ID).
 				Where("customer_id = ?", config.CustomerID).
 				Where("deleted_at IS NULL").
@@ -95,6 +111,12 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 			}
 		}
 		if err := refuseUnbindable(missing, stored.Connectors); err != nil {
+			return err
+		}
+		if err := refuseUndefined(undefined, stored.Connectors); err != nil {
+			return err
+		}
+		if err := refuseSecondChannelAgent(ctx, tx, config, stored.Connectors, stored.TestCopy()); err != nil {
 			return err
 		}
 		result, err := tx.NewUpdate().Model(config).
@@ -140,6 +162,21 @@ func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID st
 		if err := refuseUnbindable(missing, nil); err != nil {
 			return err
 		}
+		undefined, err := lockCustomDefinitions(ctx, tx, customerID, []string{binding.ConnectorID})
+		if err != nil {
+			return err
+		}
+		if err := refuseUndefined(undefined, nil); err != nil {
+			return err
+		}
+		// The channel owner's lock before the row's, the order UpdateAgentConfig takes them in.
+		// refuseSecondChannelAgent takes it again below, which a transaction that holds it is
+		// granted at once (https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS).
+		if binding.Connection.Type == "fixed" {
+			if _, _, err := lockChannelOwner(ctx, tx, customerID, binding.Connection.ConnectionID); err != nil {
+				return err
+			}
+		}
 		err = tx.NewSelect().Model(&config).
 			Where("id = ?", configID).
 			Where("customer_id = ?", customerID).
@@ -154,6 +191,11 @@ func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID st
 		}
 		if slices.ContainsFunc(config.Connectors, func(b ConnectorBinding) bool { return b.Name == binding.Name }) {
 			return nil
+		}
+		adding := config
+		adding.Connectors = []ConnectorBinding{binding}
+		if err := refuseSecondChannelAgent(ctx, tx, &adding, config.Connectors, false); err != nil {
+			return err
 		}
 		config.Connectors = append(config.Connectors, binding)
 		config.UpdatedAt = time.Now().UTC()
@@ -222,6 +264,33 @@ func refuseUnbindable(missing []string, kept []ConnectorBinding) error {
 			return binding.Connection.Type == "fixed" && binding.Connection.ConnectionID == id
 		}) {
 			return stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
+		}
+	}
+	return nil
+}
+
+// bindsAnyFixed reports whether a binding has a fixed connection.
+func bindsAnyFixed(bindings []ConnectorBinding) bool {
+	return slices.ContainsFunc(bindings, func(binding ConnectorBinding) bool { return binding.Connection.Type == "fixed" })
+}
+
+// boundConnectors are the connector ids bindings name.
+func boundConnectors(bindings []ConnectorBinding) []string {
+	ids := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		ids = append(ids, binding.ConnectorID)
+	}
+	return ids
+}
+
+// refuseUndefined refuses a binding to a custom connector the customer has no definition of,
+// unless kept, the bindings stored before this write, names it already: a forced connector
+// delete leaves its bindings behind on purpose (DeleteConnectorDefinition), and a save that
+// keeps one is not a new bind, as refuseUnbindable keeps a forced connection delete's.
+func refuseUndefined(undefined []string, kept []ConnectorBinding) error {
+	for _, id := range undefined {
+		if !slices.ContainsFunc(kept, func(binding ConnectorBinding) bool { return binding.ConnectorID == id }) {
+			return stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorDefinition, id))
 		}
 	}
 	return nil

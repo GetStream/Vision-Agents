@@ -100,10 +100,11 @@ def sync_detailed(
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
-    rejected the token or key a bearer or api_key connection holds; only new credentials fix it, so no
-    login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a
-    reopened chat's selection for an alias its config no longer declares). Every watcher is sent each
-    one when it attaches.
+    rejected the token or key a bearer or api_key connection holds, or the connection reads a connector
+    revision marked broken; only saving its credentials again fixes it, so no login is offered),
+    not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's
+    selection for an alias its config no longer declares). Every watcher is sent each one when it
+    attaches.
     `connector_scope_required` says a connector tool call was refused because the caller's own
     connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a
     step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes
@@ -216,10 +217,11 @@ def sync(
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
-    rejected the token or key a bearer or api_key connection holds; only new credentials fix it, so no
-    login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a
-    reopened chat's selection for an alias its config no longer declares). Every watcher is sent each
-    one when it attaches.
+    rejected the token or key a bearer or api_key connection holds, or the connection reads a connector
+    revision marked broken; only saving its credentials again fixes it, so no login is offered),
+    not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's
+    selection for an alias its config no longer declares). Every watcher is sent each one when it
+    attaches.
     `connector_scope_required` says a connector tool call was refused because the caller's own
     connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a
     step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes
@@ -327,10 +329,11 @@ async def asyncio_detailed(
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
-    rejected the token or key a bearer or api_key connection holds; only new credentials fix it, so no
-    login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a
-    reopened chat's selection for an alias its config no longer declares). Every watcher is sent each
-    one when it attaches.
+    rejected the token or key a bearer or api_key connection holds, or the connection reads a connector
+    revision marked broken; only saving its credentials again fixes it, so no login is offered),
+    not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's
+    selection for an alias its config no longer declares). Every watcher is sent each one when it
+    attaches.
     `connector_scope_required` says a connector tool call was refused because the caller's own
     connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a
     step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes
@@ -441,10 +444,11 @@ async def asyncio(
     `connector_unavailable` names an optional connector binding the session opened without: name (its
     alias), connector_id and reason, one of no_selection, shared_session, caller_unverified,
     connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider
-    rejected the token or key a bearer or api_key connection holds; only new credentials fix it, so no
-    login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a
-    reopened chat's selection for an alias its config no longer declares). Every watcher is sent each
-    one when it attaches.
+    rejected the token or key a bearer or api_key connection holds, or the connection reads a connector
+    revision marked broken; only saving its credentials again fixes it, so no login is offered),
+    not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's
+    selection for an alias its config no longer declares). Every watcher is sent each one when it
+    attaches.
     `connector_scope_required` says a connector tool call was refused because the caller's own
     connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a
     step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes

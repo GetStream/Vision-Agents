@@ -9,9 +9,11 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -214,6 +216,36 @@ func (s *ChatLoginsSuite) TestARejectedTokenBeginsNoConsentAndAReplacedOneIsUsed
 			"values": map[string]string{bearer.SuppliedToken: s.token}}, nil))
 	s.ask(opened.Id)
 	s.Equal(connectorEchoText, s.carryOn(events).ran["result"], "the replaced token is used")
+}
+
+// TestATokenOnABrokenRevisionBeginsNoConsentAndSavingItAgainMovesIt: the caller chose their own
+// token connection to a built-in, and a later revision marks the one it reads broken (AI-1002).
+// No consent can move a token's connection, so none is begun: the app is told
+// credential_rejected and the model to have it saved again. Once the backend saves the same
+// token again, the connection reads the latest revision and the next call runs on it.
+func (s *ChatLoginsSuite) TestATokenOnABrokenRevisionBeginsNoConsentAndSavingItAgainMovesIt() {
+	connector := "crm" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	s.builtin(connector, 1, "")
+	mine := s.withToken(s.client, connector, s.token)
+	s.builtin(connector, 2, "broken_revisions:\n  - revisions: [1]\n    reason: reads the wrong path\n")
+	opened := s.client.createSession(s.session(s.config(connector, map[string]any{"name": "echo"}), map[string]string{"crm": mine}))
+	events := s.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+
+	left := s.await(events, "connector_unavailable")
+	s.ask(opened.Id)
+	told := s.carryOn(events).ran["result"]
+
+	s.Equal("credential_rejected", left["reason"])
+	s.Contains(told, `"status":"credential_rejected"`)
+	s.Zero(s.attemptsOn(mine), "no consent was begun")
+
+	as := s.serverClient.actingFor(s.client)
+	s.Require().Equal(http.StatusOK, as.do(http.MethodPut, "/v1/agents/connections/"+mine+"/credentials",
+		map[string]any{"expected_revision": s.connectionOf(s.client, mine).Revision,
+			"values": map[string]string{bearer.SuppliedToken: s.token}}, nil))
+	s.Equal(2, s.connectionOf(s.client, mine).DefinitionRevision)
+	s.ask(opened.Id)
+	s.Equal(connectorEchoText, s.carryOn(events).ran["result"], "the token saved again is used")
 }
 
 // TestAChatUsesTheCallersOneTokenWithNoLogin: a connector that takes a consent or a token, as
@@ -623,6 +655,23 @@ sources:
 	s.Require().NoError(err)
 	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
 	s.Require().NoError(err)
+}
+
+// builtin seeds id as a built-in at the fake taking a token, at revision, with more manifest
+// YAML in extra, as a router start with that file does: only a built-in's later revision marks
+// an earlier one broken.
+func (s *ChatLoginsSuite) builtin(id string, revision int, extra string) {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), fstest.MapFS{id + ".yaml": {Data: []byte(`
+id: ` + id + `
+revision: ` + strconv.Itoa(revision) + `
+name: Fake
+endpoints:
+  mcp: ` + s.provider.URL + fakeprovider.PathMCP + `
+schemes: [bearer]
+sources:
+  - kind: mcp
+    endpoint: mcp
+` + extra)}}))
 }
 
 // connected is a connection of user's to connector that a consent their backend began

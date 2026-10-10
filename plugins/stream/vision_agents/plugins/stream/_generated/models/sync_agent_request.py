@@ -74,11 +74,12 @@ class SyncAgentRequest:
             mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
                 what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
                 speech target and a session created from it needs no call to join.
-            plugin_events (list[PluginEvent] | Unset): MCP events the agent subscribes to on its plugins, each opening a
-                text conversation when it arrives.
-            plugins (list[PluginWithOptions | str] | Unset): Plugins the agent reaches: a catalog id, or an object naming it
-                with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it
-                with their own account, from the conversation, the first time the agent needs it.
+            plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors. MCP
+                events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+            plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector. Plugins
+                the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once,
+                unless its entry sets user: then each end user connects it with their own account, from the conversation, the
+                first time the agent needs it.
             sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
                 code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
                 everything out in its head.

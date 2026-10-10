@@ -257,8 +257,8 @@ func (s *SlackChannelSuite) TestAMessageWithASubtypeIsIgnored() {
 	s.nothingLinked()
 }
 
-// AI-990 F21, F30: a message the manifest skips is answered 200 as before, and logged at
-// debug with the rule that skipped it, without its text.
+// AI-990 F21, F30, AI-1053 F67: a message the manifest skips is answered 200 as before, and
+// logged at info with the provider app and the rule that skipped it, without its text.
 func (s *SlackChannelSuite) TestASkippedMessageIsLoggedWithTheRuleThatSkippedIt() {
 	for rule, body := range map[string][]byte{
 		"skip_if_present $.event.subtype": s.event(`{"type":"message","subtype":"channel_join","channel":"C0000CHAN","user":"U0000ALICE",` +
@@ -269,7 +269,15 @@ func (s *SlackChannelSuite) TestASkippedMessageIsLoggedWithTheRuleThatSkippedIt(
 	} {
 		status, _ := s.deliver(body, 0)
 		s.Equal(http.StatusOK, status)
-		s.Contains(s.logged.String(), `level=DEBUG msg="skipped a connector event's message" connector=slack_bot rule="`+rule+`"`)
+		var line string
+		for _, l := range strings.Split(s.logged.String(), "\n") {
+			if strings.Contains(l, "skipped a connector event's message") && strings.Contains(l, `rule="`+rule+`"`) {
+				line = l
+			}
+		}
+		s.Contains(line, "level=INFO")
+		s.Contains(line, "connector=slack_bot")
+		s.Contains(line, "provider_app="+s.app.ProviderAppID)
 	}
 	s.nothingLinked()
 	s.NotContains(s.logged.String(), "synthetic join text F21")

@@ -48,7 +48,8 @@ func documentHandWritten(api huma.API) {
 			"without: name (its alias), connector_id and reason, one of no_selection, " +
 			"shared_session, caller_unverified, connection_unavailable, provider_mismatch, " +
 			"needs_reauthorization, credential_rejected (the provider rejected the token or key a " +
-			"bearer or api_key connection holds; only new credentials fix it, so no login is " +
+			"bearer or api_key connection holds, or the connection reads a connector revision marked " +
+			"broken; only saving its credentials again fixes it, so no login is " +
 			"offered), not_connected, open_failed, tool_unavailable and " +
 			"selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer " +
 			"declares). " +
@@ -277,7 +278,9 @@ func documentHandWritten(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/plugins/callback",
 		Summary:     "Finish a plugin login",
-		Description: "The provider redirects here with a code. The path is unauthenticated because the " +
+		Deprecated:  true,
+		Description: "Deprecated: a connector login finishes at finishConnectorConsent. " +
+			"The provider redirects here with a code. The path is unauthenticated because the " +
 			"browser arrives from the identity provider, and the state is the secret.",
 		Security: []map[string][]string{},
 		Parameters: []*huma.Param{
@@ -443,8 +446,12 @@ func documentHandWritten(api huma.API) {
 				"credential is added instead. On a 401 the credential is renewed and the request sent " +
 				"once more when the scheme can renew it. A provider's 429 and Retry-After come back as " +
 				"they are, and the connection's calls are then refused with a 429 here until that " +
-				"Retry-After passes. A path with a dot segment, which would leave api_base, is " +
-				"refused. The body is at most 1 MiB. Point a provider's own SDK at this URL as its base " +
+				"Retry-After passes. An app's direct calls to one connector are capped per minute " +
+				"(ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by default); a call over the cap is " +
+				"refused with a 429 and a Retry-After until the minute ends, and is not sent. A path " +
+				"with a dot segment, written or escaped, or with an escaped slash (%2F) or a backslash " +
+				"(%5C), which a provider could resolve to leave api_base, is refused. The body is at " +
+				"most 1 MiB. Point a provider's own SDK at this URL as its base " +
 				"URL, with a server-side token as its token and X-Api-Key and Stream-Auth-Type as extra " +
 				"headers. An app-owned connection is the app's backend's; a user-owned one is reached " +
 				"only by a backend acting for that user (X-Stream-User-Id). Each call that is sent " +
@@ -453,7 +460,7 @@ func documentHandWritten(api huma.API) {
 				"user's device.",
 			Parameters: []*huma.Param{
 				{Name: "id", In: "path", Description: "The connection.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
-				{Name: "path", In: "path", Description: "The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+				{Name: "path", In: "path", Description: "The provider's path under api_base, as escaped on the wire. It may hold slashes, such as chat.postMessage or repos/octo/hello/issues. A generated client escapes a slash in it to %2F, which is refused, so it reaches a single-segment path only, such as chat.postMessage; for a longer one, point the provider's own SDK or an HTTP client at the URL.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
 			},
 			RequestBody: body,
 			Responses: map[string]*huma.Response{
@@ -464,7 +471,7 @@ func documentHandWritten(api huma.API) {
 				"404": {Ref: "#/components/responses/NotFound"},
 				"409": {Description: "The connection is not connected", Content: errorBody},
 				"413": {Description: "The body is over 1 MiB", Content: errorBody},
-				"429": {Description: "The provider asked to wait: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came.", Content: errorBody},
+				"429": {Description: "The provider asked to wait, or the app's calls to this connector are over the minute's cap: retry after the Retry-After header's seconds. A 429 the provider answered itself comes back as it came.", Content: errorBody},
 				"503": {Description: "The call did not reach the provider, or its answer did not come back", Content: errorBody},
 			},
 		})
@@ -502,7 +509,9 @@ func documentHandWritten(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/plugins/{plugin_id}/logo",
 		Summary:     "A plugin's logo",
-		Description: "The image a card uses to show which plugin it is asking about, as an SVG. The path " +
+		Deprecated:  true,
+		Description: "Deprecated with the plugin catalog. Connectors have no logo route. " +
+			"The image a card uses to show which plugin it is asking about, as an SVG. The path " +
 			"is unauthenticated because what draws it is an `<img>` in a chat client or a browser, " +
 			"which has no credential of this API's to send, and because the catalog is the same " +
 			"built-in list for every customer, so there is nothing of anybody's here.",
@@ -520,7 +529,9 @@ func documentHandWritten(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/v1/agents/plugins/events/{token}",
 		Summary:     "Receive a plugin's MCP event",
-		Description: "Where a plugin's MCP server delivers the events an agent subscribed to, signed " +
+		Deprecated:  true,
+		Description: "Deprecated: a connector binding's events are delivered to receiveConnectionEvent. " +
+			"Where a plugin's MCP server delivers the events an agent subscribed to, signed " +
 			"with Standard Webhooks. The path is unauthenticated because the server is not a " +
 			"customer: the token names the subscription and its secret signs each delivery. A " +
 			"verification is answered with its challenge, and an event opens a text conversation.",

@@ -44,6 +44,17 @@ const (
 	connectorLaunchPath         = "/v1/agents/connectors/oauth/launch/"
 )
 
+// connectorCallbackURL is the redirect URI every consent of a router at publicURL sends, and
+// so the one a provider has to have registered for the OAuth client: publicURL followed by
+// ConnectorCallbackPath. Empty when publicURL is, since no consent can start then (begin).
+func connectorCallbackURL(publicURL string) string {
+	base := strings.TrimRight(publicURL, "/")
+	if base == "" {
+		return ""
+	}
+	return base + ConnectorCallbackPath
+}
+
 const (
 	// attemptLifetime is how long a consent may take, from authorize to callback. It is RFC
 	// 6749 section 4.1.2's recommended maximum authorization code lifetime (10 minutes), the
@@ -341,7 +352,7 @@ func (c consents) begin(ctx context.Context, connection store.ConnectorConnectio
 		manifest = steppedUp(manifest, connection, *stepUp)
 	}
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
-	begun, err := scheme.Begin(ctx, core.BeginInput{Ref: ref, Manifest: manifest, RedirectURI: public + ConnectorCallbackPath})
+	begun, err := scheme.Begin(ctx, core.BeginInput{Ref: ref, Manifest: manifest, RedirectURI: connectorCallbackURL(c.publicURL)})
 	// The client comes from the app's own record or the operator's environment
 	// (ConnectorClients), so a connector that takes the app's own and finds none says where
 	// to put it.
@@ -766,7 +777,7 @@ func (s *Server) serveConnectorClientMetadata(w http.ResponseWriter, _ *http.Req
 		return
 	}
 	document := oauth2code.ClientMetadataDocument(clientID,
-		[]string{strings.TrimRight(s.publicURL, "/") + ConnectorCallbackPath})
+		[]string{connectorCallbackURL(s.publicURL)})
 	w.Header().Set("Cache-Control", clientMetadataMaxAge)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -828,6 +839,13 @@ func connectionManifest(ctx context.Context, records *store.Store, connection st
 	if err != nil {
 		return core.ResolvedManifest{}, err
 	}
+	return definitionManifest(definition, connection)
+}
+
+// definitionManifest is definition resolved for the connection, as connectionManifest. Its
+// only error is Resolve's: definition does not take the connection's scheme, inputs or
+// captured values.
+func definitionManifest(definition store.ConnectorDefinition, connection store.ConnectorConnection) (core.ResolvedManifest, error) {
 	metadata := maps.Clone(connection.Metadata)
 	maps.DeleteFunc(metadata, func(name, _ string) bool {
 		return !slices.ContainsFunc(definition.Manifest.Capture, func(rule core.CaptureRule) bool { return rule.Name == name })

@@ -87,8 +87,9 @@ def sync_detailed(
 ) -> Response[ErrorResponse | list[Plugin]]:
     """The hosted MCP servers an agent may attach
 
-     A built-in catalog, not the customer's own rows. q filters by name, category or description.
-    Connecting one is a login on a config, not a change to this list.
+     Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in
+    catalog, not the customer's own rows. q filters by name, category or description. Connecting one is
+    a login on a config, not a change to this list.
 
     Args:
         q (str | Unset): Filter by name, category or description.
@@ -119,8 +120,9 @@ def sync(
 ) -> ErrorResponse | list[Plugin] | None:
     """The hosted MCP servers an agent may attach
 
-     A built-in catalog, not the customer's own rows. q filters by name, category or description.
-    Connecting one is a login on a config, not a change to this list.
+     Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in
+    catalog, not the customer's own rows. q filters by name, category or description. Connecting one is
+    a login on a config, not a change to this list.
 
     Args:
         q (str | Unset): Filter by name, category or description.
@@ -146,8 +148,9 @@ async def asyncio_detailed(
 ) -> Response[ErrorResponse | list[Plugin]]:
     """The hosted MCP servers an agent may attach
 
-     A built-in catalog, not the customer's own rows. q filters by name, category or description.
-    Connecting one is a login on a config, not a change to this list.
+     Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in
+    catalog, not the customer's own rows. q filters by name, category or description. Connecting one is
+    a login on a config, not a change to this list.
 
     Args:
         q (str | Unset): Filter by name, category or description.
@@ -176,8 +179,9 @@ async def asyncio(
 ) -> ErrorResponse | list[Plugin] | None:
     """The hosted MCP servers an agent may attach
 
-     A built-in catalog, not the customer's own rows. q filters by name, category or description.
-    Connecting one is a login on a config, not a change to this list.
+     Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in
+    catalog, not the customer's own rows. q filters by name, category or description. Connecting one is
+    a login on a config, not a change to this list.
 
     Args:
         q (str | Unset): Filter by name, category or description.

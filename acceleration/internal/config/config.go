@@ -218,6 +218,11 @@ type Connectors struct {
 	// Enabled builds the versioned key encryption keyring that seals connector
 	// credentials, in every auth mode, and refuses to start without one. Off by default.
 	Enabled bool `koanf:"enabled"`
+	// ProxyCallsPerMinute caps the direct calls one customer sends to one connector through
+	// the connection proxy in a minute, counted in Redis across every router (AI-958): all
+	// customers share the router's egress, so one customer's calls could otherwise spend a
+	// provider's limit for everyone. 0 turns it off; so does a deployment with no Redis.
+	ProxyCallsPerMinute int64 `koanf:"proxy_calls_per_minute"`
 }
 
 // Episodes is how a person's episodes close (T55, AI-884; omnichannel.Closer).
@@ -286,6 +291,8 @@ var variables = map[string]string{
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
 	"models.private_endpoints":  "ROUTER_MODELS_PRIVATE_ENDPOINTS",
 
+	"connectors.proxy_calls_per_minute": "ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE",
+
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
 	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
 	"sandbox.messages_per_day":      "ROUTER_SANDBOX_MESSAGES_PER_DAY",
@@ -311,6 +318,14 @@ func Defaults() Config {
 		// unverified against any traffic. The only external bound is maxEpisodeIdle.
 		Episodes: Episodes{IdleAfter: time.Hour},
 		Sandbox:  Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
+		// Slack's rate limits page (https://docs.slack.dev/apis/web-api/rate-limits, opened
+		// 2026-10-09): «we do recommend you design your apps with a limit of 1 request per
+		// second for any given API call». slack_bot is the only built-in with an api_base, so
+		// the only one the proxy reaches, and that page names no limit per IP address. One a
+		// second is the rate Slack tells an app to design for. Whether Slack keeps a limit per
+		// egress address, and so whether 60 keeps one customer from spending it for the others,
+		// is not on that page. # unverified
+		Connectors: Connectors{ProxyCallsPerMinute: 60},
 	}
 }
 
@@ -404,6 +419,9 @@ func environment() *env.Env {
 
 // validate refuses settings that would otherwise be found out from a customer.
 func (c Config) validate() error {
+	if c.Connectors.ProxyCallsPerMinute < 0 {
+		return fmt.Errorf("config: connectors.proxy_calls_per_minute cannot be negative, got %d", c.Connectors.ProxyCallsPerMinute)
+	}
 	if c.RateLimit.MessagesPerDay < 0 || c.RateLimit.TokensPerDay < 0 {
 		return fmt.Errorf("config: a daily limit cannot be negative, got %d messages and %d tokens",
 			c.RateLimit.MessagesPerDay, c.RateLimit.TokensPerDay)
@@ -514,6 +532,8 @@ func (c Config) export() error {
 		"sandbox.recipients":            fmt.Sprint(c.Sandbox.Recipients),
 		"sandbox.messages_per_day":      fmt.Sprint(c.Sandbox.MessagesPerDay),
 		"sandbox.audio_minutes_per_day": fmt.Sprint(c.Sandbox.AudioMinutesPerDay),
+
+		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
 	}
 	for key, value := range values {
 		if value == "" {

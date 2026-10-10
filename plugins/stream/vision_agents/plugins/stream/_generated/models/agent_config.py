@@ -61,8 +61,8 @@ class AgentConfig:
         knowledge_namespace (str | Unset):
         llm (str | Unset):
         mcp_servers (list[McpServer] | Unset):
-        plugin_events (list[PluginEvent] | Unset):
-        plugins (list[PluginWithOptions | str] | Unset):
+        plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors.
+        plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector.
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.

@@ -628,6 +628,12 @@ func (s Spec) withoutBoundPlugins(entries []store.PluginEntry) []store.PluginEnt
 	return kept
 }
 
+// UnboundPlugins is the config's plugin entries that no connector binding replaces: the ones a
+// session of the config still opens (Normalize drops the rest with withoutBoundPlugins).
+func UnboundPlugins(config store.AgentConfig) []store.PluginEntry {
+	return Spec{ConnectorBindings: config.Connectors}.withoutBoundPlugins(config.Plugins)
+}
+
 // Native reports whether this session is held by one speech-to-speech model rather than
 // the cascade of a transcriber, a conversation model and a voice.
 func (s Spec) Native() bool { return s.STSTarget != "" }

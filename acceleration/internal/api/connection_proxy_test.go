@@ -14,8 +14,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
@@ -78,7 +82,28 @@ func (s *ConnectionProxySuite) SetupSuite() {
 	roots.AddCert(s.echo.Certificate())
 	transport.TLSClientConfig.RootCAs = roots
 	s.connectorHTTP = &http.Client{Transport: transport}
+	// The router's default cap, as a deployment that sets none runs (AI-958). Every test but
+	// the cap's own stays under it, so each asserts what base answered.
+	s.proxyCallsPerMinute = config.Defaults().Connectors.ProxyCallsPerMinute
 	s.RouterSuite.SetupSuite()
+}
+
+// TestCallsUpToTheDefaultCapAllReachTheProvider: the default cap's worth of calls on one
+// connection in a row are all sent and all answered. Base 599298c6, which had no cap, answered
+// 61 such calls with 61 200s and 61 hits (probe, <scratchpad>/pr-w8-proxy/probe-base.txt).
+func (s *ConnectionProxySuite) TestCallsUpToTheDefaultCapAllReachTheProvider() {
+	id := s.connected(s.connector(""), bearer.Name)
+	before := s.hits.Load()
+
+	ok := 0
+	for range 60 {
+		if status, _ := s.send(s.serverClient, http.MethodGet, proxy(id, "ping"), "", nil); status == http.StatusOK {
+			ok++
+		}
+	}
+
+	s.Equal(60, ok)
+	s.Equal(before+60, s.hits.Load())
 }
 
 func (s *ConnectionProxySuite) SetupTest() {
@@ -124,14 +149,14 @@ func (s *ConnectionProxySuite) TestTheProviderGetsTheRequestAsItCameWithTheConne
 	body := `{"text":"hello ` + s.utils.uuid() + `"}`
 
 	status, answer := s.send(s.serverClient.actingFor(s.data.createUser()), http.MethodPatch,
-		proxy(id, "v1/items/a%2Fb")+"?limit=5&api_key=router-key&token=router-token&cursor=c%20d&user_id=u",
+		proxy(id, "v1/items/a%20b")+"?limit=5&api_key=router-key&token=router-token&cursor=c%20d&user_id=u",
 		body, http.Header{"X-Custom": {"kept"}, "Connection": {"X-Hop"}, "X-Hop": {"dropped"},
 			"X-Forwarded-For": {"192.0.2.1"}, "Proxy-Authorization": {"Basic cm91dGVyOmhvcA=="}})
 
 	s.Require().Equal(http.StatusOK, status, string(answer))
 	got := s.echoed(answer)
 	s.Equal(http.MethodPatch, got.Method)
-	s.Equal("/base/v1/items/a%2Fb", got.Path)
+	s.Equal("/base/v1/items/a%20b", got.Path)
 	s.Equal("limit=5&cursor=c%20d", got.Query)
 	s.Equal(body, got.Body)
 	s.True(got.Header.Get("X-Provider-Key") == key, "the provider got the connection's key")
@@ -203,12 +228,14 @@ func (s *ConnectionProxySuite) TestAJSONAnswerComesBackByteForByte() {
 }
 
 // TestAPathThatWouldLeaveTheAPIIsRefusedAndNothingIsSent: a dot segment, written or escaped,
-// would take the path out from under api_base.
+// would take the path out from under api_base, and so would an escaped slash or a backslash
+// at a provider that decodes the path before it resolves dots (AI-958).
 func (s *ConnectionProxySuite) TestAPathThatWouldLeaveTheAPIIsRefusedAndNothingIsSent() {
 	id := s.connected(s.connector(""), bearer.Name)
 	before := s.hits.Load()
 
-	for _, path := range []string{"../token", "%2e%2e/token", "a/./b", "a/%2E/b"} {
+	for _, path := range []string{"../token", "%2e%2e/token", "a/./b", "a/%2E/b",
+		"a/%2e%2e%2fx", "a%2F..%2F..%2Fx", "a/.%2e/x", "a/%2E%2e/x", "a%5C..%5Cx", "a%5cb", "%2F%2Fevil.example%2Fx"} {
 		status, answer := s.send(s.serverClient, http.MethodGet, proxy(id, path), "", nil)
 		s.Equal(http.StatusBadRequest, status, path+": "+string(answer))
 	}
@@ -223,7 +250,6 @@ func (s *ConnectionProxySuite) TestAPathCannotNameAnotherHost() {
 		"//evil.example/x":       "/base///evil.example/x",
 		"https://evil.example/x": "/base/https://evil.example/x",
 		"@evil.example/x":        "/base/@evil.example/x",
-		"%2F%2Fevil.example%2Fx": "/base/%2F%2Fevil.example%2Fx",
 	} {
 		status, answer := s.send(s.serverClient, http.MethodGet, proxy(id, path), "", nil)
 		s.Require().Equal(http.StatusOK, status, path+": "+string(answer))
@@ -437,11 +463,16 @@ func (s *ConnectionProxySuite) connectorWithout() string {
 
 func (s *ConnectionProxySuite) storeConnector(body string) string {
 	id := "custom_proxy" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	s.storeConnectorAs(id, body)
+	return id
+}
+
+// storeConnectorAs stores a connector of id for the suite's current app.
+func (s *ConnectionProxySuite) storeConnectorAs(id, body string) {
 	manifest, err := core.ParseManifest([]byte("id: " + id + "\nrevision: 1\nname: Proxy\n" + body))
 	s.Require().NoError(err)
 	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
 	s.Require().NoError(err)
-	return id
 }
 
 // pending is an app-owned connection to connector with scheme and no credentials yet.
@@ -493,6 +524,109 @@ func (s *ConnectionProxySuite) credentials(as *testClient, id string, values map
 	status, body := as.call(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
 		map[string]any{"expected_revision": 1, "values": values})
 	s.Require().Equal(http.StatusOK, status, string(body))
+}
+
+// TestACallOverTheCapIsRefusedUntilTheMinuteEndsAndNotSent: the default cap is 60 direct calls
+// a minute for one customer's calls to one connector (AI-958). The 61st is a 429 with Retry-After in the
+// APIError envelope, and the provider never sees the call.
+func (s *ConnectionProxySuite) TestACallOverTheCapIsRefusedUntilTheMinuteEndsAndNotSent() {
+	connector := s.connector("")
+	id := s.connected(connector, bearer.Name)
+	s.spendTheCap(id)
+	before := s.hits.Load()
+
+	refused, body := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "ping"), "", nil)
+
+	s.Equal(http.StatusTooManyRequests, refused.StatusCode)
+	wait, err := strconv.Atoi(refused.Header.Get("Retry-After"))
+	s.Require().NoError(err)
+	s.True(wait > 0 && wait <= 60, wait)
+	s.Contains(string(body), "over 60 a minute")
+	var failure struct {
+		Error struct{ Type, Code, Message string } `json:"error"`
+	}
+	s.Require().NoError(json.Unmarshal(body, &failure), string(body))
+	s.Equal(string(ErrorTypeRateLimited), failure.Error.Type)
+	s.Contains(failure.Error.Message, connector)
+	s.Equal(before, s.hits.Load(), "the refused call was not sent")
+}
+
+// TestTwoConnectionsToOneConnectorShareTheCap: the cap is the customer's for the connector,
+// not one connection's, so a second connection does not double it.
+func (s *ConnectionProxySuite) TestTwoConnectionsToOneConnectorShareTheCap() {
+	connector := s.connector("")
+	first, second := s.connected(connector, bearer.Name), s.connected(connector, bearer.Name)
+	s.spendTheCap(first)
+
+	status, _ := s.send(s.serverClient, http.MethodGet, proxy(second, "ping"), "", nil)
+
+	s.Equal(http.StatusTooManyRequests, status)
+}
+
+func (s *ConnectionProxySuite) TestAnotherConnectorOfTheAppHasACapOfItsOwn() {
+	s.spendTheCap(s.connected(s.connector(""), bearer.Name))
+
+	status, _ := s.send(s.serverClient, http.MethodGet, proxy(s.connected(s.connector(""), bearer.Name), "ping"), "", nil)
+
+	s.Equal(http.StatusOK, status)
+}
+
+// TestAnotherAppsCallsGoWhileOneAppIsOverItsCap: what the cap is for. One app spending its
+// calls to a connector leaves another app's calls to a connector of the same id going.
+func (s *ConnectionProxySuite) TestAnotherAppsCallsGoWhileOneAppIsOverItsCap() {
+	connector := s.connector("")
+	s.spendTheCap(s.connected(connector, bearer.Name))
+	backend, id := s.connectedInAnotherApp(connector)
+
+	status, answer := s.send(backend, http.MethodGet, proxy(id, "ping"), "", nil)
+
+	s.Equal(http.StatusOK, status, string(answer))
+}
+
+// TestARefusedPathIsNotCounted: a call refused before it could be sent spends none of the cap.
+func (s *ConnectionProxySuite) TestARefusedPathIsNotCounted() {
+	id := s.connected(s.connector(""), bearer.Name)
+	awayFromAMinuteBoundary()
+	for range s.proxyCallsPerMinute {
+		status, _ := s.send(s.serverClient, http.MethodGet, proxy(id, "a%2Fb"), "", nil)
+		s.Require().Equal(http.StatusBadRequest, status)
+	}
+
+	status, _ := s.send(s.serverClient, http.MethodGet, proxy(id, "ping"), "", nil)
+
+	s.Equal(http.StatusOK, status)
+}
+
+// spendTheCap sends the default cap's calls on connection id, all answered, in one minute.
+func (s *ConnectionProxySuite) spendTheCap(id string) {
+	awayFromAMinuteBoundary()
+	for range s.proxyCallsPerMinute {
+		status, answer := s.send(s.serverClient, http.MethodGet, proxy(id, "ping"), "", nil)
+		s.Require().Equal(http.StatusOK, status, string(answer))
+	}
+}
+
+// connectedInAnotherApp is a backend of a new app and its app-owned connection to that app's
+// own connector of id, at the echo, as the built-ins share one id across apps.
+func (s *ConnectionProxySuite) connectedInAnotherApp(id string) (*testClient, string) {
+	mine := s.app
+	defer func() { s.app = mine }()
+	s.app = s.data.createApp()
+	backend := s.signedIn(jwt.MapClaims{"server": true}, auth.AuthTypeServer, server, "")
+	s.storeConnectorAs(id, "endpoints:\n  api_base: "+s.echo.URL+"/base\nschemes: [bearer]\n")
+	var created Connection
+	s.Require().Equal(http.StatusCreated, backend.do(http.MethodPost, "/v1/agents/connections",
+		withScheme(appOwned(id), bearer.Name), &created))
+	s.credentials(backend, created.ID, map[string]string{bearer.SuppliedToken: "token-" + s.utils.uuid()})
+	return backend, created.ID
+}
+
+// awayFromAMinuteBoundary waits out a minute that ends in under five seconds, so the calls a
+// test counts next fall in one of the cap's windows (core.Limiter.Take).
+func awayFromAMinuteBoundary() {
+	if left := time.Until(time.Now().Truncate(time.Minute).Add(time.Minute)); left < 5*time.Second {
+		time.Sleep(left)
+	}
 }
 
 // ConnectionProxyOffSuite is the router with connectors off, as staging runs: no transports,

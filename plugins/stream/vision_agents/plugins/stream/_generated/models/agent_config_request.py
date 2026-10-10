@@ -68,14 +68,15 @@ class AgentConfigRequest:
         mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
             what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
             speech target and a session created from it needs no call to join.
-        plugin_events (list[PluginEvent] | Unset): MCP events the agent subscribes to on the plugins it names, with
-            every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login
-            it came through.
-        plugins (list[PluginWithOptions | str] | Unset): Hosted MCP servers this agent may reach, named from the built-
-            in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and
-            the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then
-            each end user connects it with their own account, and the agent asks for the login in the conversation, as a
-            plugin_authorization attachment, the first time it needs one.
+        plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors. MCP
+            events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that
+            arrives opens a text conversation of its own, as whoever's login it came through.
+        plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector. Hosted
+            MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how
+            it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each
+            once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and
+            the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs
+            one.
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.

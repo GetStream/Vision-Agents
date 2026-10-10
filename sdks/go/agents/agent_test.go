@@ -1,9 +1,11 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -564,6 +566,44 @@ func TestSyncSendsHowEachPluginIsReached(t *testing.T) {
 	if err != nil || calcom.User != nil || calcom.Toolsets == nil || strings.Join(*calcom.Toolsets, ",") != "bookings,availability" ||
 		calcom.Tools == nil || strings.Join(*calcom.Tools, ",") != "get_bookings,get_availability" {
 		t.Errorf("calcom went as %+v (%v)", calcom, err)
+	}
+}
+
+func TestSyncWarnsThatPluginsAreDeprecatedAndStillSendsThem(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "plugins: [sentry]\nplugin_events:\n  - plugin: sentry\n    event: issue.created\n")
+	router := newBackend(t)
+	var logged bytes.Buffer
+	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(logged.String(), `level=WARN msg="agent.yaml plugins and plugin_events are deprecated: bind connectors instead" agent=triage plugins=[sentry] plugin_events=1`) {
+		t.Errorf("no deprecation warning in %q", logged.String())
+	}
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	sent := router.syncs[0]
+	if sent.Plugins == nil || len(*sent.Plugins) != 1 || sent.PluginEvents == nil || len(*sent.PluginEvents) != 1 {
+		t.Errorf("the plugins went as %+v and their events as %+v, not as declared", sent.Plugins, sent.PluginEvents)
+	}
+}
+
+func TestSyncWithoutPluginsWarnsOfNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "llm: openai/gpt-4o\n")
+	router := newBackend(t)
+	var logged bytes.Buffer
+	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(logged.String(), "deprecated") {
+		t.Errorf("an agent naming no plugins was warned: %q", logged.String())
 	}
 }
 

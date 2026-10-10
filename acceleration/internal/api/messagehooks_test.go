@@ -22,10 +22,18 @@ type MessageHooksSuite struct {
 	// It is unique, because a channel is looked up by it alone, and it is not named
 	// support-<uuid>, which is the namespace durable session commands own.
 	channelID string
+	// logged is what the router logged, at debug and up.
+	logged *lockedLog
 }
 
 func TestMessageHooksSuite(t *testing.T) {
 	runSuite(t, new(MessageHooksSuite))
+}
+
+func (s *MessageHooksSuite) SetupSuite() {
+	s.logged = &lockedLog{}
+	s.logs = s.logged
+	s.RouterSuite.SetupSuite()
 }
 
 func (s *MessageHooksSuite) SetupTest() {
@@ -119,6 +127,28 @@ func (s *MessageHooksSuite) TestAChannelNamingAConfigNobodyHoldsIsAcceptedAndDro
 		"Stream retries a non-2xx, and no retry finds an owner")
 
 	s.nothingReaches(worker.Messages(), "a message naming a config nobody holds was answered")
+	// An app whose hooks deliver to two routers sends each the other's channels: no failure
+	// of this router, so not an ERROR a post-deploy check counts.
+	s.Contains(s.logged.String(), `level=INFO msg="an arriving message's channel names a config nobody in its app holds" channel=`+
+		s.channelID+` config=config-nobody-has`)
+	s.NotContains(s.logged.String(), `level=ERROR msg="an arriving message's channel names a config nobody in its app holds"`)
+}
+
+// A store failure reading the config is this router's failure, not another router's channel:
+// it stays an ERROR, under its own message.
+func (s *MessageHooksSuite) TestAStoreFailureReadingTheDeclaredConfigIsAnError() {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	before := len(s.logged.String())
+
+	_, _, found := s.router.ownerOf(ctx, hookOrigin{customer: s.customerID(), app: 77}, messageEvent{
+		ChannelID: s.channelID, ChannelCustom: map[string]any{ConfigField: "config-unread"},
+	})
+
+	s.False(found)
+	logged := s.logged.String()[before:]
+	s.Contains(logged, `level=ERROR msg="could not read the config an arriving message's channel names"`, logged)
+	s.NotContains(logged, `level=INFO msg="an arriving message's channel names a config nobody in its app holds"`)
 }
 
 func (s *MessageHooksSuite) TestAChannelWithNoHistoryAndNoConfigIsAcceptedAndDropped() {

@@ -37,8 +37,6 @@ import (
 	"syscall"
 	"text/tabwriter"
 
-	getstream "github.com/GetStream/getstream-go/v5"
-
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -561,7 +559,7 @@ func hooks(ctx context.Context, arguments []string) error {
 // on its own was refused over its message hook, still in that update (AI-990 F22).
 func changeHooks(ctx context.Context, stream *phone.Stream, url string, removes []string, segment string) ([]string, error) {
 	var said []string
-	err := stream.ChangeHooks(ctx, func(hooks []getstream.EventHook) ([]getstream.EventHook, bool, error) {
+	err := stream.ChangeHooks(ctx, func(hooks []chat.Hook) ([]chat.Hook, bool, error) {
 		changed := false
 		for _, remove := range removes {
 			base := strings.TrimSuffix(remove, "/")
