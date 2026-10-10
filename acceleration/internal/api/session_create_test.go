@@ -64,10 +64,18 @@ func (s *SessionCreateSuite) TestAnIdASessionCannotHaveIsRefused() {
 		"has a space",
 		"agent:nested",
 		strings.Repeat("a", 65),
-		"thread-" + s.utils.uuid(),
-		"support-" + s.utils.uuid(),
 	} {
 		s.Equal(http.StatusBadRequest, s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(&id), nil), id)
+	}
+}
+
+func (s *SessionCreateSuite) TestASessionMayBeNamedThreadOrSupport() {
+	for _, id := range []string{"thread-" + s.utils.uuid()[24:], "support-" + s.utils.uuid()[24:]} {
+		created := s.client.createSession(textSession(&id))
+
+		s.Equal(id, created.Id)
+		s.Equal("agent:"+id, value(created.ConversationId), "its channel is named after it")
+		s.Equal(id, s.client.getSession(id).Id)
 	}
 }
 

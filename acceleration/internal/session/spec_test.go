@@ -176,9 +176,13 @@ func (s *SpecSuite) TestATranscriptGoesIntoTheConversationsAgentChannelElseTheAg
 }
 
 func (s *SpecSuite) TestAThreadChannelIsAConversationSeveralPeopleShare() {
-	s.True(Spec{ConversationID: "agent:" + persistent.ThreadChannelPrefix + "0199"}.Shared())
-	s.False(Spec{ConversationID: "agent:support-0199"}.Shared())
+	s.True(Spec{ConversationID: "agent:" + persistent.ThreadChannelPrefix + "0199", Thread: true}.Shared())
 	s.False(Spec{}.Shared())
+}
+
+// A session may be named thread-...: its channel is its own, not a thread channel.
+func (s *SpecSuite) TestASessionNamedLikeAThreadChannelIsNoThread() {
+	s.False(Spec{ConversationID: "agent:" + persistent.ThreadChannelPrefix + "0199"}.Shared())
 }
 
 func (s *SpecSuite) TestAConfigsSandboxBecomesTheSessions() {

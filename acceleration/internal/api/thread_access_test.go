@@ -218,16 +218,17 @@ func (s *SlackChannelSuite) TestADeviceWatchingAThreadChannelsSessionIsAnsweredA
 	s.Equal(http.StatusNotFound, watched)
 }
 
-// TestReadingAThreadChannelsMessagesIsAnsweredAsForAnUnknownChannel: no request reads a
-// thread channel's messages, as at baseline 646c7ad4, which answered any agent:thread- id
-// as it answers one nobody holds. A device is refused this server-side operation first.
-func (s *SlackChannelSuite) TestReadingAThreadChannelsMessagesIsAnsweredAsForAnUnknownChannel() {
+// TestNoRequestReadsAThreadChannelsMessages: a device is refused this server-side operation
+// first, as for a channel nobody holds, and the backend is refused the thread channel.
+func (s *SlackChannelSuite) TestNoRequestReadsAThreadChannelsMessages() {
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	unknown := conversation.ThreadChannelPrefix + s.utils.uuid()
 
 	s.Equal(s.readConversation(s.client, unknown, "/messages"), s.readConversation(s.client, channel, "/messages"))
 	s.Equal(http.StatusForbidden, s.readConversation(s.client, channel, "/messages").status)
-	s.Equal(s.readConversation(s.serverClient, unknown, "/messages"), s.readConversation(s.serverClient, channel, "/messages"))
+	read := s.readConversation(s.serverClient, channel, "/messages")
+	s.Equal(http.StatusBadRequest, read.status)
+	s.Equal("invalid conversation channel", read.error.Message)
 }
 
 // TestReadingACommandInAThreadChannelIsAnsweredAsForAnUnknownChannel.
@@ -281,6 +282,20 @@ func (s *SlackChannelSuite) TestABackendDoesNotReopenAThreadChannelsSessionThatE
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Equal("invalid conversation channel", failure)
+}
+
+// TestASessionIsNotNamedAfterAThreadChannel: a session's channel is named after it, so an id a
+// thread channel has is taken, by a device or the backend, in any case.
+func (s *SlackChannelSuite) TestASessionIsNotNamedAfterAThreadChannel() {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	members := s.chat.Members(channel)
+	shouted := strings.ToUpper(channel)
+
+	s.Equal(http.StatusConflict, s.client.do(http.MethodPost, "/v1/agents/sessions",
+		CreateSessionRequest{Agent: &s.config.Name, Id: &channel}, nil))
+	s.Equal(http.StatusConflict, s.serverClient.do(http.MethodPost, "/v1/agents/sessions",
+		CreateSessionRequest{Agent: &s.config.Name, Id: &shouted}, nil))
+	s.Equal(members, s.chat.Members(channel), "nobody was made a member of the thread")
 }
 
 // TestABackendOpensAThreadChannelAgainByItsAgentID: the one way in, after a session on it

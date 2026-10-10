@@ -302,7 +302,7 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 	if request.Body.SessionId != nil {
 		held, ok := conversation.SessionID(*request.Body.SessionId)
 		if !ok {
-			return nil, invalidRequest("session_id must be up to 64 letters, digits, - and _, not starting support- or thread-")
+			return nil, invalidRequest("session_id must be up to 64 letters, digits, - and _")
 		}
 		call.SessionID = held
 	}

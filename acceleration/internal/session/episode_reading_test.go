@@ -322,7 +322,7 @@ func (s *EpisodeReadingSuite) chatNow() time.Time {
 func (s *EpisodeReadingSuite) textSession(thread string, cards bool, text string) llm.ResponseParams {
 	spec := Spec{
 		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCards: cards,
-		Text: true, PersistConversation: true, ConversationID: thread,
+		Text: true, PersistConversation: true, ConversationID: thread, Thread: true,
 		LLMTarget: "en-low-latency", Instructions: "be brief",
 	}
 	created, err := s.manager.Create(persistent.RouterOpensThread(s.ctx, thread), spec)

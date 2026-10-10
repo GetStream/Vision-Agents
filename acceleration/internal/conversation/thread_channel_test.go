@@ -183,6 +183,23 @@ func (s *ThreadChannelSuite) TestAThreadChannelARequestNamesDoesNotOpen() {
 	s.Contains(err.Error(), "invalid conversation channel")
 }
 
+// A session may be named thread-...: its own channel carries the session command trigger,
+// so it opens without the Router's word, and its replies stay in it.
+func (s *ThreadChannelSuite) TestASessionNamedLikeAThreadChannelIsItsOwnConversation() {
+	cid := "agent:" + conversation.ThreadChannelPrefix + "order-1042"
+
+	c, _, _, err := s.service.CreateInApp(context.Background(), 0, "customer", "agent", cid, "", "", nil)
+	s.Require().NoError(err)
+	s.Require().NoError(c.Begin("question"))
+	c.Observe(agent.ResponseDelta{Text: "An answer."})
+	c.Observe(agent.Responded{})
+
+	s.Require().Eventually(func() bool {
+		return slices.Contains(s.chat.Messages(cid[len("agent:"):]), "An answer.")
+	}, 5*time.Second, 10*time.Millisecond)
+	s.Never(func() bool { return len(s.handedOver()) > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+}
+
 // The Router's word is for the one channel it found the channel_threads row of.
 func (s *ThreadChannelSuite) TestTheRoutersWordForAnotherThreadChannelDoesNotOpenThisOne() {
 	other := conversation.RouterOpensThread(context.Background(), "agent:"+conversation.ThreadChannelPrefix+uuid.NewString())
