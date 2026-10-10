@@ -134,6 +134,23 @@ func (s *MessageHooksSuite) TestAChannelNamingAConfigNobodyHoldsIsAcceptedAndDro
 	s.NotContains(s.logged.String(), `level=ERROR msg="an arriving message's channel names a config nobody in its app holds"`)
 }
 
+// A store failure reading the config is this router's failure, not another router's channel:
+// it stays an ERROR, under its own message.
+func (s *MessageHooksSuite) TestAStoreFailureReadingTheDeclaredConfigIsAnError() {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	before := len(s.logged.String())
+
+	_, _, found := s.router.ownerOf(ctx, hookOrigin{customer: s.customerID(), app: 77}, messageEvent{
+		ChannelID: s.channelID, ChannelCustom: map[string]any{ConfigField: "config-unread"},
+	})
+
+	s.False(found)
+	logged := s.logged.String()[before:]
+	s.Contains(logged, `level=ERROR msg="could not read the config an arriving message's channel names"`, logged)
+	s.NotContains(logged, `level=INFO msg="an arriving message's channel names a config nobody in its app holds"`)
+}
+
 func (s *MessageHooksSuite) TestAChannelWithNoHistoryAndNoConfigIsAcceptedAndDropped() {
 	// Every message in the app arrives at this hook. One in a channel nothing claims is
 	// not answerable on a retry either.

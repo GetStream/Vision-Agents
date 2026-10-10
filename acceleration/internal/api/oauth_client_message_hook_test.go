@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"testing"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
@@ -199,4 +200,86 @@ func (s *ProviderAppMessageHookOffSuite) TestTheOAuthClientPutAnswersAsBeforeAnd
 	s.Contains(string(payload), "OAuth clients cannot be stored: connectors are not enabled on this deployment")
 	s.Len(s.chat.Requests(s.apiKey), asked, "nothing is asked of the customer's Stream app")
 	s.Empty(s.chat.EventHooks(s.apiKey))
+}
+
+// Two provider apps pinned to one Stream app whose hook delivers elsewhere: the startup check
+// reads the app once and warns once.
+func (s *ProviderAppMessageHookSuite) TestTheStartupCheckReadsAnAppOnce() {
+	status, payload := s.putOwnApp("slack_bot", s.ownSlackApp())
+	s.Require().Equal(http.StatusCreated, status, string(payload))
+	_, err := s.store.PutConnectorOAuthClient(context.Background(), &store.ConnectorOAuthClient{
+		CustomerID: s.customerID(), ConnectorID: "linq", Registration: core.ClientCustomer,
+		ClientID: "synthetic-linq-client", ProviderAppID: "synthetic-linq-" + s.utils.uuid(), StreamAppPK: s.appID(),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() {
+		_ = s.store.DeleteConnectorOAuthClient(context.Background(), s.customerID(), "linq", core.ClientCustomer)
+	})
+	client, err := getstream.NewClient(s.apiKey, s.secret, getstream.WithBaseUrl(s.chat.URL))
+	s.Require().NoError(err)
+	_, err = client.UpdateApp(context.Background(), &getstream.UpdateAppRequest{EventHooks: []getstream.EventHook{
+		pointed("https://another-router.example" + chat.MessageHookPath),
+	}})
+	s.Require().NoError(err)
+	before := len(s.logged.String())
+	gets := s.asked(s.apiKey, http.MethodGet, "/api/v2/app")
+
+	s.router.WarnWithoutMessageHooks(context.Background())
+
+	s.Equal(gets+1, s.asked(s.apiKey, http.MethodGet, "/api/v2/app"), "one read per app")
+	s.Equal(1, strings.Count(s.warnings(before), "level=WARN"), s.warnings(before))
+}
+
+// A client with no provider app takes no events, so the app it is pinned to is not checked,
+// wherever its hook delivers.
+func (s *ProviderAppMessageHookSuite) TestAClientWithoutAProviderAppIsNotCheckedAtStartup() {
+	sent := s.ownSlackApp()
+	sent.ProviderAppID, sent.SigningSecret = "", ""
+	status, payload := s.putOwnApp("slack_bot", sent)
+	s.Require().Equal(http.StatusCreated, status, string(payload))
+	before := len(s.logged.String())
+	gets := s.asked(s.apiKey, http.MethodGet, "/api/v2/app")
+
+	s.router.WarnWithoutMessageHooks(context.Background())
+
+	s.Equal(gets, s.asked(s.apiKey, http.MethodGet, "/api/v2/app"))
+	s.Empty(s.warnings(before))
+}
+
+// ProviderAppMessageHookDeploymentSuite is deployment mode with connectors on and a public
+// URL: every customer shares the deployment's app, so there is no pinned app to check.
+type ProviderAppMessageHookDeploymentSuite struct{ messageHookHarness }
+
+func TestProviderAppMessageHookDeploymentSuite(t *testing.T) {
+	runSuite(t, new(ProviderAppMessageHookDeploymentSuite))
+}
+
+func (s *ProviderAppMessageHookDeploymentSuite) SetupSuite() {
+	s.deployment = true
+	s.start(true, providerAppPublicURL)
+}
+
+func (s *ProviderAppMessageHookDeploymentSuite) SetupTest() { s.useApp(s.data.createApp()) }
+
+// The startup check asks Stream nothing in deployment mode, even of a record that carries a
+// pin.
+func (s *ProviderAppMessageHookDeploymentSuite) TestTheStartupCheckAsksNothing() {
+	s.Require().False(s.stream.PerApp())
+	pin := int64(910000000) + int64(len(s.utils.uuid()))
+	_, err := s.store.PutConnectorOAuthClient(context.Background(), &store.ConnectorOAuthClient{
+		CustomerID: s.customerID(), ConnectorID: "slack_bot", Registration: core.ClientCustomer,
+		ClientID: "synthetic-client", ProviderAppID: "ADEPLOY" + strings.ToUpper(s.utils.uuid()[:6]), StreamAppPK: pin,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() {
+		_ = s.store.DeleteConnectorOAuthClient(context.Background(), s.customerID(), "slack_bot", core.ClientCustomer)
+	})
+	before := len(s.logged.String())
+	asked := len(s.chat.Requests(suiteStreamKey))
+
+	s.router.WarnWithoutMessageHooks(context.Background())
+
+	s.Len(s.chat.Requests(suiteStreamKey), asked)
+	s.NotContains(s.logged.String()[before:], "stream_app="+strconv.FormatInt(pin, 10))
+	s.NotContains(s.logged.String()[before:], `level=WARN msg="stream: `)
 }
