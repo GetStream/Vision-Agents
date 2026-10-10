@@ -183,6 +183,55 @@ func (s *SlackChannelSuite) TestTwoAgentsBindingTheBotAtOnceAreOneOwner() {
 	s.Len(configs, 1)
 }
 
+// TestAThirdAgentIsRefusedNamingTheOldestOfTwoThatShared: of two configs that both bound the
+// connection before the 409 existed, the refusal names the oldest, the one that answers.
+func (s *SlackChannelSuite) TestAThirdAgentIsRefusedNamingTheOldestOfTwoThatShared() {
+	newer := s.sharedAsBefore()
+
+	status, failure := s.refusal(http.MethodPost, "/v1/agents/configs", s.botAgent("third-"+s.utils.uuid(), nil))
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure.Message, `agent config "`+s.config.Name+`" (`+s.config.ID+`)`)
+	s.NotContains(failure.Message, newer)
+}
+
+// TestAMigrationAndASaveOfOneConfigAtOnceDoNotDeadlock: AddConnectorBinding (router plugins
+// migrate) and UpdateAgentConfig of one config, each newly binding one channel connection, run
+// at once. Both take the channel owner's lock before the config's row; at d17a7938
+// AddConnectorBinding took the row first, and Postgres aborted one of a pair with 40P01 (the
+// count is in the fixer's log, <scratchpad>/pr-w8-own/fixer-1.md).
+func (s *SlackChannelSuite) TestAMigrationAndASaveOfOneConfigAtOnceDoNotDeadlock() {
+	ctx := context.Background()
+	const pairs = 30
+	for range pairs {
+		bot := s.connectedBot("T0000LOCK"+strings.ToUpper(s.utils.uuid()[:8]), "xoxb-synthetic-lock")
+		fixed := store.ConnectionBinding{Type: "fixed", ConnectionID: bot.ConnectionID}
+		config := store.AgentConfig{CustomerID: s.customerID(), Name: "lock-" + s.utils.uuid(), Mode: store.AgentModeText, LLM: "noted/noted-model"}
+		s.Require().NoError(s.store.CreateAgentConfig(ctx, &config))
+		var migrated, saved error
+		var started, done sync.WaitGroup
+		started.Add(1)
+		done.Add(2)
+		go func() {
+			defer done.Done()
+			started.Wait()
+			_, _, migrated = s.store.AddConnectorBinding(ctx, s.customerID(), config.ID,
+				store.ConnectorBinding{Name: "slack_migrated", ConnectorID: "slack_bot", Connection: fixed})
+		}()
+		go func() {
+			defer done.Done()
+			started.Wait()
+			update := config
+			update.Connectors = []store.ConnectorBinding{{Name: "slack", ConnectorID: "slack_bot", Connection: fixed}}
+			saved = s.store.UpdateAgentConfig(ctx, &update)
+		}()
+		started.Done()
+		done.Wait()
+		s.Require().NoError(migrated)
+		s.Require().NoError(saved)
+	}
+}
+
 // TestAPluginMigrationCannotGiveTheBotASecondAgent: router plugins migrate adds bindings
 // through AddConnectorBinding, which refuses the same way.
 func (s *SlackChannelSuite) TestAPluginMigrationCannotGiveTheBotASecondAgent() {

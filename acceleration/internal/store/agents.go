@@ -169,6 +169,14 @@ func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID st
 		if err := refuseUndefined(undefined, nil); err != nil {
 			return err
 		}
+		// The channel owner's lock before the row's, the order UpdateAgentConfig takes them in.
+		// refuseSecondChannelAgent takes it again below, which a transaction that holds it is
+		// granted at once (https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS).
+		if binding.Connection.Type == "fixed" {
+			if _, _, err := lockChannelOwner(ctx, tx, customerID, binding.Connection.ConnectionID); err != nil {
+				return err
+			}
+		}
 		err = tx.NewSelect().Model(&config).
 			Where("id = ?", configID).
 			Where("customer_id = ?", customerID).

@@ -88,32 +88,12 @@ func refuseSecondChannelAgent(ctx context.Context, tx bun.Tx, config *AgentConfi
 	}
 	slices.Sort(ids)
 	for _, id := range ids {
-		var connection ConnectorConnection
-		err := tx.NewSelect().Model(&connection).Column("id", "connector_id", "definition_revision").
-			Where("customer_id = ?", config.CustomerID).
-			Where("id = ?", id).
-			Where("deleted_at IS NULL").
-			Scan(ctx)
-		if errors.Is(err, sql.ErrNoRows) {
-			// refuseUnbindable answers a connection that is not live.
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("store: channel connection owner: %w", err)
-		}
-		definition, err := connectorDefinition(ctx, tx, config.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
-		if errors.Is(err, ErrNoConnectorDefinition) {
-			continue
-		}
+		connectorID, channel, err := lockChannelOwner(ctx, tx, config.CustomerID, id)
 		if err != nil {
 			return err
 		}
-		if definition.Manifest.Channel == nil || definition.Manifest.Channel.Messages.IsZero() {
+		if !channel {
 			continue
-		}
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, ?))",
-			config.CustomerID+"/"+id, channelOwnerLockSeed); err != nil {
-			return fmt.Errorf("store: channel connection owner: %w", err)
 		}
 		var owner AgentConfig
 		err = tx.NewSelect().Model(&owner).Column("id", "name").
@@ -132,9 +112,44 @@ func refuseSecondChannelAgent(ctx context.Context, tx bun.Tx, config *AgentConfi
 			return fmt.Errorf("store: channel connection owner: %w", err)
 		}
 		return &ChannelConnectionTakenError{
-			Binding: named[id], ConnectionID: id, ConnectorID: connection.ConnectorID,
+			Binding: named[id], ConnectionID: id, ConnectorID: connectorID,
 			OwnerID: owner.ID, OwnerName: owner.Name,
 		}
 	}
 	return nil
+}
+
+// lockChannelOwner takes the lock a channel connection's owner is decided under
+// (refuseSecondChannelAgent) when the live connection id is a channel connection, and returns
+// its connector and whether it is one. A write that also locks the config's row takes this
+// lock first, as UpdateAgentConfig does, or the two would wait on each other in a cycle.
+func lockChannelOwner(ctx context.Context, tx bun.Tx, customerID, id string) (string, bool, error) {
+	var connection ConnectorConnection
+	err := tx.NewSelect().Model(&connection).Column("id", "connector_id", "definition_revision").
+		Where("customer_id = ?", customerID).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		// refuseUnbindable answers a connection that is not live.
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("store: channel connection owner: %w", err)
+	}
+	definition, err := connectorDefinition(ctx, tx, customerID, connection.ConnectorID, connection.DefinitionRevision)
+	if errors.Is(err, ErrNoConnectorDefinition) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if definition.Manifest.Channel == nil || definition.Manifest.Channel.Messages.IsZero() {
+		return "", false, nil
+	}
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, ?))",
+		customerID+"/"+id, channelOwnerLockSeed); err != nil {
+		return "", false, fmt.Errorf("store: channel connection owner: %w", err)
+	}
+	return connection.ConnectorID, true, nil
 }
