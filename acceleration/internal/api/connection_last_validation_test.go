@@ -3,14 +3,18 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
@@ -118,14 +122,7 @@ func (s *ConnectionToolsSuite) TestA429OrA5xxKeepsAStaticTokenConnected() {
 func (s *ConnectionToolsSuite) TestAProviderThatDoesNotAnswerKeepsAStaticTokenConnected() {
 	closed := httptest.NewTLSServer(http.NotFoundHandler())
 	closed.Close()
-	connector := "custom_tools" + strings.ReplaceAll(s.utils.uuid(), "-", "")
-	yaml := strings.Replace(s.manifest(connector, 1, bearer.Name, ""),
-		"mcp: "+s.provider.URL+fakeprovider.PathMCP, "mcp: "+closed.URL+fakeprovider.PathMCP, 1)
-	manifest, err := core.ParseManifest([]byte(yaml))
-	s.Require().NoError(err)
-	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
-	s.Require().NoError(err)
-	id := s.connectionTo(connector)
+	id := s.connectionTo(s.connectorAt(closed.URL + fakeprovider.PathMCP))
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
 
 	validation := s.validate(id)
@@ -137,6 +134,41 @@ func (s *ConnectionToolsSuite) TestAProviderThatDoesNotAnswerKeepsAStaticTokenCo
 	s.Equal(validationFailed, string(got.LastValidation.Status))
 	s.Empty(got.LastValidation.Code, "no status to name")
 	s.Equal(validation.Error, got.LastValidation.Error)
+}
+
+// TestTheAnswerAValidateFailedOnDecidesNotTheSessionsDelete: a stateful MCP server answers
+// tools/list with 503, then the DELETE that ends the session with 405, as MCP 2025-11-25 lets it
+// («Session Management»). The 503 is what the validate failed on, so the token stays connected.
+func (s *ConnectionToolsSuite) TestTheAnswerAValidateFailedOnDecidesNotTheSessionsDelete() {
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "stateful", Version: "1"}, nil)
+	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server }, &mcpsdk.StreamableHTTPOptions{JSONResponse: true})
+	deletes := 0
+	// httptest servers share one certificate, so the fake's client trusts this one too.
+	stateful := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		switch {
+		case r.Method == http.MethodDelete:
+			deletes++
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		case bytes.Contains(raw, []byte(`"method":"tools/list"`)):
+			w.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			handler.ServeHTTP(w, r)
+		}
+	}))
+	s.T().Cleanup(stateful.Close)
+	id := s.connectionTo(s.connectorAt(stateful.URL + "/mcp"))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+
+	validation := s.validate(id)
+
+	s.Equal(validationFailed, string(validation.Status))
+	s.Equal(1, deletes, "the session was ended with a DELETE")
+	got := s.get(id)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), got.Status)
+	s.Require().NotNil(got.LastValidation)
+	s.Equal("503", got.LastValidation.Code)
 }
 
 // TestA400OnAnOAuthGrantKeepsItConnected is a control: an OAuth grant keeps the 401-only rule
@@ -216,6 +248,18 @@ func (s *ConnectionToolsSuite) TestAPendingConnectionsValidateIsRecordedWithoutA
 	s.Equal(validationPending, string(got.Status))
 	s.Equal(validation.Error, got.Error)
 	s.Empty(got.Code)
+}
+
+// connectorAt stores a bearer connector of the suite's app whose MCP endpoint is mcp.
+func (s *ConnectionToolsSuite) connectorAt(mcp string) string {
+	connector := "custom_tools" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	yaml := strings.Replace(s.manifest(connector, 1, bearer.Name, ""),
+		"mcp: "+s.provider.URL+fakeprovider.PathMCP, "mcp: "+mcp, 1)
+	manifest, err := core.ParseManifest([]byte(yaml))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	return connector
 }
 
 // answerMCP has the fake answer every MCP request with status until the test ends.

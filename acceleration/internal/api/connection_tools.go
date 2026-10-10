@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -331,10 +332,8 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 	if s.connectorResolver == nil || s.connectorTransports == nil {
 		return nil, errConnectionToolsOff
 	}
-	// The exchange is what the connection's client saw of the provider's answers: its last
-	// status is what the static rule (refusedStatic) and the record's code read.
-	observed, exchange := core.WithExchange(ctx)
-	response, err := s.checkConnection(observed, connection, request.Body, exchange)
+	answered := &lastAnswer{}
+	response, err := s.checkConnection(ctx, connection, request.Body, answered)
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +343,7 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 	if validation.CheckedAt != nil {
 		record.CheckedAt = *validation.CheckedAt
 	}
-	if status := exchange.Status(); record.Code == "" && status >= http.StatusBadRequest {
+	if status := answered.status(); record.Code == "" && status >= http.StatusBadRequest {
 		record.Code = strconv.Itoa(status)
 	}
 	if err := s.store.PutConnectorConnectionValidation(ctx, record); err != nil {
@@ -354,9 +353,9 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 }
 
 // checkConnection resolves the connection's credential, lists its tools through each of its
-// sources, stores the list, and compares the granted scopes with what the tools need. ctx
-// carries exchange.
-func (s *Server) checkConnection(ctx context.Context, connection store.ConnectorConnection, body *ConnectionValidationRequest, exchange *core.Exchange) (*validationResponse, error) {
+// sources, stores the list, and compares the granted scopes with what the tools need. answered
+// is told the provider's answers.
+func (s *Server) checkConnection(ctx context.Context, connection store.ConnectorConnection, body *ConnectionValidationRequest, answered *lastAnswer) (*validationResponse, error) {
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
 	// The resolver refuses a connection that is not connected before anything is sent, and
 	// moves one whose renewal the provider refused; either way the row says what to do.
@@ -372,10 +371,14 @@ func (s *Server) checkConnection(ctx context.Context, connection store.Connector
 	if err != nil {
 		return nil, err
 	}
+	// A copy of the connection's client, on the same transport and so the same pool, whose
+	// answers the validate reads.
+	client := *s.connectorTransports.Client(ref, scheme)
+	answered.base, client.Transport = client.Transport, answered
 	binding := core.ResolvedBinding{
 		Connection: coreConnection(connection),
 		Manifest:   manifest,
-		HTTP:       s.connectorTransports.Client(ref, scheme),
+		HTTP:       &client,
 	}
 	var specs []core.ToolSpec
 	for _, kind := range sourceKinds(manifest) {
@@ -385,7 +388,7 @@ func (s *Server) checkConnection(ctx context.Context, connection store.Connector
 		}
 		listed, err := source.Discover(ctx, binding)
 		if err != nil {
-			if refusedStatic(s.connectors.Schemes, connection.AuthScheme, exchange.Status()) {
+			if refusedStatic(s.connectors.Schemes, connection.AuthScheme, answered.status()) {
 				// The 401 path's move (core.Transports invalidates a refused credential nothing
 				// renews), so the row and the validate say the same: replace the token or key.
 				// Invalidate leaves a connection whose credentials changed since Resolve alone.
@@ -475,6 +478,35 @@ func missingScopes(specs []core.ToolSpec, names, granted []string) ([]string, er
 	}
 	slices.Sort(missing)
 	return missing, nil
+}
+
+// lastAnswer is the provider's status for the last request of a validate that was answered, 0
+// when none was: the answer the validate failed on, since an MCP client stops at the first
+// failed request (go-sdk v1.8.0, MaxRetries -1 in sources/mcp). The DELETE that ends an MCP
+// session is left out: a source sends it when it closes the session after the failure, and a
+// server «MAY respond to this request with HTTP 405 Method Not Allowed» (MCP 2025-11-25,
+// Transports, «Session Management»).
+type lastAnswer struct {
+	base   http.RoundTripper
+	mu     sync.Mutex
+	answer int
+}
+
+func (a *lastAnswer) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := a.base.RoundTrip(request)
+	if err != nil || request.Method == http.MethodDelete {
+		return response, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.answer = response.StatusCode
+	return response, err
+}
+
+func (a *lastAnswer) status() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.answer
 }
 
 // refusedStatic says a validate whose provider last answered status moves a connection of
