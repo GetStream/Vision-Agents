@@ -125,6 +125,31 @@ class TestStreamConversation:
         assert request.custom.get("generating") is True
         assert request.custom.get("source") == "agent"
 
+    async def test_a_message_with_no_sender_is_kept_but_not_written(
+        self, stream_conversation, mock_channel
+    ):
+        # What the router reports for text typed into a call: a line heard from nobody.
+        await stream_conversation.upsert_message(
+            role="user",
+            user_id="",
+            content="Greet the caller briefly and wait.",
+            completed=True,
+        )
+        await stream_conversation.upsert_message(
+            role="user",
+            user_id="caller-1",
+            content="Hi, a table for two.",
+            completed=True,
+        )
+        await stream_conversation.wait_for_pending_syncs()
+
+        assert [m.content for m in stream_conversation.messages] == [
+            "Greet the caller briefly and wait.",
+            "Hi, a table for two.",
+        ]
+        mock_channel.send_message.assert_called_once()
+        assert mock_channel.send_message.call_args[0][0].user_id == "caller-1"
+
     @pytest.mark.asyncio
     async def test_upsert_simple_message(self, stream_conversation, mock_channel):
         """Test adding a simple non-streaming message with upsert."""
