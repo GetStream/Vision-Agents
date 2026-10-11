@@ -6,6 +6,13 @@ import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.http.URLBuilder
 import io.ktor.http.URLProtocol
 import io.ktor.http.appendPathSegments
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
@@ -32,12 +39,36 @@ public fun interface TokenProvider {
     public suspend fun token(): String
 }
 
+/** What Stream's own Chat and Video clients connect with: the app's key, the user and their token. */
+public data class StreamCredentials(
+    val apiKey: String,
+    val user: User,
+    val token: String,
+)
+
+/**
+ * How `vision-agents-chat` and `vision-agents-rtc` share Stream clients through a [Backend].
+ *
+ * Public because those are separate artifacts, and opted into because it is not for apps: an
+ * app hands its own clients over with `use` and never builds through these.
+ */
+@RequiresOptIn(message = "Shared Stream clients are for the chat and rtc modules; an app calls use instead.")
+@Retention(AnnotationRetention.BINARY)
+@Target(AnnotationTarget.FUNCTION)
+public annotation class StreamClients
+
 /**
  * Where the router is and who is asking.
  *
  * A phone holds no secret worth having, so there is no API secret here. A router with nothing
  * in front of it is reached by [customerId]; a deployment verifying tokens is reached by
- * [apiKey] and the token [setUser] is given, which the app's own backend minted.
+ * [apiKey] and the token [setUser] is given, which the app's own backend minted. Beside a
+ * customer id the key is Stream's alone: the router is still reached by customer id, and the key
+ * is what Chat and Video connect with.
+ *
+ * The key, user and token are the one identity for the router, Stream Chat and Stream Video.
+ * Nothing connects when the user is set; each Stream client is built the first time a session
+ * asks for it, once per key and user, and [VisionAgents.disconnect] closes it.
  *
  * Constructing one does no I/O. Pass an [OkHttpClient] to share the app's connection pool,
  * proxy and certificate pinning; [close] releases the HTTP client built around it.
@@ -71,6 +102,13 @@ public class Backend(
     @Volatile private var identity: Identity? = null
     @Volatile private var cached: String? = null
 
+    /** Opens shared clients outside any one caller, so a session going away does not cancel another's. */
+    private val opening = CoroutineScope(SupervisorJob())
+    /** The app's own clients by kind, kept whoever signs in. */
+    private val given = ConcurrentHashMap<String, Any>()
+    /** The clients built here, by kind, key and user. */
+    private val built = mutableMapOf<String, Built>()
+
     /** Who this is acting for, or null until [setUser]. */
     public val user: User? get() = identity?.user
 
@@ -103,6 +141,85 @@ public class Backend(
     }
 
     /**
+     * The key, user and token for Stream Chat, Stream Video or any other Stream product.
+     *
+     * [refresh] is for a token the caller was told has expired: the one held is fetched again,
+     * unless somebody else already did, so two clients refreshing at once fetch one token.
+     */
+    public suspend fun streamCredentials(refresh: Boolean = false): StreamCredentials {
+        val who = identity
+        if (apiKey.isEmpty() || who == null) {
+            throw AgentsException.Configuration(
+                "Stream Chat and Video need the app's Stream key and a user: build VisionAgents " +
+                    "with apiKey and call setUser",
+            )
+        }
+        val token = token(who, stale = if (refresh) cached ?: "" else null)
+        return StreamCredentials(apiKey, who.user, token)
+    }
+
+    /** Records a Stream client the app owns, so it is used rather than another being built. */
+    @StreamClients
+    public fun give(kind: String, client: Any) {
+        given[kind] = client
+    }
+
+    /**
+     * The client the app gave for [kind], or the one built for the current key and user.
+     *
+     * Built once however many sessions ask, keyed before any token is asked for, so a second
+     * session mints nothing. One that failed to open is not kept.
+     */
+    @StreamClients
+    @Suppress("UNCHECKED_CAST")
+    public suspend fun <T : Any> shared(
+        kind: String,
+        open: suspend (StreamCredentials) -> T,
+        disconnect: suspend (T) -> Unit,
+    ): T {
+        given[kind]?.let { return it as T }
+        val who = identity
+        if (apiKey.isEmpty() || who == null) {
+            throw AgentsException.Configuration(
+                "$kind connects to Stream rather than to the router, so it needs the app's Stream " +
+                    "key and a user: build VisionAgents with apiKey and call setUser",
+            )
+        }
+        val key = "$kind:$apiKey:${who.user.id}"
+        val entry = synchronized(built) {
+            built.getOrPut(key) {
+                Built(opening.async { open(streamCredentials()) }) { disconnect(it as T) }
+            }
+        }
+        try {
+            return entry.opening.await() as T
+        } catch (e: Exception) {
+            // Only a client that failed to open is forgotten. A caller cancelled while it was
+            // opening leaves it to whoever asks next, or a second would be built beside it.
+            if (entry.opening.isCompleted) {
+                synchronized(built) { if (built[key] === entry) built.remove(key) }
+            }
+            throw e
+        }
+    }
+
+    /** Disconnects every Stream client built here. The ones the app gave are left alone. */
+    internal suspend fun disconnectStream() {
+        val opened = synchronized(built) { built.values.toList().also { built.clear() } }
+        for (entry in opened) {
+            val client = try {
+                entry.opening.await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // One that never opened has nothing to disconnect, and its opener was told why.
+                continue
+            }
+            entry.disconnect(client)
+        }
+    }
+
+    /**
      * The headers every request and every socket handshake carries.
      *
      * `Stream-Auth-Type: jwt` says this caller is somebody's device rather than their backend.
@@ -113,21 +230,21 @@ public class Backend(
     internal suspend fun headers(): Map<String, String> {
         val headers = linkedMapOf("Stream-Auth-Type" to "jwt")
         val who = identity
-        if (apiKey.isNotEmpty()) {
-            if (who == null) {
-                throw AgentsException.Configuration(
-                    "an api key needs a user token to go with it; call setUser first",
-                )
-            }
-            headers["X-Api-Key"] = apiKey
-            headers["Authorization"] = "Bearer ${token(who)}"
+        if (customerId.isNotEmpty()) {
+            headers["X-Customer-Id"] = customerId
+            if (who != null) headers["X-Stream-User-Id"] = who.user.id
             return headers
         }
-        if (customerId.isEmpty()) {
+        if (apiKey.isEmpty()) {
             throw AgentsException.Configuration("pass a customerId, or an apiKey and setUser")
         }
-        headers["X-Customer-Id"] = customerId
-        if (who != null) headers["X-Stream-User-Id"] = who.user.id
+        if (who == null) {
+            throw AgentsException.Configuration(
+                "an api key needs a user token to go with it; call setUser first",
+            )
+        }
+        headers["X-Api-Key"] = apiKey
+        headers["Authorization"] = "Bearer ${token(who)}"
         return headers
     }
 
@@ -137,7 +254,7 @@ public class Backend(
      */
     internal fun expireToken(): Boolean {
         cached = null
-        return apiKey.isNotEmpty() && identity != null
+        return customerId.isEmpty() && apiKey.isNotEmpty() && identity != null
     }
 
     /** The URL for a path under the router, with its segments encoded. */
@@ -160,16 +277,20 @@ public class Backend(
         }.buildString()
 
     override fun close() {
+        opening.cancel()
         http.close()
     }
 
-    private suspend fun token(who: Identity): String {
-        cached?.let { return it }
+    /** The token held, or a fresh one when the one held is [stale]. */
+    private suspend fun token(who: Identity, stale: String? = null): String {
+        if (stale == null) cached?.let { return it }
         return lock.withLock {
             // Asked once however many requests were waiting for it.
-            cached ?: who.token.token().also { if (identity === who) cached = it }
+            cached?.takeIf { it != stale } ?: who.token.token().also { if (identity === who) cached = it }
         }
     }
 
     private class Identity(val user: User, val token: TokenProvider)
+
+    private class Built(val opening: Deferred<Any>, val disconnect: suspend (Any) -> Unit)
 }
