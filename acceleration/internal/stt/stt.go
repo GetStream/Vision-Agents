@@ -75,3 +75,10 @@ type STT interface {
 	// Model is the model identifier used in stats, e.g. "flux-general-en".
 	Model() string
 }
+
+// Retuner is a provider whose vocabulary can change on a stream already open. One that
+// cannot be retuned keeps the keyterms it started with.
+type Retuner interface {
+	// SetKeyterms replaces the terms the transcriber expects, for the rest of the stream.
+	SetKeyterms(terms []string) error
+}

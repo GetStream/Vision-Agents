@@ -16,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts/openairealtime"
@@ -177,7 +178,7 @@ func (s *AgentSuite) TestNativeDelegationKeepsTalkingAndDeliversTheResultWhenIdl
 	s.Contains(string(setup["session"]), "delegate_skill")
 	s.Contains(string(setup["session"]), "cancel_skill")
 	s.Nil(s.agent.LLM(), "STS must not open a text conversation model")
-	turnID, err := s.agent.RespondTo(s.ctx, "My booking is for six people", nil)
+	turnID, err := s.agent.RespondTo(s.ctx, "My booking is for six people", nil, options.LLM{})
 	s.Require().NoError(err)
 	s.Empty(turnID, "a native agent names its own turns")
 	s.nativeFrame(peer, "response.create")

@@ -61,9 +61,8 @@ class CreateSessionRequest:
             is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant
             message puts words in the agent's mouth.
         id (str | Unset): The id to hold the session by, so a caller can know it before the session exists. It may be
-            any string of up to 64 letters, digits, - and _, such as your own record's id, that does not start support- or
-            thread- and that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a
-            UUIDv7.
+            any string of up to 64 letters, digits, - and _, such as your own record's id, that nobody has used for a
+            session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7.
         incognito (bool | Unset): Hold the conversation and record nothing about it: no session row, no turns, no
             transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it
             simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork

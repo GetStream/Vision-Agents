@@ -171,8 +171,8 @@ type Responses struct {
 	sessionID string
 }
 
-// Input is something sent along with what is asked: an Image or a Clip to show the agent, or
-// the RequestID it answers.
+// Input is something sent along with what is asked: an Image or a Clip to show the agent, the
+// RequestID it answers, or a MaxOutputTokens or ReasoningEffort for this answer alone.
 type Input interface {
 	attachTo(request *acceleration.CreateResponseRequest)
 }
@@ -220,6 +220,22 @@ func (id RequestID) attachTo(request *acceleration.CreateResponseRequest) {
 	if id != "" {
 		request.RequestId = pointer(string(id))
 	}
+}
+
+// MaxOutputTokens caps this answer, reasoning included, and the replies that finish it once
+// its tools come back. Without it the session's own limit holds.
+type MaxOutputTokens int
+
+func (n MaxOutputTokens) attachTo(request *acceleration.CreateResponseRequest) {
+	request.MaxOutputTokens = pointer(int(n))
+}
+
+// ReasoningEffort is how long the model may think before this answer, such as "none", "low"
+// or "high". The router refuses one the session's model does not take.
+type ReasoningEffort string
+
+func (e ReasoningEffort) attachTo(request *acceleration.CreateResponseRequest) {
+	request.ReasoningEffort = pointer(string(e))
 }
 
 // ClipFile is a video on disk, sent inline so the router needs no way to reach it.

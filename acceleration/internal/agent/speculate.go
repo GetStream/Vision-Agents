@@ -8,6 +8,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 )
 
 // speculation is a reply started while the flow controller is still deciding whether the
@@ -150,6 +151,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) bool {
 	a.speakingTurn = ready.ID
 	a.generating = true
 	a.toolRounds = 0
+	a.asked = options.LLM{}
 	a.lastParticipant = ready.Participant
 	a.generatingCancel[ready.ID] = spec.cancel
 	a.mu.Unlock()

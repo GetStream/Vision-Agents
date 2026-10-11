@@ -26,6 +26,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -713,7 +714,7 @@ func (s *Service) run(config store.AgentConfig, declared store.BindingEvent, sub
 
 	s.logger.Info("an MCP event opened a conversation", "connection", sub.ConnectionID,
 		"event", delivered.Name, "config", config.ID, "session", created.ID())
-	if _, err := created.Respond(ctx, said(sub.Binding, delivered), nil); err != nil {
+	if _, err := created.Respond(ctx, said(sub.Binding, delivered), nil, options.LLM{}); err != nil {
 		s.logger.Error("the agent could not take an MCP event", "session", created.ID(), "error", err)
 		return
 	}

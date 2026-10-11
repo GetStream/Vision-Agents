@@ -436,7 +436,8 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	}
 	if len(filter.Custom) > 0 {
 		// Containment rather than a key at a time, so the GIN index on custom is usable
-		// and a caller asking for two labels gets the sessions carrying both.
+		// and a caller asking for two labels gets the sessions carrying both. The index is
+		// jsonb_path_ops, which serves @> and nothing else: no key-exists (?, ?|, ?&) filter.
 		query = query.Where("custom @> ?::jsonb", jsonbOf(filter.Custom))
 	}
 	if !filter.After.IsZero() {

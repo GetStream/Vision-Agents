@@ -5198,6 +5198,10 @@ export type components = {
         };
         readonly CreateResponseRequest: {
             readonly images?: readonly components["schemas"]["ImageSource"][];
+            /** @description Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's. */
+            readonly max_output_tokens?: number;
+            /** @description How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's. */
+            readonly reasoning_effort?: string;
             /** @description Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id. */
             readonly request_id?: string;
             /** @description What to answer, as though it had been said. */
@@ -5231,7 +5235,7 @@ export type components = {
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth. */
             readonly history?: readonly components["schemas"]["HistoryMessage"][];
-            /** @description The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that does not start support- or thread- and that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7. */
+            /** @description The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7. */
             readonly id?: string;
             /**
              * @description Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.

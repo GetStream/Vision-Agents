@@ -58,9 +58,9 @@ func (s *ToolsSuite) TestTheBuiltInSetIsUsable() {
 
 func (s *ToolsSuite) TestOnlyAModelWithToolsIsToldHowToUseThem() {
 	s.Empty(Tools{}.Prompt(), "a harness without tools adds nothing to the system prompt")
-	s.Equal(usePolicy, testTools().Prompt())
+	s.Equal(usePolicy+" "+sayDo, testTools().Prompt())
 	s.Empty(Tools{}.TextPrompt())
-	s.Equal(textUsePolicy, testTools().TextPrompt())
+	s.Equal(textUsePolicy+" "+sayDo, testTools().TextPrompt())
 }
 
 func (s *ToolsSuite) TestAWrittenConversationFillsNoPauseBeforeACall() {

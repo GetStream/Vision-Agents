@@ -46,7 +46,11 @@ type Spec struct {
 	ID                  string
 	PersistConversation bool
 	ConversationID      string
-	ContextTruncated    bool
+	// Thread holds ConversationID on a thread channel (internal/channelbridge), which only
+	// the Router sets once it found the channel's channel_threads row (api.threadSession,
+	// api.threadConversation). No request sets it.
+	Thread           bool
+	ContextTruncated bool
 	// CallID is the call the agent is on while voice is started: agent:<ID>, which joining
 	// creates. Empty while the conversation is held in writing.
 	CallID string
@@ -357,7 +361,7 @@ func (s *Spec) Normalize() error {
 	} else if held, ok := persistent.SessionID(s.ID); ok {
 		s.ID = held
 	} else {
-		return stack.Wrap(fmt.Errorf("session: the id %q is not one a session can have: up to 64 letters, digits, - and _, not starting support- or thread-", s.ID))
+		return stack.Wrap(fmt.Errorf("session: the id %q is not one a session can have: up to 64 letters, digits, - and _", s.ID))
 	}
 
 	// Checked before incognito clears the conversation id, so naming both is refused
@@ -593,12 +597,11 @@ func (s Spec) TranscriptChannel() string {
 }
 
 // Shared reports whether more than one verified person writes in the conversation: a thread
-// channel (persistent.ThreadChannelPrefix), where everyone in the external thread does, such
-// as a thread in a Slack channel. Such a session uses the app's connections only, never one
-// person's: the multi-person rule (architecture doc on connectors/planning, «One-way doors»
-// row 7).
+// channel (Thread), where everyone in the external thread does, such as a thread in a Slack
+// channel. Such a session uses the app's connections only, never one person's: the
+// multi-person rule (architecture doc on connectors/planning, «One-way doors» row 7).
 func (s Spec) Shared() bool {
-	return strings.HasPrefix(s.ConversationID, streamapp.AgentChannelType+":"+persistent.ThreadChannelPrefix)
+	return s.Thread
 }
 
 // boundProvider reports whether a connector binding names the provider id. A connector id

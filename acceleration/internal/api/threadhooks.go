@@ -174,7 +174,28 @@ func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread st
 	spec.CallID, spec.STSTarget, spec.Greeting = "", "", ""
 	spec.PersistConversation = true
 	spec.ConversationID = chatlog.ChannelType + ":" + thread.ChannelID
+	spec.Thread = true
 	return s.sessions.Create(conversation.RouterOpensThread(ctx, spec.ConversationID), spec)
+}
+
+// heldOnThread is whether a session's conversation is held on a thread channel: a live one
+// says so (Spec.Thread), and an ended one's channel has a channel_threads row.
+func (s *Server) heldOnThread(ctx context.Context, found session.Found) (bool, error) {
+	if found.Live != nil {
+		return found.Live.Spec().Thread, nil
+	}
+	if found.Stored == nil || s.store == nil {
+		return false, nil
+	}
+	channel, held := strings.CutPrefix(found.Stored.ConversationID, chatlog.ChannelType+":")
+	if !held || !strings.HasPrefix(channel, conversation.ThreadChannelPrefix) {
+		return false, nil
+	}
+	_, err := s.store.ChannelThread(ctx, channel)
+	if errors.Is(err, store.ErrNoChannelThread) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // threadConversation holds a text session asked for on a thread channel, by its agent id, on
@@ -234,6 +255,7 @@ func (s *Server) threadConversation(ctx context.Context, customerID string, spec
 		return ctx
 	}
 	spec.ConversationID = cid
+	spec.Thread = true
 	// A resumed conversation names its own agent (Spec.Normalize).
 	spec.AgentID = ""
 	return conversation.RouterOpensThread(ctx, spec.ConversationID)

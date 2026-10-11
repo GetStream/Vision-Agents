@@ -67,7 +67,7 @@ async def _open_ui(
     session_id = await _router_session_id(agent, join_task)
     base = os.getenv(_DASHBOARD_BASE_URL_ENV)
     if session_id and base:
-        url = f"{base.rstrip('/')}/sessions/{session_id}"
+        url = f"{base.rstrip('/')}/agent/sessions/{session_id}"
         # Logged before opening, so the URL is still usable where there is no browser to
         # open it with, as in a container or over ssh.
         logger.info(f"🌐 Opening the dashboard: {url}")

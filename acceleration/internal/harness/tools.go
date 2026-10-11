@@ -143,6 +143,13 @@ const textUsePolicy = "Call a tool as soon as every argument it requires is know
 	"ask you to write before acting (such as reading the caller's details back). " +
 	useArguments
 
+// sayDo holds what the agent says to what its tools did. A voice model told to say a hold
+// phrase before a call can say the outcome instead: in Voicebench Gemma told a caller
+// "You're all set" for a booking it never made. It sits beside the use policy rather than in
+// it, so that stays short.
+const sayDo = "Never say something is done (booked, changed, cancelled, sent) unless a " +
+	"tool result in this conversation shows it; if you have not called that tool, call it now."
+
 // Prompt is what the model is told about using its tools: when to call one and how to fill
 // it in. It is empty when there are none, so a harness without tools adds nothing to the
 // system prompt.
@@ -150,7 +157,7 @@ func (t Tools) Prompt() string {
 	if len(t.Tools) == 0 {
 		return ""
 	}
-	return usePolicy
+	return usePolicy + " " + sayDo
 }
 
 // TextPrompt is Prompt for a conversation held in writing, which fills no pause before a
@@ -159,7 +166,7 @@ func (t Tools) TextPrompt() string {
 	if len(t.Tools) == 0 {
 		return ""
 	}
-	return textUsePolicy
+	return textUsePolicy + " " + sayDo
 }
 
 // Validate reports the first tool the harness could not use.

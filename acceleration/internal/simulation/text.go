@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -96,7 +97,7 @@ func (w *written) Opening() string { return w.opening }
 func (w *written) Say(ctx context.Context, text string) (store.SimulationLine, error) {
 	w.begin()
 
-	if _, err := w.created.Respond(ctx, text, nil); err != nil {
+	if _, err := w.created.Respond(ctx, text, nil, options.LLM{}); err != nil {
 		return store.SimulationLine{}, err
 	}
 

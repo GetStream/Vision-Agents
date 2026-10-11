@@ -386,6 +386,91 @@ func (s *OpenAICompatSuite) TestAThoughtChannelIsLeftAloneForOtherModels() {
 	s.Equal("<|channel>thought\n<channel|>Hi", response.OutputText)
 }
 
+// withTools is a request that offers the restaurant's tools.
+func withTools() llm.ResponseParams {
+	params := hello()
+	params.Tools = []llm.Tool{{Name: "check_availability"}, {Name: "create_reservation"}}
+	return params
+}
+
+func (s *OpenAICompatSuite) TestAToolCallWrittenAsTextIsMadeNotSpoken() {
+	// What Gemma 4 sent in Voicebench once the opening marker went missing, split mid-marker.
+	s.frames = []string{
+		textFrame("call:check_avail"),
+		textFrame("ability{party_size:4,patio:true,time:<|\"|"),
+		textFrame(">7:30<|\"|>}<tool_"),
+		textFrame("call|>"),
+		usageFrame(20, 0, 30, 0, "stop"),
+	}
+	provider := s.provider(Options{ToolCallText: true})
+
+	response, _ := s.ask(provider, withTools())
+
+	s.Empty(response.OutputText)
+	s.Require().Len(response.ToolCalls, 1)
+	s.Equal("check_availability", response.ToolCalls[0].Name)
+	s.JSONEq(`{"party_size":4,"patio":true,"time":"7:30"}`, response.ToolCalls[0].Arguments)
+	s.NotEmpty(response.ToolCalls[0].ID)
+}
+
+func (s *OpenAICompatSuite) TestAMarkedToolCallAfterFillerKeepsTheFiller() {
+	s.frames = []string{
+		textFrame("One moment, checking. <|tool_call>call:create_reservation{name:<|\"|>Alvarez<|\"|>,"),
+		textFrame("party_size:6,allergen:<|\"|>gluten<|\"|>,notes:{high_chair:false,tags:[1,<|\"|>a, b<|\"|>]}}<tool_call|>"),
+		toolFrame(0, "call-1", "check_availability", `{"party_size":6}`),
+		usageFrame(20, 0, 30, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{ToolCallText: true})
+
+	response, _ := s.ask(provider, withTools())
+
+	s.Equal("One moment, checking. ", response.OutputText)
+	s.Require().Len(response.ToolCalls, 2, "the call written as text and the real one are both made")
+	names := []string{response.ToolCalls[0].Name, response.ToolCalls[1].Name}
+	s.ElementsMatch([]string{"create_reservation", "check_availability"}, names)
+	for _, call := range response.ToolCalls {
+		if call.Name == "create_reservation" {
+			s.JSONEq(`{"name":"Alvarez","party_size":6,"allergen":"gluten","notes":{"high_chair":false,"tags":[1,"a, b"]}}`, call.Arguments)
+		}
+	}
+}
+
+func (s *OpenAICompatSuite) TestAReplyThatMerelyLooksLikeAToolCallIsSpokenWhole() {
+	s.frames = []string{
+		textFrame("Please call: me back, or call:"),
+		textFrame("check_weather{city:Austin} and call:check"),
+		usageFrame(20, 0, 8, 0, "stop"),
+	}
+	provider := s.provider(Options{ToolCallText: true})
+
+	response, _ := s.ask(provider, withTools())
+
+	s.Equal("Please call: me back, or call:check_weather{city:Austin} and call:check", response.OutputText,
+		"a name that is not offered is not a call")
+	s.Empty(response.ToolCalls)
+}
+
+func (s *OpenAICompatSuite) TestAToolCallThatNeverClosesIsNotSpoken() {
+	s.frames = []string{textFrame("Sure. call:create_reservation{name:<|\"|>Al"), usageFrame(20, 0, 8, 0, "length")}
+	provider := s.provider(Options{ToolCallText: true})
+
+	response, events := s.ask(provider, withTools())
+
+	s.Equal("Sure. ", response.OutputText)
+	s.Empty(response.ToolCalls)
+	s.Contains(reasoningOf(events), "create_reservation", "it is kept where a caller that wants it can see it")
+}
+
+func (s *OpenAICompatSuite) TestAToolCallWrittenAsTextIsLeftAloneForOtherModels() {
+	s.frames = []string{textFrame("call:check_availability{party_size:4}"), usageFrame(20, 0, 8, 0, "stop")}
+	provider := s.provider(Options{})
+
+	response, _ := s.ask(provider, withTools())
+
+	s.Equal("call:check_availability{party_size:4}", response.OutputText)
+	s.Empty(response.ToolCalls)
+}
+
 func (s *OpenAICompatSuite) TestInstructionsAreSentAsASystemMessage() {
 	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
 	provider := s.provider(Options{})

@@ -10,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -88,7 +89,11 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 		return nil, failure
 	}
 
-	spec, err := forkSpec(parent, body, config)
+	thread, err := s.heldOnThread(ctx, parent)
+	if err != nil {
+		return nil, err
+	}
+	spec, err := forkSpec(parent, body, config, thread)
 	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
@@ -203,7 +208,7 @@ func (s *Server) respondSession(ctx context.Context, request *respondSessionRequ
 	}
 
 	if id := value(request.Body.RequestId); id != "" && found.Durable() {
-		receipt, _, err := found.RespondCommand(ctx, id, request.Body.Text, value(request.Body.ClientId))
+		receipt, _, err := found.RespondCommand(ctx, id, request.Body.Text, value(request.Body.ClientId), options.LLM{})
 		if errors.Is(err, conversation.ErrCommandConflict) {
 			return nil, conflict(err.Error())
 		}
@@ -215,7 +220,7 @@ func (s *Server) respondSession(ctx context.Context, request *respondSessionRequ
 			AssistantMessageId: receipt.AssistantMessageID, State: receipt.State, Duplicate: receipt.Duplicate,
 		}}, nil
 	}
-	if _, err := found.Respond(ctx, request.Body.Text, nil); err != nil {
+	if _, err := found.Respond(ctx, request.Body.Text, nil, options.LLM{}); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
 	return &respondSessionResponse{Status: http.StatusNoContent}, nil
@@ -866,8 +871,9 @@ func modelOverwritesFor(held store.ModelOverwrites) *ModelOverwrites {
 //
 // The parent is read from whichever half of Found has it. A live parent is preferable -- it
 // carries the whole spec, tools and skills included -- but a conversation worth continuing
-// has usually ended, so the row has to be enough on its own.
-func forkSpec(parent session.Found, request ForkSessionRequest, config *store.AgentConfig) (session.Spec, error) {
+// has usually ended, so the row has to be enough on its own. thread is whether the parent's
+// conversation is held on a thread channel (heldOnThread).
+func forkSpec(parent session.Found, request ForkSessionRequest, config *store.AgentConfig, thread bool) (session.Spec, error) {
 	var spec session.Spec
 	var parentID string
 	// What the fork reads its history out of, which is the parent's channel and the agent
@@ -908,7 +914,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config *store.Ag
 	// fork would carry their words into a conversation one caller owns, outside the thread
 	// and the shared session's connector rule, so none is made, whoever asks: the backend
 	// carries on in the thread by opening it again by its agent id (threadConversation).
-	if recall != nil && (session.Spec{ConversationID: recall.ConversationID}).Shared() {
+	if thread {
 		return session.Spec{}, stack.Wrap(errors.New("a thread channel's conversation is not forked"))
 	}
 

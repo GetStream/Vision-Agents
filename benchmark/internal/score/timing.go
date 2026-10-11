@@ -345,9 +345,16 @@ func BargeInStopMS(rec caller.Result) int {
 	return -1
 }
 
+// sentencePauseMs is the longest pause that still counts as one reply when scoring an
+// overlap. Speech detection splits at 250 ms, and a voice leaves 300-400 ms between two
+// sentences of the same reply: scored as is, an agent that went straight on through a
+// cough with "One moment." then "Checking" had started a turn on it. An agent that really
+// stops for the sound and answers it leaves a second or more.
+const sentencePauseMs = 600
+
 // ScoreOverlaps evaluates every non-directed sound in the script.
 func ScoreOverlaps(rec caller.Result) []OverlapCheck {
-	agent := audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
+	agent := joinPauses(audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs), sentencePauseMs)
 	var checks []OverlapCheck
 	for _, event := range rec.Events {
 		if event.OverlapSound == "" {
@@ -365,6 +372,19 @@ func ScoreOverlaps(rec caller.Result) []OverlapCheck {
 		checks = append(checks, check)
 	}
 	return checks
+}
+
+// joinPauses merges speech spans whose gap is shorter than gapMs.
+func joinPauses(spans []audio.Span, gapMs int) []audio.Span {
+	var out []audio.Span
+	for _, span := range spans {
+		if n := len(out); n > 0 && span.StartMs-out[n-1].EndMs < gapMs {
+			out[n-1].EndMs = max(out[n-1].EndMs, span.EndMs)
+			continue
+		}
+		out = append(out, span)
+	}
+	return out
 }
 
 // SelectivityHold is true when no overlap sound produced a new agent turn.

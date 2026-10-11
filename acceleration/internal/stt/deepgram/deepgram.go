@@ -149,7 +149,9 @@ func (s *STT) Start(ctx context.Context) error {
 		return stack.Wrap(errors.New("deepgram: connect failed"))
 	}
 
+	s.mu.Lock()
 	s.client = client
+	s.mu.Unlock()
 	s.pinging.Add(1)
 	go s.keepAlive(client)
 	return nil
@@ -220,6 +222,24 @@ func (s *STT) Close() error {
 		client.Stop()
 	}
 	s.emitter.Close()
+	return nil
+}
+
+// SetKeyterms implements stt.Retuner: Flux takes a new list on the open stream, and it
+// replaces the one the stream started with.
+func (s *STT) SetKeyterms(terms []string) error {
+	s.mu.Lock()
+	client, closed := s.client, s.closed
+	s.mu.Unlock()
+	if closed {
+		return stack.Wrap(errors.New("deepgram: session closed"))
+	}
+	if client == nil {
+		return stack.Wrap(errors.New("deepgram: not started"))
+	}
+	if err := client.Configure(&interfacesv2.FluxConfigureOptions{Keyterms: terms}); err != nil {
+		return stack.Wrap(fmt.Errorf("deepgram: configure keyterms: %w", err))
+	}
 	return nil
 }
 

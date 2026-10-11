@@ -251,6 +251,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if err != nil {
 			return nil, stack.Wrap(err)
 		}
+		// A session's channel is named after it, and a thread channel's id is taken by the
+		// external thread it holds. Compared case-folded, as threadConversation does.
+		if folded := strings.ToLower(spec.ID); !taken && strings.HasPrefix(folded, persistent.ThreadChannelPrefix) {
+			_, err := m.options.Store.ChannelThread(ctx, folded)
+			if err != nil && !errors.Is(err, store.ErrNoChannelThread) {
+				return nil, stack.Wrap(err)
+			}
+			taken = err == nil
+		}
 		if taken {
 			return nil, stack.Wrap(ErrSessionExists)
 		}
@@ -300,8 +309,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		// A channel OpenInApp refuses, such as a thread channel a request named, takes over
 		// no session that holds it.
-		if spec.ConversationID != "" && persistent.Openable(ctx, spec.ConversationID) {
-			m.takeOver(spec.CustomerID, spec.ConversationID)
+		if spec.ConversationID != "" && persistent.Openable(spec.ConversationID) {
+			m.takeOver(spec.CustomerID, spec.ConversationID, spec.Thread)
 		}
 		var truncated bool
 		open := service.OpenInApp
@@ -780,12 +789,13 @@ func (m *Manager) supersede(spec Spec) {
 
 // takeOver ends the session holding the persistent conversation cid when nobody is
 // watching it, so reopening the conversation does not wait out that session's grace: the
-// client reopening it is most likely the one that stopped watching, after a crash.
-func (m *Manager) takeOver(customer, cid string) {
+// client reopening it is most likely the one that stopped watching, after a crash. Only the
+// Router opening a thread channel (thread) takes over a session held on one.
+func (m *Manager) takeOver(customer, cid string, thread bool) {
 	m.mu.Lock()
 	var left []*Session
 	for id, found := range m.sessions {
-		if found.spec.CustomerID == customer && found.unwatchedFor(cid) {
+		if found.spec.CustomerID == customer && found.spec.Thread == thread && found.unwatchedFor(cid) {
 			left = append(left, found)
 			delete(m.sessions, id)
 		}
