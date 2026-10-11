@@ -93,9 +93,31 @@ func newRouter(t *testing.T) *router {
 
 	mux.HandleFunc("POST /v1/agents/sessions", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
-		answer(w, http.StatusCreated, acceleration.Session{
+		created := acceleration.Session{
 			Id: "session-1", AgentId: "agent-1", UserId: "jean", State: "running",
 			ConversationId: ptr("agent:session-1"), CreatedAt: time.Now(),
+		}
+		backend.mu.Lock()
+		if backend.bodies[r.Method+" "+r.URL.Path]["start_voice"] == true {
+			created.CallId = created.Id
+		}
+		backend.mu.Unlock()
+		answer(w, http.StatusCreated, created)
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/voice", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.Session{
+			Id: r.PathValue("id"), AgentId: "agent-1", UserId: "jean", State: "running",
+			CallId: r.PathValue("id"), CreatedAt: time.Now(),
+		})
+	})
+
+	mux.HandleFunc("DELETE /v1/agents/sessions/{id}/voice", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.Session{
+			Id: r.PathValue("id"), AgentId: "agent-1", UserId: "jean", State: "running",
+			CreatedAt: time.Now(),
 		})
 	})
 
@@ -337,6 +359,7 @@ func TestASessionIsOpenedAgainstTheAgentByName(t *testing.T) {
 		Description: "The comparison question, again",
 		ProjectID:   "docs",
 		Custom:      map[string]any{"ticket": "4721"},
+		Tags:        map[string]string{"customer_id": "123"},
 		ModelOverwrites: &acceleration.ModelOverwrites{
 			Thinking: thinking("high"),
 		},
@@ -353,8 +376,11 @@ func TestASessionIsOpenedAgainstTheAgentByName(t *testing.T) {
 	if body["title"] != "Is Stream better?" || body["project_id"] != "docs" {
 		t.Errorf("the labels went over as %v", body)
 	}
-	if body["text"] != true {
-		t.Error("a session with no call should be held in writing")
+	if _, asked := body["start_voice"]; asked {
+		t.Error("a session that asks for no voice should be held in writing")
+	}
+	if tags, _ := body["tags"].(map[string]any); tags["customer_id"] != "123" {
+		t.Errorf("the tags went over as %v", body["tags"])
 	}
 	overwrites, _ := body["model_overwrites"].(map[string]any)
 	if overwrites["thinking"] != "high" {
@@ -362,6 +388,55 @@ func TestASessionIsOpenedAgainstTheAgentByName(t *testing.T) {
 	}
 	if session.ID() != "session-1" {
 		t.Errorf("the session is %q", session.ID())
+	}
+}
+
+func TestASessionAskedToStartVoiceIsOnItsCall(t *testing.T) {
+	backend := newRouter(t)
+
+	session := onCall(t, backend)
+
+	if backend.body(t, "POST", "/v1/agents/sessions")["start_voice"] != true {
+		t.Error("starting voice was not asked for")
+	}
+	if !session.Voice.Started() {
+		t.Error("the session does not know it is on its call")
+	}
+}
+
+func TestStartingVoiceAsksTheRouterToJoinTheSessionsCall(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+	if _, err := session.Video(); err == nil {
+		t.Fatal("a session held in writing handed back a call")
+	}
+
+	started, err := session.Voice.Start(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if asked := backend.requests("POST", "/v1/agents/sessions/session-1/voice"); asked != 1 {
+		t.Errorf("the router was asked %d times", asked)
+	}
+	if started.CallId != "session-1" || !session.Voice.Started() {
+		t.Errorf("voice started on %q", started.CallId)
+	}
+}
+
+func TestStoppingVoiceCarriesTheConversationOnInWriting(t *testing.T) {
+	backend := newRouter(t)
+	session := onCall(t, backend)
+
+	if _, err := session.Voice.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if asked := backend.requests("DELETE", "/v1/agents/sessions/session-1/voice"); asked != 1 {
+		t.Errorf("the router was asked %d times", asked)
+	}
+	if session.Voice.Started() {
+		t.Error("the session still thinks it is on its call")
 	}
 }
 
@@ -526,8 +601,8 @@ func TestAskingSomethingNamesTheTurnItIsAnsweredAs(t *testing.T) {
 	if body["text"] != "Is Stream better than Sendbird?" {
 		t.Errorf("the question went over as %v", body["text"])
 	}
-	if id, _ := body["command_id"].(string); id == "" {
-		t.Error("a question in a stored conversation is a command the router answers at most once")
+	if id, _ := body["request_id"].(string); id == "" {
+		t.Error("a question goes with a request id, so a retry of it is answered once")
 	}
 }
 
@@ -552,8 +627,30 @@ func TestImagesAndClipsGoOverWithTheQuestion(t *testing.T) {
 	if string(videos) != `[{"max_frames":12,"url":"https://example.com/unboxing.mp4"},{"url":"https://example.com/return.mp4"}]` {
 		t.Errorf("the videos went over as %s", videos)
 	}
-	if _, carried := body["command_id"]; carried {
-		t.Error("a command carries text only")
+	if _, carried := body["request_id"]; carried {
+		t.Error("a request id carries text only")
+	}
+}
+
+func TestALengthAndAnEffortGoOverWithTheQuestion(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "Plan my week",
+		MaxOutputTokens(800), ReasoningEffort("high"),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	if body["max_output_tokens"] != float64(800) {
+		t.Errorf("the limit went over as %v", body["max_output_tokens"])
+	}
+	if body["reasoning_effort"] != "high" {
+		t.Errorf("the effort went over as %v", body["reasoning_effort"])
+	}
+	if id, _ := body["request_id"].(string); id == "" {
+		t.Error("a question with settings is still text only, so it goes with a request id")
 	}
 }
 
@@ -1137,7 +1234,7 @@ func open(t *testing.T, backend *router) *Session {
 // onCall is a session opened on a call rather than held in writing.
 func onCall(t *testing.T, backend *router) *Session {
 	t.Helper()
-	session, err := backend.client(t).Agent("docs").Sessions.Create(t.Context(), SessionOptions{CallID: "call-1"})
+	session, err := backend.client(t).Agent("docs").Sessions.Create(t.Context(), SessionOptions{StartVoice: true})
 	if err != nil {
 		t.Fatal(err)
 	}

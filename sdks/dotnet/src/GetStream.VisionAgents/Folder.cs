@@ -55,6 +55,11 @@ public sealed record KnowledgePage(string Url, string Title = "", string Descrip
 /// <summary>What the video a skill captures is.</summary>
 public sealed record VideoDeclaration(string Source, int MaxFrames);
 
+/// <summary>What the agent says as it joins.</summary>
+/// <param name="Text">What it says.</param>
+/// <param name="Mode"><c>exact</c>, said word for word, or <c>variation</c>, which the model rewords on every call. Empty is exact.</param>
+public sealed record GreetingDeclaration(string Text, string Mode);
+
 /// <summary>
 /// What the agent leaves to the application's own dispatch worker, each <c>enabled</c> or
 /// <c>disabled</c>, empty when not written. With <paramref name="Text"/> enabled the model
@@ -92,9 +97,6 @@ public sealed record Declaration
     /// <summary>A provider-specific voice id.</summary>
     public string Voice { get; init; } = "";
 
-    /// <summary>The voice's rate of delivery, 1 being its own. Zero leaves it there.</summary>
-    public double Speed { get; init; }
-
     /// <summary>The model that answers.</summary>
     public string Llm { get; init; } = "";
 
@@ -107,8 +109,8 @@ public sealed record Declaration
     /// <summary>The search target.</summary>
     public string Search { get; init; } = "";
 
-    /// <summary>Said on joining, without going through the model.</summary>
-    public string Greeting { get; init; } = "";
+    /// <summary>What the agent says as it joins, before anyone speaks. Null leaves the stored one.</summary>
+    public GreetingDeclaration? Greeting { get; init; }
 
     /// <summary>Where the subagent may run code it writes.</summary>
     public string Sandbox { get; init; } = "";
@@ -508,12 +510,11 @@ public sealed class Folder
             Tts = read.Tts ?? "",
             Sts = read.Sts,
             Voice = read.Voice ?? "",
-            Speed = read.Speed ?? 0,
             Llm = read.Llm ?? "",
             Harness = read.Harness ?? "",
             Subagent = read.Subagent ?? "",
             Search = read.Search ?? "",
-            Greeting = read.Greeting ?? "",
+            Greeting = read.Greeting is { } greeting ? new GreetingDeclaration(greeting.Text ?? "", greeting.Mode ?? "") : null,
             Sandbox = read.Sandbox ?? "",
             Plugins = read.Plugins ?? [],
             Keyterms = read.Keyterms ?? [],
@@ -862,12 +863,11 @@ public sealed class Folder
         [YamlMember(Alias = "tts")] public string? Tts { get; set; }
         [YamlMember(Alias = "sts")] public string? Sts { get; set; }
         [YamlMember(Alias = "voice")] public string? Voice { get; set; }
-        [YamlMember(Alias = "speed")] public double? Speed { get; set; }
         [YamlMember(Alias = "llm")] public string? Llm { get; set; }
         [YamlMember(Alias = "harness")] public string? Harness { get; set; }
         [YamlMember(Alias = "subagent")] public string? Subagent { get; set; }
         [YamlMember(Alias = "search")] public string? Search { get; set; }
-        [YamlMember(Alias = "greeting")] public string? Greeting { get; set; }
+        [YamlMember(Alias = "greeting")] public WrittenGreeting? Greeting { get; set; }
         [YamlMember(Alias = "sandbox")] public string? Sandbox { get; set; }
         [YamlMember(Alias = "plugins")] public List<string>? Plugins { get; set; }
         [YamlMember(Alias = "keyterms")] public List<string>? Keyterms { get; set; }
@@ -880,6 +880,12 @@ public sealed class Folder
     {
         [YamlMember(Alias = "source")] public string? Source { get; set; }
         [YamlMember(Alias = "max_frames")] public int? MaxFrames { get; set; }
+    }
+
+    private sealed class WrittenGreeting
+    {
+        [YamlMember(Alias = "text")] public string? Text { get; set; }
+        [YamlMember(Alias = "mode")] public string? Mode { get; set; }
     }
 
     private sealed class WrittenDispatch

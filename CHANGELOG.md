@@ -2,6 +2,53 @@
 
 ## Breaking Changes
 
+### Voice is started and stopped on a session, on a call named after it
+
+A session is one conversation, and voice is something it turns on and off. Every session
+starts in writing; `POST /v1/agents/sessions/{id}/voice` puts the agent on the call
+`agent:<session id>`, and `DELETE` on the same path takes it off again. The history and the
+Chat channel stay the same throughout, and a question typed while voice is on is part of the
+same conversation as what was said aloud. To start talking straight away, create the session
+with `start_voice: true`.
+
+The call is always named after the session, so nobody names it any more:
+
+- `call_id`, `call_type` and `text` are gone from `POST /v1/agents/sessions` and from the
+  session socket's start frame.
+- `call_id` is gone from `POST /v1/agents/sessions/{id}/fork`. A fork is always held in
+  writing, because talking to two agents at once is not a conversation.
+- Placing a call (`POST /v1/phone/calls`) takes an optional `session_id` instead of
+  `call_id` and `call_type`, and returns the `session_id` to open with `start_voice`.
+- A transfer takes the `session_id` it brings the human into instead of `call_id`.
+- Attaching a number no longer takes `call_id` or `call_type`. Every caller lands in a call of
+  their own, and the dispatched call carries the `session_id` to open for it. Numbers attached
+  before this change still route into their old fixed call, so attach them again.
+
+A session `id` you choose no longer has to be a UUID: any string of up to 64 letters, digits,
+`-` and `_` works, such as your own record's id, as long as it does not start `support-` or
+`thread-`. The same goes for the `session_id` a placed call names.
+
+`GET /v1/agents/sessions/{id}` reads a session that ended as well as a running one, and tells
+your backend its `summary`, `review_score`, `review_notes` and `usage` (tokens, requests and
+cost over every model it called, typed and spoken), so what a conversation cost is read off
+the session rather than a separate call record.
+
+In Go, `SessionOptions.StartVoice` and `Session.Voice.Start` / `Stop` are new in `client`.
+`agents.Agent.Join(ctx)` starts a session with voice, `Agent.Answer` opens the session for an
+inbound call, and `Phone.Attach` takes only the number.
+
+### `command_id` is `request_id`, and the SDKs send it for you
+
+The id that makes a retried question answered once is called `request_id` everywhere a client
+sees it: `POST /v1/agents/sessions/{id}/responses`, `POST /v1/agents/sessions/{id}/respond` and
+its receipt, the session socket's `respond`, `interrupt`, `tool_result` and `tool_approval`
+frames, the `tool_call` and `tool_cancel` events, and the dispatch `message` frame. The
+`/commands/{request_id}` paths keep their URLs.
+
+Every SDK now generates one for each text-only question inside `responses.create` and no longer
+takes one from the caller; a dispatch worker answering a message still passes that message's id
+back. A session not kept in Stream Chat ignores a `request_id` rather than refusing it.
+
 ### The Swift SDK is one package, and its views are Stream Chat's AI components
 
 `VisionAgentsCore` is the only Swift package. `VisionAgentsUI`, `VisionAgentsRTC` and
@@ -564,6 +611,16 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 `deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
 
 ## New Features
+
+### Bring your own model
+
+A language model you serve yourself behind an OpenAI-compatible endpoint (a fine-tune on
+Baseten, Together or Fireworks, vLLM or SGLang on your own GPUs) can be routed like any other.
+Store it with `POST /v1/agents/models` (base URL, model id, API key, and optionally its context
+window, price and data policy), then name it as `custom/<name>` in a router config, a session or
+`allowed_models`. The key is sealed and never returned. A shared router only dials public https
+endpoints; a self-hosted one that sets `ROUTER_MODELS_PRIVATE_ENDPOINTS=true` also reaches
+private and plain http ones. In Go, `client.DefineModel` stores one by name.
 
 ### A voice agent words its own hold lines, status updates and check-ins
 
@@ -1813,6 +1870,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A test copy or a duplicate of an agent no longer silences the agent on its Slack bot, Linq, Telnyx or WhatsApp connection. A channel connection belongs to one live agent config: a create, update, patch or sync that newly binds one as `fixed` while another live config binds it is a 409 `channel_connection_taken` naming that config. A config tagged `draft_of` (the dashboard's test copy) is not refused, answers no channel message and subscribes to no MCP event. Configs that already shared a connection keep working: the oldest answers, and the router logs a warning naming the others. An MCP event is subscribed to once per connection, by the oldest live config that declares it, so a copy no longer opens a second conversation for each event (AI-1049, AI-1048).
 - `phone hooks -remove` works when the tunnel it names is gone. Stream refuses an update of
   the app's hooks while any hook in it is at a host that does not resolve, and the command
   dropped a tunnel's call hook and its message hook in two updates, so the first was refused

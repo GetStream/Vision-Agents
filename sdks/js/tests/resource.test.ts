@@ -115,23 +115,50 @@ describe("sessions", () => {
     return { session: await opening, connection };
   }
 
-  it("names the agent and holds the conversation in writing unless a call was given", async () => {
+  it("names the agent and holds the conversation in writing unless voice was asked for", async () => {
     const { session: held } = await open({ title: "Is Stream better than Sendbird" });
 
     const body = router.received[0]?.body as Record<string, unknown>;
     assert.equal(body["agent"], "docs");
-    assert.equal(body["text"], true, "a session resource is a conversation");
+    assert.equal(body["start_voice"], undefined, "a session resource is a conversation");
     assert.equal(body["title"], "Is Stream better than Sendbird");
     assert.equal(held.conversationId, "agent:support-7");
+    assert.equal(held.voice.started, false);
     await held.close();
   });
 
-  it("joins a call rather than writing when one is named", async () => {
-    const { session: held } = await open({ call_id: "call-9" });
+  it("starts voice as it opens when asked, on the session's own call", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: session({ id: "chosen-id_1", call_id: "chosen-id_1" }),
+    });
+    const opening = api.agent("docs").sessions.create({ id: "chosen-id_1", start_voice: true });
+    await router.socket();
+    const held = await opening;
 
     const body = router.received[0]?.body as Record<string, unknown>;
-    assert.equal(body["call_id"], "call-9");
-    assert.equal(body["text"], undefined, "a call is not held in writing");
+    assert.equal(body["start_voice"], true);
+    assert.equal(body["id"], "chosen-id_1", "a session id is whatever the caller picks");
+    assert.equal(held.voice.started, true);
+    await held.close();
+  });
+
+  it("resumes a conversation by the id of the session it was held in", async () => {
+    router.serve("GET", "/v1/agents/sessions/session-4", {
+      body: session({ id: "session-4", conversation_id: "agent:support-4", state: "ended" }),
+    });
+    const resuming = api.agent("docs").sessions.resume("session-4");
+    const connection = await router.socket();
+    const held = await resuming;
+
+    assert.equal(held.id, "session-4");
+    assert.equal(held.conversationId, "agent:support-4");
+    assert.equal(connection.path, "/v1/agents/sessions/session-4/events");
+    assert.equal(
+      router.received.some((one) => one.method === "POST" && one.path === "/v1/agents/sessions"),
+      false,
+      "carrying a conversation on creates no session",
+    );
     await held.close();
   });
 
@@ -467,30 +494,39 @@ describe("responses", () => {
     assert.equal(answering.status, "running");
     const body = router.last.body as Record<string, unknown>;
     assert.equal(body["text"], "Is Stream better than Sendbird?");
-    assert.equal(body["command_id"], undefined, "a session keeping no conversation names no command");
+    assert.match(
+      String(body["request_id"]),
+      /^[A-Za-z0-9_-]{1,128}$/,
+      "a session keeping no conversation is named a request too, since the router ignores it there",
+    );
   });
 
-  it("names each question on a session that keeps its conversation", async () => {
-    router.serve("POST", "/v1/agents/sessions", {
-      status: 201,
-      body: session({ id: "session-2", conversation_id: "agent:support-1" }),
-    });
-    const kept = await api.agent("docs").sessions.create({ text: true, watch: false });
-    router.serve("POST", "/v1/agents/sessions/session-2/responses", {
+  it("names each question afresh, so a retry is answered once and the next is not mistaken for it", async () => {
+    router.serve("POST", "/v1/agents/sessions/session-1/responses", {
       status: 202,
-      body: { id: "response-1", session_id: "session-2", status: "running", created_at: new Date().toISOString() },
+      body: { id: "response-1", session_id: "session-1", status: "running", created_at: new Date().toISOString() },
     });
 
-    await kept.responses.create("First question");
-    const first = (router.last.body as Record<string, unknown>)["command_id"];
-    await kept.responses.create("Second question");
-    const second = (router.last.body as Record<string, unknown>)["command_id"];
-    await kept.responses.create("Retried question", { commandId: "request-7" });
+    await held.responses.create("First question");
+    const first = (router.last.body as Record<string, unknown>)["request_id"];
+    await held.responses.create("Second question");
+    const second = (router.last.body as Record<string, unknown>)["request_id"];
 
     assert.match(String(first), /^[0-9a-f-]{36}$/);
-    assert.notEqual(first, second, "two questions are two commands");
-    assert.equal((router.last.body as Record<string, unknown>)["command_id"], "request-7");
-    await kept.close();
+    assert.notEqual(first, second, "two questions are two requests");
+  });
+
+  it("names no request for a question with images, which the router refuses one for", async () => {
+    router.serve("POST", "/v1/agents/sessions/session-1/responses", {
+      status: 202,
+      body: { id: "response-1", session_id: "session-1", status: "running", created_at: new Date().toISOString() },
+    });
+
+    await held.responses.create("What is this?", { images: [{ url: "https://example.com/a.png" }] });
+
+    const body = router.last.body as Record<string, unknown>;
+    assert.deepEqual(body["images"], [{ url: "https://example.com/a.png" }]);
+    assert.equal(body["request_id"], undefined);
   });
 
   it("reads one turn's items rather than the whole conversation's", async () => {

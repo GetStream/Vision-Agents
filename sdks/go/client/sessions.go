@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -33,24 +34,22 @@ type SessionOptions struct {
 	ProjectID string
 	// Custom is the caller's own labels.
 	Custom map[string]any
+	// Tags are cost labels for this conversation, merged with the agent's own. Where both
+	// name a key, these win.
+	Tags map[string]string
 	// Incognito holds the conversation and keeps nothing: no row, no turns, no transcript.
 	// It cannot be searched for, listed or forked afterwards, which is the point of it.
 	Incognito bool
 	// ModelOverwrites changes the models for this conversation alone.
 	ModelOverwrites *acceleration.ModelOverwrites
 
-	// CallID is the call to join. Empty holds the conversation in writing.
-	CallID string
-	// CallType is the Stream call type. Empty leaves the backend's default.
-	CallType string
-	// ConversationID resumes the channel an earlier session was held in.
-	ConversationID string
+	// StartVoice has the agent join the session's own call, agent:<session id>, as soon as
+	// it opens. False holds the conversation in writing, and Session.Voice starts it later.
+	StartVoice bool
 	// History is the conversation so far, oldest first, for a backend that keeps its own
 	// thread: the model is handed it before the first response and the router records none
-	// of it. Up to 100 messages; not with ConversationID. Server side only.
+	// of it. Up to 100 messages. Server side only.
 	History []acceleration.HistoryMessage
-	// Instructions overrides the agent's own system prompt for this conversation.
-	Instructions string
 	// UserID is who the conversation belongs to, for a backend opening one on somebody's
 	// behalf. A client acting for a user leaves it empty: the token already says who.
 	UserID string
@@ -103,7 +102,7 @@ type Sessions struct {
 // Create opens a conversation and starts watching it.
 //
 // It returns once the backend is holding the conversation, so a session that has opened is
-// one that is already listening. Without a CallID it is held in writing, which is what a
+// one that is already listening. Without StartVoice it is held in writing, which is what a
 // conversation somebody comes back to usually is.
 func (s *Sessions) Create(ctx context.Context, options SessionOptions) (*Session, error) {
 	functions := options.Tools
@@ -125,6 +124,20 @@ func (s *Sessions) Create(ctx context.Context, options SessionOptions) (*Session
 		return nil, err
 	}
 	return newSession(s.client, s.agent, pipeline, created), nil
+}
+
+// Resume carries on a conversation held in writing, by the id of the session it was held
+// in, and starts watching it. One that ended is reopened with what was said in it.
+func (s *Sessions) Resume(ctx context.Context, id string) (*Session, error) {
+	got, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	pipeline := stream.Accelerated(stream.Config{Backend: s.client.backend, Functions: s.agent.tools})
+	if err := pipeline.Watch(ctx, got); err != nil {
+		return nil, err
+	}
+	return newSession(s.client, s.agent, pipeline, got), nil
 }
 
 // Query returns a page of the agent's conversations, most recently updated first, the ones
@@ -189,7 +202,7 @@ func (s *Sessions) Get(ctx context.Context, id string) (*acceleration.Session, e
 // Update changes one conversation, whether or not it is still being held.
 //
 // Only this session changes: the agent config it started from is untouched. One that ended
-// can still be renamed and relabelled; instructions, models and voice need it running, and
+// can still be renamed and relabelled; models and voice need it running, and
 // take over from its next turn. A target that does not route is refused and the session
 // carries on as it was. Only a backend may ask.
 func (s *Sessions) Update(ctx context.Context, id string, update SessionUpdate) (*acceleration.Session, error) {
@@ -262,15 +275,16 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 		ProjectId:       pointer(options.ProjectID),
 		Incognito:       pointer(options.Incognito),
 		ModelOverwrites: options.ModelOverwrites,
-		CallId:          pointer(options.CallID),
-		CallType:        pointer(options.CallType),
-		ConversationId:  pointer(options.ConversationID),
-		Instructions:    pointer(options.Instructions),
+		StartVoice:      pointer(options.StartVoice),
 		UserId:          pointer(options.UserID),
 	}
 	if len(options.Custom) > 0 {
 		custom := options.Custom
 		request.Custom = &custom
+	}
+	if len(options.Tags) > 0 {
+		tags := options.Tags
+		request.Tags = &tags
 	}
 	if len(options.History) > 0 {
 		history := options.History
@@ -282,11 +296,6 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 			chosen = append(chosen, acceleration.SessionConnectorBinding{Name: name, ConnectionId: options.ConnectorBindings[name]})
 		}
 		request.ConnectorBindings = &chosen
-	}
-	// Held in writing unless a call was named, which is what the resource surface is mostly
-	// for: a conversation somebody comes back to.
-	if options.CallID == "" {
-		request.Text = pointer(true)
 	}
 	return request
 }
@@ -358,6 +367,8 @@ func equals(value string) *acceleration.Equals {
 type Session struct {
 	// Responses is this conversation's turns, and what each of them was made of.
 	Responses *Responses
+	// Voice starts and stops the agent talking on the session's call.
+	Voice *Voice
 
 	client   *Client
 	agent    *Agent
@@ -377,13 +388,15 @@ func (c *Client) Hold(agent string, pipeline *stream.Pipeline) (*Session, error)
 }
 
 func newSession(client *Client, agent *Agent, pipeline *stream.Pipeline, created *acceleration.Session) *Session {
+	voice := &Voice{client: client, sessionID: created.Id}
+	voice.on.Store(created.CallId != "")
 	return &Session{
 		Responses: &Responses{
 			client:    client,
 			sessionID: created.Id,
-			kept:      created.ConversationId != nil && *created.ConversationId != "",
 			Items:     newItems(client, created.Id, ""),
 		},
+		Voice:    voice,
 		client:   client,
 		agent:    agent,
 		pipeline: pipeline,
@@ -437,11 +450,6 @@ func (s *Session) Wait(ctx context.Context) error {
 // Interrupt abandons the reply being spoken.
 func (s *Session) Interrupt() error { return s.pipeline.Interrupt() }
 
-// SetInstructions changes what the agent is told to be, from the next turn.
-func (s *Session) SetInstructions(instructions string) error {
-	return s.pipeline.SetInstructions(instructions)
-}
-
 // Close stops the conversation. Safe to call after it has already ended. What it recorded
 // and remembered is kept; Delete takes it away.
 func (s *Session) Close(ctx context.Context) error { return s.pipeline.Leave(ctx) }
@@ -461,7 +469,7 @@ func (s *Session) DeleteMemories(ctx context.Context) error {
 // default. The id, the call and incognito cannot change.
 type SessionUpdate = acceleration.UpdateSessionRequest
 
-// Update changes this session: its title, description, custom labels, instructions, models
+// Update changes this session: its title, description, custom labels, models
 // or voice. See Sessions.Update.
 func (s *Session) Update(ctx context.Context, update SessionUpdate) (*acceleration.Session, error) {
 	return s.agent.Sessions.Update(ctx, s.ID(), update)
@@ -475,12 +483,8 @@ type ForkOptions struct {
 	Description     string
 	ProjectID       string
 	Custom          map[string]any
-	Instructions    string
 	Incognito       bool
 	ModelOverwrites *acceleration.ModelOverwrites
-	// CallID is the call the fork joins, required when the parent held one and refused when
-	// it did not: a voice conversation cannot be forked into a written one.
-	CallID string
 	// WithoutMessages starts the same configuration over from nothing rather than carrying
 	// the parent's history across. What comparing two answers to one opening question wants.
 	WithoutMessages bool
@@ -513,10 +517,8 @@ func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, erro
 		Title:           pointer(options.Title),
 		Description:     pointer(options.Description),
 		ProjectId:       pointer(options.ProjectID),
-		Instructions:    pointer(options.Instructions),
 		Incognito:       pointer(options.Incognito),
 		ModelOverwrites: options.ModelOverwrites,
-		CallId:          pointer(options.CallID),
 		ResponseId:      pointer(options.ResponseID),
 	}
 	if len(options.Custom) > 0 {
@@ -601,7 +603,7 @@ func (s *Session) Chat() (*Chat, error) {
 // A conversation held in writing joins no call, and asking for one says so rather than
 // handing back a call nobody is in.
 func (s *Session) Video() (*Video, error) {
-	if s.created.CallId == "" {
+	if !s.Voice.Started() {
 		return nil, fmt.Errorf("client: the session %s is held in writing, so there is no "+
 			"call to join", s.ID())
 	}
@@ -610,12 +612,55 @@ func (s *Session) Video() (*Video, error) {
 	if err != nil {
 		return nil, err
 	}
-	kind := s.created.CallType
-	if kind == "" {
-		kind = "agent"
-	}
-	return &Video{Client: connected, Call: connected.Video().Call(kind, s.created.CallId)}, nil
+	return &Video{Client: connected, Call: connected.Video().Call("agent", s.ID())}, nil
 }
+
+// Voice is the agent talking on a session's call, agent:<session id>. Typed and spoken turns
+// are one conversation, with one history and one channel, whether voice is on or not.
+type Voice struct {
+	client    *Client
+	sessionID string
+	on        atomic.Bool
+}
+
+// Start has the agent join the session's call and carry the conversation on there. Starting
+// voice that is already on does nothing.
+func (v *Voice) Start(ctx context.Context) (*acceleration.Session, error) {
+	api, err := v.client.api()
+	if err != nil {
+		return nil, err
+	}
+	started, err := api.StartSessionVoiceWithResponse(ctx, v.sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("client: starting voice on the session %s: %w", v.sessionID, err)
+	}
+	if started.JSON200 == nil {
+		return nil, failure("starting voice on the session "+v.sessionID, started.HTTPResponse, started.Body)
+	}
+	v.on.Store(true)
+	return started.JSON200, nil
+}
+
+// Stop takes the agent off the call and carries the conversation on in writing. Stopping
+// voice that is off does nothing.
+func (v *Voice) Stop(ctx context.Context) (*acceleration.Session, error) {
+	api, err := v.client.api()
+	if err != nil {
+		return nil, err
+	}
+	stopped, err := api.StopSessionVoiceWithResponse(ctx, v.sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("client: stopping voice on the session %s: %w", v.sessionID, err)
+	}
+	if stopped.JSON200 == nil {
+		return nil, failure("stopping voice on the session "+v.sessionID, stopped.HTTPResponse, stopped.Body)
+	}
+	v.on.Store(false)
+	return stopped.JSON200, nil
+}
+
+// Started reports whether the agent is on the call, as this process last saw it.
+func (v *Voice) Started() bool { return v.on.Load() }
 
 // split reads a type:id pair, falling back to a default type for a bare id.
 func split(pair, fallback string) (string, string) {

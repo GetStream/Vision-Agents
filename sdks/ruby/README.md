@@ -12,7 +12,7 @@ gem "getstream-vision-agents"
 ```
 
 Ruby 3.3 or newer. Two runtime dependencies: `getstream-ruby`, Stream's own server-side gem,
-to create the calls the backend joins, and `websocket-driver` for the sockets.
+for Stream calls of your own, and `websocket-driver` for the sockets.
 
 ## An agent on a call
 
@@ -30,22 +30,28 @@ agent.tools.register("get_weather", description: "Weather for a city",
   weather_in(args["city"])
 end
 
-agent.join("call-1") do |session|
+agent.join do |session|
   puts agent.monitor_url
   agent.responses.create("greet the user in one short sentence")
 end
 ```
 
-`join` creates the Stream call, has the backend join it, and waits for somebody else to be
-in it. The block form closes the session when the block leaves, after waiting for the call to
-end unless `wait_for_end: false`. Without a block the open session is returned.
+`join` opens a session with voice: the backend joins the session's own call,
+`agent:<session id>`, and `join` waits for somebody else to be in it. `id:` picks the session
+id, up to 64 of `A-Za-z0-9_-`. The block form closes the session when the block leaves, after
+waiting for the call to end unless `wait_for_end: false`. Without a block the open session is
+returned.
 
 The session starts from the stored config, and only what the code sets is sent over it.
-`cost_tracking` labels every request the session makes; `memory_filter` says who the memories
-are about, under `user_id`, and what else narrows recall.
+Instructions reach the backend when the agent syncs. `cost_tracking` labels every request the
+session makes; `memory_filter` says who the memories are about, under `user_id`, and what else
+narrows recall.
 
 `chat` holds the same conversation in writing: the same instructions, skills and knowledge,
 nothing transcribed or spoken. It is kept in Stream Chat unless `incognito: true` is given.
+`session.voice.start` puts the agent on the session's call and `session.voice.stop` carries
+the conversation on in writing again; `session.voice.started?` says which.
+`api.agent("support").sessions.resume(session_id)` carries on a conversation held earlier.
 
 ```ruby
 agent.chat { |session| session.responses.create("What changed in v3?") }
@@ -68,7 +74,7 @@ With no arguments the client reads its credentials from the environment: `url` f
 `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY` and `STREAM_API_SECRET`. Pass them only
 when they come from somewhere else. The hosted router is reached through Stream's
 authenticating proxy, which is on by default for it; a self-hosted deployment behind the
-same proxy passes `authenticate: true` or sets `STREAM_ACCELERATION_AUTHENTICATE`. Creating a call needs
+same proxy passes `authenticate: true` or sets `STREAM_ACCELERATION_AUTHENTICATE`. A monitoring link needs
 `STREAM_API_KEY` and `STREAM_API_SECRET` whichever way the router is reached.
 
 ## Checked against the spec
@@ -112,7 +118,7 @@ still being handled) and `handles` (`call`, `message`, or neither).
 A message arrives when no agent is running on its channel, and `get_or_create_agent` keeps one
 agent per channel for the same reason. An agent whose `agent.yaml` says
 `dispatch: {text: enabled}` hands what end users write to the worker instead, with
-`message.session_id` and `message.command_id` set: `dispatch.answer(message)` has the model
+`message.session_id` and `message.request_id` set: `dispatch.answer(message)` has the model
 answer it on that session, with the worker's own credential acting for `message.user_id`.
 `get_or_create_agent` refuses such a message.
 
@@ -139,6 +145,9 @@ The tools are declared each time the router says it is ready, and each call runs
 thread. `tool_timeout` is how many seconds the router waits for one tool call; nil takes its default of two minutes. Hosting alone is enough
 to `run`, and a router that refuses the tools ends `run` with the reason.
 
+A dispatched call names the session it is for: `join(call)` opens it with voice, on the call
+the caller is already in.
+
 Ringing somebody is the other direction:
 
 ```ruby
@@ -147,11 +156,13 @@ agent.outbound_call(from: "+15551234567", to: "+15557654321") do |session|
 end
 ```
 
+The router places the call for a session of its own, and the agent joins that session.
+
 ## An agent written down as a directory
 
 ```
 agents/jean/
-  agent.yaml            required: the name and what it runs on (llm, stt, tts, speed, harness, tags, ...)
+  agent.yaml            required: the name and what it runs on (llm, stt, tts, greeting, plugins, harness, tags, ...)
   instructions.md
   guardrail.md
   skills/think.md
@@ -164,7 +175,7 @@ agents/jean/
 ```ruby
 agent = GetStream::VisionAgents::Agent.new(folder: "agents/jean")
 agent.sync
-agent.join("call-1") { ... }
+agent.join { ... }
 ```
 
 `sync` stores the directory as a config named after it, in one request. A key `agent.yaml`
@@ -240,7 +251,7 @@ session.update(title: "Pricing", llm: "llm-thinking", thinking: "high")
 api.agent("support").sessions.update(session_id, title: "Pricing")  # an ended session can still be renamed
 ```
 
-`update` takes `title`, `description`, `custom`, `instructions`, `llm`, `stt`, `tts`, `sts`,
+`update` takes `title`, `description`, `custom`, `llm`, `stt`, `tts`, `sts`,
 `voice`, `thinking`, `temperature`, `max_output_tokens` and `verbosity`; a field left out is
 left as it is.
 

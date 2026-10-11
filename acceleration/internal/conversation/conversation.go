@@ -53,7 +53,7 @@ type Message struct {
 	// AnswerStart is a Unicode code-point offset separating public progress from the answer.
 	TextLayout     int        `json:"text_layout,omitempty"`
 	AnswerStart    int        `json:"answer_start,omitempty"`
-	CommandID      string     `json:"command_id,omitempty"`
+	CommandID      string     `json:"request_id,omitempty"`
 	TurnID         string     `json:"turn_id,omitempty"`
 	ID             string     `json:"id"`
 	QuestionID     string     `json:"question_id,omitempty"`
@@ -93,10 +93,13 @@ type Page struct {
 	memoryScope memory.Scope
 	agent       string
 	shared      bool
-	empty       bool
-	Messages    []Message `json:"messages"`
-	Before      string    `json:"before,omitempty"`
-	Truncated   bool      `json:"context_truncated"`
+	// thread is a page of a thread channel, whose people's messages are read back as user
+	// turns (messageFromThread).
+	thread    bool
+	empty     bool
+	Messages  []Message `json:"messages"`
+	Before    string    `json:"before,omitempty"`
+	Truncated bool      `json:"context_truncated"`
 }
 type Updated struct {
 	CID     string  `json:"conversation_id"`
@@ -105,7 +108,7 @@ type Updated struct {
 
 // CommandReceipt identifies one durable submission and its two Chat messages.
 type CommandReceipt struct {
-	CommandID          string `json:"command_id"`
+	CommandID          string `json:"request_id"`
 	UserMessageID      string `json:"user_message_id"`
 	AssistantMessageID string `json:"assistant_message_id"`
 	State              string `json:"state"`
@@ -176,11 +179,14 @@ type known struct {
 	customer, cid string
 }
 type Conversation struct {
-	mu       sync.Mutex
-	service  *Service
-	data     ledger
-	active   bool
-	shared   bool
+	mu      sync.Mutex
+	service *Service
+	data    ledger
+	active  bool
+	shared  bool
+	// thread is a conversation the Router opened on a thread channel (RouterOpensThread),
+	// whose finished replies leave for the external thread.
+	thread   bool
 	stopping bool
 	turns    map[string]string
 	created  map[string]bool
@@ -215,18 +221,45 @@ type indication struct {
 	state   string
 }
 
-var validID = regexp.MustCompile(`^support-[a-f0-9-]{36}$`)
+// sessionID is what a session's id may be: its channel and its call are named after it, and
+// this is what a Stream channel id and a call id both take.
+var sessionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// SessionID is id as a session holds it, and whether a session can have it. A UUID is held in
+// one spelling, so the same one always names the same channel and call.
+func SessionID(id string) (string, bool) {
+	if parsed, err := uuid.Parse(id); err == nil {
+		return parsed.String(), true
+	}
+	return id, sessionID.MatchString(id)
+}
+
+// validID is whether id is a channel id a conversation can be held on: a session's own id,
+// support-<uuid> for one opened before channels were named after their session, or a thread
+// channel's.
+func validID(id string) bool {
+	held, ok := SessionID(id)
+	return ok && held == id
+}
+
+// legacyID is a session command channel opened before channels were named after their
+// session, which its id alone says is one.
+var legacyID = regexp.MustCompile(`^support-[a-f0-9-]{36}$`)
 
 // ThreadChannelPrefix starts the id of a thread channel: the agent channel the channel bridge
 // (internal/channelbridge) writes one external thread into, such as a Slack thread. A
 // persistent conversation can be held on one, so a session's reply lands in the thread it
 // answers. Unlike support-, it stays open to the message hook, which is how a person's
-// message there wakes the session.
+// message there wakes the session. A session may be named thread- too, so the prefix alone
+// does not make a channel a thread channel (threadChannel).
 const ThreadChannelPrefix = "thread-"
 
-// conversationID is every channel a persistent conversation can be held on: a session
-// command channel, or a thread channel.
-var conversationID = regexp.MustCompile(`^(support|thread)-[a-f0-9-]{36}$`)
+// threadChannel is whether a channel, by its id and its custom data, is a thread channel: the
+// bridge names every one thread-<uuid>, and stamps none with the trigger every session's own
+// channel carries (OpenInApp), so a session named thread-... is not one.
+func threadChannel(id string, custom map[string]any) bool {
+	return strings.HasPrefix(id, ThreadChannelPrefix) && custom[TriggerField] != SessionCommandTrigger
+}
 
 // threadOpen is the context key RouterOpensThread keeps its channel under.
 type threadOpen struct{}
@@ -257,18 +290,19 @@ func Barred(ctx context.Context, cid string) bool {
 	return barred != "" && barred == cid
 }
 
-// Openable is whether a conversation may be opened on cid: a session command channel, or the
-// thread channel ctx says the Router opens (RouterOpensThread).
-func Openable(ctx context.Context, cid string) bool {
+// Openable is whether cid names an agent channel a conversation can be held on. A thread
+// channel is one too, but opens only for the Router's word (opensThread), which is read once
+// the channel is.
+func Openable(cid string) bool {
 	id := strings.TrimPrefix(cid, "agent:")
-	if cid != "agent:"+id {
-		return false
-	}
-	if validID.MatchString(id) {
-		return true
-	}
+	return cid == "agent:"+id && validID(id)
+}
+
+// opensThread is whether ctx carries the Router's word that it opens the thread channel cid
+// (RouterOpensThread).
+func opensThread(ctx context.Context, cid string) bool {
 	vouched, _ := ctx.Value(threadOpen{}).(string)
-	return vouched == cid && strings.HasPrefix(id, ThreadChannelPrefix) && conversationID.MatchString(id)
+	return vouched != "" && vouched == cid
 }
 
 // FinishedReply is an agent's reply in a thread channel, once its final text is stored in
@@ -298,8 +332,15 @@ func (s *Service) OnFinishedReply(fn func(FinishedReply)) {
 
 // SessionCommandChannel reserves the persistent conversation namespace for the
 // session command path. Webhook delivery cannot opt it into a second trigger path.
-func SessionCommandChannel(channelType, id string) bool {
-	return channelType == "agent" && validID.MatchString(id)
+//
+// A channel named after its session has an id an agent's own channel can have too, such as a
+// call's transcript under a session id, so it is told apart by the trigger it was created
+// with (custom is the channel's).
+func SessionCommandChannel(channelType, id string, custom map[string]any) bool {
+	if channelType != "agent" {
+		return false
+	}
+	return legacyID.MatchString(id) || custom[TriggerField] == SessionCommandTrigger
 }
 
 const TriggerField = "support_trigger"
@@ -380,6 +421,20 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 // in that app. One that already exists is kept wherever it was written, which the
 // conversation says: a session resuming it acts there too.
 func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+	fresh := cid == ""
+	if fresh {
+		cid = "agent:support-" + uuid.NewString()
+	}
+	return s.open(ctx, app, customer, agentID, cid, fresh, caller, voiceAgent, custom, scopes...)
+}
+
+// CreateInApp opens a new conversation on the channel cid, as OpenInApp opens one it names no
+// channel for: a session's own conversation, named after the session.
+func (s *Service) CreateInApp(ctx context.Context, app int64, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+	return s.open(ctx, app, customer, agentID, cid, true, caller, voiceAgent, custom, scopes...)
+}
+
+func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid string, fresh bool, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
 	if voiceAgent != "" && !validAuthorID.MatchString(voiceAgent) {
 		return nil, nil, false, stack.Wrap(errors.New("invalid voice transcript author"))
 	}
@@ -394,12 +449,8 @@ func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, c
 	if len(scopes) > 0 {
 		scope = scopes[0]
 	}
-	fresh := cid == ""
-	if fresh {
-		cid = "agent:support-" + uuid.NewString()
-	}
 	id := strings.TrimPrefix(cid, "agent:")
-	if !Openable(ctx, cid) {
+	if !Openable(cid) {
 		return nil, nil, false, stack.Wrap(errors.New("invalid conversation channel"))
 	}
 	if c := s.all[known{customer, cid}]; c != nil {
@@ -427,7 +478,7 @@ func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, c
 			return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another user"))
 		}
 		c.data.Owner = caller
-		c.shared = page.shared
+		c.shared, c.thread = page.shared, page.thread
 		c.active = true
 		h, tr := history(page)
 		return c, h, tr, nil
@@ -473,7 +524,7 @@ func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, c
 		agentID = page.agent
 	}
 	c := s.make(ledger{CID: cid, Customer: customer, Agent: agentID, Owner: caller, Commands: commandsIn(page.Messages), StreamApp: pin})
-	c.shared = page.shared
+	c.shared, c.thread = page.shared, page.thread
 	c.active = true
 	// Nobody here holds the conversation, so a reply Stream still shows as running was
 	// left by a process that stopped.
@@ -567,8 +618,8 @@ func channelCustom(custom map[string]any) map[string]any {
 func (s *Service) Describe(ctx context.Context, customer, cid, title, description string) error {
 	id := strings.TrimPrefix(cid, "agent:")
 	// A thread channel is named too: Describe is told only the channel of a conversation a
-	// session holds (internal/session), which OpenInApp already let through (Openable).
-	if cid != "agent:"+id || !conversationID.MatchString(id) {
+	// session holds (internal/session), which OpenInApp already let through.
+	if cid != "agent:"+id || !validID(id) {
 		return stack.Wrap(errors.New("invalid conversation channel"))
 	}
 	set := map[string]any{}
@@ -626,7 +677,7 @@ func ownedBy(custom map[string]any, customer, agentID, caller string) error {
 // session left to reach reconciles the same command id instead of reopening one to ask.
 func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, caller, commandID string) (CommandReceipt, error) {
 	id := strings.TrimPrefix(cid, "agent:")
-	if cid != "agent:"+id || !validID.MatchString(id) || !validCommandID.MatchString(commandID) {
+	if cid != "agent:"+id || !validID(id) || !validCommandID.MatchString(commandID) {
 		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	s.mu.Lock()
@@ -650,7 +701,7 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 	if err != nil {
 		return CommandReceipt{}, stack.Wrap(err)
 	}
-	if err := ownedBy(r.Data.Channel.Custom, customer, agentID, caller); err != nil {
+	if threadChannel(id, r.Data.Channel.Custom) || ownedBy(r.Data.Channel.Custom, customer, agentID, caller) != nil {
 		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	if caller != "" {
@@ -737,7 +788,7 @@ func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, custo
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	id := strings.TrimPrefix(cid, "agent:")
-	if !Openable(ctx, cid) {
+	if !Openable(cid) {
 		return Page{}, stack.Wrap(errors.New("invalid conversation channel"))
 	}
 	limit := 100
@@ -755,6 +806,12 @@ func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, custo
 	if err := ownedBy(r.Data.Channel.Custom, customer, agentID, caller); err != nil {
 		return Page{}, stack.Wrap(err)
 	}
+	// A thread channel is read only for the Router's word that it opens it: a conversation id
+	// a request names reads nothing there.
+	thread := opensThread(ctx, cid)
+	if !thread && threadChannel(id, r.Data.Channel.Custom) {
+		return Page{}, stack.Wrap(errors.New("invalid conversation channel"))
+	}
 	if caller != "" {
 		if r.Data.Channel.Custom[TriggerField] != SessionCommandTrigger {
 			return Page{}, stack.Wrap(errors.New("conversation is not a session-command channel"))
@@ -770,7 +827,7 @@ func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, custo
 			return Page{}, stack.Wrap(errors.New("conversation caller is not a channel member"))
 		}
 	}
-	p := Page{agent: stored, shared: r.Data.Channel.Custom["support_access"] == "members", empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
+	p := Page{agent: stored, shared: r.Data.Channel.Custom["support_access"] == "members", thread: thread, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
 	if raw, ok := r.Data.Channel.Custom["support_memory_scope"]; ok {
 		b, err := json.Marshal(raw)
 		if err != nil {
@@ -795,7 +852,7 @@ func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, custo
 			// A message written before schema v1 carries the whole message as support_message.
 			raw, ok := m.Custom["support_message"]
 			if !ok {
-				if written, ok := messageFromThread(m, strings.HasPrefix(id, ThreadChannelPrefix)); ok {
+				if written, ok := messageFromThread(m, p.thread); ok {
 					p.Messages = append(p.Messages, written)
 				}
 				continue
@@ -1734,7 +1791,7 @@ func (c *Conversation) flush() bool {
 func (c *Conversation) finishedReply(op operation) (FinishedReply, bool) {
 	m := op.Message
 	if m.Role != "assistant" || m.FinishedAt == nil || m.State != "completed" || (m.Text == "" && len(m.Files) == 0) ||
-		!strings.HasPrefix(c.data.CID, "agent:"+ThreadChannelPrefix) {
+		!c.thread {
 		return FinishedReply{}, false
 	}
 	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: m.ID, Text: m.Text,

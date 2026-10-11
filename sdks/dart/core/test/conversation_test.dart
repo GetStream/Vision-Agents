@@ -156,7 +156,7 @@ void main() {
     test('a tool call decodes its arguments, which arrive as a JSON string', () {
       final call = frame(
         '{"type":"tool_call","id":"c1","name":"lookup_order",'
-        r'"arguments":"{\"order_id\":\"A-1042\"}","command_id":"","turn_id":"t1"}',
+        r'"arguments":"{\"order_id\":\"A-1042\"}","request_id":"","turn_id":"t1"}',
       ).toolCall!;
 
       expect(call.name, 'lookup_order');

@@ -55,6 +55,8 @@ type recordWrite struct {
 	described *described
 	// sawVideo is the session whose user's video the agent saw.
 	sawVideo string
+	// voiced is the session voice was started on, and the call it joined.
+	voiced *voiced
 	// chose is a connection a login in the conversation chose for a binding, nil otherwise.
 	chose *chose
 	// flushed is closed once everything queued before it has been written.
@@ -76,6 +78,8 @@ type recorder interface {
 	Described(customerID, id, title, description string, custom map[string]any)
 	// SawVideo says the agent saw the user's video.
 	SawVideo(id string)
+	// Voiced says voice was started on the session, on the call named.
+	Voiced(id, callID, callType string)
 	// Chose says a login in the conversation chose a connection for the binding called name.
 	Chose(customerID, id, name, connectionID string)
 	// Flush waits until everything said so far has been written, which is what reading the
@@ -150,6 +154,16 @@ func (r *sessionRecorder) Chose(customerID, id, name, connectionID string) {
 // SawVideo queues that a session became a video one, behind the row it changes.
 func (r *sessionRecorder) SawVideo(id string) {
 	r.queueWrite(recordWrite{sawVideo: id})
+}
+
+// voiced is a session voice was started on.
+type voiced struct {
+	id, callID, callType string
+}
+
+// Voiced queues that voice was started on a session, behind the row it changes.
+func (r *sessionRecorder) Voiced(id, callID, callType string) {
+	r.queueWrite(recordWrite{voiced: &voiced{id, callID, callType}})
 }
 
 // Responding queues a turn that has just begun.
@@ -288,6 +302,11 @@ func (r *sessionRecorder) write(write recordWrite) {
 	case write.sawVideo != "":
 		if err := r.store.SawVideo(ctx, write.sawVideo); err != nil {
 			r.logger.Error("could not record the session's video", "session", write.sawVideo, "error", err)
+		}
+	case write.voiced != nil:
+		v := write.voiced
+		if err := r.store.SessionVoiced(ctx, v.id, v.callID, v.callType); err != nil {
+			r.logger.Error("could not record the session's call", "session", v.id, "error", err)
 		}
 	}
 }

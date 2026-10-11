@@ -49,10 +49,10 @@ func TestAWholeConversationAgainstARealSession(t *testing.T) {
 
 	opened := make(chan string, 1)
 	m := newModel(t, Options{
-		Open:           backend.opener(t),
-		History:        BackendHistory(stream.Backend{URL: backend.URL, CustomerID: "acme"}, "jean"),
-		ConversationID: "agent:support-1",
-		Branding:       Branding{Title: "Jean", Subtitle: "answers questions about Stream"},
+		Open:      backend.opener(t),
+		History:   BackendHistory(stream.Backend{URL: backend.URL, CustomerID: "acme"}, "jean"),
+		SessionID: "session-7",
+		Branding:  Branding{Title: "Jean", Subtitle: "answers questions about Stream"},
 		OnOpen: func(_ context.Context, session Session) error {
 			opened <- session.ID()
 			return nil
@@ -62,7 +62,7 @@ func TestAWholeConversationAgainstARealSession(t *testing.T) {
 	settle(m, m.Init())
 
 	// The conversation opened on what it was asked to, with the history behind it.
-	if m.session == nil || m.conversationID != "agent:support-1" {
+	if m.session == nil || m.sessionID != "session-7" || m.conversationID != "agent:session-7" {
 		t.Fatalf("the conversation opened on %q with session %v", m.conversationID, m.session != nil)
 	}
 	if !shown(m, "a question from last time") {
@@ -73,7 +73,7 @@ func TestAWholeConversationAgainstARealSession(t *testing.T) {
 	}
 	select {
 	case id := <-opened:
-		if id != "session-1" {
+		if id != "session-7" {
 			t.Errorf("the application was told about session %q", id)
 		}
 	case <-time.After(3 * time.Second):

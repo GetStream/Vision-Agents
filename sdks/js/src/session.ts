@@ -55,8 +55,8 @@ export interface SessionOptions {
    * what the agent is doing word by word. A page on a hosted deployment can watch one too:
    * the socket carries the credential in its query, where the proxy reads it. Off, the
    * conversation is opened and read over HTTP instead — `responses.create()` asks,
-   * `responses.items` reads the turn back — and `say`, `interrupt`,
-   * `setInstructions` and `events` have nothing to send to.
+   * `responses.items` reads the turn back — and `say`, `interrupt` and `events` have
+   * nothing to send to.
    */
   watch?: boolean;
 }
@@ -104,6 +104,8 @@ export class Session {
   readonly created: Schemas["Session"];
   /** This conversation's turns, and what each of them was made of. */
   readonly responses: Responses;
+  /** Starts and stops the agent talking on the session's call. */
+  readonly voice: Voice;
 
   /**
    * Undefined for a conversation that is read and written to over HTTP rather than watched
@@ -132,16 +134,17 @@ export class Session {
     this.created = created;
     this.socket = socket;
     this.tools = tools;
-    this.responses = new Responses(client, created.id, Boolean(created.conversation_id));
+    this.responses = new Responses(client, created.id);
+    this.voice = new Voice(client, created.id, Boolean(created.call_id));
     this.finished = socket ? this.watch() : Promise.resolve();
   }
 
   /**
    * Creates the session and starts watching it.
    *
-   * It resolves once the backend is in the call, so a session that has opened is one that
-   * is already listening. A request with no `call_id` and `text: true` holds the
-   * conversation in writing instead.
+   * With `start_voice` it resolves once the backend is in the session's call, so a session
+   * that has opened is one that is already listening. Without it the conversation is held
+   * in writing.
    */
   static async open(
     client: Client,
@@ -247,22 +250,16 @@ export class Session {
     this.held().send({ type: "say", text: said });
   }
 
-  /** Abandons the reply being spoken, or with `commandId` the one answering that command. */
-  interrupt(options: { commandId?: string } = {}): void {
+  /** Abandons the reply being spoken, or with `requestId` the one answering that request. */
+  interrupt(options: { requestId?: string } = {}): void {
     this.held().send({
       type: "interrupt",
-      ...(options.commandId ? { command_id: options.commandId } : {}),
+      ...(options.requestId ? { request_id: options.requestId } : {}),
     });
   }
 
-  /** Changes what the agent is told to be, from the next turn. */
-  setInstructions(instructions: string): void {
-    this.held().send({ type: "instructions", instructions });
-  }
-
   /**
-   * Changes this session alone: its title, description, custom labels, instructions, models
-   * or voice.
+   * Changes this session alone: its title, description, custom labels, models or voice.
    *
    * Server side only. The agent config it started from is untouched and a field left out is
    * left as it is. A session that ended can still be renamed and relabelled; the rest needs
@@ -346,7 +343,7 @@ export class Session {
   }
 
   /**
-   * The Stream video call the agent is on.
+   * The Stream video call the agent is on, `agent:<session id>`.
    *
    * The same arrangement as chat: `@stream-io/video-client` is an optional peer dependency,
    * opted into by importing `@stream-io/vision-agents/video` once, and the client handed over
@@ -442,8 +439,8 @@ export class Session {
     const id = text(frame, "id");
     const name = text(frame, "name");
     const result: Record<string, unknown> = { type: "tool_result", tool_call_id: id };
-    // A durable command's result is only accepted back with the command and turn it names.
-    for (const key of ["command_id", "turn_id"]) {
+    // A durable request's result is only accepted back with the request and turn it names.
+    for (const key of ["request_id", "turn_id"]) {
       if (text(frame, key)) {
         result[key] = text(frame, key);
       }
@@ -484,18 +481,14 @@ export class Session {
   }
 
   private async openVideo(): Promise<SessionVideo> {
-    const callId = this.created.call_id ?? "";
-    if (!callId) {
+    if (!this.voice.started) {
       throw new ConfigurationError(
         "this conversation is held in writing, so there is no call to join",
       );
     }
 
     const connected = await this.client.peers.video();
-    return {
-      client: connected,
-      call: connected.call(this.created.call_type ?? "agent", callId),
-    };
+    return { client: connected, call: connected.call("agent", this.id) };
   }
 
   private deliver(event: SessionEvent): void {
@@ -508,6 +501,47 @@ export class Session {
     if (this.buffered.length > BUFFERED_EVENTS) {
       this.buffered.shift();
     }
+  }
+}
+
+/**
+ * The agent talking on a session's call, `agent:<session id>`.
+ *
+ * Typed and spoken turns are one conversation, with one history and one channel, whether
+ * voice is on or not.
+ */
+export class Voice {
+  private readonly client: Client;
+  private readonly sessionId: string;
+  private on: boolean;
+
+  constructor(client: Client, sessionId: string, on: boolean) {
+    this.client = client;
+    this.sessionId = sessionId;
+    this.on = on;
+  }
+
+  /** Whether the agent is on the call, as far as this process knows. */
+  get started(): boolean {
+    return this.on;
+  }
+
+  /** Has the agent join the call and carry the conversation on there. Already on does nothing. */
+  async start(): Promise<Schemas["Session"]> {
+    const started = await this.client.post("/v1/agents/sessions/{id}/voice", {
+      path: { id: this.sessionId },
+    });
+    this.on = true;
+    return started;
+  }
+
+  /** Takes the agent off the call and carries the conversation on in writing. Already off does nothing. */
+  async stop(): Promise<Schemas["Session"]> {
+    const stopped = await this.client.delete("/v1/agents/sessions/{id}/voice", {
+      path: { id: this.sessionId },
+    });
+    this.on = false;
+    return stopped;
   }
 }
 

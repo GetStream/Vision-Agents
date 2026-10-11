@@ -36,7 +36,7 @@ class Router:
     def __init__(self):
         self.configs: dict[str, dict[str, Any]] = {}
         self.skills: dict[str, dict[str, Any]] = {}
-        self.knowledge: list[dict[str, Any]] = []
+        self.knowledge: list[list[dict[str, Any]]] = []
         self.pages: list[dict[str, Any]] = []
         # What the last sync declared as the config's simulations, None when it said
         # nothing about them.
@@ -522,10 +522,9 @@ class TestSyncAgent:
             "stt: stt-fast\n"
             "tts: tts-fast\n"
             "voice: nova\n"
-            "speed: 1.1\n"
             "harness: default\n"
             "search: search-fast\n"
-            "greeting: Hello.\n"
+            "greeting:\n  text: Hello.\n  mode: variation\n"
             "sandbox: daytona\n"
             "plugins:\n  - gmail\n  - name: google_calendar\n    user: true\n"
             "keyterms:\n  - Vision Agents\n"
@@ -543,10 +542,10 @@ class TestSyncAgent:
         assert stored["stt"] == "stt-fast"
         assert stored["tts"] == "tts-fast"
         assert stored["voice"] == "nova"
-        assert stored["speed"] == 1.1
+        assert "speed" not in stored
         assert stored["harness"] == "default"
         assert stored["search"] == "search-fast"
-        assert stored["greeting"] == "Hello."
+        assert stored["greeting"] == {"text": "Hello.", "mode": "variation"}
         assert stored["sandbox"] == "daytona"
         assert stored["plugins"] == ["gmail", {"name": "google_calendar", "user": True}]
         assert stored["keyterms"] == ["Vision Agents"]

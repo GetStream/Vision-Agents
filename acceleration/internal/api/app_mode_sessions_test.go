@@ -79,28 +79,11 @@ func (s *AppModeSessionsSuite) TestAResumedLegacyConversationAsksForAFork() {
 	s.giveApp(s.customerID(), 4242, "own-key")
 	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
 
-	resumed := textSession(nil)
-	resumed.ConversationId = created.ConversationId
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions", resumed)
+	status, failure := s.serverClient.failure(http.MethodPost,
+		"/v1/agents/sessions/"+created.Id+"/respond", SayRequest{Text: "still there?"})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "can only be read there: fork it")
-}
-
-func (s *AppModeSessionsSuite) TestAVoiceCallOnAConversationKeptInAnotherAppIsRefused() {
-	// The conversation is in the customer's own app; the call rings a number attached in
-	// the shared one. The agent would join the call there and look for the conversation's
-	// channel where it is not.
-	s.giveApp(s.customerID(), 4242, "own-key")
-	created := s.serverClient.createSession(textSession(nil))
-	s.Require().NotNil(created.ConversationId)
-	call := s.attachedIn(0)
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions",
-		CreateSessionRequest{CallId: &call, CallType: pointerTo("agent"), ConversationId: created.ConversationId})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "kept in another Stream app")
 }
 
 func (s *AppModeSessionsSuite) TestDisconnectingEndsSessionsPinnedToTheApp() {

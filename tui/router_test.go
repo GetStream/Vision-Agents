@@ -57,15 +57,22 @@ func newRouter(t *testing.T) *router {
 		backend.mu.Lock()
 		id, truncated := backend.conversationID, backend.truncated
 		backend.mu.Unlock()
-		// A resumed conversation keeps the id it was resumed under.
-		if request.ConversationId != nil && *request.ConversationId != "" {
-			id = *request.ConversationId
-		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(acceleration.Session{
 			Id: "session-1", AgentId: "agent-1", UserId: "jean", State: "running",
 			ConversationId: &id, ContextTruncated: &truncated, CreatedAt: time.Now(),
+		})
+	})
+
+	// A resumed session is read back under its own id, its channel named after it.
+	mux.HandleFunc("GET /v1/agents/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		conversation := "agent:" + id
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(acceleration.Session{
+			Id: id, AgentId: "agent-1", UserId: "jean", State: "ended",
+			ConversationId: &conversation, CreatedAt: time.Now(),
 		})
 	})
 
@@ -172,7 +179,7 @@ func containsInOrder(kinds, want []string) bool {
 }
 
 // session opens a real session on the stand-in router.
-func (r *router) session(t *testing.T, conversationID string) Session {
+func (r *router) session(t *testing.T, sessionID string) Session {
 	t.Helper()
 	quiet := slog.New(slog.DiscardHandler)
 	agent, err := agents.New(agents.Options{
@@ -186,7 +193,12 @@ func (r *router) session(t *testing.T, conversationID string) Session {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := agent.Chat(t.Context(), agents.SessionOptions{ConversationID: conversationID})
+	var session *agents.Session
+	if sessionID == "" {
+		session, err = agent.Chat(t.Context())
+	} else {
+		session, err = agent.Sessions.Resume(t.Context(), sessionID)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,8 +208,8 @@ func (r *router) session(t *testing.T, conversationID string) Session {
 
 // opener opens a session on the stand-in router, for a conversation to be built around.
 func (r *router) opener(t *testing.T) Opener {
-	return func(_ context.Context, conversationID string) (Session, error) {
-		return r.session(t, conversationID), nil
+	return func(_ context.Context, sessionID string) (Session, error) {
+		return r.session(t, sessionID), nil
 	}
 }
 

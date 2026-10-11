@@ -130,6 +130,9 @@ type Turn struct {
 	// Answers says the reply is offered no tools and must answer from what it has: the
 	// chain of tools before it has gone on as long as the caller can be kept waiting.
 	Answers bool
+	// Asked is what the caller asked to change about this reply, written over the
+	// session's own overwrites.
+	Asked llmoptions.LLM
 }
 
 // answerNow is the note a reply that Answers is given.
@@ -360,7 +363,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		// they are written to the provider's cache once under a key the agent owns and
 		// read back from there on every turn after.
 		PromptCacheKey: h.options.CacheKey,
-	}.Overwrite(overwrites))
+	}.Overwrite(overwrites).Overwrite(turn.Asked))
 }
 
 // Release makes what a reply was handed owed to the caller again, because that reply was
@@ -413,10 +416,12 @@ func (h *Harness) SetOverwrites(overwrites llmoptions.LLM) {
 }
 
 // resumption is what a turn nobody prompted is asked, when the conversation so far ends
-// with the agent's own words. What came back is already in the instructions, so this only
-// has to say that it has.
-const resumption = "The work you handed over has come back, and is in your instructions. " +
-	"Tell the caller what it found."
+// with the agent's own words. What came back, if anything did, is already in the
+// instructions. It states no outcome: the note that prompted the turn may say that nothing
+// ran, and told that work had come back, Gemma told a caller "You're all set" for a booking
+// it never made.
+const resumption = "Carry on with the caller from what is in your instructions. Say only " +
+	"what a tool or your colleague actually returned."
 
 // answerable returns a history with something at the end of it to reply to.
 //
@@ -699,7 +704,8 @@ func (h *Harness) actUnknown(found directive) {
 	h.logger.Debug("the model asked for a skill that does not exist", "skill", found.skill)
 	h.mu.Lock()
 	h.notes = append(h.notes, noted{text: fmt.Sprintf(
-		"There is no skill named %s. Carry on with the caller.", found.skill)})
+		"There is no skill named %s, so nothing was done. If the caller asked for something "+
+			"to be done, call its tool now; do not tell them it is done.", found.skill)})
 	h.mu.Unlock()
 }
 

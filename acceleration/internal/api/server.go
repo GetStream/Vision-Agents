@@ -203,6 +203,9 @@ type Options struct {
 	// Absent when the deployment has no key encryption key, in which case the paths that
 	// would store one say so rather than holding it in the clear.
 	Secrets *auth.Sealer
+	// PrivateModelEndpoints lets a customer's model sit on a private address or plain http,
+	// which only a router no other tenant shares should allow.
+	PrivateModelEndpoints bool
 	// PublicURL is where this process is reachable, which plugin OAuth callbacks need.
 	PublicURL string
 	// DashboardURL is where a finished plugin login sends the browser.
@@ -247,6 +250,10 @@ type Options struct {
 	// the Retry-After it asked for (core.Limiter). Absent, which it is with connectors off or
 	// without Redis, nothing is held and the provider limits alone.
 	ConnectorLimiter *core.Limiter
+	// ProxyCallsPerMinute caps one customer's direct calls to one connector in a minute,
+	// counted by ConnectorLimiter (config connectors.proxy_calls_per_minute). 0 caps nothing,
+	// and so does an absent ConnectorLimiter.
+	ProxyCallsPerMinute int64
 	// ConnectorEventSecrets finds the secret a connector's events are verified with
 	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
 	// endpoint takes no events.
@@ -311,6 +318,7 @@ type Server struct {
 	library           *voices.Catalogue
 	dispatch          *dispatch.Pool
 	secrets           *auth.Sealer
+	privateModels     bool
 	corsOrigins       []string
 	publicURL         string
 	dashboardURL      string
@@ -347,6 +355,8 @@ type Server struct {
 	connectorTransports *core.Transports
 	// connectorLimiter holds the proxy's calls after a provider's 429; nil holds none.
 	connectorLimiter *core.Limiter
+	// proxyCallsPerMinute caps one customer's direct calls to one connector; 0 caps nothing.
+	proxyCallsPerMinute int64
 
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -448,6 +458,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		library:           options.VoiceLibrary,
 		dispatch:          options.Dispatch,
 		secrets:           options.Secrets,
+		privateModels:     options.PrivateModelEndpoints,
 		corsOrigins:       options.CORSOrigins,
 		publicURL:         options.PublicURL,
 		dashboardURL:      options.DashboardURL,
@@ -490,6 +501,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	}
 	server.connectorTransports = options.ConnectorTransports
 	server.connectorLimiter = options.ConnectorLimiter
+	server.proxyCallsPerMinute = options.ProxyCallsPerMinute
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}
 	}

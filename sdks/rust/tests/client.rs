@@ -359,7 +359,7 @@ async fn what_was_left_out_is_left_out() {
     let client = server.client();
     client
         .create_session(&types::CreateSessionRequest {
-            text: Some(true),
+            title: Some("Plans".into()),
             ..Default::default()
         })
         .await
@@ -377,7 +377,7 @@ async fn what_was_left_out_is_left_out() {
 
     assert_eq!(
         server.request(Method::POST, "/v1/agents/sessions").body,
-        json!({"text": true})
+        json!({"title": "Plans"})
     );
     assert_eq!(
         server

@@ -12,10 +12,10 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -79,14 +79,29 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	found, ok := s.sessions.Get(id, OwnerFrom(r.Context()))
-	if !ok || !canReadSession(r.Context(), found.Spec()) {
-		// A session this node is not running may still be running on another one, and a
-		// browser reconnecting has no reason to land back where it was. The relay asks
-		// the rest of the deployment for it; without one, this node is the deployment.
-		if !ok && s.relayed != nil {
-			s.watchRemoteSession(w, r, id, OwnerFrom(r.Context()))
+	// A session this node is not running may still be running on another one, and a
+	// browser reconnecting has no reason to land back where it was. The relay asks the rest
+	// of the deployment for it; without one, this node is the deployment.
+	if !ok && s.relayed != nil && s.watchRemoteSession(w, r, id, OwnerFrom(r.Context())) {
+		return
+	}
+	// A text conversation that ended is carried on under the same id, as a message to it
+	// is, so watching it again is how a client resumes it.
+	if !ok || found.State() == session.Ended {
+		reopened, sent, err := s.sessionToAnswer(r.Context(), id)
+		var failure APIError
+		if errors.As(err, &failure) {
+			writeError(w, failure)
 			return
 		}
+		if err != nil {
+			writeFailure(w, r, err)
+			return
+		}
+		sent()
+		found, ok = reopened, true
+	}
+	if !canReadSession(r.Context(), found.Spec()) {
 		writeError(w, errUnknownSession)
 		return
 	}
@@ -208,7 +223,7 @@ type watcherCommand struct {
 	Type string `json:"type"`
 	// ToolCallID names the call a tool_result answers.
 	ToolCallID string `json:"tool_call_id"`
-	CommandID  string `json:"command_id"`
+	CommandID  string `json:"request_id"`
 	TurnID     string `json:"turn_id"`
 	// Output is a string or a parts array, which is what a tool that returns an
 	// image sends.
@@ -223,8 +238,6 @@ type watcherCommand struct {
 	Text string `json:"text"`
 	// Images attach to a respond command, and become image parts on that turn.
 	Images []wireImage `json:"images"`
-	// Instructions carries the instructions command.
-	Instructions string `json:"instructions"`
 }
 
 // readCommands applies what the caller sends, which is tool results and the handful of
@@ -305,12 +318,12 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, comma
 			}
 			return true
 		}
-		if command.CommandID != "" {
+		if command.CommandID != "" && found.Durable() {
 			if len(command.Images) > 0 {
 				found.Report(fmt.Errorf("durable commands currently support text only"), "llm")
 				return true
 			}
-			if _, _, err := found.RespondCommand(context.Background(), command.CommandID, command.Text, ""); err != nil {
+			if _, _, err := found.RespondCommand(context.Background(), command.CommandID, command.Text, "", options.LLM{}); err != nil {
 				found.Report(err, "llm")
 			}
 			return true
@@ -320,7 +333,7 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, comma
 			found.Report(err, "llm")
 			return true
 		}
-		if _, err := found.Respond(context.Background(), command.Text, images); err != nil {
+		if _, err := found.Respond(context.Background(), command.Text, images, options.LLM{}); err != nil {
 			found.Report(err, "llm")
 		}
 
@@ -335,15 +348,6 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, comma
 			return true
 		}
 		found.Interrupt()
-
-	case "instructions":
-		// Refused from a device as on createSession and updateSession. The owner's kind is
-		// what a relayed command carries too, and only a backend's is KindServer.
-		if owner.Kind != auth.KindServer {
-			found.Report(errDeviceInstructions, "command")
-			return true
-		}
-		found.SetInstructions(command.Instructions)
 
 	case "close":
 		// Through the manager rather than found.Close(), which ends the conversation
@@ -384,14 +388,14 @@ func frameOf(event session.Event) (frame, bool) {
 	switch typed := event.(type) {
 	case session.ToolCall:
 		if typed.Cancel {
-			return frame{"type": "tool_cancel", "id": typed.ID, "command_id": typed.CommandID, "turn_id": typed.TurnID}, true
+			return frame{"type": "tool_cancel", "id": typed.ID, "request_id": typed.CommandID, "turn_id": typed.TurnID}, true
 		}
 		return frame{
 			"type":       "tool_call",
 			"id":         typed.ID,
 			"name":       typed.Name,
 			"arguments":  typed.Arguments,
-			"command_id": typed.CommandID,
+			"request_id": typed.CommandID,
 			"turn_id":    typed.TurnID,
 		}, true
 

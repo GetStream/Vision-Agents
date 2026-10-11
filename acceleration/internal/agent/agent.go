@@ -315,6 +315,9 @@ type Agent struct {
 	// listeners holds one transcription session per participant, because a speech-to-text
 	// stream is bound to a single speaker.
 	listeners map[string]*sttrouter.Session
+	// learnedTerms are names the caller said and the agent has said back, which the
+	// transcriber is told to expect for the rest of the call (keyterms.go).
+	learnedTerms []string
 	// voices is the diarised label of the first voice heard on each participant's track,
 	// which is taken to be the caller's. A later turn in a different voice is somebody
 	// else at the same microphone: the track says who joined the call, and it is the
@@ -357,8 +360,11 @@ type Agent struct {
 	// owedTurn is the last turn that ended with tools or delegated work outstanding, which
 	// the reply delivering that work continues.
 	owedTurn string
-	joined   bool
-	closed   bool
+	// asked is what the caller asked to change about the reply to the last thing it said
+	// (RespondTo), kept for the replies that deliver that turn's tools and delegated work.
+	asked  options.LLM
+	joined bool
+	closed bool
 
 	// lastParticipant is who the agent was last talking to, so a reply prompted by
 	// delegated work coming back is attributed to the person who is waiting for it.
@@ -655,7 +661,7 @@ func (a *Agent) Join(ctx context.Context) error {
 // said it. It returns once the request is on its way: the reply arrives on Events and is
 // spoken as it streams.
 func (a *Agent) SimpleResponse(ctx context.Context, text string) error {
-	_, err := a.RespondTo(ctx, text, nil)
+	_, err := a.RespondTo(ctx, text, nil, options.LLM{})
 	return err
 }
 
@@ -669,7 +675,13 @@ func (a *Agent) SimpleResponse(ctx context.Context, text string) error {
 // Images go to the vision skill when the agent has one, and to the conversation model
 // itself when it has none but the model can see. With neither the turn is refused with
 // ErrCannotSeeImages rather than answered blind.
-func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePart) (string, error) {
+//
+// asked is written over the session's own overwrites for this reply and the replies that
+// finish it once its tools come back. CheckAsked says whether the model takes it.
+func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePart, asked options.LLM) (string, error) {
+	if err := a.CheckAsked(asked); err != nil {
+		return "", err
+	}
 	if a.native() {
 		return "", a.respondNative(text, images)
 	}
@@ -713,17 +725,36 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked)
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", attached)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", attached, asked)
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
 	}
 	id := replyPrefix + turnStamp()
 	typed()
-	return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", nil)
+	return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", nil, asked)
+}
+
+// CheckAsked reports whether the conversation model takes what a caller asked to change
+// about one reply, so a reasoning effort it does not answer to is refused before the turn
+// starts rather than failing it.
+func (a *Agent) CheckAsked(asked options.LLM) error {
+	if asked.ReasoningEffort == "" && asked.MaxOutputTokens == nil {
+		return nil
+	}
+	if a.native() {
+		return errors.New("agent: a speech-to-speech agent takes no reasoning effort or output limit")
+	}
+	a.mu.Lock()
+	model := a.llm
+	a.mu.Unlock()
+	if model == nil {
+		return stack.Wrap(errors.New("agent: not joined"))
+	}
+	return model.Capabilities().Validate(llm.ResponseParams{}.Overwrite(asked))
 }
 
 // VideoFramesTool is the caller's tool the agent reads frames of the user's video through.
@@ -920,30 +951,6 @@ func (a *Agent) Interrupt() {
 	a.mu.Unlock()
 	a.abandon(turnID)
 	a.interrupt(participant)
-}
-
-// SetInstructions changes what the agent is told to be from the next turn on. The reply
-// being spoken keeps the prompt it was started with, because rewriting it mid-sentence
-// would have the agent change character in the middle of a thought.
-func (a *Agent) SetInstructions(text string) {
-	a.mu.Lock()
-	a.prompt = text
-	instructions := a.instructions()
-	if a.native() {
-		instructions = a.nativeInstructions(a.harness != nil)
-	}
-	model := a.sts
-	a.mu.Unlock()
-
-	// A native model holds the prompt itself, so it is told. One that took its
-	// instructions only when the session opened refuses, and the refusal is reported
-	// rather than swallowed: a caller who changed the prompt and heard nothing of it would
-	// believe the agent had changed.
-	if model != nil {
-		if err := model.SetInstructions(instructions); err != nil {
-			a.fail(err, "sts")
-		}
-	}
 }
 
 // Events carries what happened in the conversation. It is closed by Close.
@@ -1477,7 +1484,7 @@ func turnStamp() string { return strconv.FormatInt(time.Now().UnixNano(), 10) }
 
 // respond asks the harness to reply to a turn.
 func (a *Agent) respond(participant stt.Participant, text string, listened heard, images []llm.ImagePart) error {
-	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "", images)
+	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "", images, options.LLM{})
 }
 
 // respondCandidate answers a settled turn. The note is what the conversation decided the
@@ -1488,7 +1495,7 @@ func (a *Agent) respondCandidate(ready candidate, note string) error {
 		revisedAt:    ready.RevisedAt,
 		sttLatencyMs: ready.STTLatencyMs,
 		confidence:   ready.Confidence,
-	}, note, nil)
+	}, note, nil, options.LLM{})
 }
 
 // noteToolDone records that one of the tools the current turn asked for has returned. A
@@ -1548,6 +1555,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	continues := a.owedTurn
 	a.owedTurn = ""
 	instructions := a.instructions()
+	asked := a.asked
 	a.mu.Unlock()
 
 	a.turns.begin(turnID, participant, time.Now(), time.Time{}, 0)
@@ -1559,6 +1567,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 		History:      history,
 		AfterTool:    true,
 		Answers:      answers,
+		Asked:        asked,
 	}, "")
 }
 
@@ -1569,6 +1578,7 @@ func (a *Agent) respondTurn(
 	listened heard,
 	note string,
 	images []llm.ImagePart,
+	asked options.LLM,
 ) error {
 	a.mu.Lock()
 	if a.harness == nil {
@@ -1581,6 +1591,7 @@ func (a *Agent) respondTurn(
 	a.speakingTurn = turnID
 	a.generating = true
 	a.toolRounds = 0
+	a.asked = asked
 	a.lastParticipant = participant
 	instructions := a.instructions()
 	a.mu.Unlock()
@@ -1594,6 +1605,7 @@ func (a *Agent) respondTurn(
 		History:      history,
 		Note:         joinNotes(note, a.duplex.Note(listened.confidence)),
 		Images:       images,
+		Asked:        asked,
 	}, text)
 }
 
@@ -2131,6 +2143,7 @@ func (a *Agent) finish(response llm.Response) {
 	if currentHarness != nil {
 		currentHarness.Remember(response)
 	}
+	a.learnTerms(said, history)
 
 	// Remembering happens off the turn path: extraction takes longer than a turn and the
 	// next thing the participant says must not wait for it.
@@ -2469,6 +2482,7 @@ func (a *Agent) follow() error {
 	continues := a.owedTurn
 	a.owedTurn = ""
 	instructions := a.instructions()
+	asked := a.asked
 	a.mu.Unlock()
 
 	// This turn is deliberately not measured. A Turn reports the wait between someone
@@ -2480,6 +2494,7 @@ func (a *Agent) follow() error {
 		Instructions: instructions,
 		History:      history,
 		AfterTool:    afterTool,
+		Asked:        asked,
 	}, "")
 }
 

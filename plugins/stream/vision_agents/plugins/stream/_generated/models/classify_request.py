@@ -64,9 +64,7 @@ class ClassifyRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.classify_request_questions import (
-            ClassifyRequestQuestions,
-        )
+        from ..models.classify_request_questions import ClassifyRequestQuestions
         from ..models.classify_request_tags import ClassifyRequestTags
 
         d = dict(src_dict)

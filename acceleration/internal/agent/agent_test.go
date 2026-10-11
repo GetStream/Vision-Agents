@@ -127,9 +127,24 @@ type stubSTT struct {
 
 	mu    sync.Mutex
 	heard []audio.PcmData
+	// terms is the last vocabulary it was retuned to.
+	terms []string
 }
 
 func newStubSTT() *stubSTT { return &stubSTT{emitter: stt.NewEmitter(64)} }
+
+func (s *stubSTT) SetKeyterms(terms []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.terms = append([]string(nil), terms...)
+	return nil
+}
+
+func (s *stubSTT) keyterms() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.terms...)
+}
 
 func (s *stubSTT) Start(context.Context) error { return nil }
 
@@ -1505,6 +1520,24 @@ func (s *AgentSuite) TestADirectionIsSpokenButNeverRead() {
 	s.Equal("That is a good one.", history[1].Content)
 }
 
+func (s *AgentSuite) TestANameBothSidesHaveSaidIsExpectedFromThenOn() {
+	// Flux heard "Chen" once, the agent said it back, and the caller's next "Yes, Chen" came
+	// back as "Yes. Ten". Once both have said it, the transcriber is told to expect it.
+	s.join(true)
+	s.model.reply = []string{"Two at 7:30 for Chen. ", "I'm checking with Mia now."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "a table for two at seven thirty, name Chen")
+
+	s.eventually(func() bool { return len(s.ears.keyterms()) > 0 }, "the transcriber was never retuned")
+	terms := s.ears.keyterms()
+	s.Contains(terms, "Chen")
+	s.NotContains(terms, "Mia", "a name only the agent said is not reinforced")
+	s.NotContains(terms, "Two", "a word that only opens a sentence is not a name")
+	s.NotContains(terms, "I", "nor is a contraction")
+}
+
 func (s *AgentSuite) TestADirectionIsTakenOutOfWhatAVoiceCannotAct() {
 	// Left in, the caller would hear the word "laughs" read out mid-sentence.
 	s.join(true)
@@ -1700,6 +1733,35 @@ func (s *AgentSuite) TestAnAnswerComesBackAsATurnNobodyAskedFor() {
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer was never spoken")
 	s.Contains(s.voice.spoken()[len(s.voice.spoken())-1].ID, "turn-",
 		"the answer reaches the caller as a turn of its own")
+}
+
+func (s *AgentSuite) TestWhatAResponseAskedForHoldsForTheAnswerToItsDelegatedWork() {
+	// The reply carrying the subagent's findings is the answer that was asked for, so a
+	// limit that stopped at the first reply would miss the one that matters.
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = []string{"It is 12.63."}
+	limit := 64
+
+	_, err := s.agent.RespondTo(s.ctx, "what is 15% of 84.20", nil, options.LLM{MaxOutputTokens: &limit})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the answer coming back never started a turn")
+	s.Equal(64, s.model.requests()[0].MaxOutputTokens)
+	s.Equal(64, s.model.requests()[1].MaxOutputTokens)
+}
+
+func (s *AgentSuite) TestAReasoningEffortTheModelDoesNotTakeIsRefusedBeforeTheTurn() {
+	s.join(true)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is my order", nil, options.LLM{ReasoningEffort: "high"})
+
+	s.ErrorContains(err, "does not reason")
+	s.Empty(s.model.requests())
+	s.Zero(countOf[Responding](s.reported()))
 }
 
 func (s *AgentSuite) TestAnAnswerComingBackDoesNotCutOffTheReplyBeingSpoken() {
@@ -2373,7 +2435,7 @@ func (s *AgentSuite) TestALostVoiceIsReplacedForTheRestOfTheCall() {
 	s.eventually(func() bool { return s.agent.voice() != lost },
 		"the lost voice was never replaced")
 
-	_, err := s.agent.RespondTo(s.ctx, "where is my order", nil)
+	_, err := s.agent.RespondTo(s.ctx, "where is my order", nil, options.LLM{})
 	s.Require().NoError(err)
 
 	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 },
@@ -2386,7 +2448,7 @@ func (s *AgentSuite) TestAnAgentThatLostItsVoiceMidReplyIsNoLongerTalking() {
 	s.join(false)
 	s.voice.silent = true
 	s.replacement = newStubTTS(false)
-	_, err := s.agent.RespondTo(s.ctx, "where is my order", nil)
+	_, err := s.agent.RespondTo(s.ctx, "where is my order", nil, options.LLM{})
 	s.Require().NoError(err)
 	s.eventually(func() bool { return len(s.voice.spoken()) > 0 && s.agent.floor().Talking },
 		"the reply never reached the voice")
@@ -2404,7 +2466,7 @@ func (s *AgentSuite) TestWhatIsTypedIntoACallIsHeardAsTheCallerSaid() {
 	// a line typed into a call is answered and then nowhere to be read.
 	s.join(false)
 
-	_, err := s.agent.RespondTo(s.ctx, "my order number is 12", nil)
+	_, err := s.agent.RespondTo(s.ctx, "my order number is 12", nil, options.LLM{})
 	s.Require().NoError(err)
 
 	s.eventually(func() bool {
@@ -2422,7 +2484,7 @@ func (s *AgentSuite) TestWhatIsTypedIntoATextSessionIsNotAlsoHeard() {
 	// would record each of them twice.
 	s.joinText()
 
-	_, err := s.agent.RespondTo(s.ctx, "my order number is 12", nil)
+	_, err := s.agent.RespondTo(s.ctx, "my order number is 12", nil, options.LLM{})
 	s.Require().NoError(err)
 
 	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 },

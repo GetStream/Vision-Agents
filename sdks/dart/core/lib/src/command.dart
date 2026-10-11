@@ -28,23 +28,13 @@ final class InterruptCommand extends Command {
   Map<String, Object?> toJson() => {'type': 'interrupt'};
 }
 
-/// Replace the system prompt, from the next turn on.
-final class InstructionsCommand extends Command {
-  const InstructionsCommand(this.instructions);
-
-  final String instructions;
-
-  @override
-  Map<String, Object?> toJson() => {'type': 'instructions', 'instructions': instructions};
-}
-
 /// Answer a tool call. One of [output] or [error] says how it went.
 final class ToolResultCommand extends Command {
   const ToolResultCommand(
     this.toolCallId, {
     this.output,
     this.error,
-    this.commandId = '',
+    this.requestId = '',
     this.turnId = '',
   });
 
@@ -53,8 +43,8 @@ final class ToolResultCommand extends Command {
   final String? error;
 
   /// Repeated from the call when it carried one, so the result cannot be adopted by another
-  /// command or turn.
-  final String commandId;
+  /// request or turn.
+  final String requestId;
   final String turnId;
 
   @override
@@ -65,9 +55,9 @@ final class ToolResultCommand extends Command {
     // the empty string and sending nothing are the same thing.
     'output': output ?? '',
     'error': error ?? '',
-    // Only with a command id: a turn id on its own routes the result to the voice path,
+    // Only with a request id: a turn id on its own routes the result to the voice path,
     // which refuses it for a conversation kept in chat.
-    if (commandId.isNotEmpty) ...{'command_id': commandId, 'turn_id': turnId},
+    if (requestId.isNotEmpty) ...{'request_id': requestId, 'turn_id': turnId},
   };
 }
 

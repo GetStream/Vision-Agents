@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -378,11 +380,10 @@ func (s *SessionSuite) manages() {
 	// The agent opens a voice model and a flow controller, in that order, and each needs
 	// its own emitter: two sessions on one channel would each consume the other's events.
 	s.model = &stubLLM{reply: "Hello."}
-	var opened int
+	var opened atomic.Int32
 	reasoning := llmrouter.NewRegistry()
 	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
-		defer func() { opened++ }()
-		if opened == 0 {
+		if opened.Add(1) == 1 {
 			if s.gated != nil {
 				return s.gated, nil
 			}
@@ -462,7 +463,7 @@ func (s *SessionSuite) joins(spec Spec) *Session {
 // says hands a session a line to answer, for tests that care about what comes back on the
 // events rather than the id the turn was recorded under.
 func (s *SessionSuite) says(created *Session, text string) {
-	_, err := created.Respond(s.ctx, text, nil)
+	_, err := created.Respond(s.ctx, text, nil, options.LLM{})
 	s.Require().NoError(err)
 }
 
@@ -955,7 +956,7 @@ func (s *SessionSuite) TestAnLLMOnlyManagerAnswersTextAndRefusesVoice() {
 	created := s.writes(Spec{})
 	events, detach := created.Watch()
 	defer detach()
-	_, err = created.Respond(s.ctx, "hello", nil)
+	_, err = created.Respond(s.ctx, "hello", nil, options.LLM{})
 	s.Require().NoError(err)
 	s.Equal("Hello.", awaitReply(events))
 	_, err = manager.Create(s.ctx, Spec{CallID: "voice", CustomerID: "acme"})
@@ -1024,7 +1025,7 @@ func (s *SessionSuite) TestARewoundSessionCarriesOnFromTheKeptResponse() {
 	s.Equal([]llm.Message{
 		{Role: llm.User, Content: "Is Stream better than Sendbird?"},
 		{Role: llm.Assistant, Content: "Yes."},
-	}, created.voiceAgent.History())
+	}, created.current().History())
 	s.Len(recorded.exchanges, 1, "the later turn is no longer part of the conversation")
 }
 
@@ -1060,7 +1061,7 @@ func (s *SessionSuite) TestAForkReadFromRecordsStartsFromThatHistory() {
 
 	created := s.writes(Spec{ForkedFrom: "parent", Recall: &Recall{Messages: recalled}})
 
-	s.Equal(recalled, created.voiceAgent.History())
+	s.Equal(recalled, created.current().History())
 }
 
 func (s *SessionSuite) TestATextSessionAsksTheModelWithTheHistoryTheCallerKept() {
@@ -1212,7 +1213,7 @@ func (s *SessionSuite) TestACallersToolIsAskedForAndItsAnswerReachesTheModel() {
 	s.True(created.ResolveTool(asked.ID, "it ships tomorrow", ""))
 
 	s.eventually(func() bool {
-		for _, message := range created.voiceAgent.History() {
+		for _, message := range created.current().History() {
 			if message.ToolCallID == asked.ID && message.Content == "it ships tomorrow" {
 				return true
 			}
@@ -1466,25 +1467,6 @@ func (s *SessionSuite) TestARecordedSessionWritesToMemory() {
 	s.NotEmpty(s.remembers.remembered(), "a finished turn is handed to memory")
 }
 
-func (s *SessionSuite) TestChangingTheInstructionsAppliesToTheNextTurn() {
-	s.manages()
-	created := s.joins(Spec{Instructions: "be brief"})
-
-	created.SetInstructions("be thorough")
-	s.says(created, "hello")
-
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be thorough", s.model.requests()[0].Instructions)
-}
-
-func (s *SessionSuite) TestASessionNeedsACallToJoin() {
-	s.manages()
-
-	_, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme"})
-
-	s.ErrorContains(err, "call id is required")
-}
-
 func (s *SessionSuite) TestASandboxNobodyHasIsRefusedRatherThanIgnored() {
 	// Silently running without one would leave the subagent doing arithmetic in its head
 	// on a call whose caller asked for a sandbox precisely because that goes wrong.
@@ -1647,7 +1629,7 @@ func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
 func (s *SessionSuite) TestImagesAreRefusedWhenNeitherASkillNorTheModelCanSeeThem() {
 	s.manages()
 	created := s.joins(Spec{})
-	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{1, 2, 3}}})
+	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{1, 2, 3}}}, options.LLM{})
 	s.ErrorIs(err, agent.ErrCannotSeeImages)
 }
 
@@ -1656,7 +1638,7 @@ func (s *SessionSuite) TestAConversationModelThatSeesIsShownImagesWhenThereIsNoV
 	s.model.sees = true
 	created := s.joins(Spec{})
 
-	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}})
+	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}, options.LLM{})
 	s.Require().NoError(err)
 
 	s.eventually(func() bool {
@@ -1676,7 +1658,7 @@ func (s *SessionSuite) TestAPictureIsShownOnlyToTheReplyItCameWith() {
 	events, detach := created.Watch()
 	defer detach()
 
-	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}})
+	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}, options.LLM{})
 	s.Require().NoError(err)
 	s.Require().NotEmpty(awaitReply(events), "the picture was never answered")
 	s.says(created, "and what should I do")
@@ -1767,7 +1749,7 @@ func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConne
 	s.Equal("notes__search", ran.Tool)
 	s.Equal("the note", ran.Result)
 	s.NoError(ran.Err)
-	s.Contains(created.voiceAgent.Tools(), "notes__search")
+	s.Contains(created.current().Tools(), "notes__search")
 }
 
 func awaitToolCall(events <-chan Event) *ToolCall {

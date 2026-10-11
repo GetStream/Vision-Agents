@@ -163,6 +163,9 @@ func (s *Server) registerOAuthClients(api huma.API) {
 			"are verified with that secret and reach the app alone. Both secrets are sealed and " +
 			"never returned. A connector whose connections take no OAuth client, such as linq, " +
 			"takes the provider app alone: provider_app_id and signing_secret without client_id.\n\n" +
+			"A provider app of a connector whose channel is verified with the app's own " +
+			"secret, such as slack_bot, has its message hook pointed as the provider app PUTs " +
+			"point it. " + messageHookNote + "\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
 		// Huma describes the body of the default status (200) alone, so 201 names it here.
@@ -173,7 +176,7 @@ func (s *Server) registerOAuthClients(api huma.API) {
 			}},
 		},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
-			http.StatusNotFound, http.StatusConflict},
+			http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable},
 	}, s.setConnectorOAuthClient)
 	huma.Register(api, huma.Operation{
 		OperationID: "getConnectorOAuthClient",
@@ -278,6 +281,14 @@ func (s *Server) setConnectorOAuthClient(ctx context.Context, request *oauthClie
 	}
 	if err != nil {
 		return nil, err
+	}
+	// A provider app whose channel's events reach the bridge (receiveProviderAppEvent) has its
+	// messages written into the Stream app it is pinned to, so that app's message hook is
+	// pointed here, as the provider app PUTs point it.
+	if record.ProviderAppID != "" && readsProviderAppEvents(definition.Manifest) {
+		if err := s.pointMessageHook(ctx, customerID, record.StreamAppPK); err != nil {
+			return nil, err
+		}
 	}
 	// RFC 9110 section 9.3.4: a PUT that creates the resource MUST answer 201, one that
 	// replaces it 200 or 204.

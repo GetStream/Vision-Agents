@@ -94,6 +94,7 @@ export type { ChatClient, StreamClients, VideoClient } from "./stream.js";
 
 export {
   Session,
+  Voice,
   eventOf,
   type ForkOptions,
   type Participant,

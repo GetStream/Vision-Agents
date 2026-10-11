@@ -39,7 +39,7 @@ public final class AgentSession {
     /// is never heard back.
     public var responses: Responses {
         Responses(
-            backend: backend, sessionID: session.id, kept: !session.conversationID.isEmpty,
+            backend: backend, sessionID: session.id,
             asked: { [weak self] text in self?.conversation.said(text) })
     }
 
@@ -104,9 +104,20 @@ public final class AgentSession {
         try await socket.send(.interrupt)
     }
 
-    /// Replaces the system prompt, from the next turn on.
-    public func setInstructions(_ instructions: String) async throws {
-        try await socket.send(.instructions(instructions))
+    /// Has the agent join the session's call, `agent:<session id>`, and carry the conversation
+    /// on there. Starting voice that is already on does nothing.
+    @discardableResult
+    public func startVoice() async throws -> Session {
+        session = try await VisionAgents(backend: backend).sessions.startVoice(session.id)
+        return session
+    }
+
+    /// Takes the agent off the call and carries the conversation on in writing. Stopping voice
+    /// that is off does nothing.
+    @discardableResult
+    public func stopVoice() async throws -> Session {
+        session = try await VisionAgents(backend: backend).sessions.stopVoice(session.id)
+        return session
     }
 
     /// Renames or relabels this conversation. Nil leaves a field as it is, and `custom`
@@ -133,7 +144,7 @@ public final class AgentSession {
         do {
             try await socket.send(
                 .toolApproval(
-                    id: call.id, allowed: allowed, summary: summary, commandID: call.commandID,
+                    id: call.id, allowed: allowed, summary: summary, requestID: call.requestID,
                     turnID: call.turnID))
         } catch {
             approvals.insert(request, at: min(index, approvals.count))
@@ -145,7 +156,7 @@ public final class AgentSession {
             try await socket.send(
                 .toolResult(
                     id: call.id, output: nil, error: "The person declined this call.",
-                    commandID: call.commandID, turnID: call.turnID))
+                    requestID: call.requestID, turnID: call.turnID))
         }
     }
 
@@ -207,13 +218,13 @@ public final class AgentSession {
                 let output = try await tool.run(call.argumentValues)
                 try await socket.send(
                     .toolResult(
-                        id: call.id, output: output, error: nil, commandID: call.commandID,
+                        id: call.id, output: output, error: nil, requestID: call.requestID,
                         turnID: call.turnID))
             } catch {
                 try? await socket.send(
                     .toolResult(
                         id: call.id, output: nil, error: error.localizedDescription,
-                        commandID: call.commandID, turnID: call.turnID))
+                        requestID: call.requestID, turnID: call.turnID))
             }
         }
     }

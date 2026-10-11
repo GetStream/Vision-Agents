@@ -52,7 +52,7 @@ func (s *ForwardedSessionSuite) TestASessionIsReadBackFromANodeThatIsNotRunningI
 func (s *ForwardedSessionSuite) TestASessionIsToldToAnswerFromANodeThatIsNotRunningIt() {
 	answer := s.utils.uuid()
 	opened := s.onTheOtherNode(CreateSessionRequest{
-		Llm: pointerTo("echo/echo-model"), Instructions: pointerTo(answer),
+		Llm: pointerTo("echo/echo-model"), ConfigId: s.data.instructedAgent(answer),
 	})
 	// Watched from here too, which the relay serves. What is under test is that the
 	// request to answer reached the conversation, and the answer is where that shows.
@@ -71,7 +71,7 @@ func (s *ForwardedSessionSuite) TestASessionIsToldToAnswerFromANodeThatIsNotRunn
 // them. So this is recorded rather than incognito, which is what gives it rows to lose.
 func (s *ForwardedSessionSuite) TestDeletingASessionFromAnotherNodeEndsItWhereItIsRunning() {
 	opened := s.serverClient.on(s.other).createSession(CreateSessionRequest{
-		Text: pointerTo(true), Llm: pointerTo("llm-flow"),
+		Llm: pointerTo("llm-flow"),
 	})
 
 	s.serverClient.deleteSession(opened.Id)
@@ -146,7 +146,7 @@ func (s *ForwardedSessionSuite) wasAsked(text string) bool {
 // Incognito because a session with no row is one only the node running it can answer for,
 // which is what makes a 200 here proof that the request was carried there.
 func (s *ForwardedSessionSuite) onTheOtherNode(request CreateSessionRequest) Session {
-	request.Text, request.Incognito = pointerTo(true), pointerTo(true)
+	request.Incognito = pointerTo(true)
 	if request.Llm == nil {
 		request.Llm = pointerTo("llm-flow")
 	}

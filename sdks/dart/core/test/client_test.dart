@@ -85,8 +85,9 @@ void main() {
 
       final session = await agents.sessions.create(
         const SessionOptions(
-          id: '0199a3f2-7c1e-7d4a-9b2e-5f6a7b8c9d0e',
+          id: 'order-1042',
           agent: 'docs',
+          greeting: Greeting('Hello.', mode: GreetingMode.variation),
           title: 'Billing',
           projectId: 'Health',
           modelOverwrites: ModelOverwrites(thinking: Thinking.high),
@@ -94,9 +95,9 @@ void main() {
       );
 
       expect(router.last('POST /v1/agents/sessions').json, {
-        'id': '0199a3f2-7c1e-7d4a-9b2e-5f6a7b8c9d0e',
-        'text': true,
+        'id': 'order-1042',
         'agent': 'docs',
+        'greeting': {'text': 'Hello.', 'mode': 'variation'},
         'title': 'Billing',
         'project_id': 'Health',
         'model_overwrites': {'thinking': 'high'},
@@ -108,15 +109,43 @@ void main() {
       expect(session.createdAt, DateTime.utc(2026, 9, 24, 15, 54, 56, 38, 55));
     });
 
-    test('a voice session names its call and is not marked text', () async {
-      router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+    test('a voice session asks to start voice and is on its own call', () async {
+      router.answer(
+        'POST /v1/agents/sessions',
+        Answer(201, {...sessionJson(), 'call_id': 's1', 'text': false}),
+      );
 
-      await agents.sessions.create(const SessionOptions(configId: 'c1'), 'call-1');
+      final session = await agents.sessions.create(
+        const SessionOptions(configId: 'c1', startVoice: true),
+      );
 
       expect(router.last('POST /v1/agents/sessions').json, {
-        'call_id': 'call-1',
         'config_id': 'c1',
+        'start_voice': true,
       });
+      expect(session.callId, 's1');
+      expect(session.callType, 'agent');
+      expect(session.isText, isFalse);
+    });
+
+    test('starting and stopping voice moves a session onto its call and off it', () async {
+      router
+        ..answer(
+          'POST /v1/agents/sessions/s1/voice',
+          Answer(200, {...sessionJson(), 'call_id': 's1', 'text': false}),
+        )
+        ..answer('DELETE /v1/agents/sessions/s1/voice', Answer(200, sessionJson()));
+
+      final started = await agents.sessions.startVoice('s1');
+      final stopped = await agents.sessions.stopVoice('s1');
+
+      expect(router.arrived.map((request) => '${request.method} ${request.path}'), [
+        'POST /v1/agents/sessions/s1/voice',
+        'DELETE /v1/agents/sessions/s1/voice',
+      ]);
+      expect(started.callId, 's1');
+      expect(stopped.callId, isEmpty);
+      expect(stopped.isText, isTrue);
     });
 
     test('declares tools by name, description and schema, and never their handler', () async {
@@ -174,7 +203,7 @@ void main() {
         ),
       );
 
-      expect(router.last('POST /v1/agents/sessions').json, {'text': true, 'agent': 'docs'});
+      expect(router.last('POST /v1/agents/sessions').json, {'agent': 'docs'});
       expect(router.last('POST /v1/agents/sessions/query').json, {
         'filter': {'agent': 'docs', 'agent_id': 'a1', 'modality': 'voice', 'state': 'ended'},
         'limit': 10,
@@ -200,7 +229,7 @@ void main() {
 
       await agents.agent('docs').sessions.create(const SessionOptions(configId: 'c2'));
 
-      expect(router.last('POST /v1/agents/sessions').json, {'text': true, 'config_id': 'c2'});
+      expect(router.last('POST /v1/agents/sessions').json, {'config_id': 'c2'});
     });
 
     test('searches by the words a conversation was titled with', () async {
@@ -455,16 +484,16 @@ void main() {
       });
     });
 
-    test('names a question with the command id it was given', () async {
+    test('names a text question with a request id it generates', () async {
       router.answer(
         'POST /v1/agents/sessions/s1/responses',
         Answer(202, responseJson('r1', status: 'running')),
       );
 
-      await agents.sessions.responses('s1').create('Hello', commandId: 'cmd-1');
+      await agents.sessions.responses('s1').create('Hello');
 
       expect(router.last('POST /v1/agents/sessions/s1/responses').json, {
-        'command_id': 'cmd-1',
+        'request_id': matches(RegExp(r'^[0-9a-f]{32}$')),
         'text': 'Hello',
       });
     });

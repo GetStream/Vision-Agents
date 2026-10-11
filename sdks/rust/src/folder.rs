@@ -117,14 +117,13 @@ pub struct Settings {
     /// `None` when the declaration says nothing, and empty when it turns it off.
     pub sts: Option<String>,
     pub voice: String,
-    /// The voice's rate of delivery, 1 being its own. Zero leaves it there.
-    pub speed: f64,
     pub llm: String,
     pub harness: Option<types::Harness>,
     /// The slower model a voice agent hands its skills to. A text agent names none.
-    pub thinking_llm: String,
+    pub subagent: String,
     pub search: String,
-    pub greeting: String,
+    /// What the agent opens the call with. `None` leaves the stored one.
+    pub greeting: Option<types::Greeting>,
     pub sandbox: Option<types::Sandbox>,
     pub plugins: Vec<String>,
     pub keyterms: Vec<String>,
@@ -435,19 +434,11 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             "tts" => settings.tts = text()?,
             "sts" => settings.sts = if value.is_null() { None } else { Some(text()?) },
             "voice" => settings.voice = text()?,
-            "speed" => {
-                settings.speed = match &value {
-                    Yaml::Real(number) => number.parse().map_err(|_| "speed is a number")?,
-                    Yaml::Integer(number) => *number as f64,
-                    Yaml::Null => 0.0,
-                    _ => return Err("speed is a number".into()),
-                }
-            }
             "llm" => settings.llm = text()?,
             "harness" => settings.harness = named(&text()?, "harness")?,
-            "thinking_llm" => settings.thinking_llm = text()?,
+            "subagent" => settings.subagent = text()?,
             "search" => settings.search = text()?,
-            "greeting" => settings.greeting = text()?,
+            "greeting" => settings.greeting = greeting(&value)?,
             "mode" => settings.mode = named(&text()?, "mode")?,
             "sandbox" => settings.sandbox = named(&text()?, "sandbox")?,
             "plugins" => settings.plugins = strings(&value, &key)?,
@@ -472,6 +463,32 @@ fn named<T: serde::de::DeserializeOwned>(
     serde_json::from_value(json!(value))
         .map(Some)
         .map_err(|_| format!("{value:?} is not a {key}"))
+}
+
+fn greeting(value: &Yaml) -> std::result::Result<Option<types::Greeting>, String> {
+    let Yaml::Hash(fields) = value else {
+        return if value.is_null() {
+            Ok(None)
+        } else {
+            Err("greeting is a mapping of text and mode".into())
+        };
+    };
+    let mut greeting = types::Greeting::default();
+    for (key, value) in fields {
+        match scalar(key).as_deref() {
+            Some("text") => greeting.text = scalar(value).ok_or("greeting.text is a string")?,
+            Some("mode") => {
+                let mode = scalar(value).ok_or("greeting.mode is a string")?;
+                greeting.mode = named(&mode, "greeting mode; exact or variation is")?;
+            }
+            _ => {
+                return Err(format!(
+                    "{key:?} is not a greeting setting; text and mode are"
+                ));
+            }
+        }
+    }
+    Ok(Some(greeting))
 }
 
 fn video(value: &Yaml) -> std::result::Result<Option<VideoSettings>, String> {

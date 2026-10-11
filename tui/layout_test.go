@@ -35,7 +35,7 @@ func busyConversation(t *testing.T) *Model {
 	m.truncated = true
 	m.notice = commandHelp(m.styles, m.options.Commands, 70)
 	m.busy, m.submittedAt = true, started
-	m.conversationID = "agent:support-27392eaf-1f43-4c1a-87e4-4dd113482218"
+	m.sessionID = "27392eaf-1f43-4c1a-87e4-4dd113482218"
 	m.messages = []stream.ConversationMessage{
 		{ID: "q", Role: "user", Text: strings.Repeat("a long question that has to be wrapped somewhere ", 4)},
 		{ID: "a", Role: "assistant", State: "tools", StartedAt: started, Text: "## Heading\n\n" + strings.Repeat("An answer with `code` in it and a [link](https://example.com/very/long/path). ", 6),
@@ -138,9 +138,9 @@ func TestTheHeaderSaysWhichConversationThisIs(t *testing.T) {
 	if header := plain(m.header()); !strings.Contains(header, "opening…") {
 		t.Errorf("a conversation being opened says:\n%s", header)
 	}
-	m.connecting, m.conversationID = false, "agent:support-9"
+	m.connecting, m.sessionID = false, "session-9"
 	header := plain(m.header())
-	if !strings.Contains(header, "agent:support-9") || !strings.Contains(header, "Jean") {
+	if !strings.Contains(header, "session-9") || !strings.Contains(header, "Jean") {
 		t.Errorf("an open conversation says:\n%s", header)
 	}
 }

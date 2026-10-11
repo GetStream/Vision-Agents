@@ -104,6 +104,24 @@ func (s *Store) NumberByCallInApp(ctx context.Context, scope AppScope, callType,
 	return PhoneNumber{}, ErrAmbiguousHook
 }
 
+// NumberRungInApp is the attached number an inbound call rang, among the numbers attached
+// in one app: the call is named for the session answering it, so it carries the number.
+func (s *Store) NumberRungInApp(ctx context.Context, scope AppScope, e164 string) (PhoneNumber, error) {
+	var held []PhoneNumber
+	if err := s.db.NewSelect().Model(&held).
+		Where("e164 = ?", e164).Where("stream_trunk_id IS NOT NULL").
+		Where("released_at IS NULL").ApplyQueryBuilder(scope.where).Limit(20).Scan(ctx); err != nil {
+		return PhoneNumber{}, fmt.Errorf("store: number rung: %w", err)
+	}
+	switch customers(held, func(n PhoneNumber) string { return n.CustomerID }) {
+	case 0:
+		return PhoneNumber{}, fmt.Errorf("store: no number %s is attached", e164)
+	case 1:
+		return held[0], nil
+	}
+	return PhoneNumber{}, ErrAmbiguousHook
+}
+
 // CallByAgentInApp is the newest call an agent ran, among the calls made in one app.
 func (s *Store) CallByAgentInApp(ctx context.Context, scope AppScope, agentID string) (Call, error) {
 	if agentID == "" {

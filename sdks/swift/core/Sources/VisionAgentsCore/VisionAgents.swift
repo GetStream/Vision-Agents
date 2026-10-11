@@ -7,8 +7,8 @@ import OpenAPIRuntime
 /// what it does not say, and the router decides what the config does not. Setting a field here
 /// overrides both, for this session only.
 public struct SessionOptions: Sendable {
-    /// The id to hold the session by, so a caller knows it before the session exists. It must
-    /// be a UUID no session has had; nil lets the router choose one.
+    /// The id to hold the session by, so a caller knows it before the session exists: up to
+    /// 64 letters, digits, `-` and `_` no session has had. Nil lets the router choose one.
     public var id: String?
     /// The agent to talk to, by the name its config was synced under. The router resolves
     /// it, and refuses a name that matches nothing rather than starting an agent with no
@@ -16,17 +16,16 @@ public struct SessionOptions: Sendable {
     public var agent: String?
     /// An agent config to start from, by id, for a caller that holds one instead of a name.
     public var configID: String?
-    /// Carries on this conversation rather than starting one.
-    public var conversationID: String?
+    /// Has the agent join the session's own call, `agent:<session id>`, as soon as it opens.
+    /// False holds the conversation in writing until `AgentSession.startVoice` starts it.
+    public var startVoice = false
     /// Writes nothing down: no transcript, no memory.
     public var incognito: Bool?
     public var title: String?
     public var description: String?
     public var projectID: String?
-    /// The system prompt.
-    public var instructions: String?
-    /// Said on joining without going through the model.
-    public var greeting: String?
+    /// What the agent opens the call with.
+    public var greeting: Greeting?
     public var llm: String?
     public var stt: String?
     public var tts: String?
@@ -121,49 +120,45 @@ public struct VisionAgents: Sendable {
 
     /// Holds a conversation in writing, configured in full.
     public func chat(_ options: SessionOptions) async throws -> AgentSession {
-        let session = try await createSession(options, callID: nil)
+        var options = options
+        options.startVoice = false
+        let session = try await createSession(options)
         return await AgentSession(backend: backend, session: session, tools: options.tools)
     }
 
-    /// Puts an agent on a call and follows it.
+    /// Puts an agent on the session's own call, `agent:<session id>`, and follows it.
     ///
     /// The agent joins as soon as this returns. Joining the same call from this device is what
     /// `VoiceSession` is for; this only starts the agent and gives you the state layer.
-    public func voice(
-        callID: String,
-        agent: String? = nil,
-        tools: [AgentTool] = []
-    ) async throws -> AgentSession {
+    public func voice(agent: String? = nil, tools: [AgentTool] = []) async throws -> AgentSession {
         var options = SessionOptions(agent: agent)
         options.tools = tools
-        let session = try await createSession(options, callID: callID)
-        return await AgentSession(backend: backend, session: session, tools: options.tools)
+        return try await voice(options)
     }
 
-    /// Puts an agent on a call, configured in full.
-    public func voice(callID: String, options: SessionOptions) async throws -> AgentSession {
-        let session = try await createSession(options, callID: callID)
+    /// Puts an agent on the session's own call, configured in full.
+    public func voice(_ options: SessionOptions) async throws -> AgentSession {
+        var options = options
+        options.startVoice = true
+        let session = try await createSession(options)
         return await AgentSession(backend: backend, session: session, tools: options.tools)
     }
 
     /// Starts a session without following it, for a caller building its own state layer.
-    public func createSession(_ options: SessionOptions, callID: String?) async throws -> Session {
+    public func createSession(_ options: SessionOptions) async throws -> Session {
         let body = Components.Schemas.CreateSessionRequest(
             agent: options.agent.flatMap { $0.isEmpty ? nil : $0 },
-            callId: callID,
             configId: options.configID.flatMap { $0.isEmpty ? nil : $0 },
-            conversationId: options.conversationID,
             description: options.description,
-            greeting: options.greeting.map { .init(text: $0) },
+            greeting: options.greeting?.schema,
             id: options.id.flatMap { $0.isEmpty ? nil : $0 },
             incognito: options.incognito,
-            instructions: options.instructions,
             llm: options.llm,
             projectId: options.projectID,
+            startVoice: options.startVoice ? true : nil,
             stt: options.stt,
             tags: options.tags.isEmpty
                 ? nil : .init(additionalProperties: options.tags),
-            text: callID == nil,
             title: options.title,
             tools: options.tools.map {
                 Components.Schemas.SessionTool(
@@ -193,8 +188,8 @@ public struct VisionAgents: Sendable {
     /// Follows a session this caller already has open, without creating one.
     ///
     /// Use this when the app opened a session and is coming back to it — after a relaunch,
-    /// or on another screen. A session opened by somebody else is not found, because reading
-    /// one is reading a conversation.
+    /// or on another screen — which is how a conversation is carried on. A session opened by
+    /// somebody else is not found, because reading one is reading a conversation.
     public func attach(sessionID: String, tools: [AgentTool] = []) async throws -> AgentSession {
         let session = try await sessions.get(sessionID)
         return await AgentSession(backend: backend, session: session, tools: tools)
@@ -241,14 +236,12 @@ public struct VisionAgents: Sendable {
         }
     }
 
-    /// Continues a conversation as a new session, leaving the parent as it was.
+    /// Continues a conversation as a new session held in writing, leaving the parent as it was.
     ///
     /// Follow the fork the way any session is followed, with `attach(sessionID:)`.
     public func fork(sessionID: String, _ options: ForkOptions = ForkOptions()) async throws -> Session {
         let body = Components.Schemas.ForkSessionRequest(
-            callId: options.callID,
             configId: options.agent.flatMap { $0.isEmpty ? nil : $0 },
-            instructions: options.instructions,
             messages: options.withoutHistory ? false : nil,
             projectId: options.projectID,
             responseId: options.responseID.flatMap { $0.isEmpty ? nil : $0 },
@@ -345,6 +338,30 @@ public struct Sessions: Sendable {
         let output = try await agents.backend.call {
             try await $0.updateSession(path: .init(id: id), body: .json(body))
         }
+        switch output {
+        case .ok(let response):
+            return Session(try response.body.json)
+        default:
+            throw AgentsError.undescribedSuccess
+        }
+    }
+
+    /// Has the agent join a session's call, `agent:<session id>`, and carry the conversation on
+    /// there. Starting voice that is already on does nothing.
+    public func startVoice(_ id: String) async throws -> Session {
+        let output = try await agents.backend.call { try await $0.startSessionVoice(path: .init(id: id)) }
+        switch output {
+        case .ok(let response):
+            return Session(try response.body.json)
+        default:
+            throw AgentsError.undescribedSuccess
+        }
+    }
+
+    /// Takes the agent off a session's call and carries the conversation on in writing.
+    /// Stopping voice that is off does nothing.
+    public func stopVoice(_ id: String) async throws -> Session {
+        let output = try await agents.backend.call { try await $0.stopSessionVoice(path: .init(id: id)) }
         switch output {
         case .ok(let response):
             return Session(try response.body.json)

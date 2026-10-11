@@ -82,7 +82,7 @@ import Testing
     #expect(answer["type"]?.stringValue == "tool_approval")
     #expect(answer["tool_call_id"]?.stringValue == "c1")
     #expect(answer["allowed"]?.boolValue == allowed)
-    #expect(answer["command_id"]?.stringValue == "m1")
+    #expect(answer["request_id"]?.stringValue == "m1")
     #expect(answer["turn_id"]?.stringValue == "t1")
     let result = try JSONDecoder().decode(
       [String: JSONValue].self, from: try #require(try await commands.next()))
@@ -112,6 +112,32 @@ import Testing
 
     #expect(session.session.title == "After")
     #expect(try await server.request().body == ["title": .string("After")])
+  }
+
+  @Test(arguments: [("POST", "s1"), ("DELETE", "")])
+  func startingAndStoppingVoiceMovesTheSessionOntoAndOffItsCall(method: String, callID: String)
+    async throws
+  {
+    let server = try SessionServer(answer: .session(status: 200, callID: callID))
+    defer { server.listener.cancel() }
+    let session = AgentSession(
+      backend: Backend(url: try await server.url(), customerID: "test"),
+      session: Session(
+        .init(
+          agentId: "a1", callId: method == "POST" ? "" : "s1", callType: "agent",
+          createdAt: Date(), id: "s1", modality: .text, state: .live, userId: "jlahey")),
+      tools: [])
+
+    if method == "POST" {
+      try await session.startVoice()
+    } else {
+      try await session.stopVoice()
+    }
+
+    #expect(session.session.callID == callID)
+    let request = try await server.request()
+    #expect(request.method == method)
+    #expect(request.path == "/v1/agents/sessions/s1/voice")
   }
 }
 
@@ -232,7 +258,7 @@ private struct ApprovalServer {
       connection.stateUpdateHandler = { state in
         guard case .ready = state else { return }
         let frame =
-          #"{"type":"tool_call","id":"c1","name":"issue_refund","arguments":"{\"order_id\":\"A-1042\",\"reason\":\"it arrived unopened\"}","command_id":"m1","turn_id":"t1"}"#
+          #"{"type":"tool_call","id":"c1","name":"issue_refund","arguments":"{\"order_id\":\"A-1042\",\"reason\":\"it arrived unopened\"}","request_id":"m1","turn_id":"t1"}"#
         connection.send(
           content: Data(frame.utf8),
           contentContext: NWConnection.ContentContext(

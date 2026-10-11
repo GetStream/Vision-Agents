@@ -46,14 +46,23 @@ type Spec struct {
 	ID                  string
 	PersistConversation bool
 	ConversationID      string
-	ContextTruncated    bool
-	// CallID is the call to join. It is the one thing with no sensible default, and the
-	// one thing a text session does not have.
+	// Thread holds ConversationID on a thread channel (internal/channelbridge), which only
+	// the Router sets once it found the channel's channel_threads row (api.threadSession,
+	// api.threadConversation). No request sets it.
+	Thread           bool
+	ContextTruncated bool
+	// CallID is the call the agent is on while voice is started: agent:<ID>, which joining
+	// creates. Empty while the conversation is held in writing.
 	CallID string
 	// Text holds the conversation in writing: no call is joined, nothing is transcribed
 	// and nothing is spoken. Everything between hearing and answering is unchanged, so a
-	// text session has the same skills, knowledge and tools a call would have had.
+	// text session has the same skills, knowledge and tools a call would have had. Starting
+	// voice clears it (Voiced) and stopping it sets it again (Written).
 	Text bool
+	// heldSTS and heldSubagent are the speech-to-speech model and the subagent the
+	// conversation runs on while voice is started, kept while it is held in writing.
+	heldSTS      string
+	heldSubagent string
 	// Edge is a call the caller has already opened, used instead of the manager's own.
 	// It is how a conversation is held against something other than a real transport: the
 	// manager's factory is handed a spec and cannot be given a particular one back.
@@ -349,8 +358,10 @@ func (s *Spec) Normalize() error {
 			return stack.Wrap(fmt.Errorf("session: generating an id: %w", err))
 		}
 		s.ID = id.String()
-	} else if _, err := uuid.Parse(s.ID); err != nil {
-		return stack.Wrap(fmt.Errorf("session: the id %q is not a UUID", s.ID))
+	} else if held, ok := persistent.SessionID(s.ID); ok {
+		s.ID = held
+	} else {
+		return stack.Wrap(fmt.Errorf("session: the id %q is not one a session can have: up to 64 letters, digits, - and _", s.ID))
 	}
 
 	// Checked before incognito clears the conversation id, so naming both is refused
@@ -382,6 +393,16 @@ func (s *Spec) Normalize() error {
 	}
 
 	s.CallID = joinedCallID(s.CallID)
+	// A voice session given no call to join holds its own, named after the session, which
+	// joining creates.
+	if !s.Text && s.CallID == "" {
+		s.CallID, s.CallType = s.ID, defaultCallType
+	}
+	// A speech-to-speech model is what the conversation speaks with once voice is started,
+	// so a session held in writing keeps it rather than running it.
+	if s.Text && s.STSTarget != "" {
+		s.heldSTS, s.STSTarget = s.STSTarget, ""
+	}
 	switch {
 	case !s.Reopened.IsZero() && !(s.Text && s.PersistConversation && s.ConversationID != ""):
 		return stack.Wrap(errors.New("session: only a persistent text conversation is reopened"))
@@ -389,8 +410,6 @@ func (s *Spec) Normalize() error {
 		return stack.Wrap(errors.New("session: a text session holds no call, so it cannot join one"))
 	case s.Text && s.Native():
 		return stack.Wrap(errors.New("session: a text session has no voice, so it cannot run a speech-to-speech model"))
-	case !s.Text && s.CallID == "":
-		return stack.Wrap(errors.New("session: a call id is required"))
 	}
 	if s.CustomerID == "" {
 		return stack.Wrap(errors.New("session: a customer id is required"))
@@ -424,7 +443,7 @@ func (s *Spec) Normalize() error {
 	// A text session runs on one model. Nobody is waiting on a voice while it thinks, so
 	// the skills it hands over run on the model holding the conversation.
 	if s.Text {
-		s.SubagentTarget = s.LLMTarget
+		s.heldSubagent, s.SubagentTarget = s.SubagentTarget, s.LLMTarget
 	}
 	if s.ControllerTarget == "" && !s.Native() {
 		s.ControllerTarget = defaultControllerTarget
@@ -511,6 +530,43 @@ func (s Spec) KeyedAgentID() string {
 	return joinedCallID(s.CallID)
 }
 
+// Voiced is the spec once voice is started: on the call agent:<ID>, speaking with the
+// models the conversation was configured with, or the defaults.
+func (s Spec) Voiced() Spec {
+	if !s.Text {
+		return s
+	}
+	s.Text = false
+	s.CallID, s.CallType = s.ID, defaultCallType
+	s.STSTarget, s.heldSTS = s.heldSTS, ""
+	s.SubagentTarget, s.heldSubagent = s.heldSubagent, ""
+	if !s.Native() {
+		if s.STTTarget == "" {
+			s.STTTarget = defaultSTTTarget
+		}
+		if s.TTSTarget == "" {
+			s.TTSTarget = defaultTTSTarget
+		}
+	}
+	return s
+}
+
+// Written is the spec once voice is stopped: on no call, and on one model, as Normalize
+// leaves a session held in writing.
+func (s Spec) Written() Spec {
+	if s.Text {
+		return s
+	}
+	s.Text = true
+	s.CallID = ""
+	s.heldSTS, s.STSTarget = s.STSTarget, ""
+	if s.LLMTarget == "" {
+		s.LLMTarget = defaultLLMTarget
+	}
+	s.heldSubagent, s.SubagentTarget = s.SubagentTarget, s.LLMTarget
+	return s
+}
+
 // joinedCallID is a call id as the session joins it and is keyed under: without the spaces
 // around it. Normalize and KeyedAgentID both read a call id through it.
 func joinedCallID(id string) string {
@@ -541,12 +597,11 @@ func (s Spec) TranscriptChannel() string {
 }
 
 // Shared reports whether more than one verified person writes in the conversation: a thread
-// channel (persistent.ThreadChannelPrefix), where everyone in the external thread does, such
-// as a thread in a Slack channel. Such a session uses the app's connections only, never one
-// person's: the multi-person rule (architecture doc on connectors/planning, «One-way doors»
-// row 7).
+// channel (Thread), where everyone in the external thread does, such as a thread in a Slack
+// channel. Such a session uses the app's connections only, never one person's: the
+// multi-person rule (architecture doc on connectors/planning, «One-way doors» row 7).
 func (s Spec) Shared() bool {
-	return strings.HasPrefix(s.ConversationID, streamapp.AgentChannelType+":"+persistent.ThreadChannelPrefix)
+	return s.Thread
 }
 
 // boundProvider reports whether a connector binding names the provider id. A connector id
@@ -574,6 +629,12 @@ func (s Spec) withoutBoundPlugins(entries []store.PluginEntry) []store.PluginEnt
 		}
 	}
 	return kept
+}
+
+// UnboundPlugins is the config's plugin entries that no connector binding replaces: the ones a
+// session of the config still opens (Normalize drops the rest with withoutBoundPlugins).
+func UnboundPlugins(config store.AgentConfig) []store.PluginEntry {
+	return Spec{ConnectorBindings: config.Connectors}.withoutBoundPlugins(config.Plugins)
 }
 
 // Native reports whether this session is held by one speech-to-speech model rather than

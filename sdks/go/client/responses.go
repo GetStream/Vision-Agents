@@ -169,13 +169,10 @@ type Responses struct {
 
 	client    *Client
 	sessionID string
-	// kept is a conversation stored in Stream Chat, whose every question is a command the
-	// router answers at most once.
-	kept bool
 }
 
-// Input is something sent along with what is asked: an Image or a Clip to show the agent, or
-// the Command it answers.
+// Input is something sent along with what is asked: an Image or a Clip to show the agent, the
+// RequestID it answers, or a MaxOutputTokens or ReasoningEffort for this answer alone.
 type Input interface {
 	attachTo(request *acceleration.CreateResponseRequest)
 }
@@ -214,14 +211,31 @@ func (v Clip) attachTo(request *acceleration.CreateResponseRequest) {
 	request.Videos = appended(request.Videos, source)
 }
 
-// Command is the durable command a dispatch worker was handed, passed back with the text it
-// was sent as so the model's answer lands on it. See stream.InboundMessage.CommandID.
-type Command string
+// RequestID is the request a dispatch worker was handed, passed back with the text it was
+// sent as so the model's answer lands on it. See stream.InboundMessage.RequestID. Every other
+// question is given one of its own.
+type RequestID string
 
-func (c Command) attachTo(request *acceleration.CreateResponseRequest) {
-	if c != "" {
-		request.CommandId = pointer(string(c))
+func (id RequestID) attachTo(request *acceleration.CreateResponseRequest) {
+	if id != "" {
+		request.RequestId = pointer(string(id))
 	}
+}
+
+// MaxOutputTokens caps this answer, reasoning included, and the replies that finish it once
+// its tools come back. Without it the session's own limit holds.
+type MaxOutputTokens int
+
+func (n MaxOutputTokens) attachTo(request *acceleration.CreateResponseRequest) {
+	request.MaxOutputTokens = pointer(int(n))
+}
+
+// ReasoningEffort is how long the model may think before this answer, such as "none", "low"
+// or "high". The router refuses one the session's model does not take.
+type ReasoningEffort string
+
+func (e ReasoningEffort) attachTo(request *acceleration.CreateResponseRequest) {
+	request.ReasoningEffort = pointer(string(e))
 }
 
 // ClipFile is a video on disk, sent inline so the router needs no way to reach it.
@@ -261,13 +275,14 @@ func (r *Responses) Create(ctx context.Context, text string, inputs ...Input) (*
 	for _, input := range inputs {
 		input.attachTo(&request)
 	}
-	// A command carries text only, so a question showing the agent something goes without one.
-	if r.kept && request.CommandId == nil && request.Images == nil && request.Videos == nil {
+	// A request id is what makes a retried question answered once. It carries text only, so a
+	// question showing the agent something goes without one.
+	if request.RequestId == nil && request.Images == nil && request.Videos == nil {
 		id := make([]byte, 16)
 		if _, err := rand.Read(id); err != nil {
 			return nil, err
 		}
-		request.CommandId = pointer(hex.EncodeToString(id))
+		request.RequestId = pointer(hex.EncodeToString(id))
 	}
 
 	created, err := api.CreateResponseWithResponse(ctx, r.sessionID, request)

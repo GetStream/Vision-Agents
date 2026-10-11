@@ -19,7 +19,7 @@ final readonly class SetPluginClientRequest
         public string $clientId,
         // The client secret the provider issued. Left out for a public client.
         public ?string $clientSecret = null,
-        // Also name the plugin under the config's user_plugins, so that each end user connects their own account in t...
+        // Also name the plugin under the config's plugins with user, so that each end user connects their own account...
         public ?bool $user = null,
     ) {
     }

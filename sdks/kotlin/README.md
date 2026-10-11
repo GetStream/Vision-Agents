@@ -85,7 +85,7 @@ val found = sessions.search("billing")
 
 `update` renames a conversation or relabels it, `chat.update(title = "Billing")` on an open one
 and `sessions.update(id, title = "Billing")` on one that ended. A device may change `title`,
-`description` and `custom` and nothing else; instructions, models and voice are your backend's.
+`description` and `custom` and nothing else; models and voice are your backend's.
 
 ### Looking something up
 
@@ -139,7 +139,7 @@ not open.
 | Writing a config, syncing a folder, dispatching agents | The agent's name, which is all the app needs |
 | A token to join the agent's call | `CallCredentials`, which `join` is handed |
 | Moving a guest's history onto the account they signed up with | Nothing: the backend that authenticated them does it |
-| Changing a session's instructions, models or voice | Your backend, which has the Go or Node SDK's `update` |
+| Changing a session's models or voice | Your backend, which has the Go or Node SDK's `update` |
 | Interrupting over HTTP | Nothing: `interrupt()` goes over the socket |
 
 Every request and socket handshake sends `Stream-Auth-Type: jwt`, which is what declares this

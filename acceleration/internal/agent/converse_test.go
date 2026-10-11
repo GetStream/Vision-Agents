@@ -421,6 +421,38 @@ func (s *ConverseSuite) TestAQueuedTurnSurvivesDifferentWordsBeingAnswered() {
 	s.Equal(queued.Candidate.ID, action.Candidate.ID)
 }
 
+func (s *ConverseSuite) TestAQueuedTurnTheCallerKeepsAddingToIsNotAnsweredOnItsOwn() {
+	// What a caller's long turn looked like in Voicebench: they paused after "the name for the
+	// booking is" while the agent talked, so that much was queued, then went on. Answering
+	// the queued half once the agent stopped cut into the rest of the sentence.
+	s.build(DuplexOptions{})
+	s.overhears("the name for the booking is", s.talking())
+	queued := s.converse.Settled(s.held(), s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Text: "the name for the booking is Alvarez",
+	}, s.quiet())
+	s.settling.Forget(caller)
+
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "the half sentence is answered with the rest, once that settles")
+}
+
+func (s *ConverseSuite) TestAQueuedTurnSurvivesANewTurnThatStartsTheSameWay() {
+	s.build(DuplexOptions{})
+	s.overhears("yes that is right", s.talking())
+	queued := s.converse.Settled(s.held(), s.talking())
+	s.Require().Equal(ActQueue, queued.Kind)
+
+	s.converse.Observe(stt.Transcript{Participant: caller, Mode: stt.ModeReplacement, Text: "yes"}, s.quiet())
+	s.settling.Forget(caller)
+
+	action, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting, "words that only start like the queued turn do not replace it")
+	s.Equal(queued.Candidate.ID, action.Candidate.ID)
+}
+
 func (s *ConverseSuite) TestAfterAProvisionalStopTheSettledWordsAreAnsweredOnce() {
 	asked := s.overhears("actually wait", s.talking())
 	stopped := s.converse.Ruled(harness.Decided{

@@ -2546,6 +2546,25 @@ llm:
         per_million_cached_input_tokens: 0.06
         per_million_output_tokens: 1.20
 
+    # Together's Qwen3.8 Flash is the production release of Qwen3.8-Flash-Next, 125B with
+    # 6B active, which Artificial Analysis score at 40 with thinking on. Thinking is off
+    # here, which the template honours. Together answer it only as a stream, which is how
+    # every request here goes, and publish no cache-read rate.
+    - provider: together
+      model: Qwen/Qwen3.8-Flash
+      description: "Alibaba's Qwen3.8 Flash, 125B with 6B active per token, so cheap and quick."
+      benchmark: { intelligence_index: 40 }
+      context_window: 1000000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_input_tokens: 0.15
+        per_million_output_tokens: 0.47
+
     - provider: baseten
       model: zai-org/GLM-5.3
       description: "Z.ai's frontier GLM, ten times Flash's price and the strongest open-weight model here."

@@ -140,13 +140,13 @@ public sealed class FolderTests : IDisposable
     [Fact]
     public void TheDeclarationSaysWhatTheAgentIsCalledAndRunsOn()
     {
-        Write("agent.yaml", "name: receptionist\nllm: openai/gpt-5.6\nsts: \"\"\nspeed: 0.9\nharness: default\nkeyterms: [Vision Agents]\nvideo:\n  source: camera\ndispatch:\n  incoming_call: disabled\n  text: enabled\n");
+        Write("agent.yaml", "name: receptionist\nllm: openai/gpt-5.6\nsts: \"\"\ngreeting:\n  text: Hello.\n  mode: variation\nharness: default\nkeyterms: [Vision Agents]\nvideo:\n  source: camera\ndispatch:\n  incoming_call: disabled\n  text: enabled\n");
 
         var folder = Folder.Load(_root);
 
         Assert.Equal("receptionist", folder.Name);
         Assert.Equal("openai/gpt-5.6", folder.Declaration.Llm);
-        Assert.Equal((0.9, "default"), (folder.Declaration.Speed, folder.Declaration.Harness));
+        Assert.Equal((new GreetingDeclaration("Hello.", "variation"), "default"), (folder.Declaration.Greeting, folder.Declaration.Harness));
         Assert.Equal(["Vision Agents"], folder.Declaration.Keyterms);
         Assert.Equal("", folder.Declaration.Sts);
         Assert.Equal(new VideoDeclaration("camera", 1), folder.Declaration.Video);
@@ -246,6 +246,20 @@ public sealed class FolderTests : IDisposable
     {
         Write("agent.yaml", "name: jean\n");
         Write("knowledge/urls.yaml", $"- url: https://example.com/plans\n  refresh_hours: {hours}\n");
+
+        Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+    }
+
+    [Theory]
+    [InlineData("speed: 0.9\n")]
+    [InlineData("thinking_llm: openai/gpt-5.6-sol\n")]
+    [InlineData("agent_plugins: [sentry]\n")]
+    [InlineData("user_plugins: [linear]\n")]
+    [InlineData("progressive_tools: true\n")]
+    [InlineData("greeting: Hello.\n")]
+    public void TheOldConfigKeysAreRefused(string declaration)
+    {
+        Write("agent.yaml", "name: jean\n" + declaration);
 
         Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
     }

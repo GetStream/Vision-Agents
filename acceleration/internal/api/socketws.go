@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -107,15 +106,6 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		refuse(failure.Error())
 		return
 	}
-	if value(start.Session.Text) {
-		refuse("a socket session carries audio, so it cannot be a text session")
-		return
-	}
-	if value(start.Session.CallId) == "" {
-		callID := "socket-" + uuid.NewString()
-		start.Session.CallId = &callID
-	}
-
 	edge := socketedge.New(socketedge.Options{
 		SampleRate: start.SampleRate,
 		Caller:     stt.Participant{ID: "caller", Name: "Caller"},
@@ -123,6 +113,8 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		Cleared:    func() { _ = writeFrame(frame{"type": "cleared"}) },
 	})
 	spec := specOf(start.Session, customerID, config)
+	// A socket session carries audio, so voice is started on it whatever the frame says.
+	spec.Text = false
 	ctx = s.threadConversation(ctx, customerID, &spec)
 	spec.Caller = CallerFrom(ctx)
 	spec.CallerKind = KindFrom(ctx)

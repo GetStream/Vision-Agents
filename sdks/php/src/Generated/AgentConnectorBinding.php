@@ -10,7 +10,9 @@ use GetStream\VisionAgents\Json;
 
 /**
  * A connector whose tools an agent config may call, under an alias. The binding is the grant:
- * only the tools it lists are offered, each pinned to the schema it was reviewed against.
+ * only the tools it lists are offered, each pinned to the schema it was reviewed against, or
+ * for a tool a session binding grants by name alone, to the schema its connection first
+ * offered it with.
  */
 final readonly class AgentConnectorBinding
 {
@@ -20,7 +22,7 @@ final readonly class AgentConnectorBinding
         public string $connectorId,
         // The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, n...
         public string $name,
-        // The exact tools allowed, each named once. There is no wildcard, and an empty list grants none.
+        // The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session bi...
         /** @var list<ConnectorToolGrant> */
         public array $tools,
         // MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the confi...

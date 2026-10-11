@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -254,12 +255,6 @@ func (s *Server) attachPhoneNumber(ctx context.Context, request *attachPhoneNumb
 
 	attachment := phone.Attachment{CustomerID: customerID, E164: request.E164}
 	if request.Body != nil {
-		if request.Body.CallId != nil {
-			attachment.CallID = *request.Body.CallId
-		}
-		if request.Body.CallType != nil {
-			attachment.CallType = *request.Body.CallType
-		}
 		if request.Body.AllowedIps != nil {
 			attachment.AllowedIPs = *request.Body.AllowedIps
 		}
@@ -304,11 +299,12 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 		From:  request.Body.From,
 		To:    request.Body.To,
 	}
-	if request.Body.CallId != nil {
-		call.CallID = *request.Body.CallId
-	}
-	if request.Body.CallType != nil {
-		call.CallType = *request.Body.CallType
+	if request.Body.SessionId != nil {
+		held, ok := conversation.SessionID(*request.Body.SessionId)
+		if !ok {
+			return nil, invalidRequest("session_id must be up to 64 letters, digits, - and _")
+		}
+		call.SessionID = held
 	}
 	if request.Body.RingTimeoutSeconds != nil {
 		if *request.Body.RingTimeoutSeconds < 0 {
@@ -341,10 +337,9 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 	}
 
 	return &placePhoneCallResponse{Body: PlacedCall{VendorCallId: placed.VendorCallID,
-		Status:   placed.Status,
-		Vendor:   &placed.Vendor,
-		CallId:   &placed.CallID,
-		CallType: &placed.CallType}}, nil
+		Status:    placed.Status,
+		Vendor:    &placed.Vendor,
+		SessionId: &placed.SessionID}}, nil
 }
 
 // answerPhoneCall serves the call plan a vendor fetches when the person it called picks up.
@@ -393,14 +388,13 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 		return nil, invalidRequest(err.Error())
 	}
 
+	// The human is brought into the session's call, which is named after it.
 	transfer := phone.TransferRequest{
-		Owner:  routing.Owner{CustomerID: customerID, Tags: tags},
-		From:   request.Body.From,
-		To:     request.Body.To,
-		CallID: request.Body.CallId,
-	}
-	if request.Body.CallType != nil {
-		transfer.CallType = *request.Body.CallType
+		Owner:    routing.Owner{CustomerID: customerID, Tags: tags},
+		From:     request.Body.From,
+		To:       request.Body.To,
+		CallID:   request.Body.SessionId,
+		CallType: defaultCallType,
 	}
 	app, err := s.callApp(ctx, customerID, transfer.CallType, transfer.CallID)
 	if err != nil {
@@ -1065,8 +1059,6 @@ type AddTrunkNumberRequest struct {
 // AttachNumberRequest is the AttachNumberRequest schema.
 type AttachNumberRequest struct {
 	AllowedIps *[]string `json:"allowed_ips,omitempty" doc:"The vendor's signalling addresses, as IPs or CIDR blocks."`
-	CallId     *string   `json:"call_id,omitempty" doc:"The call every caller joins. Omit to give each caller their own call, named after the number they rang."`
-	CallType   *string   `json:"call_type,omitempty" doc:"The Stream call type. Omit for \"agent\"."`
 }
 
 // AttachedNumber is the AttachedNumber schema.
@@ -1254,13 +1246,12 @@ type PhoneVendor struct {
 
 // PlaceCallRequest is the PlaceCallRequest schema.
 type PlaceCallRequest struct {
-	CallId             *string            `json:"call_id,omitempty" doc:"The Stream call the answered leg joins, and so the one the agent has to be in. Omit to have one named after this call, since two calls from the same number are two conversations."`
-	CallType           *string            `json:"call_type,omitempty" doc:"The Stream call type. Omit for \"agent\"."`
 	Custom             *map[string]string `json:"custom,omitempty" doc:"Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it."`
 	From               string             `json:"from" doc:"One of the customer's own numbers, which is what the person sees."`
 	Headers            *map[string]string `json:"headers,omitempty" doc:"Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call."`
 	InitialDigits      *string            `json:"initial_digits,omitempty" doc:"Digits pressed once the person answers, for reaching an extension behind a menu, e.g. \"ww1234#\". w is a short pause and W a long one."`
 	RingTimeoutSeconds *int               `json:"ring_timeout_seconds,omitempty" doc:"How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than ringing for its own default."`
+	SessionId          *string            `json:"session_id,omitempty" doc:"The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice."`
 	Tags               *map[string]string `json:"tags,omitempty"`
 	To                 string             `json:"to"`
 }
@@ -1272,8 +1263,7 @@ func (*PlaceCallRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *
 
 // PlacedCall is the PlacedCall schema.
 type PlacedCall struct {
-	CallId       *string `json:"call_id,omitempty" doc:"The Stream call the answered leg is routed into. An agent that is not in it hears nothing when the person picks up."`
-	CallType     *string `json:"call_type,omitempty"`
+	SessionId    *string `json:"session_id,omitempty" doc:"The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up."`
 	Status       string  `json:"status" doc:"The vendor's own word for where the call is, e.g. \"queued\"."`
 	Vendor       *string `json:"vendor,omitempty" doc:"Who is placing the call."`
 	VendorCallId string  `json:"vendor_call_id"`
@@ -1308,11 +1298,10 @@ type SkippedVendor struct {
 
 // TransferCallRequest is the TransferCallRequest schema.
 type TransferCallRequest struct {
-	CallId   string             `json:"call_id" doc:"The Stream call the caller and the agent are already on."`
-	CallType *string            `json:"call_type,omitempty" doc:"The Stream call type. Omit for \"agent\"."`
-	From     string             `json:"from" doc:"The customer's number the human is dialled from, which is what they see."`
-	Tags     *map[string]string `json:"tags,omitempty"`
-	To       string             `json:"to" doc:"The human being brought onto the call."`
+	From      string             `json:"from" doc:"The customer's number the human is dialled from, which is what they see."`
+	SessionId string             `json:"session_id" doc:"The session whose call the caller and the agent are on. The human is brought into it."`
+	Tags      *map[string]string `json:"tags,omitempty"`
+	To        string             `json:"to" doc:"The human being brought onto the call."`
 }
 
 // UpdateSipTrunkRequest is the UpdateSipTrunkRequest schema. Every field left out keeps

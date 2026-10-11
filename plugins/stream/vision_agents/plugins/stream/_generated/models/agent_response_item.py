@@ -86,9 +86,7 @@ class AgentResponseItem:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.agent_response_item_payload import (
-            AgentResponseItemPayload,
-        )
+        from ..models.agent_response_item_payload import AgentResponseItemPayload
 
         d = dict(src_dict)
         at = datetime.datetime.fromisoformat(d.pop("at"))

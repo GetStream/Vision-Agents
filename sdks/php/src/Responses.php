@@ -34,12 +34,26 @@ final readonly class Responses
      * It returns as soon as the agent has started answering, not when it has finished: a model
      * takes seconds, and a request that waited them out would time out on anything worth asking.
      *
+     * A question that is text only is sent with a fresh request id; one with images is sent
+     * with none, because the router refuses one with media.
+     *
      * @param list<ImageSource> $images
-     * @param ?string $commandId the durable command this answers, so the reply lands on it
      */
-    public function create(string $text, array $images = [], ?string $commandId = null): AgentResponse
+    public function create(string $text, array $images = []): AgentResponse
     {
-        $body = new CreateResponseRequest(text: $text, images: $images === [] ? null : $images, commandId: $commandId === '' ? null : $commandId);
+        return $this->createAnswering($text, $images, '');
+    }
+
+    /**
+     * @internal for Dispatch, which answers an inbound message on the request it was sent as
+     *
+     * @param list<ImageSource> $images
+     * @param string $requestId the request id of the inbound message being answered; empty generates one
+     */
+    public function createAnswering(string $text, array $images, string $requestId): AgentResponse
+    {
+        $requestId = $images !== [] ? null : ($requestId === '' ? bin2hex(random_bytes(16)) : $requestId);
+        $body = new CreateResponseRequest(text: $text, images: $images === [] ? null : $images, requestId: $requestId);
         $created = $this->client->post('/v1/agents/sessions/{id}/responses', ['id' => $this->sessionId], body: $body->toArray());
         return new AgentResponse($this->client, ResponseRow::fromArray(Json::asObject($created)));
     }

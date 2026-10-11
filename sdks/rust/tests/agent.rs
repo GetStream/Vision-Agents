@@ -24,14 +24,14 @@ where
     (opening.await.unwrap().unwrap(), socket)
 }
 
-fn created_call(server: &Server) -> String {
-    let created: Vec<_> = server
-        .seen()
-        .into_iter()
-        .filter(|seen| seen.path.starts_with("/api/v2/video/call/agent/"))
-        .collect();
-    assert_eq!(created.len(), 1, "one call is created");
-    created[0].path.rsplit('/').next().unwrap().to_string()
+fn no_call_is_created(server: &Server) {
+    assert!(
+        server
+            .seen()
+            .iter()
+            .all(|seen| !seen.path.starts_with("/api/v2")),
+        "a Stream call was created"
+    );
 }
 
 fn write(root: &Path, name: &str, content: &str) {
@@ -41,20 +41,14 @@ fn write(root: &Path, name: &str, content: &str) {
 }
 
 #[tokio::test]
-async fn joining_creates_the_call_and_carries_the_agents_configuration() {
+async fn joining_starts_voice_on_the_sessions_own_call_and_carries_the_agents_configuration() {
     let server = Server::start().await;
-    server.route(
-        Method::POST,
-        "/api/v2/video/call/agent/support-call",
-        201,
-        json!({}),
-    );
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
     let jean = agent(&server, "rust_sdk_test_agent")
         .cost_tracking([("env", "production")])
         .memory_filter([("user_id", "123"), ("team", "blue")]);
 
-    let (_session, _socket) = opened(&server, async move { jean.join("support-call").await }).await;
+    let (session, _socket) = opened(&server, async move { jean.join().await }).await;
 
     let sent = server.request(Method::POST, "/v1/agents/sessions").body;
     assert_eq!(
@@ -64,18 +58,20 @@ async fn joining_creates_the_call_and_carries_the_agents_configuration() {
             "agent_id": "rust_sdk_test_agent",
             "user_id": "rust_sdk_test_agent",
             "user_name": "rust_sdk_test_agent",
-            "call_id": "support-call",
-            "call_type": "agent",
+            "start_voice": true,
             "tags": {"env": "production"},
             "memory": {"user_id": "123", "filter": {"team": "blue"}},
         })
     );
+    assert!(session.voice_started());
     assert_eq!(
-        server
-            .request(Method::POST, "/api/v2/video/call/agent/support-call")
-            .body["data"]["created_by_id"],
-        "rust_sdk_test_agent"
+        session.call(),
+        vision_agents::Call {
+            id: "s1".into(),
+            kind: "agent".into()
+        }
     );
+    no_call_is_created(&server);
 }
 
 fn subagent_and_sandbox() -> Harness {
@@ -88,7 +84,7 @@ fn subagent_and_sandbox() -> Harness {
 }
 
 #[tokio::test]
-async fn an_agent_spelled_out_in_code_sends_its_instructions_and_pipeline_but_never_its_harness() {
+async fn an_agent_spelled_out_in_code_sends_its_pipeline_but_never_its_instructions_or_harness() {
     let server = Server::start().await;
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
     let mut harness = subagent_and_sandbox();
@@ -106,12 +102,37 @@ async fn an_agent_spelled_out_in_code_sends_its_instructions_and_pipeline_but_ne
 
     let sent = server.request(Method::POST, "/v1/agents/sessions").body;
     assert_eq!(sent["user_id"], "jean-luc");
-    assert_eq!(sent["instructions"], "You are Jean.");
     assert_eq!(sent["llm"], "llm-fast");
-    assert_eq!(sent["text"], true);
-    for harnessed in ["thinking_llm", "sandbox", "skills", "tasks", "agent"] {
-        assert!(sent.get(harnessed).is_none(), "{harnessed} was sent");
+    for left_out in [
+        "instructions",
+        "start_voice",
+        "subagent",
+        "sandbox",
+        "skills",
+        "tasks",
+        "agent",
+    ] {
+        assert!(sent.get(left_out).is_none(), "{left_out} was sent");
     }
+}
+
+#[tokio::test]
+async fn a_conversation_is_resumed_by_the_id_of_its_session() {
+    let server = Server::start().await;
+    server.route(Method::GET, "/v1/agents/sessions/s1", 200, session("s1"));
+    let jean = agent(&server, "jean");
+
+    let (session, socket) = opened(&server, async move { jean.resume("s1").await }).await;
+
+    assert_eq!(session.id(), "s1");
+    assert_eq!(socket.path, "/v1/agents/sessions/s1/events");
+    assert!(
+        server
+            .seen()
+            .iter()
+            .all(|seen| seen.path != "/v1/agents/sessions"),
+        "a new session was opened"
+    );
 }
 
 #[tokio::test]
@@ -122,7 +143,7 @@ async fn agent_yaml_names_the_harness_and_the_code_its_subagent_and_sandbox() {
     write(
         root.path(),
         "agent.yaml",
-        "name: jean\nharness: default\nspeed: 1.1\nsandbox: daytona\nplugins: [sentry]\n",
+        "name: jean\nharness: default\nsandbox: daytona\nplugins: [sentry]\ngreeting:\n  text: Hello.\n  mode: variation\n",
     );
     let agent = Agent::from_folder(root.path())
         .unwrap()
@@ -133,10 +154,13 @@ async fn agent_yaml_names_the_harness_and_the_code_its_subagent_and_sandbox() {
 
     let body = server.request(Method::POST, "/v1/agents/sync").body;
     assert_eq!(body["harness"], "default");
-    assert_eq!(body["thinking_llm"], "openai/gpt-5.6");
+    assert_eq!(body["subagent"], "openai/gpt-5.6");
     assert_eq!(body["sandbox"], "daytona");
-    assert_eq!(body["agent_plugins"], json!(["sentry"]));
-    assert_eq!(body["speed"], 1.1);
+    assert_eq!(body["plugins"], json!(["sentry"]));
+    assert_eq!(
+        body["greeting"],
+        json!({"text": "Hello.", "mode": "variation"})
+    );
     assert_ne!(body["hash"], agent.folder().unwrap().hash().as_str());
 }
 
@@ -181,12 +205,13 @@ async fn an_agents_config_is_patched_with_only_what_was_set() {
 }
 
 #[tokio::test]
-async fn an_inbound_call_is_answered_in_the_call_it_arrived_in() {
+async fn an_inbound_call_is_answered_by_opening_the_session_it_names_with_voice() {
     let server = Server::start().await;
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
     let call = InboundCall {
-        call_id: "sip-1".into(),
-        call_type: "default".into(),
+        call_id: "s1".into(),
+        call_type: "agent".into(),
+        session_id: "s1".into(),
         called_number: "+15550100".into(),
         ..Default::default()
     };
@@ -196,21 +221,79 @@ async fn an_inbound_call_is_answered_in_the_call_it_arrived_in() {
 
     let sent = server.request(Method::POST, "/v1/agents/sessions").body;
     assert_eq!(
-        (sent["call_id"].clone(), sent["call_type"].clone()),
-        (json!("sip-1"), json!("default"))
+        (sent["id"].clone(), sent["start_voice"].clone()),
+        (json!("s1"), json!(true))
     );
     assert_eq!(sent["phone"], json!({"number": "+15550100"}));
-    assert!(
-        server
-            .seen()
-            .iter()
-            .all(|seen| !seen.path.starts_with("/api/v2")),
-        "no call is created"
-    );
+    assert!(sent.get("call_id").is_none());
+    no_call_is_created(&server);
 }
 
 #[tokio::test]
-async fn a_message_is_replied_to_in_its_own_channel() {
+async fn an_inbound_call_naming_no_session_is_refused() {
+    let server = Server::start().await;
+
+    let refused = agent(&server, "support")
+        .answer(&InboundCall {
+            call_id: "sip-1".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+
+    assert!(matches!(refused, vision_agents::Error::Configuration(_)));
+    assert!(server.seen().is_empty());
+}
+
+#[tokio::test]
+async fn waiting_for_a_call_attaches_the_number_and_answers_the_caller_handed_over() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/v1/phone/numbers/%2B15550100/attach",
+        200,
+        json!({"route_id": "r1", "sip_uri": "sip:agent@example.com", "trunk_id": "t1"}),
+    );
+    server.route(Method::POST, "/v1/agents/sessions", 201, session("s7"));
+    let support = agent(&server, "support");
+
+    let waiting = tokio::spawn(async move { support.wait_for_call("+15550100").await });
+    let mut worker = server.accept().await;
+    assert_eq!(worker.path, "/v1/dispatch");
+    assert_eq!(worker.query, "capacity=1&active=0&handles=call");
+    worker
+        .send(
+            json!({"type": "call", "work_id": "work-1", "call_id": "s7", "call_type": "agent",
+                     "session_id": "s7", "called_number": "+15550100"}),
+        )
+        .await;
+    assert_eq!(
+        worker.expect("done").await,
+        json!({"type": "done", "work_id": "work-1"})
+    );
+    let mut conversation = server.accept().await;
+    conversation
+        .send(json!({"type": "heard", "text": "hello?"}))
+        .await;
+    let session = waiting.await.unwrap().unwrap();
+
+    assert_eq!(session.id(), "s7");
+    assert_eq!(
+        server
+            .request(Method::POST, "/v1/phone/numbers/%2B15550100/attach")
+            .body,
+        json!({})
+    );
+    let sent = server.request(Method::POST, "/v1/agents/sessions").body;
+    assert_eq!(
+        (sent["id"].clone(), sent["start_voice"].clone()),
+        (json!("s7"), json!(true))
+    );
+    assert_eq!(sent["phone"], json!({"number": "+15550100"}));
+}
+
+#[tokio::test]
+async fn a_message_is_replied_to_in_writing_as_the_agent_it_was_written_to() {
     let server = Server::start().await;
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
     let message = InboundMessage {
@@ -224,21 +307,20 @@ async fn a_message_is_replied_to_in_its_own_channel() {
     let (_session, _socket) = opened(&server, async move { support.reply(&message).await }).await;
 
     let sent = server.request(Method::POST, "/v1/agents/sessions").body;
-    assert_eq!(sent["conversation_id"], "messaging:c1");
+    assert!(sent.get("conversation_id").is_none());
     assert!(sent.get("incognito").is_none());
+    assert!(sent.get("start_voice").is_none());
     assert_eq!(sent["agent_id"], "support-bot");
-    assert_eq!(sent["text"], true);
 }
 
 #[tokio::test]
-async fn an_outbound_call_is_placed_then_joined_as_navigating() {
+async fn an_outbound_call_is_placed_then_its_session_joined_as_navigating() {
     let server = Server::start().await;
-    server.route(Method::POST, "/api/v2/video/call/agent/*", 201, json!({}));
     server.route(
         Method::POST,
         "/v1/phone/calls",
         201,
-        json!({"status": "ringing", "vendor_call_id": "vendor-9"}),
+        json!({"status": "ringing", "vendor_call_id": "vendor-9", "session_id": "s1"}),
     );
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
     let seller = agent(&server, "seller").cost_tracking([("campaign", "spring")]);
@@ -248,18 +330,19 @@ async fn an_outbound_call_is_placed_then_joined_as_navigating() {
     })
     .await;
 
-    let call_id = created_call(&server);
     assert_eq!(
         server.request(Method::POST, "/v1/phone/calls").body,
-        json!({"from": "+15550100", "to": "+15550199", "call_id": call_id, "call_type": "agent", "tags": {"campaign": "spring"}})
+        json!({"from": "+15550100", "to": "+15550199", "tags": {"campaign": "spring"}})
     );
     let sent = server.request(Method::POST, "/v1/agents/sessions").body;
-    assert_eq!(sent["call_id"], call_id.as_str());
+    assert_eq!(sent["id"], "s1");
+    assert_eq!(sent["start_voice"], true);
     assert_eq!(sent["navigating"], true);
     assert_eq!(
         sent["phone"],
         json!({"number": "+15550100", "vendor_call_id": "vendor-9"})
     );
+    no_call_is_created(&server);
 }
 
 #[tokio::test]
@@ -295,10 +378,36 @@ async fn a_monitoring_link_names_the_sessions_call() {
     let link = jean.monitor_url(&session).unwrap();
 
     assert!(
-        link.starts_with("https://example.com/demo/join/call?"),
+        link.starts_with("https://example.com/demo/join/s1?"),
         "{link}"
     );
     assert!(link.contains("user_name=Monitor"), "{link}");
+}
+
+#[tokio::test]
+async fn a_conversation_held_in_writing_has_no_call_to_monitor() {
+    let server = Server::start().await;
+    let jean = agent(&server, "jean");
+    let mut written = session("s1");
+    written["call_id"] = json!("");
+    server.route(Method::POST, "/v1/agents/sessions", 201, written);
+    let client = server.client();
+    let (session, _socket) = opened(&server, async move {
+        Session::open(
+            &client,
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
+        .await
+    })
+    .await;
+
+    assert!(!session.voice_started());
+    assert!(matches!(
+        jean.monitor_url(&session),
+        Err(vision_agents::Error::Configuration(_))
+    ));
 }
 
 fn jean(root: &Path) {
@@ -477,7 +586,6 @@ async fn cost_tracking_is_part_of_what_a_directory_is_synced_under() {
 async fn an_agent_read_from_a_directory_is_stored_before_its_first_session() {
     let server = Server::start().await;
     synced(&server);
-    server.route(Method::POST, "/api/v2/video/call/agent/*", 201, json!({}));
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
     let root = tempfile::tempdir().unwrap();
     jean(root.path());
@@ -486,7 +594,7 @@ async fn an_agent_read_from_a_directory_is_stored_before_its_first_session() {
         .client(server.client())
         .stream(server.stream());
 
-    let (_session, _socket) = opened(&server, async move { jean.join("").await }).await;
+    let (_session, _socket) = opened(&server, async move { jean.join().await }).await;
 
     let order: Vec<_> = server
         .seen()
@@ -497,8 +605,11 @@ async fn an_agent_read_from_a_directory_is_stored_before_its_first_session() {
     assert_eq!(order, ["/v1/agents/sync", "/v1/agents/sessions"]);
     let sent = server.request(Method::POST, "/v1/agents/sessions").body;
     assert_eq!(sent["agent"], "jean");
-    assert_eq!(sent["instructions"], "You are Jean.");
-    assert_eq!(created_call(&server).len(), 16);
+    assert!(sent.get("instructions").is_none());
+    assert_eq!(
+        server.request(Method::POST, "/v1/agents/sync").body["instructions"],
+        "You are Jean."
+    );
 }
 
 #[tokio::test]
@@ -535,7 +646,7 @@ async fn an_agent_spelled_out_in_code_is_stored_by_name() {
     assert_eq!(
         server.request(Method::POST, "/v1/agents/configs").body,
         json!({"name": "Ada", "instructions": "You are Ada.", "skills": ["think"], "harness": "default",
-               "thinking_llm": "openai/gpt-5.6", "sandbox": "daytona"})
+               "subagent": "openai/gpt-5.6", "sandbox": "daytona"})
     );
 }
 

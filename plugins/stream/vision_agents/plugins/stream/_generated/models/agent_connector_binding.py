@@ -107,15 +107,9 @@ class AgentConnectorBinding:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.agent_connector_selection import (
-            AgentConnectorSelection,
-        )
-        from ..models.connector_binding_event import (
-            ConnectorBindingEvent,
-        )
-        from ..models.connector_binding_policy import (
-            ConnectorBindingPolicy,
-        )
+        from ..models.agent_connector_selection import AgentConnectorSelection
+        from ..models.connector_binding_event import ConnectorBindingEvent
+        from ..models.connector_binding_policy import ConnectorBindingPolicy
         from ..models.connector_tool_grant import ConnectorToolGrant
 
         d = dict(src_dict)

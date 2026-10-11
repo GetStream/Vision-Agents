@@ -28,9 +28,11 @@ type worked struct {
 	mu     sync.Mutex
 	opened []acceleration.CreateSessionRequest
 	asked  []string
-	// answered is each command answered on a session someone else holds, as who it was
-	// answered for and the command, which is what a worker handed one has to send back.
+	// answered is each request answered on a session someone else holds, as who it was
+	// answered for and the request, which is what a worker handed one has to send back.
 	answered []string
+	// created is the sessions the worker opened itself, by id.
+	created  map[string]bool
 	sessions map[string]chan stream.Frame
 	// sockets are the open session sockets, by session id, which answers are written to.
 	sockets map[string]*socket
@@ -45,7 +47,7 @@ type worked struct {
 func newWorked(t *testing.T, hand func(*websocket.Conn)) *worked {
 	t.Helper()
 
-	router := &worked{hand: hand, sessions: map[string]chan stream.Frame{}, sockets: map[string]*socket{}}
+	router := &worked{hand: hand, sessions: map[string]chan stream.Frame{}, sockets: map[string]*socket{}, created: map[string]bool{}}
 	var opened atomic.Int64
 	mux := http.NewServeMux()
 
@@ -58,6 +60,9 @@ func newWorked(t *testing.T, hand func(*websocket.Conn)) *worked {
 		router.mu.Unlock()
 
 		id := "session-" + string(rune('a'+opened.Add(1)-1))
+		router.mu.Lock()
+		router.created[id] = true
+		router.mu.Unlock()
 		reply(w, http.StatusCreated, acceleration.Session{
 			Id: id, AgentId: "agent-1", State: "running", CreatedAt: time.Now(),
 		})
@@ -69,13 +74,14 @@ func newWorked(t *testing.T, hand func(*websocket.Conn)) *worked {
 
 		router.mu.Lock()
 		router.asked = append(router.asked, r.PathValue("id")+": "+request.Text)
-		if request.CommandId != nil {
-			router.answered = append(router.answered, r.Header.Get(stream.UserHeader)+": "+*request.CommandId)
+		held := router.created[r.PathValue("id")]
+		if !held && request.RequestId != nil {
+			router.answered = append(router.answered, r.Header.Get(stream.UserHeader)+": "+*request.RequestId)
 		}
 		router.mu.Unlock()
 		// The answer arrives on the session's socket after the question is taken, as it does
-		// from the backend. A command on a session somebody else holds is answered there.
-		if request.CommandId == nil {
+		// from the backend. A request on a session somebody else holds is answered there.
+		if held {
 			go router.respond(t, r.PathValue("id"), request.Text)
 		}
 
@@ -541,7 +547,7 @@ func TestAMessageWrittenToARunningSessionIsAnsweredThereForWhoeverWroteIt(t *tes
 	dispatch, built := answering(t, router, nil)
 
 	err := dispatch.Answer(t.Context(), InboundMessage{
-		AgentID: "support-42", SessionID: "session-9", CommandID: "command-1", Text: "Where is my order?", UserID: "sam",
+		AgentID: "support-42", SessionID: "session-9", RequestID: "request-1", Text: "Where is my order?", UserID: "sam",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -552,8 +558,8 @@ func TestAMessageWrittenToARunningSessionIsAnsweredThereForWhoeverWroteIt(t *tes
 	if !slices.Equal(router.asked, []string{"session-9: Where is my order?"}) {
 		t.Errorf("the router was asked %v", router.asked)
 	}
-	if !slices.Equal(router.answered, []string{"sam: command-1"}) {
-		t.Errorf("the command answered was %v, want command-1 for sam", router.answered)
+	if !slices.Equal(router.answered, []string{"sam: request-1"}) {
+		t.Errorf("the request answered was %v, want request-1 for sam", router.answered)
 	}
 	if built.Load() != 0 || len(router.opened) != 0 {
 		t.Error("an agent was started for a conversation a session is already holding")

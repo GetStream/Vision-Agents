@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.connection_client import ConnectionClient
     from ..models.connection_inputs import ConnectionInputs
+    from ..models.connection_last_validation import ConnectionLastValidation
     from ..models.connection_metadata import ConnectionMetadata
     from ..models.connection_owner import ConnectionOwner
     from ..models.connection_use import ConnectionUse
@@ -61,6 +62,9 @@ class Connection:
         expires_at (datetime.datetime | Unset): When the current credential expires. Absent when there is none or it
             does not.
         label (str | Unset):
+        last_validation (ConnectionLastValidation | Unset): What a connection's last validate found, kept so it is still
+            shown after the validate's answer is gone. A validate whose provider refused a bearer or api_key credential with
+            any 4xx but 429 also moves the connection to needs_reauthorization.
     """
 
     auth_scheme: str
@@ -82,6 +86,7 @@ class Connection:
     definition_broken_reason: str | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
     label: str | Unset = UNSET
+    last_validation: ConnectionLastValidation | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -140,6 +145,10 @@ class Connection:
 
         label = self.label
 
+        last_validation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.last_validation, Unset):
+            last_validation = self.last_validation.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -170,6 +179,8 @@ class Connection:
             field_dict["expires_at"] = expires_at
         if label is not UNSET:
             field_dict["label"] = label
+        if last_validation is not UNSET:
+            field_dict["last_validation"] = last_validation
 
         return field_dict
 
@@ -177,6 +188,7 @@ class Connection:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.connection_client import ConnectionClient
         from ..models.connection_inputs import ConnectionInputs
+        from ..models.connection_last_validation import ConnectionLastValidation
         from ..models.connection_metadata import ConnectionMetadata
         from ..models.connection_owner import ConnectionOwner
         from ..models.connection_use import ConnectionUse
@@ -263,6 +275,13 @@ class Connection:
 
         label = d.pop("label", UNSET)
 
+        _last_validation = d.pop("last_validation", UNSET)
+        last_validation: ConnectionLastValidation | Unset
+        if isinstance(_last_validation, Unset):
+            last_validation = UNSET
+        else:
+            last_validation = ConnectionLastValidation.from_dict(_last_validation)
+
         connection = cls(
             auth_scheme=auth_scheme,
             connector_id=connector_id,
@@ -283,6 +302,7 @@ class Connection:
             definition_broken_reason=definition_broken_reason,
             expires_at=expires_at,
             label=label,
+            last_validation=last_validation,
         )
 
         connection.additional_properties = d

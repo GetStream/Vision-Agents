@@ -103,6 +103,7 @@ public sealed class Session : IAsyncDisposable
         _socket = socket;
         Created = created;
         Responses = new Responses(client, created.Id);
+        Voice = new SessionVoice(client, created.Id, created.CallId is { Length: > 0 });
         if (socket is null)
         {
             _ended.TrySetResult();
@@ -121,11 +122,10 @@ public sealed class Session : IAsyncDisposable
     /// <summary>The router's id for the session.</summary>
     public string Id => Created.Id;
 
-    /// <summary>The call joined, empty for a chat.</summary>
-    public string CallId => Created.CallId;
-
-    /// <summary>The call's type.</summary>
-    public string CallType => Created.CallType;
+    /// <summary>
+    /// The Stream call the conversation is on while voice is started, named after the session.
+    /// </summary>
+    public Call Call => new(Id);
 
     /// <summary>The Stream Chat channel a persisted conversation is kept in.</summary>
     public string ConversationId => Created.ConversationId ?? "";
@@ -135,6 +135,9 @@ public sealed class Session : IAsyncDisposable
 
     /// <summary>The session's turns.</summary>
     public Responses Responses { get; }
+
+    /// <summary>Starts and stops the agent talking on the session's call.</summary>
+    public SessionVoice Voice { get; }
 
     /// <summary>
     /// What happens in the session, until it ends.
@@ -171,15 +174,11 @@ public sealed class Session : IAsyncDisposable
     public Task InterruptAsync(CancellationToken cancellationToken = default) =>
         SendAsync(Frames.Of("interrupt"), cancellationToken);
 
-    /// <summary>Replaces the system prompt from the next turn on.</summary>
-    public Task SetInstructionsAsync(string instructions, CancellationToken cancellationToken = default) =>
-        SendAsync(Frames.Of("instructions", ("instructions", instructions)), cancellationToken);
-
     /// <summary>
-    /// Changes this session: its title, description, custom labels, instructions, models or
-    /// voice, and returns it as it now is. A field left null is left as it is.
+    /// Changes this session: its title, description, custom labels, models or voice, and
+    /// returns it as it now is. A field left null is left as it is.
     /// </summary>
-    /// <remarks>Models and instructions take over from the next turn. The id, the call and incognito cannot change; fork for that.</remarks>
+    /// <remarks>Models take over from the next turn. The id, the call and incognito cannot change; fork for that.</remarks>
     public Task<Models.Session> UpdateAsync(UpdateSessionRequest update, CancellationToken cancellationToken = default) =>
         new Sessions(_client).UpdateAsync(Id, update, cancellationToken);
 
@@ -198,7 +197,7 @@ public sealed class Session : IAsyncDisposable
     /// Carries the conversation on in a new session, leaving this one as it was.
     /// </summary>
     /// <remarks>
-    /// The fork is watched the way this one is, with the same tools. Name a
+    /// The fork is watched the way this one is, with the same tools, and held in writing. Name a
     /// <see cref="ForkOptions.ResponseId"/> to branch from a response rather than from the end.
     /// </remarks>
     public async Task<Session> ForkAsync(ForkOptions? options = null, CancellationToken cancellationToken = default)
@@ -212,11 +211,9 @@ public sealed class Session : IAsyncDisposable
             ProjectId = VisionAgentsClient.Blank(options.ProjectId),
             Custom = options.Custom?.ToDictionary(pair => pair.Key, pair => pair.Value!),
             ModelOverwrites = options.ModelOverwrites,
-            Instructions = VisionAgentsClient.Blank(options.Instructions),
             Incognito = options.Incognito,
             Messages = options.Messages,
             ResponseId = VisionAgentsClient.Blank(options.ResponseId),
-            CallId = VisionAgentsClient.Blank(options.CallId),
         };
         var forked = await _client.PostAsync<Models.Session>(
             $"/v1/agents/sessions/{VisionAgentsClient.Escape(Id)}/fork", request, cancellationToken).ConfigureAwait(false);
@@ -358,7 +355,7 @@ public sealed class Session : IAsyncDisposable
                 switch (frame.Type)
                 {
                     case "tool_call":
-                        Call(frame);
+                        RunTool(frame);
                         continue;
                     case "tool_cancel":
                         if (_running.TryRemove(frame.Text("id"), out var cancelled))
@@ -404,12 +401,12 @@ public sealed class Session : IAsyncDisposable
     /// Runs a tool the model called, off the read loop so a slow one does not hold up the
     /// conversation, and answers with what it returned or what it threw.
     /// </summary>
-    private void Call(Frame frame)
+    private void RunTool(Frame frame)
     {
         var id = frame.Text("id");
         var answer = (string Key, object? Value) => Frames.Of("tool_result",
             ("tool_call_id", id),
-            ("command_id", frame.Text("command_id")),
+            ("request_id", frame.Text("request_id")),
             ("turn_id", frame.Text("turn_id")),
             (Key, Value));
         if (_tools is null || _running.Count >= MaxRunningTools)
@@ -477,9 +474,6 @@ public sealed record ForkOptions
     /// <summary>A different agent config to carry on under.</summary>
     public string? Agent { get; init; }
 
-    /// <summary>A call to carry the fork on in.</summary>
-    public string? CallId { get; init; }
-
     /// <summary>The fork's title.</summary>
     public string? Title { get; init; }
 
@@ -495,12 +489,54 @@ public sealed record ForkOptions
     /// <summary>Models to use instead of the session's.</summary>
     public ModelOverwrites? ModelOverwrites { get; init; }
 
-    /// <summary>A different system prompt.</summary>
-    public string? Instructions { get; init; }
-
     /// <summary>Records nothing.</summary>
     public bool? Incognito { get; init; }
 
     /// <summary>False starts the same configuration over, without the conversation so far.</summary>
     public bool? Messages { get; init; }
+}
+
+/// <summary>
+/// The agent talking on a session's call, <c>agent:&lt;session id&gt;</c>. Typed and spoken
+/// turns are one conversation, with one history, whether voice is on or not.
+/// </summary>
+public sealed class SessionVoice
+{
+    private readonly VisionAgentsClient _client;
+    private readonly string _sessionId;
+    private int _on;
+
+    internal SessionVoice(VisionAgentsClient client, string sessionId, bool on)
+    {
+        _client = client;
+        _sessionId = sessionId;
+        _on = on ? 1 : 0;
+    }
+
+    /// <summary>Whether the agent is on the call, as this process last saw it.</summary>
+    public bool Started => Volatile.Read(ref _on) == 1;
+
+    /// <summary>
+    /// Has the agent join the session's call and carry the conversation on there. Starting
+    /// voice that is already on does nothing.
+    /// </summary>
+    public async Task<Models.Session> StartAsync(CancellationToken cancellationToken = default)
+    {
+        var started = await _client.PostAsync<Models.Session>(Path, null, cancellationToken).ConfigureAwait(false);
+        Volatile.Write(ref _on, 1);
+        return started;
+    }
+
+    /// <summary>
+    /// Takes the agent off the call and carries the conversation on in writing. Stopping
+    /// voice that is off does nothing.
+    /// </summary>
+    public async Task<Models.Session> StopAsync(CancellationToken cancellationToken = default)
+    {
+        var stopped = await _client.SendAsync<Models.Session>(HttpMethod.Delete, Path, null, null, cancellationToken).ConfigureAwait(false);
+        Volatile.Write(ref _on, 0);
+        return stopped;
+    }
+
+    private string Path => $"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/voice";
 }
