@@ -305,6 +305,7 @@ npm run types                          # regenerate src/generated/api.ts from th
 npm test                               # typecheck, then the suite
 npm run test:local                     # against a router running on this machine
 npm run test:qa                        # against the hosted deployments
+npm run test:integration               # device posture and one Stream connection, see below
 npm run build                          # dist/, what gets published
 npm run example build/examples/voice.js
 ```
@@ -326,6 +327,30 @@ reaches `STAGING_ACCELERATION_URL` and `STAGING_DOCS_SEARCH_URL`. They are the o
 the claims above are checked against a real backend rather than against a test one, which
 is worth running before trusting any of them: three of them are `todo` there today, each
 naming what the deployment does instead.
+
+`test:integration` checks the two promises a client SDK makes. A device holding a user's token
+is refused every server-side operation (minting a call or chat token, claiming a guest,
+configs, sync, simulations, memories, the dispatch socket) with a 403 `server_side_only`. And
+however many sessions ask, there is one Stream Chat and one Stream Video socket for the user,
+none at all beside a `StreamChat` the app handed over with `client.use`, nobody left online
+after `client.disconnect()`, and no push device but the app's own. Sockets are counted off
+Node's diagnostics channels, so they are the connections that actually left the process.
+
+The posture half needs a router that verifies credentials, which the Docker one in proxy mode
+does not. Mint a key against its Postgres and run a second router in `api_key` mode beside it:
+
+```bash
+cd acceleration && set -a && source ../.env && set +a
+export ROUTER_POSTGRES_DSN='postgres://postgres:postgres@localhost:55432/model_router?sslmode=disable' ROUTER_REDIS_ADDR=localhost:56379
+go run ./cmd/router keys create --app-name sdk-suite      # prints the key and secret once
+ROUTER_ADDR=:8099 ROUTER_AUTH_MODE=api_key ROUTER_PUBLIC_URL=http://localhost:8099 go run ./cmd/router
+```
+
+Then `INTEGRATION_ROUTER_KEY=vak_live_… INTEGRATION_ROUTER_SECRET=vas_live_… npm run
+test:integration` (`INTEGRATION_ROUTER_URL` defaults to `http://localhost:8099`). The Stream
+half wants the Docker router on `STREAM_ACCELERATION_URL` with `STREAM_ACCELERATION_CUSTOMER_ID`,
+`STREAM_API_KEY` and `STREAM_API_SECRET`, all read from `.env`. Each half skips without its own.
+Run it from a shell without `.env` sourced, or `npm test` reads the same variables and fails.
 
 They hold real conversations, so they spend the app's daily token allowance, and run often
 enough they will spend all of it. A test that finds it gone skips saying so rather than

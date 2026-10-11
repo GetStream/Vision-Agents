@@ -180,7 +180,11 @@ write lands nowhere. Chat is the transcript; `responses.create` is the way in.
 being true. The unit suite proves the SDK sends what it meant to; only a deployment proves that
 was the right thing to send. Two suites, neither in CI, both skipping when there is nothing to
 talk to: `local.test.ts` against a router on this machine, `staging.test.ts` against the hosted
-deployments.
+deployments. A third, `integration.test.ts` (`npm run test:integration`), holds the client
+promises: a device token gets 403 `server_side_only` from a router in `api_key` mode, and
+sessions share one Stream Chat and one Video socket, counted off Node's diagnostics channels.
+The README says how to run the second router it needs. Add to it when a new server-side
+operation or a new Stream connection appears.
 
 They earn it. The QA suite is what found that the hosted deployments want the credential spelled
 Stream's own way — `api_key`, not `X-Api-Key`, and `stream-auth-type: jwt` whoever the token is

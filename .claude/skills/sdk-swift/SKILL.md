@@ -267,6 +267,9 @@ Three layers, in order of how much they cost to run:
 2. **Live tests.** `LiveTests` is gated on `VISION_AGENTS_URL`, which is the Swift answer to
    `@pytest.mark.integration`. It creates a real session, asks the model something and waits
    for a real tool call. Mark the suite `@MainActor`, because `AgentSession` is.
+   `PostureTests` fails offline if the generated client holds an operation the spec does not
+   mark `x-client-accessible`, and with `INTEGRATION_ROUTER_KEY` and `_SECRET` checks a
+   device token's 403s against a router in `api_key` mode (see the JS README for that router).
 3. **Builds.** `ui`, `rtc` and `chat` are views and wrappers over Stream's SDKs; build them
    for the simulator. What they share is in `core` and tested there (`StreamCredentialsTests`).
 

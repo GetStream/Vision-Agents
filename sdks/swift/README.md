@@ -234,6 +234,15 @@ That enables `LiveTests`, which creates a real session, asks the model something
 a tool call to come back. Without `VISION_AGENTS_URL` they are skipped, which is the Swift
 answer to `@pytest.mark.integration`.
 
+`PostureTests` checks offline that every operation in the generated client is one the spec
+marks `x-client-accessible`. Against a router in `api_key` mode (set up as in the
+[JavaScript README](../js/README.md#working-on-this-package)) it also checks that a device token
+is refused minting call and chat tokens, claiming a guest and reading configs:
+
+```bash
+INTEGRATION_ROUTER_KEY=vak_live_… INTEGRATION_ROUTER_SECRET=vas_live_… swift test --filter Posture
+```
+
 The iOS packages are built rather than tested, since they are views and wrappers over Stream's
 SDKs. `chat` is iOS only: Stream Chat does not build for macOS under Swift 6.
 
