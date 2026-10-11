@@ -44,6 +44,59 @@ import Testing
     }
   }
 
+  @Test(arguments: [true, false])
+  func aToolThatAsksFirstWaitsForThePerson(allowed: Bool) async throws {
+    let server = try ApprovalServer()
+    defer { server.listener.cancel() }
+    let url = try #require(try await server.addresses.first(where: { @Sendable _ in true }))
+    let refund = AgentTool(
+      name: "issue_refund", description: "Refund an order",
+      approval: .init(title: "Refund order A-1042?", reasonArgument: "reason")
+    ) { arguments in
+      "Refunded \(arguments["order_id"]?.stringValue ?? "")"
+    }
+    let session = AgentSession(
+      backend: Backend(url: url, customerID: "test"),
+      session: Session(
+        .init(
+          agentId: "test", callId: "", callType: "agent", createdAt: Date(), id: "test",
+          modality: .text, state: .live, text: true, userId: "test")),
+      tools: [refund])
+    await session.start()
+    defer { Task { await session.close() } }
+
+    let deadline = ContinuousClock.now + .seconds(5)
+    while session.approvals.isEmpty, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let waiting = try #require(session.approvals.first)
+    #expect(waiting.approval.title == "Refund order A-1042?")
+    #expect(waiting.reason == "it arrived unopened")
+
+    try await session.decide("c1", allowed: allowed, summary: allowed ? "" : "Kept the order")
+
+    #expect(session.approvals.isEmpty)
+    var commands = server.commands.makeAsyncIterator()
+    let answer = try JSONDecoder().decode(
+      [String: JSONValue].self, from: try #require(try await commands.next()))
+    #expect(answer["type"]?.stringValue == "tool_approval")
+    #expect(answer["tool_call_id"]?.stringValue == "c1")
+    #expect(answer["allowed"]?.boolValue == allowed)
+    #expect(answer["command_id"]?.stringValue == "m1")
+    #expect(answer["turn_id"]?.stringValue == "t1")
+    let result = try JSONDecoder().decode(
+      [String: JSONValue].self, from: try #require(try await commands.next()))
+    #expect(result["type"]?.stringValue == "tool_result")
+    #expect(result["tool_call_id"]?.stringValue == "c1")
+    if allowed {
+      #expect(result["output"]?.stringValue == "Refunded A-1042")
+    } else {
+      #expect(answer["summary"]?.stringValue == "Kept the order")
+      #expect(result["output"]?.stringValue == "")
+      #expect(result["error"]?.stringValue.isEmpty == false)
+    }
+  }
+
   @Test func anUpdateRefreshesTheSessionItHolds() async throws {
     let server = try SessionServer()
     defer { server.listener.cancel() }
@@ -116,6 +169,78 @@ private struct ToolEventServer {
           command.finish(throwing: error)
           connection.cancel()
         }
+      }
+      connection.start(queue: queue)
+      queue.asyncAfter(deadline: .now() + 5) { connection.cancel() }
+    }
+    queue.asyncAfter(deadline: .now() + 5) {
+      let error = AgentsError.unreadable("test socket timed out")
+      address.finish(throwing: error)
+      command.finish(throwing: error)
+    }
+    listener.start(queue: queue)
+  }
+}
+
+/// A real WebSocket peer that asks for one call of a tool that asks first, from a durable
+/// command, and hands over every frame the session sends back.
+private struct ApprovalServer {
+  let listener: NWListener
+  let addresses: AsyncThrowingStream<URL, any Error>
+  let commands: AsyncThrowingStream<Data, any Error>
+
+  init() throws {
+    let queue = DispatchQueue(label: "approval-server")
+    let webSocket = NWProtocolWebSocket.Options()
+    webSocket.autoReplyPing = true
+    webSocket.setClientRequestHandler(queue) { _, _ in
+      .init(status: .accept, subprotocol: nil)
+    }
+    let parameters = NWParameters.tcp
+    parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+    parameters.defaultProtocolStack.applicationProtocols.insert(webSocket, at: 0)
+    let listener = try NWListener(using: parameters)
+    self.listener = listener
+    let (addresses, address) = AsyncThrowingStream<URL, any Error>.makeStream()
+    let (commands, command) = AsyncThrowingStream<Data, any Error>.makeStream()
+    self.addresses = addresses
+    self.commands = commands
+    listener.stateUpdateHandler = { state in
+      switch state {
+      case .ready:
+        if let port = listener.port {
+          address.yield(URL(string: "http://127.0.0.1:\(port.rawValue)")!)
+          address.finish()
+        }
+      case .failed(let error):
+        address.finish(throwing: error)
+        command.finish(throwing: error)
+      default: break
+      }
+    }
+    @Sendable func receive(_ connection: NWConnection) {
+      connection.receiveMessage { data, _, _, error in
+        if let error {
+          command.finish(throwing: error)
+          return
+        }
+        if let data { command.yield(data) }
+        receive(connection)
+      }
+    }
+    listener.newConnectionHandler = { connection in
+      connection.stateUpdateHandler = { state in
+        guard case .ready = state else { return }
+        let frame =
+          #"{"type":"tool_call","id":"c1","name":"issue_refund","arguments":"{\"order_id\":\"A-1042\",\"reason\":\"it arrived unopened\"}","command_id":"m1","turn_id":"t1"}"#
+        connection.send(
+          content: Data(frame.utf8),
+          contentContext: NWConnection.ContentContext(
+            identifier: "call", metadata: [NWProtocolWebSocket.Metadata(opcode: .text)]),
+          completion: .contentProcessed { error in
+            if let error { command.finish(throwing: error) }
+          })
+        receive(connection)
       }
       connection.start(queue: queue)
       queue.asyncAfter(deadline: .now() + 5) { connection.cancel() }

@@ -83,6 +83,14 @@ import Testing
             Command.toolResult(id: "c1", output: "ok", error: nil, commandID: "m1", turnID: "t1"),
             #"{"command_id":"m1","error":"","output":"ok","tool_call_id":"c1","turn_id":"t1","type":"tool_result"}"#
         ),
+        (
+            Command.toolApproval(id: "c1", allowed: true, commandID: "m1", turnID: "t1"),
+            #"{"allowed":true,"command_id":"m1","tool_call_id":"c1","turn_id":"t1","type":"tool_approval"}"#
+        ),
+        (
+            Command.toolApproval(id: "c1", allowed: false, summary: "Kept the card"),
+            #"{"allowed":false,"summary":"Kept the card","tool_call_id":"c1","type":"tool_approval"}"#
+        ),
     ])
     func aCommandEncodesToWhatTheRouterReads(command: Command, expected: String) throws {
         let encoder = JSONEncoder()

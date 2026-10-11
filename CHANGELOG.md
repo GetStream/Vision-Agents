@@ -2,6 +2,18 @@
 
 ## Breaking Changes
 
+### The Swift SDK is one package, and its views are Stream Chat's AI components
+
+`VisionAgentsCore` is the only Swift package. `VisionAgentsUI`, `VisionAgentsRTC` and
+`VisionAgentsChat` are gone: `VoiceSession` and `session.chat()` moved into core, which now
+depends on Stream Chat (5.13+) and Stream Video and is iOS only. `ConversationView`,
+`TranscriptView`, `Composer`, `AgentStatusView`, `VoiceCallView` and `AgentVideoView` are gone
+too; show a conversation with Stream Chat's AI components (`StreamChatAI`, from the same
+`stream-chat-swift`), as the Swift demos do. A tool may now ask the person first:
+`AgentTool.approval` holds each call in `session.approvals` until `session.decide` allows or
+declines it, and `LiveReasoning` puts a reply's whole reasoning back together from its live
+updates.
+
 ### `lcm` is now `decision_model`, with ten models behind it
 
 The modality that answers typed questions with probabilities is called `decision_model`,

@@ -1,23 +1,24 @@
-# Swift SDKs
+# Swift SDK
 
-Four iOS packages for talking to an agent from a phone. They are separate packages, not
-products of one, because SPM resolves every dependency a manifest declares whether or not you
-use the product it belongs to — and `StreamWebRTC` is a 47 MB binary. An app that only holds a
-text conversation should not download it, nor Stream Chat unless it shows the channel.
+One iOS package for talking to an agent from a phone, `core/`, whose module is
+`VisionAgentsCore`: the generated client, the session socket and the conversation state, the
+Stream Chat channel a text conversation is kept in, and `VoiceSession`, which joins the agent's
+call over Stream Video. It depends on the OpenAPI runtime, `stream-chat-swift` 5.13+
+(`StreamChat`) and `stream-video-swift` (`StreamVideo`).
 
-| Package | Module | Depends on | What it is |
-| --- | --- | --- | --- |
-| `core/` | `VisionAgentsCore` | OpenAPI runtime, URLSession | The generated client, the session socket, and the conversation state |
-| `ui/` | `VisionAgentsUI` | `core` | SwiftUI views over that state |
-| `rtc/` | `VisionAgentsRTC` | `core`, `stream-video-swift` | Joining the call, so the conversation can be spoken |
-| `chat/` | `VisionAgentsChat` | `core`, `stream-chat-swift` 5.3+ | The Stream Chat channel a text conversation is kept in |
+It has no views. The views are Stream Chat's AI components, the `StreamChatAI` library of the
+same `stream-chat-swift` package, which render what the router writes into a conversation's
+channel: the reply streaming in, each round of the model's reasoning, each tool call, and the
+question a tool asks before it runs. Add `StreamChatAI` to the app target beside
+`VisionAgentsCore`; it needs Xcode 27 to add with SPM.
 
 iOS 17 is the floor. It is `@Observable`'s floor, and the alternative was an `ObservableObject`
-path beside it to serve devices that will not be running a new SDK anyway.
+path beside it to serve devices that will not be running a new SDK anyway. It is iOS only,
+because Stream Video is and Stream Chat's macOS build does not compile under Swift 6.
 
-`ui`, `rtc` and `chat` reach `core` with `.package(path: "../core")`, which works in this repository and
-cannot survive publication: SPM has no way to depend on a subdirectory of a tagged repository.
-Shipping these means splitting each into its own repository from CI, or a package registry.
+SPM has no way to depend on a subdirectory of a tagged repository, so the examples reach the
+package by path. Shipping it means splitting `core/` into its own repository from CI, or a
+package registry.
 
 ## Using them
 
@@ -38,7 +39,7 @@ _ = try await session.responses.create("And on Sundays?")
 let voice = try await VoiceSession.start(agents: agents, agent: "myagent")
 await voice.join()
 
-// The Stream Chat channel the text session is kept in, with VisionAgentsChat.
+// The Stream Chat channel the text session is kept in.
 let channel = try await session.chat()
 ```
 
@@ -56,22 +57,44 @@ them; closing a session does not. An app that already has a `ChatClient` or a `S
 hands it over instead, and it is used rather than a second one, and never disconnected here:
 
 ```swift
-agents.use(chatClient)   // VisionAgentsChat
-agents.use(streamVideo)  // VisionAgentsRTC
+agents.use(chatClient)
+agents.use(streamVideo)
 ```
 
 One connected as somebody other than the user `setUser` named is refused. Beside a customer id,
 `apiKey:` is Stream's alone: the router is still reached by customer id, and chat and video
 connect with the key.
 
-With `VisionAgentsUI` a whole conversation is one view:
+### Showing a conversation
+
+A text session is kept in its channel, which the router writes: the person's message, then the
+reply, marked `ai_generated`, with `generating` true until it is done and its steps as
+attachments in the order they happened. Stream's AI components render all of it:
 
 ```swift
-ConversationView(session: chat)
+import StreamChatAI
+
+let parts = AIMessagePart.parts(from: message.allAttachments.map { ($0.type.rawValue, $0.payload) })
+VStack(alignment: .leading) {
+    AIMessagePartsView(parts: parts) { part in
+        if let step = part.reasoning {
+            StreamingReasoningView(part: step, text: reasoning[step.id])
+        } else {
+            AIMessagePartView(part: part, approver: approver)
+        }
+    }
+    StreamingMessageView(content: message.text, isGenerating: message.extraData["generating"]?.boolValue == true)
+}
 ```
 
-`TranscriptView`, `Composer` and `AgentStatusView` are public and work on their own, so a host
-that wants a different arrangement takes them apart rather than fighting `ConversationView`.
+A step keeps only the opening of its reasoning. The whole of it comes with the reply's live
+updates, a window at a time, and `LiveReasoning` puts it back together: read every
+`MessageUpdatedEvent` into it, from `chatClient.eventsController()`, and look a step up by its id.
+The same events controller carries `AIIndicatorUpdateEvent`, which says what the agent is
+doing before its answer starts, for `AITypingIndicatorView`.
+
+Ask with `session.responses.create`, from `AIComposerView`'s send; its stop button is
+`session.interrupt()`. Start the session first, so its socket runs this phone's tools.
 
 ### A tool that runs on the phone
 
@@ -97,6 +120,33 @@ await session.start()   // the socket is what carries tool calls to this device
 
 `executor: .client` shows the people in a persistent conversation that a device is running it,
 and `displayTitle` is what the reply's tool attachment says it is doing.
+
+### A tool that asks first
+
+Give a tool an `approval` and each call waits for the person whose message it answers, in
+`session.approvals`, until `decide` answers it. Allowed, the tool runs; declined, it never does,
+and the model is told so.
+
+```swift
+let refund = AgentTool(
+    name: "issue_refund",
+    description: "Refund an order to the card it was paid with.",
+    parameters: .strings(["order_id": "the order", "reason": "why"], required: ["order_id", "reason"]),
+    approval: .init(title: "Refund this order?", reasonArgument: "reason", allowTitle: "Refund")
+) { arguments in
+    try await Refunds.issue(arguments["order_id"]?.stringValue ?? "")
+}
+
+let approver = AIToolApprover(userID: user.id, clientID: AIClientIdentity.installID) { call, allowed in
+    try await session.decide(call.id, allowed: allowed)
+}
+```
+
+In a conversation kept in Stream Chat the call's step carries the question, and
+`AIMessagePartView` asks it with `AIToolApprovalView` for whoever the approver says is signed in.
+On a call there is no channel: show `session.approvals` yourself, with `AIToolApprovalCard`.
+The router addresses a client tool's question to the install the message came from, which a
+device cannot name yet, so declare a tool that asks first with the default executor.
 
 ### Finding old conversations
 
@@ -210,15 +260,15 @@ hand-written against the contract in
 
 ## Tests
 
+The package is iOS only, so the tests run on a simulator rather than with `swift test`:
+
 ```bash
-export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-cd sdks/swift/core && swift test        # offline, about a second
+cd sdks/swift/core
+xcodebuild test -scheme vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
-`DEVELOPER_DIR` is needed whenever `xcode-select -p` points at `/Library/Developer/CommandLineTools`,
-whose toolchain has no `Testing` module — the failure is `no such module 'Testing'` rather than
-anything about the toolchain. Set it permanently with
-`sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` is needed whenever
+`xcode-select -p` points at `/Library/Developer/CommandLineTools`, which has no simulator.
 
 The conversation's state machine is a value type (`Conversation`), so what a stream of frames
 means for a transcript is tested on real router frames with no network and no mocks. Frames are
@@ -227,20 +277,14 @@ quoted verbatim from `frameOf`, so a change to the wire format on that side fail
 Against a running router:
 
 ```bash
-VISION_AGENTS_URL=http://localhost:8080 VISION_AGENTS_CUSTOMER_ID=examples swift test
+TEST_RUNNER_VISION_AGENTS_URL=http://localhost:8080 TEST_RUNNER_VISION_AGENTS_CUSTOMER_ID=examples \
+  xcodebuild test -scheme vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
 That enables `LiveTests`, which creates a real session, asks the model something and waits for
-a tool call to come back. Without `VISION_AGENTS_URL` they are skipped, which is the Swift
-answer to `@pytest.mark.integration`.
+a tool call to come back. `xcodebuild` hands a variable to the tests without its `TEST_RUNNER_`
+prefix. Without `VISION_AGENTS_URL` they are skipped, which is the Swift answer to
+`@pytest.mark.integration`.
 
-The iOS packages are built rather than tested, since they are views and wrappers over Stream's
-SDKs. `chat` is iOS only: Stream Chat does not build for macOS under Swift 6.
-
-```bash
-export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer   # if xcode-select points at the CLI tools
-for pkg in core ui rtc chat; do
-  (cd sdks/swift/$pkg && xcodebuild -scheme vision-agents-$pkg \
-     -destination 'generic/platform=iOS Simulator' build)
-done
-```
+`VoiceSession` and `chat()` are wrappers over Stream's SDKs, and are built rather than tested;
+what they share is in `Backend` and tested there (`StreamCredentialsTests`).

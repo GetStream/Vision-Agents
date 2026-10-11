@@ -128,7 +128,7 @@ public struct VisionAgents: Sendable {
     /// Puts an agent on a call and follows it.
     ///
     /// The agent joins as soon as this returns. Joining the same call from this device is what
-    /// the RTC package is for; this only starts the agent and gives you the state layer.
+    /// `VoiceSession` is for; this only starts the agent and gives you the state layer.
     public func voice(
         callID: String,
         agent: String? = nil,
@@ -167,6 +167,11 @@ public struct VisionAgents: Sendable {
             title: options.title,
             tools: options.tools.map {
                 Components.Schemas.SessionTool(
+                    approval: $0.approval.map {
+                        .init(
+                            allowTitle: $0.allowTitle, declineTitle: $0.declineTitle,
+                            message: $0.message, reasonArgument: $0.reasonArgument, title: $0.title)
+                    },
                     description: $0.description,
                     displayTitle: $0.displayTitle,
                     executor: $0.executor.flatMap { .init(rawValue: $0.rawValue) },

@@ -1,6 +1,5 @@
 import Foundation
 import StreamChat
-@_spi(Stream) import VisionAgentsCore
 import os
 
 private let kind = "chat"
@@ -65,4 +64,55 @@ private func connect(_ backend: Backend, _ credentials: StreamCredentials) async
             }
         })
     return client
+}
+
+/// A reply's thinking, put back together from its live updates.
+///
+/// The router stores only the opening of each round of reasoning, as its step's `preview`.
+/// The whole of it reaches people watching the reply live: each update carries the next
+/// window of the round being streamed, in the message's `reasoning` field. Read every update
+/// into one of these, from the client's `MessageUpdatedEvent`s rather than the channel's
+/// message list, which can fold several updates into one, and show a step by its id.
+public struct LiveReasoning: Sendable, Hashable {
+    private var steps: [String: Step] = [:]
+
+    private struct Step: Sendable, Hashable {
+        var text = ""
+        /// Where `text` ends in the round's whole thinking, in Unicode scalars.
+        var end = 0
+    }
+
+    public init() {}
+
+    /// The thinking of reasoning step `stepID` so far, or nil before any of it arrived.
+    public subscript(stepID: String) -> String? {
+        steps[stepID]?.text
+    }
+
+    /// Reads the window a live update carries, if it carries one.
+    public mutating func read(_ message: ChatMessage) {
+        guard case .dictionary(let window)? = message.extraData["reasoning"],
+            case .string(let id)? = window["id"],
+            case .number(let offset)? = window["offset"],
+            case .string(let text)? = window["text"]
+        else { return }
+        add(text, at: Int(offset), to: id)
+    }
+
+    /// Adds what `text`, which starts `offset` scalars into step `id`'s thinking, has that is
+    /// not held yet. A window that repeats recent thinking, for somebody who joined midway,
+    /// overlaps what is held; one that starts past it means updates were missed, and is kept
+    /// after a paragraph break rather than run on.
+    mutating func add(_ text: String, at offset: Int, to id: String) {
+        var step = steps[id] ?? Step()
+        let scalars = text.unicodeScalars
+        let end = offset + scalars.count
+        guard end > step.end else { return }
+        if offset > step.end, !step.text.isEmpty {
+            step.text += "\n\n"
+        }
+        step.text.unicodeScalars.append(contentsOf: scalars.dropFirst(max(0, step.end - offset)))
+        step.end = end
+        steps[id] = step
+    }
 }
