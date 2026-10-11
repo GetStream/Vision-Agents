@@ -15,12 +15,20 @@ struct ContentView: View {
         }
     }
 
-    private var content: some View {
-        TabView {
-            ChatView(agent: Demo.agentName)
-                .tabItem { Label("Chat", systemImage: "text.bubble") }
-            VoiceView(agent: Demo.agentName)
-                .tabItem { Label("Voice", systemImage: "waveform") }
+    @ViewBuilder private var content: some View {
+        if Demo.streamAPIKey.isEmpty {
+            ContentUnavailableView {
+                Label("No Stream key yet", systemImage: "key")
+            } description: {
+                Text("Put the STREAM_API_KEY the router runs with in Demo.streamAPIKey.")
+            }
+        } else {
+            TabView {
+                ChatView(agent: Demo.agentName)
+                    .tabItem { Label("Chat", systemImage: "text.bubble") }
+                VoiceView(agent: Demo.agentName)
+                    .tabItem { Label("Voice", systemImage: "waveform") }
+            }
         }
     }
 }
