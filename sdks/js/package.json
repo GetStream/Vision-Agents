@@ -31,13 +31,24 @@
     "./node": {
       "types": "./dist/node.d.ts",
       "default": "./dist/node.js"
+    },
+    "./chat": {
+      "types": "./dist/chat.d.ts",
+      "default": "./dist/chat.js"
+    },
+    "./video": {
+      "types": "./dist/video.d.ts",
+      "default": "./dist/video.js"
     }
   },
   "files": [
     "dist",
     "README.md"
   ],
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/chat.js",
+    "./dist/video.js"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -49,9 +60,11 @@
     "prepublishOnly": "rm -rf dist && tsc -p tsconfig.build.json"
   },
   "devDependencies": {
+    "@stream-io/video-client": "^1.61.2",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "openapi-typescript": "^7.13.0",
+    "stream-chat": "^9.54.0",
     "typescript": "^5.7.0",
     "ws": "^8.18.0"
   },

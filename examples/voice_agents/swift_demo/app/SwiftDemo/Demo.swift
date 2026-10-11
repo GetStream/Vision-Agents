@@ -1,20 +1,20 @@
 import Foundation
 import VisionAgentsCore
-import VisionAgentsRTC
 
-/// Where the router is, where this app's own backend is, and the one tool it answers itself.
+/// Where the router is, where this app's own backend is, and the tools it answers itself.
 ///
-/// There is no sign-in. The router is running in the mode where it trusts the customer id it
-/// is given, which is what `docker compose up` and `go run ./cmd/router` do, so the constants
-/// are the whole of the configuration. In front of a real deployment the customer id would
-/// come from your own backend along with a token, and nothing else here would change.
+/// There is no sign-in. The router is running in the mode where it trusts the customer and
+/// user ids it is given, `ROUTER_AUTH_MODE=proxy`, so the constants are the whole of the
+/// configuration.
+/// In front of a real deployment the router is reached by the key and the same token, and
+/// nothing else here would change.
 enum Demo {
     /// The simulator reaches the Mac's localhost, so this works as it stands. On a device,
     /// put your Mac's address on the network here, for example http://192.168.1.20:8080.
     static let routerURL = URL(string: "http://localhost:8080")!
 
-    /// This app's own backend, which is `go run ./backend`. A device cannot mint a token for
-    /// joining a call — that is server-side only — so it asks this for one.
+    /// This app's own backend, which is `go run ./backend`. A device holds no secret to sign
+    /// a Stream token with, so it asks this for one.
     static let backendURL = URL(string: "http://localhost:8099")!
 
     /// Whichever customer id you started the router with. `compose.yaml` builds the
@@ -22,52 +22,46 @@ enum Demo {
     /// here works but will not appear on the dashboard.
     static let customerID = "examples"
 
-    /// The agent config `go run ./configure` stored, which prints the id to put here.
+    /// The `STREAM_API_KEY` the router runs with: the chat channel a written conversation is
+    /// kept in and the call the agent is on are both in that Stream app, and this device
+    /// connects to them there.
+    static let streamAPIKey = ""
+
+    /// The agent `go run ./configure` stored, by the name in `agent.yaml`.
     ///
-    /// An id rather than a name because reading the configs is server-side only: the app is
-    /// told which agent it talks to rather than finding out.
-    static let agentID = ""
+    /// The app is told which agent it talks to rather than finding out, because reading the
+    /// configs is server-side only.
+    static let agentName = "swift_demo"
 
-    static let agents = VisionAgents(url: routerURL, customerID: customerID)
+    /// Who this device is. A call waiting for approval is addressed to them.
+    static let user = User(id: "demo-caller", name: "Demo caller")
 
-    /// Asks the backend for credentials to join the call a session is holding.
-    static let callCredentials: CallCredentialsProvider = { sessionID in
-        var request = URLRequest(url: backendURL.appending(path: "call-token"))
+    static let agents: VisionAgents = {
+        let agents = VisionAgents(url: routerURL, customerID: customerID, apiKey: streamAPIKey)
+        agents.setUser(user) { try await streamToken() }
+        return agents
+    }()
+
+    /// Asks the backend for a Stream user token, which joins the agent's call.
+    private static func streamToken() async throws -> String {
+        var request = URLRequest(url: backendURL.appending(path: "stream-token"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["session_id": sessionID])
+        request.httpBody = try JSONEncoder().encode(["user_id": user.id])
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw AgentsError.unreadable("the backend would not mint a call token")
+            throw AgentsError.unreadable("the backend would not mint a Stream token")
         }
-        return try JSONDecoder().decode(MintedToken.self, from: data).credentials
+        return try JSONDecoder().decode(MintedToken.self, from: data).token
     }
 
-    /// What the backend answers with, which is the router's own `CallToken` passed through.
     private struct MintedToken: Decodable {
-        let apiKey: String
         let token: String
-        let userId: String
-        let userName: String
-        let callId: String
-        let callType: String
-
-        enum CodingKeys: String, CodingKey {
-            case apiKey = "api_key"
-            case token
-            case userId = "user_id"
-            case userName = "user_name"
-            case callId = "call_id"
-            case callType = "call_type"
-        }
-
-        var credentials: CallCredentials {
-            CallCredentials(
-                apiKey: apiKey, token: token, userID: userId, userName: userName,
-                callID: callId, callType: callType)
-        }
     }
+
+    /// The tools the agent may call, which run on this phone.
+    static let tools = [lookupOrder, issueRefund]
 
     /// Orders the agent can look up.
     ///
@@ -81,16 +75,50 @@ enum Demo {
             + "delivered on 2 September, worn",
     ]
 
-    static let lookupOrder = AgentTool(
+    private static let lookupOrder = AgentTool(
         name: "lookup_order",
         description: "Look up one of the caller's orders by its order number, such as A-1042.",
         parameters: .strings(
-            ["order_id": "the order number, such as A-1042"], required: ["order_id"])
+            ["order_id": "the order number, such as A-1042"], required: ["order_id"]),
+        displayTitle: "Looking up your order"
     ) { arguments in
         let id = arguments["order_id"]?.stringValue.uppercased() ?? ""
         guard let order = orders[id] else {
             return "There is no order \(id) on this account."
         }
         return "Order \(id): \(order)."
+    }
+
+    /// Refunds an order, once the person says it may.
+    ///
+    /// The agent decides a refund is owed; the person decides whether it goes ahead. Each call
+    /// waits in the session's `approvals` until they answer: on the reply's step in Chat,
+    /// where Stream's AI components ask, or on the card over the call in Voice.
+    private static let issueRefund = AgentTool(
+        name: "issue_refund",
+        description: "Refund one of the caller's orders to the card it was paid with, once the "
+            + "refund skill has said they are owed it.",
+        parameters: .strings(
+            [
+                "order_id": "the order number, such as A-1042",
+                "amount": "how much to refund, such as 78.00",
+                "reason": "why the caller is owed it, in a few words they would recognise",
+            ],
+            required: ["order_id", "amount", "reason"]),
+        displayTitle: "Refunding your order",
+        approval: .init(
+            title: "Refund this order?",
+            message: "The money goes back to the card the order was paid with.",
+            reasonArgument: "reason",
+            allowTitle: "Refund",
+            declineTitle: "Not now")
+    ) { arguments in
+        let id = arguments["order_id"]?.stringValue.uppercased() ?? ""
+        let amount = arguments["amount"]?.stringValue ?? ""
+        guard orders[id] != nil else {
+            return "There is no order \(id) on this account."
+        }
+        return "Refunded \(amount) for order \(id) to the card ending 4242. It shows within five "
+            + "working days."
     }
 }

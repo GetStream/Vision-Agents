@@ -1,45 +1,48 @@
 ---
 name: sdk-swift
-description: How to build and extend the Swift SDKs in sdks/swift. Read this before changing VisionAgentsCore, VisionAgentsUI or VisionAgentsRTC, or before adding a Swift client for a new endpoint.
+description: How to build and extend the Swift SDK in sdks/swift. Read this before changing VisionAgentsCore, the Swift demos' use of Stream's AI components, or before adding a Swift client for a new endpoint.
 ---
 
 # Swift SDK conventions
 
-The per-language half of [sdk](../sdk/SKILL.md). It records the decisions the packages in
+The per-language half of [sdk](../sdk/SKILL.md). It records the decisions the package in
 [`sdks/swift`](../../../sdks/swift) already follow, so a change lands consistently rather than
 re-litigating them. Where a rule has an exception, the exception is written down.
 
 Assume Swift 6 language mode with complete strict concurrency, iOS 17, SPM only.
 
-## Packages
+## The package
 
-Three packages, not one package with three products. Splitting *targets* stops compilation and
-linking; splitting *packages* is the only reliable way to stop a consumer resolving and
-fetching a dependency's whole graph, and SwiftPM's pruning has changed across releases. Stream
-Video's `StreamWebRTC` is a 47 MB binary artifact, so this matters.
+One package, `core`, with one product, `VisionAgentsCore`: the generated client, the socket,
+the conversation state, `session.chat()` (the Stream Chat channel a text session is kept in)
+and `VoiceSession` (joining the agent's call over Stream Video). It is the only thing published.
+It depends on `stream-chat-swift` (`StreamChat` only) and `stream-video-swift` (`StreamVideo`
+only), so every app resolves Stream Video's 47 MB `StreamWebRTC` binary, text-only or not.
+That is the price of one artifact; do not split it back up without being asked.
 
-```
-core  VisionAgentsCore  generated client, socket, conversation state
-ui    VisionAgentsUI    SwiftUI views over that state          -> core
-rtc   VisionAgentsRTC   joining the call over Stream Video     -> core
-```
-
-- `ui` holds no networking. `rtc` maps Stream's types into ours and keeps them out of `core`'s
-  public API.
-- Declare `platforms:` on every package. An unspecified platform makes consumers discover
-  availability failures inside generated code.
-- Never add an umbrella product. It hands the WebRTC binary to somebody who wanted text.
+- **No views in core.** The views are Stream Chat's AI components, `StreamChatAI` from the
+  same `stream-chat-swift`, which the app adds itself; see [Views](#views).
+- Stream's types cross the public API only where an app uses Stream's own SDK: the app's
+  `StreamVideo` or `ChatClient` in `use`, `chat()` answering a `ChatChannelController`,
+  `VoiceSession.call`, and `LiveReasoning.read(_:)` taking a `ChatMessage`. Nothing generated
+  crosses.
+- iOS only, because Stream Video is and Stream Chat's macOS build does not compile under
+  Swift 6. `stream-chat-swift` is required from 5.13, the first with `StreamChatAI`, so an app
+  adding the views resolves the version core does; `StreamChat` alone would build from 5.3
+  (4.x's `ChatClient` is not `Sendable`, and 5.0 to 5.2 fail inside `stream-core-swift`).
+- Core builds with Xcode 26 and 27. `StreamChatAI` needs Xcode 27 to add with SPM, and
+  `StreamVideoSwiftUI` 1.54 does not compile under Xcode 27: an app cannot use both yet.
+- Declare `platforms:`. An unspecified platform makes consumers discover availability
+  failures inside generated code.
 
 **Publishing is not solved by the monorepo.** SwiftPM has no `url + subdirectory` version
-dependency, so `.package(path: "../core")` cannot survive publication. When these ship, either
-subtree-split each package into its own repository from CI, or use a package registry. During
-development, keep the local packages in one Xcode workspace or use
-`swift package edit <identity> --path ../core`. Do not make `Package.swift` branch on an
-environment variable between `path:` and `url:` — resolution stops being reproducible and
-development paths leak into releases.
+dependency, so the examples' path reference cannot survive publication. When it ships, either
+subtree-split `core` into its own repository from CI, or use a package registry. Do not make
+`Package.swift` branch on an environment variable between `path:` and `url:` — resolution stops
+being reproducible and development paths leak into releases.
 
-A library's `Package.resolved` is not a promise to consumers; it is gitignored for the three
-packages and committed for the demo app.
+A library's `Package.resolved` is not a promise to consumers; it is gitignored for the package
+and committed for the demo apps.
 
 ## Concurrency
 
@@ -73,6 +76,11 @@ task owns the object that owns the task, and `deinit` never runs to cancel it.
   generated value into one of ours instead.
 - Answering a tool call must not depend on anybody consuming a public event stream. It happens
   inside `AgentSession`.
+- A tool with an `approval` is not run when its call arrives. The call waits in
+  `AgentSession.approvals` until `decide` sends `tool_approval`; then the tool runs (allowed) or
+  the call is answered with an error (declined), since the router wants a `tool_result` either
+  way. A `tool_cancel` drops a waiting call. A failed send puts the call back, so the person can
+  answer again.
 
 ## Observation
 
@@ -181,7 +189,8 @@ too, with only the status and request id: URLSession never hands over its body.
 `VisionAgents(apiKey:)`, defaulting to Stream's hosted router, then `setUser` with a token
 provider: the shape [sdk](../sdk/SKILL.md) gives every client SDK. `ID` and `URL` are
 capitalised as Swift does. The initialiser does no I/O. `VisionAgents(url:customerID:)` is
-only for a router running locally with nothing in front of it.
+only for a router running locally with nothing in front of it; an `apiKey:` beside it is
+Stream's alone, for chat and video, and the router is still reached by customer id.
 
 ```swift
 let agents = VisionAgents(apiKey: "your_api_key")
@@ -210,31 +219,43 @@ Async/await only. No completion handlers, no `.shared` singleton, no configurati
 
 **A token provider, not a token,** for anything with credentials. `Backend` takes a
 `TokenProvider` in `setUser` and threads it through requests, the socket handshake and a
-single 401 retry, single-flighted. `VoiceSession` passes one to StreamVideo so an hour-long
-call does not drop when the call token expires.
+single 401 retry, single-flighted.
 
-## SwiftUI
+**Stream is set up once.** The key, the user and the token from `setUser` are the one identity
+for the router, Stream Chat and Stream Video. `VoiceSession.join()` and `session.chat()` take
+no credentials: `Backend.shared` builds one client per kind, key and user, single-flighted and
+shared by every session, and hands Stream a provider that asks `streamCredentials(refresh:
+true)`, so an hour-long call outlives its token and two clients refreshing at once fetch one.
+`agents.use(_:)` hands over the app's own `ChatClient` or `StreamVideo`, which is used first,
+kept across `setUser` and never disconnected here; one connected as another user is a
+`.configuration` error. `agents.disconnect()` closes only what was built, and closing a session
+closes nothing. A client is built only when a session first asks for one.
 
-`@ViewBuilder` slots for customisation, not a theme object. A forty-value `AgentTheme` becomes
-a second design system that fights the host's real one.
+## Views
 
-- Respect the environment: `colorScheme`, `dynamicTypeSize`, `layoutDirection`, `tint`,
-  `accessibilityReduceMotion`. Never set `.preferredColorScheme` or install fonts from a
-  package.
-- No component creates a `NavigationStack`, pushes a destination, dismisses itself, or assumes
-  it is presented modally. Navigation is the host's.
-- `ConversationView` is the arrangement most apps want; `TranscriptView`, `Composer` and
-  `AgentStatusView` are public so a host can take it apart instead of fighting it.
-- `LazyVStack` with stable turn ids, and one mutable in-flight turn — not a row per token, and
-  never the message text as the id, which destroys and recreates the row on every delta.
-- Follow the bottom without animating growing text; animate only a new line. Animating each
-  delta is what makes a transcript judder.
-- Assets belong to `ui` with `Bundle.module`. Prefer SF Symbols. Expose views, not asset-name
-  strings.
+Core has none. An app shows a conversation with Stream Chat's AI components (`StreamChatAI`),
+and the demos (`examples/voice_agents/swift_demo`, `examples/video_agents/flower_spotter`) are
+where that composition lives and is kept working. What the router writes is what they render:
 
-Known gap: deltas are published straight to SwiftUI rather than coalesced to a frame boundary,
-and `TranscriptView` always follows the bottom rather than stopping when the reader scrolls
-away. Both are worth fixing before this carries a long transcript.
+- A text session's reply is a message marked `ai_generated`, with `generating` true until done:
+  `StreamingMessageView(content:isGenerating:)`.
+- Its steps are `ai_reasoning` and `ai_tool_call` attachments, in order:
+  `AIMessagePart.parts(from:)` and `AIMessagePartsView`.
+- A reasoning step stores only its opening. The whole of it comes a window at a time on the
+  live updates' `reasoning` field; `LiveReasoning` reassembles it, fed from the client's
+  `MessageUpdatedEvent`s (the channel's message list can fold updates together), and goes to
+  `StreamingReasoningView(part:text:)`.
+- A call that asks first is `awaiting_approval` with an `approval`: `AIToolApprovalView`, with
+  an `AIToolApprover` whose `decide` is `session.decide`. On a call there is no channel; show
+  `session.approvals` with `AIToolApprovalCard`.
+- `ai_indicator.update` and `.clear` say what the agent is doing before the answer starts:
+  `AITypingIndicatorView`. Read them from `chatClient.eventsController()`; a channel's events
+  controller never sees them.
+- `AIComposerView`'s stop button is `session.interrupt()`, which cancels the reply in flight.
+  The router does not listen for `ai_indicator.stop`.
+
+A spoken session has no channel: render `session.turns` with `StreamingMessageView` and
+`session.state` with `AITypingIndicatorView`.
 
 ## Tests
 
@@ -248,7 +269,13 @@ Three layers, in order of how much they cost to run:
 2. **Live tests.** `LiveTests` is gated on `VISION_AGENTS_URL`, which is the Swift answer to
    `@pytest.mark.integration`. It creates a real session, asks the model something and waits
    for a real tool call. Mark the suite `@MainActor`, because `AgentSession` is.
-3. **Builds.** `ui` and `rtc` are views and a WebRTC wrapper; build them for the simulator.
+3. **Builds.** `VoiceSession` and `chat()` are wrappers over Stream's SDKs, and the demos are
+   views; build them for the simulator. What they share is in `Backend` and tested there
+   (`StreamCredentialsTests`).
+
+The package is iOS only, so the tests run on a simulator: `xcodebuild test -scheme
+vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`, with
+`TEST_RUNNER_VISION_AGENTS_URL` for the live tests.
 
 Wait on a condition with a deadline, never `Task.sleep` for a fixed guess:
 
@@ -261,7 +288,7 @@ write a real one on `127.0.0.1:0` rather than a `URLProtocol` subclass — `URLP
 test a genuine WebSocket upgrade. Do not spend tests re-testing the generated client's
 forwarding; it is machine-produced.
 
-## Audio and permissions, for `rtc`
+## Audio and permissions, for `VoiceSession`
 
 - **One owner of `AVAudioSession`.** A WebRTC SDK and the app both setting category, mode or
   active state gives dropped Bluetooth, wrong routing and activation failures. Use Stream's
@@ -285,11 +312,15 @@ frames or bodies by default. Never put a token in a query string.
 Reject it if it:
 
 - mutates conversation state off the main actor, or hops per frame;
-- exposes a generated or Stream type publicly;
+- exposes a generated type publicly, or a Stream type outside `use`, `chat()`,
+  `VoiceSession.call` and `LiveReasoning`;
+- runs a tool that has an `approval` before `decide` allows it;
+- builds a second Stream client for a user who already has one, or disconnects one the app
+  handed over;
 - uses `[String: Any]`, or `@unchecked Sendable` to quiet a warning;
 - starts more than one receive per connection, or replays `respond`/`tool_result`;
 - treats an unknown frame as fatal, or discards its payload;
 - wraps `CancellationError`, or reports an HTTP status as a transport failure;
 - hand-edits generated code, or adds a client method for an `x-server-side-only` operation;
-- adds a theme object, a `NavigationStack`, or an asset-name string to `ui`;
+- adds a view to core, or a second package beside it;
 - asserts that a method was called.

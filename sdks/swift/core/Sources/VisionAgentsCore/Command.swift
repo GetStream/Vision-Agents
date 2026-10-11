@@ -14,6 +14,10 @@ public enum Command: Sendable, Hashable {
     /// request is only accepted back with its `requestID` and `turnID`.
     case toolResult(
         id: String, output: String?, error: String?, requestID: String = "", turnID: String = "")
+    /// A person's answer to a tool call that waited for them. A declined call's step shows
+    /// `summary`. The call is still answered with `toolResult` either way.
+    case toolApproval(
+        id: String, allowed: Bool, summary: String = "", requestID: String = "", turnID: String = "")
     /// End the session.
     case close
 }
@@ -21,7 +25,7 @@ public enum Command: Sendable, Hashable {
 extension Command: Encodable {
     private enum CodingKeys: String, CodingKey {
         case type, text, toolCallID = "tool_call_id", output, error
-        case requestID = "request_id", turnID = "turn_id"
+        case requestID = "request_id", turnID = "turn_id", allowed, summary
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -39,6 +43,19 @@ extension Command: Encodable {
             // absent, so sending the empty string and sending nothing are the same thing.
             try container.encode(output ?? "", forKey: .output)
             try container.encode(error ?? "", forKey: .error)
+            if !requestID.isEmpty {
+                try container.encode(requestID, forKey: .requestID)
+            }
+            if !turnID.isEmpty {
+                try container.encode(turnID, forKey: .turnID)
+            }
+        case .toolApproval(let id, let allowed, let summary, let requestID, let turnID):
+            try container.encode("tool_approval", forKey: .type)
+            try container.encode(id, forKey: .toolCallID)
+            try container.encode(allowed, forKey: .allowed)
+            if !summary.isEmpty {
+                try container.encode(summary, forKey: .summary)
+            }
             if !requestID.isEmpty {
                 try container.encode(requestID, forKey: .requestID)
             }

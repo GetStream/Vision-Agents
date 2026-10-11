@@ -20,7 +20,7 @@ agent.yaml           models and video selection; synced to the router on join
 instructions.md      what the agent is told
 skills/vision.md     the skill that captures frames for the subagent
 flower_spotter.py    joins as the video worker
-app/                 iOS: lists the live call, camera on, annotated video
+app/                 iOS: lists the live call, camera on, annotated video, transcript
 ```
 
 The default model is `rfdetr-nano`, a serverless COCO detector (person, cup,
@@ -85,15 +85,32 @@ call ends (hang-up, not navigating back).
 
 ## Run the iOS app
 
+The app shows the video with Stream Video's SwiftUI components and the transcript
+with Stream Chat's AI components (`StreamingMessageView`, `AITypingIndicatorView`).
+The AI components need Xcode 27 to add with SPM, and `StreamVideoSwiftUI` 1.54.0
+does not compile under Xcode 27 yet, so the app does not build until
+stream-video-swift ships a release that does. Everything else in it builds against
+`VisionAgentsCore`.
+
 Open `app/FlowerSpotter.xcodeproj` on a **physical device**. The camera is the
 point; the simulator can reach the router but cannot usefully point a camera.
 
-Two constants in `app/FlowerSpotter/Demo.swift`:
+Joining the call takes a Stream user token, which a device cannot sign. Run the
+swift demo's backend beside the router:
+
+```bash
+cd examples/voice_agents/swift_demo
+STREAM_API_SECRET=<the router's STREAM_API_SECRET> go run ./backend
+```
+
+Four constants in `app/FlowerSpotter/Demo.swift`:
 
 | Constant | Simulator | Physical device |
 | --- | --- | --- |
 | `routerURL` | `http://localhost:8080` | Mac LAN address, `http://$(ipconfig getifaddr en0):8080` |
+| `backendURL` | `http://localhost:8099` | Mac LAN address, `http://$(ipconfig getifaddr en0):8099` |
 | `customerID` | `examples` | `examples` |
+| `streamAPIKey` | the router's `STREAM_API_KEY` | the router's `STREAM_API_KEY` |
 
 `NSAllowsLocalNetworking` in `Info.plist` lets plain HTTP through to that
 address. Allow Local Network when iOS asks.

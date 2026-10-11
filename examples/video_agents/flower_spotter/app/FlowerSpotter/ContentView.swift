@@ -3,7 +3,7 @@ import VisionAgentsCore
 
 /// Live calls the flower_spotter Python process has started.
 struct ContentView: View {
-    @State private var calls: [CallRecord] = []
+    @State private var calls: [Session] = []
     @State private var failure: String?
     @State private var isLoading = true
 
@@ -54,13 +54,13 @@ struct ContentView: View {
                 NavigationLink(value: record) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(record.callID).font(.headline)
-                        Text(record.startedAt.formatted())
+                        Text(record.createdAt.formatted())
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
-            .navigationDestination(for: CallRecord.self) { CallView(record: $0) }
+            .navigationDestination(for: Session.self) { CallView(record: $0) }
         }
     }
 
@@ -69,9 +69,10 @@ struct ContentView: View {
         failure = nil
         defer { isLoading = false }
         do {
-            let records = try await Demo.agents.calls(
-                agentID: Demo.agentName, limit: 20)
-            calls = records.filter(\.isRunning)
+            var query = SessionQuery(limit: 20)
+            query.state = .live
+            let page = try await Demo.agents.agent(Demo.agentName).sessions.query(query)
+            calls = page.items.filter { !$0.callID.isEmpty }
         } catch is CancellationError {
             return
         } catch {

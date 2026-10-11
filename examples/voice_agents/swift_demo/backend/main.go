@@ -1,18 +1,15 @@
 // Command backend is the part of the Swift demo that holds the credential.
 //
-// The router serves a device five operations: opening a conversation, listing and closing
-// one, the session events socket, and search. Everything else is server-side only, and a
-// token for joining the agent's Stream call is one of the things it will not mint for a
-// phone. So the phone asks this, and this asks the router.
+// The phone is one Stream user for everything it does: the router, and the agent's call it
+// joins over Stream Video. Proving that is a Stream user token, signed with the app's secret,
+// and a phone holds no secret. So the phone asks this for one, and hands it to setUser.
 //
-// That is the shape a real app has anyway. A token is an authorisation, and deciding whether
-// the person holding the phone may join a particular call is the application's decision, not
-// the router's. Here the decision is "yes", because a demo has nobody to sign in; the comment
-// where that happens says what a real one would do instead.
+// That is the shape a real app has anyway. A token is an authorisation, and deciding who the
+// person holding the phone is belongs to the application, not the router. Here the answer is
+// "whoever they say", because a demo has nobody to sign in; the comment where that happens
+// says what a real one would do instead.
 //
-//	STREAM_ACCELERATION_URL=http://localhost:8080 \
-//	STREAM_ACCELERATION_CUSTOMER_ID=examples \
-//	go run ./backend
+//	STREAM_API_SECRET=<the secret of the Stream app the router runs in> go run ./backend
 package main
 
 import (
@@ -26,9 +23,12 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
-	"github.com/GetStream/Vision-Agents/sdks/go/stream"
+	"github.com/golang-jwt/jwt/v5"
 )
+
+// tokenValidity is how long a token lasts. The SDK asks for a new one when Stream says the
+// one it has expired, so an hour-long call outlives it.
+const tokenValidity = time.Hour
 
 func main() {
 	addr := flag.String("addr", ":8099", "where to listen")
@@ -43,13 +43,13 @@ func main() {
 }
 
 func run(ctx context.Context, addr string) error {
-	client, err := stream.Backend{}.Client()
-	if err != nil {
-		return err
+	secret := os.Getenv("STREAM_API_SECRET")
+	if secret == "" {
+		return errors.New("STREAM_API_SECRET is needed: the secret of the Stream app the router runs in")
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /call-token", callToken(client))
+	mux.HandleFunc("POST /stream-token", streamToken(secret))
 
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
@@ -59,36 +59,36 @@ func run(ctx context.Context, addr string) error {
 		_ = server.Shutdown(closing)
 	}()
 
-	log.Printf("minting call tokens on %s", addr)
+	log.Printf("minting Stream user tokens on %s", addr)
 	return server.ListenAndServe()
 }
 
-// callToken answers the phone with credentials for the call a session is holding.
-func callToken(client *acceleration.ClientWithResponses) http.HandlerFunc {
+// streamToken answers the phone with a Stream user token for the user it names.
+func streamToken(secret string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var asked struct {
-			SessionID string `json:"session_id"`
+			UserID string `json:"user_id"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&asked); err != nil || asked.SessionID == "" {
-			http.Error(w, "a session_id is required", http.StatusBadRequest)
+		if err := json.NewDecoder(r.Body).Decode(&asked); err != nil || asked.UserID == "" {
+			http.Error(w, "a user_id is required", http.StatusBadRequest)
 			return
 		}
 
-		// Where a real application would authenticate the caller and decide whether they
-		// may join this particular call. A demo has nobody signed in, so it decides yes.
-		minted, err := client.CreateCallTokenWithResponse(
-			r.Context(), asked.SessionID, acceleration.CallTokenRequest{})
+		// Where a real application would authenticate the caller and sign for the user they
+		// signed in as. A demo has nobody signed in, so it signs for whoever is asked for.
+		now := time.Now()
+		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"user_id": asked.UserID,
+			"iat":     jwt.NewNumericDate(now),
+			"exp":     jwt.NewNumericDate(now.Add(tokenValidity)),
+		}).SignedString([]byte(secret))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		if minted.JSON200 == nil {
-			http.Error(w, minted.Status(), http.StatusBadGateway)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(minted.JSON200); err != nil {
+		if err := json.NewEncoder(w).Encode(map[string]string{"token": token}); err != nil {
 			log.Printf("could not answer with a token: %v", err)
 		}
 	}

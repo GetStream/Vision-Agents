@@ -23,6 +23,10 @@ public final class AgentSession {
     /// Why the socket stopped, or nil. A conversation that ended normally has none.
     public private(set) var failure: AgentsError?
 
+    /// Calls of tools that ask first, waiting for the person to answer with `decide`, oldest
+    /// first. A conversation kept in Stream Chat also shows each on its reply's step.
+    public private(set) var approvals: [ToolApprovalRequest] = []
+
     /// What the router holds this session by, which is what addresses it and its socket.
     public var id: String { session.id }
 
@@ -39,7 +43,8 @@ public final class AgentSession {
             asked: { [weak self] text in self?.conversation.said(text) })
     }
 
-    private let backend: Backend
+    /// Where the session lives and who is asking, for the chat channel to connect as.
+    let backend: Backend
     private let socket: SessionSocket
     private let tools: [String: AgentTool]
     private var pump: Task<Void, Never>?
@@ -126,6 +131,35 @@ public final class AgentSession {
         return session
     }
 
+    /// Answers a call waiting in `approvals`.
+    ///
+    /// Allowed, the tool runs and its result goes back as it would have. Declined, it never
+    /// runs: the model is told the person declined, and the call's step shows `summary`. A
+    /// call that is not waiting is left alone, so answering twice does nothing. If the answer
+    /// cannot be sent, the call waits again.
+    public func decide(_ toolCallID: String, allowed: Bool, summary: String = "") async throws {
+        guard let index = approvals.firstIndex(where: { $0.id == toolCallID }) else { return }
+        let request = approvals.remove(at: index)
+        let call = request.call
+        do {
+            try await socket.send(
+                .toolApproval(
+                    id: call.id, allowed: allowed, summary: summary, requestID: call.requestID,
+                    turnID: call.turnID))
+        } catch {
+            approvals.insert(request, at: min(index, approvals.count))
+            throw error
+        }
+        if allowed {
+            run(call, with: request.tool)
+        } else {
+            try await socket.send(
+                .toolResult(
+                    id: call.id, output: nil, error: "The person declined this call.",
+                    requestID: call.requestID, turnID: call.turnID))
+        }
+    }
+
     /// Ends the session and closes the socket. What it recorded and remembered is kept.
     public func close() async {
         try? await socket.send(.close)
@@ -133,6 +167,7 @@ public final class AgentSession {
         pump?.cancel()
         pump = nil
         isConnected = false
+        approvals = []
         conversation.state = .ended
     }
 
@@ -146,6 +181,7 @@ public final class AgentSession {
     private func stopped(_ error: AgentsError?) {
         failure = error
         isConnected = false
+        approvals = []
         conversation.state = .ended
     }
 
@@ -153,18 +189,30 @@ public final class AgentSession {
         conversation.apply(event)
         if let call = event.toolCall {
             answer(call)
+        } else if event.kind == .toolCancel {
+            approvals.removeAll { $0.id == event["id"].stringValue }
         }
     }
 
-    /// Runs a tool the model asked for and sends back what it returned.
-    ///
-    /// A task of its own, so a slow tool does not hold up the transcript. The handler is a
-    /// nonisolated async closure, so its body does not run on the main actor even though this
-    /// call site is on it.
+    /// Runs a tool the model asked for, or holds the call for the person when the tool asks
+    /// first.
     private func answer(_ call: AgentEvent.ToolCall) {
         // Session events are broadcast to observers as well as tool owners. A Python
         // video worker may own this request; an observer must not resolve it first.
         guard let tool = tools[call.name] else { return }
+        if let approval = tool.approval {
+            approvals.append(ToolApprovalRequest(call: call, approval: approval, tool: tool))
+        } else {
+            run(call, with: tool)
+        }
+    }
+
+    /// Runs a tool and sends back what it returned.
+    ///
+    /// A task of its own, so a slow tool does not hold up the transcript. The handler is a
+    /// nonisolated async closure, so its body does not run on the main actor even though this
+    /// call site is on it.
+    private func run(_ call: AgentEvent.ToolCall, with tool: AgentTool) {
         Task { [socket] in
             do {
                 let output = try await tool.run(call.argumentValues)
@@ -179,5 +227,21 @@ public final class AgentSession {
                         requestID: call.requestID, turnID: call.turnID))
             }
         }
+    }
+}
+
+/// A call of one of your tools, waiting for the person to allow it.
+public struct ToolApprovalRequest: Sendable, Identifiable {
+    public let call: AgentEvent.ToolCall
+    /// The question the tool asks.
+    public let approval: AgentTool.Approval
+    let tool: AgentTool
+
+    public var id: String { call.id }
+
+    /// The model's own words for why it wants the call, from the argument the approval names,
+    /// or the empty string.
+    public var reason: String {
+        approval.reasonArgument.flatMap { call.argumentValues[$0]?.stringValue } ?? ""
     }
 }

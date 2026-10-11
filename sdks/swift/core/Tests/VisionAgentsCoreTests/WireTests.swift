@@ -112,6 +112,14 @@ import Testing
             Command.toolResult(id: "c1", output: "ok", error: nil, requestID: "m1", turnID: "t1"),
             #"{"error":"","output":"ok","request_id":"m1","tool_call_id":"c1","turn_id":"t1","type":"tool_result"}"#
         ),
+        (
+            Command.toolApproval(id: "c1", allowed: true, requestID: "m1", turnID: "t1"),
+            #"{"allowed":true,"request_id":"m1","tool_call_id":"c1","turn_id":"t1","type":"tool_approval"}"#
+        ),
+        (
+            Command.toolApproval(id: "c1", allowed: false, summary: "Kept the card"),
+            #"{"allowed":false,"summary":"Kept the card","tool_call_id":"c1","type":"tool_approval"}"#
+        ),
     ])
     func aCommandEncodesToWhatTheRouterReads(command: Command, expected: String) throws {
         let encoder = JSONEncoder()
@@ -202,6 +210,18 @@ import Testing
         let url = backend.socketURL(path: "/v1/agents/sessions/s1/events")
 
         #expect(url.absoluteString == "wss://accelerate.gcp.stream-io-api.com/v1/agents/sessions/s1/events?api_key=key")
+    }
+
+    @Test func aKeyBesideACustomerIsStreamsAlone() async throws {
+        let backend = Backend(url: URL(string: "http://localhost:8080")!, customerID: "acme", apiKey: "key")
+        backend.setUser(User(id: "jlahey"), token: "t1")
+
+        let headers = try await backend.headers()
+        #expect(headers["X-Customer-Id"] == "acme")
+        #expect(headers["X-Stream-User-Id"] == "jlahey")
+        #expect(headers["Authorization"] == nil)
+        #expect(backend.socketURL(path: "/v1/agents/sessions/s1/events").query == "customer_id=acme")
+        #expect(try await backend.streamCredentials() == StreamCredentials(apiKey: "key", user: User(id: "jlahey"), token: "t1"))
     }
 
     @Test func aSecureRouterGetsASecureSocket() {

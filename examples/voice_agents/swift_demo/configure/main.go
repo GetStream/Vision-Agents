@@ -83,6 +83,9 @@ func run(ctx context.Context, dir string) error {
 		Subagent: text("openai/gpt-5.6-sol"),
 		Greeting: &acceleration.Greeting{Text: "Larkspur support, how can I help?"},
 		Keyterms: &[]string{"Larkspur", "store credit"},
+		// The app's chat shows a reply's steps. issue_refund asks the person first, which
+		// shows it whatever this says; lookup_order is shown because it is named here.
+		VisibleTools: &[]string{"lookup_order"},
 	})
 	if err != nil {
 		return err
@@ -128,10 +131,7 @@ func run(ctx context.Context, dir string) error {
 	if result.Unchanged {
 		fmt.Println("\nthe directory has not changed since the last sync")
 	}
-	// The id rather than the name, because the app is told which agent it talks to: reading
-	// the configs to resolve a name is server-side only.
-	fmt.Printf("\nnext       put the config id above in Demo.agentID, then:\n")
-	fmt.Printf("           go run ./backend\n")
+	fmt.Printf("\nnext       go run ./backend\n")
 	fmt.Printf("           open examples/voice_agents/swift_demo/app/SwiftDemo.xcodeproj and run it\n")
 	return nil
 }
@@ -172,9 +172,9 @@ func sync(
 }
 
 func complaint(response *acceleration.SyncAgentResponse) string {
-	for _, failure := range []*acceleration.Error{response.JSON400, response.JSON401} {
+	for _, failure := range []*acceleration.ErrorResponse{response.JSON400, response.JSON401} {
 		if failure != nil {
-			return failure.Error
+			return failure.Error.Message
 		}
 	}
 	return response.Status()

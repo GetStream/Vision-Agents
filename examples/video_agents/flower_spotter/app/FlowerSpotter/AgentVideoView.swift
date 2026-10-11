@@ -2,6 +2,7 @@ import StreamVideo
 import StreamVideoSwiftUI
 import SwiftUI
 import UIKit
+import VisionAgentsCore
 
 /// The device camera, with the agent's annotated track inset beside it.
 ///
@@ -10,14 +11,10 @@ import UIKit
 /// lags the camera by however long a round trip takes and is inset rather than filling the
 /// frame. What fills the frame is this device's own camera, which is immediate. A call where
 /// the device publishes nothing shows the agent's track full-frame instead.
-public struct AgentVideoView: View {
-    private let voice: VoiceSession
+struct AgentVideoView: View {
+    let voice: VoiceSession
 
-    public init(voice: VoiceSession) {
-        self.voice = voice
-    }
-
-    public var body: some View {
+    var body: some View {
         if let call = voice.call {
             CallCanvas(call: call)
         } else {
