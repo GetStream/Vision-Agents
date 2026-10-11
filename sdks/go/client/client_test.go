@@ -632,6 +632,28 @@ func TestImagesAndClipsGoOverWithTheQuestion(t *testing.T) {
 	}
 }
 
+func TestALengthAndAnEffortGoOverWithTheQuestion(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "Plan my week",
+		MaxOutputTokens(800), ReasoningEffort("high"),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	if body["max_output_tokens"] != float64(800) {
+		t.Errorf("the limit went over as %v", body["max_output_tokens"])
+	}
+	if body["reasoning_effort"] != "high" {
+		t.Errorf("the effort went over as %v", body["reasoning_effort"])
+	}
+	if id, _ := body["request_id"].(string); id == "" {
+		t.Error("a question with settings is still text only, so it goes with a request id")
+	}
+}
+
 func TestAClipOnDiskIsSentInline(t *testing.T) {
 	for name, kind := range map[string]string{"unboxing.webm": "video/webm", "unboxing": "video/mp4"} {
 		path := filepath.Join(t.TempDir(), name)

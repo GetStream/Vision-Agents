@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -374,7 +375,7 @@ func (s *AgentSuite) TestCloseCancelsAContextBoundPublisherWaitingAtTheEdge() {
 
 	// Start the normal cascade answer path, then hold the first audio write in the
 	// edge. Close must cancel its publication epoch before waiting for pipeline readers.
-	s.Require().NoError(s.agent.respondTurn("turn-close", participant, "hello", heard{}, "", nil))
+	s.Require().NoError(s.agent.respondTurn("turn-close", participant, "hello", heard{}, "", nil, options.LLM{}))
 	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the close test did not start synthesis")
 	turn := s.model.requests()[0].ID
 	s.voice.emitter.Send(tts.AudioChunk{

@@ -25,6 +25,7 @@ import (
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -465,10 +466,14 @@ func (s *Session) Say(ctx context.Context, text string) error {
 // It returns the id the turn was recorded as, which is the handle a caller follows one
 // particular answer by: its items are asked for under it. Empty when nothing is being
 // recorded -- an incognito session, or a deployment with no store -- and empty for a native
-// session, where the model decides for itself what counts as a turn.
-func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart) (string, error) {
+// session, where the model decides for itself what counts as a turn. asked is what the
+// caller wants changed about this reply alone.
+func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart, asked options.LLM) (string, error) {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
+	if err := s.current().CheckAsked(asked); err != nil {
+		return "", stack.Wrap(err)
+	}
 	// Typed into a call, the text is heard there, and the call's transcript writes it.
 	if s.persisted != nil && s.spec.Text {
 		if s.spec.Caller.UserID != "" {
@@ -478,7 +483,7 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 			return "", stack.Wrap(err)
 		}
 	}
-	turnID, err := s.current().RespondTo(ctx, text, images)
+	turnID, err := s.current().RespondTo(ctx, text, images, asked)
 	if err != nil {
 		if s.persisted != nil && s.spec.Text {
 			s.persisted.Cancel()
@@ -500,12 +505,16 @@ func (s *Session) Durable() bool { return s.persisted != nil }
 // RespondCommand accepts one durable text submission. The receipt may be replayed,
 // but only the first successful acceptance is allowed to invoke the model, and only
 // that one returns the id of the response it recorded. clientID names the install the
-// command came from, which a client tool called while answering is addressed to.
-func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string) (persistent.CommandReceipt, string, error) {
+// command came from, which a client tool called while answering is addressed to. asked is
+// what the caller wants changed about this reply alone.
+func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, asked options.LLM) (persistent.CommandReceipt, string, error) {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.persisted == nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(errors.New("command IDs require a persistent text conversation"))
+	}
+	if err := s.current().CheckAsked(asked); err != nil {
+		return persistent.CommandReceipt{}, "", stack.Wrap(err)
 	}
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(err)
@@ -526,7 +535,7 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string)
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
-	turnID, err := s.current().RespondTo(ctx, text, nil)
+	turnID, err := s.current().RespondTo(ctx, text, nil, asked)
 	if err != nil {
 		s.persisted.Cancel()
 		return receipt, "", stack.Wrap(err)
@@ -572,7 +581,7 @@ func (s *Session) FollowUp(ctx context.Context, text string) error {
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
-	turnID, err := s.current().RespondTo(ctx, text, nil)
+	turnID, err := s.current().RespondTo(ctx, text, nil, options.LLM{})
 	if err != nil {
 		s.persisted.Cancel()
 		return stack.Wrap(err)

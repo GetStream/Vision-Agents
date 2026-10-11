@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -443,7 +444,7 @@ func (s *Service) run(config store.AgentConfig, declared store.PluginEvent, sub 
 
 	s.logger.Info("a plugin event opened a conversation", "plugin", sub.PluginID,
 		"event", delivered.Name, "config", config.ID, "session", created.ID())
-	if _, err := created.Respond(ctx, said(sub.PluginID, delivered), nil); err != nil {
+	if _, err := created.Respond(ctx, said(sub.PluginID, delivered), nil, options.LLM{}); err != nil {
 		s.logger.Error("the agent could not take a plugin event", "session", created.ID(), "error", err)
 		return
 	}

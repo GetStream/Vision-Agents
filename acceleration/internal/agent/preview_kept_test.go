@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -217,7 +218,7 @@ func (s *AgentSuite) TestAPreviewKeptForAWaitIsNotTakenOverByAReplyToSomethingEl
 	s.eventually(func() bool { return s.keptPreviews() == 1 }, "the wait did not keep the preview")
 	kept := s.watchPreview()
 
-	_, err := s.agent.RespondTo(s.ctx, "what time is it", nil)
+	_, err := s.agent.RespondTo(s.ctx, "what time is it", nil, options.LLM{})
 	s.Require().NoError(err)
 
 	s.eventually(kept.Load, "the kept preview survived a reply that changed the conversation")

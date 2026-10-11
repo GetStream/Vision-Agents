@@ -10,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -143,7 +144,7 @@ func (s *SessionSuite) TestACommandNamesTheResponseItIsRecordedAs() {
 	held := &heldRecorder{}
 	running.records = held
 
-	_, responseID, err := running.RespondCommand(s.ctx, "command-a", "First question", "")
+	_, responseID, err := running.RespondCommand(s.ctx, "command-a", "First question", "", options.LLM{})
 	s.Require().NoError(err)
 	s.Require().NotEmpty(responseID, "a caller following this command needs the turn to read back")
 
@@ -163,7 +164,7 @@ func (s *SessionSuite) TestAFinishedLoginCarriesOnWithWhatItWasAskedFor() {
 	s.persists()
 	running := s.commands()
 	running.persisted.AcceptLogins([]string{"slack"})
-	_, _, err := running.RespondCommand(s.ctx, "command-a", "Tell Nash a joke on Slack", "")
+	_, _, err := running.RespondCommand(s.ctx, "command-a", "Tell Nash a joke on Slack", "", options.LLM{})
 	s.Require().NoError(err)
 	s.Equal("Tell Nash a joke on Slack", s.asked())
 	slack, ok := plugins.Lookup("slack")
@@ -195,7 +196,7 @@ func (s *SessionSuite) TestALoginFinishedAfterTheWatcherLeftStillCarriesOn() {
 	running := s.commands()
 	_, detach := running.Watch()
 	running.persisted.AcceptLogins([]string{"slack"})
-	_, _, err := running.RespondCommand(s.ctx, "command-a", "Tell Nash a joke on Slack", "")
+	_, _, err := running.RespondCommand(s.ctx, "command-a", "Tell Nash a joke on Slack", "", options.LLM{})
 	s.Require().NoError(err)
 	s.Equal("Tell Nash a joke on Slack", s.asked())
 	slack, ok := plugins.Lookup("slack")
@@ -268,7 +269,7 @@ func (s *SessionSuite) TestStoppingACommandLeavesALaterOneAnsweringItsOwnQuestio
 	s.persists()
 	running := s.commands()
 
-	first, _, err := running.RespondCommand(s.ctx, "command-a", "First question", "")
+	first, _, err := running.RespondCommand(s.ctx, "command-a", "First question", "", options.LLM{})
 	s.Require().NoError(err)
 	s.Equal("First question", s.asked())
 
@@ -277,7 +278,7 @@ func (s *SessionSuite) TestStoppingACommandLeavesALaterOneAnsweringItsOwnQuestio
 	s.Equal("cancelled", stopped.State)
 	s.Equal(first.AssistantMessageID, stopped.AssistantMessageID)
 
-	second, _, err := running.RespondCommand(s.ctx, "command-b", "Second question", "")
+	second, _, err := running.RespondCommand(s.ctx, "command-b", "Second question", "", options.LLM{})
 	s.Require().NoError(err)
 	s.NotEqual(first.AssistantMessageID, second.AssistantMessageID)
 	s.Equal("Second question", s.asked())
@@ -310,7 +311,7 @@ func (s *SessionSuite) TestStoppingACommandInTheAcceptanceGapLeavesNothingToRun(
 
 	// No wait for the model here: the stop is decided in the gap between the command
 	// being accepted and its execution producing anything.
-	accepted, _, err := running.RespondCommand(s.ctx, "command-a", "First question", "")
+	accepted, _, err := running.RespondCommand(s.ctx, "command-a", "First question", "", options.LLM{})
 	s.Require().NoError(err)
 	s.Equal("thinking", accepted.State)
 
@@ -335,7 +336,7 @@ func (s *SessionSuite) TestRepeatedStopsAndFinishedCommandsConvergeOnOneReceipt(
 	running := s.commands()
 	s.gated.answers(1)
 
-	finished, _, err := running.RespondCommand(s.ctx, "command-a", "First question", "")
+	finished, _, err := running.RespondCommand(s.ctx, "command-a", "First question", "", options.LLM{})
 	s.Require().NoError(err)
 	s.Equal("First question", s.asked())
 	s.eventually(func() bool {
@@ -350,7 +351,7 @@ func (s *SessionSuite) TestRepeatedStopsAndFinishedCommandsConvergeOnOneReceipt(
 	s.Equal("completed", replayed.State)
 	s.Equal(finished.AssistantMessageID, replayed.AssistantMessageID)
 
-	live, _, err := running.RespondCommand(s.ctx, "command-b", "Second question", "")
+	live, _, err := running.RespondCommand(s.ctx, "command-b", "Second question", "", options.LLM{})
 	s.Require().NoError(err)
 	s.Equal("Second question", s.asked())
 
@@ -381,7 +382,7 @@ func (s *SessionSuite) TestConcurrentStopsAndSubmissionsKeepEachCommandSeparate(
 	running := s.commands()
 	s.gated.answers(8)
 
-	first, _, err := running.RespondCommand(s.ctx, "command-a", "First question", "")
+	first, _, err := running.RespondCommand(s.ctx, "command-a", "First question", "", options.LLM{})
 	s.Require().NoError(err)
 
 	var workers sync.WaitGroup
@@ -396,7 +397,7 @@ func (s *SessionSuite) TestConcurrentStopsAndSubmissionsKeepEachCommandSeparate(
 	}
 	var second persistent.CommandReceipt
 	s.eventually(func() bool {
-		second, _, err = running.RespondCommand(s.ctx, "command-b", "Second question", "")
+		second, _, err = running.RespondCommand(s.ctx, "command-b", "Second question", "", options.LLM{})
 		return err == nil
 	}, "a new command should be accepted once the stopped one is terminal")
 	workers.Wait()
@@ -501,7 +502,7 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	s.Require().NoError(err)
 	_, detachAlice := alice.Watch()
 	defer detachAlice()
-	_, _, err = alice.RespondCommand(s.ctx, "alice-command", "The team codeword is TEAM_CANVAS_42", "")
+	_, _, err = alice.RespondCommand(s.ctx, "alice-command", "The team codeword is TEAM_CANVAS_42", "", options.LLM{})
 	s.Require().NoError(err)
 	s.eventually(func() bool {
 		messages := s.stored(alice)
@@ -536,16 +537,16 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	}, 150*time.Millisecond, 5*time.Millisecond, "Alice's late detach must not cancel Bob's command")
 	_, err = bob.InterruptCommand("bob-pending")
 	s.Require().NoError(err)
-	_, _, err = bob.RespondCommand(s.ctx, "bob-command", "What is our codeword?", "")
+	_, _, err = bob.RespondCommand(s.ctx, "bob-command", "What is our codeword?", "", options.LLM{})
 	s.Require().NoError(err)
 	setMembers("alice")
-	_, _, err = bob.RespondCommand(s.ctx, "removed-command", "This must not run", "")
+	_, _, err = bob.RespondCommand(s.ctx, "removed-command", "This must not run", "", options.LLM{})
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
 	_, err = bob.Command("bob-command")
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
 	_, err = bob.InterruptCommand("bob-command")
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
-	_, _, err = alice.RespondCommand(s.ctx, "stale-session-command", "An old session must not act as Bob", "")
+	_, _, err = alice.RespondCommand(s.ctx, "stale-session-command", "An old session must not act as Bob", "", options.LLM{})
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
 	detachBob()
 	_, err = s.manager.Create(s.ctx, spec)
@@ -567,7 +568,7 @@ func (s *SessionSuite) TestAVoiceSessionRestoresChatHistoryWithoutPersisting() {
 		Caller:              routing.Caller{UserID: "employee-1"},
 	})
 	s.Require().NoError(err)
-	_, _, err = written.RespondCommand(s.ctx, "seed-1", "The project name is Nimbus", "")
+	_, _, err = written.RespondCommand(s.ctx, "seed-1", "The project name is Nimbus", "", options.LLM{})
 	s.Require().NoError(err)
 	cid := written.Spec().ConversationID
 	s.eventually(func() bool {

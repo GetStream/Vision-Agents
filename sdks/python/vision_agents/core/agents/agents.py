@@ -1100,10 +1100,6 @@ class Agent:
                 await self.mcp_manager.connect_all()
 
         await self.authenticate()
-        self.conversation = await self.edge.create_conversation(
-            call, self.agent_user, self.instructions.full_reference
-        )
-        self.llm.set_conversation(self.conversation)
 
         with self.span("llm.join_remote"):
             await pipeline.join_remote(self._remote_call(call.id))

@@ -601,7 +601,7 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.llm ? { llm: declared.llm } : {}),
     ...(declared.harness ? { harness: declared.harness } : {}),
     ...(declared.search ? { search: declared.search } : {}),
-    ...(declared.greeting ? { greeting: { text: declared.greeting } } : {}),
+    ...(declared.greeting ? { greeting: declared.greeting } : {}),
     ...(declared.plugins?.length ? { plugins: declared.plugins } : {}),
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),

@@ -453,6 +453,23 @@ func (s *HarnessSuite) TestAReplyToAToolResultThinksAndACallerTurnDoesNot() {
 		"at none the model asks to book a free table instead of booking it")
 }
 
+func (s *HarnessSuite) TestWhatATurnAskedForWinsOverWhatTheHarnessWouldChoose() {
+	s.build(false)
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "high"}}
+	limit := 64
+
+	s.answer(Turn{
+		ID:        "tool-1",
+		History:   []llm.Message{{Role: llm.User, Content: "a table for four at 7:30"}},
+		AfterTool: true,
+		Asked:     llmoptions.LLM{ReasoningEffort: "none", MaxOutputTokens: &limit},
+	})
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.Equal("none", s.fast.requests()[0].Reasoning.Effort)
+	s.Equal(64, s.fast.requests()[0].MaxOutputTokens)
+}
+
 func (s *HarnessSuite) TestToolsAreOfferedToTheFastModel() {
 	s.tools = testTools()
 	s.build(false)
