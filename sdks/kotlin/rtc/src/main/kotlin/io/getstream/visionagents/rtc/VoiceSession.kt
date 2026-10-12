@@ -10,38 +10,31 @@ import io.getstream.video.android.core.socket.common.token.TokenProvider
 import io.getstream.video.android.model.User
 import io.getstream.visionagents.core.AgentSession
 import io.getstream.visionagents.core.AgentTool
+import io.getstream.visionagents.core.AgentsException
+import io.getstream.visionagents.core.Backend
 import io.getstream.visionagents.core.SessionOptions
+import io.getstream.visionagents.core.StreamClients
+import io.getstream.visionagents.core.StreamCredentials
 import io.getstream.visionagents.core.VisionAgents
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/**
- * Credentials for joining the Stream call an agent is on.
- *
- * Minting these is server-side only, so they come from the app's own backend rather than from
- * this device. A backend holding the Go, Python or Node SDK asks the router for a call token
- * and hands down what is here.
- */
-public data class CallCredentials(
-    val apiKey: String,
-    val token: String,
-    val userId: String,
-    val userName: String,
-    /** The Stream call to join, `agent:<session id>`. */
-    val callId: String,
-    val callType: String,
-)
+private const val KIND = "video"
+
+/** The last client built here, so the process-wide instance can be told apart from the app's. */
+@Volatile private var builtHere: StreamVideo? = null
 
 /**
- * Asks the app's backend for credentials to join the call a session is holding.
+ * Hands over the app's own Stream Video client, so every call is joined on it.
  *
- * A function rather than a value because a token expires an hour in, and a long call that was
- * handed one value would drop when it did.
+ * Stream Video keeps one client per process, so an app with one of its own hands it over rather
+ * than have another built. It is never removed here.
  */
-public fun interface CallCredentialsProvider {
-    public suspend fun credentials(sessionId: String): CallCredentials
+@OptIn(StreamClients::class)
+public fun VisionAgents.use(video: StreamVideo) {
+    backend.give(KIND, video)
 }
 
 /** Joining the call failed for a reason Stream's Video SDK gave rather than threw. */
@@ -50,12 +43,11 @@ public class CallFailed(message: String) : Exception(message)
 /**
  * A spoken conversation: the agent on a call, and this device on the same call.
  *
- * Three things happen, in this order, and the order matters:
+ * Two things happen, in this order:
  *
  * 1. The router starts a session with voice on, which puts the agent on the session's own
  *    call, `agent:<session id>`.
- * 2. The app's backend mints a token for joining that call.
- * 3. Stream's Video SDK joins it, and audio starts flowing.
+ * 2. Stream's Video SDK joins that call as the user `setUser` named, and audio starts flowing.
  *
  * The transcript comes over the session socket rather than out of the call, so what is said is
  * readable even before anybody is listening to it. That is [session], the same [AgentSession] a
@@ -73,8 +65,6 @@ public class VoiceSession private constructor(
     private val muted = MutableStateFlow(false)
     private val cameraOn = MutableStateFlow(false)
     private val stoppedBy = MutableStateFlow<Throwable?>(null)
-    /** The client this session built, which is the only one it may remove. */
-    private var built: StreamVideo? = null
 
     /** The Stream call this device is on, once it has joined. */
     public val call: StateFlow<Call?> = joined.asStateFlow()
@@ -96,13 +86,13 @@ public class VoiceSession private constructor(
      * the back lens, since what an agent is shown is whatever the caller is pointing at. Both are
      * set before joining, so no front-facing frame is ever published.
      *
-     * [credentials] is asked for the token to join with, and asked again when it expires.
+     * It joins on the client handed over with [use], or else on one built from the agents' key,
+     * user and token, which every voice session then shares.
      */
-    public suspend fun join(camera: Boolean = false, credentials: CallCredentialsProvider) {
+    public suspend fun join(camera: Boolean = false) {
         if (joined.value != null) return
         try {
-            val joining = credentials.credentials(session.id)
-            val call = client(joining, credentials).call(joining.callType, joining.callId)
+            val call = client().call(session.session.callType, session.session.callId)
             call.camera.setDirection(CameraDirection.Back)
             call.camera.setEnabled(camera)
             call.microphone.setEnabled(true)
@@ -146,7 +136,8 @@ public class VoiceSession private constructor(
 
     /**
      * Leaves this device's call. Closes the router session only if this device started it; an
-     * attached device navigating away leaves it running.
+     * attached device navigating away leaves it running. The Video client stays connected for
+     * the next call, until [VisionAgents.disconnect].
      */
     public suspend fun leave() {
         leaveCall(closeSession = createdLocally)
@@ -161,31 +152,57 @@ public class VoiceSession private constructor(
         joined.value?.leave()
         joined.value = null
         cameraOn.value = false
-        if (built != null) {
-            StreamVideo.removeClient()
-            built = null
-        }
         if (closeSession) session.close()
     }
 
     /**
-     * Stream's Video SDK keeps one client per process and refuses a second. One the host already
-     * has for this user is used as it is; one for anybody else is the host's to remove first.
+     * The shared Video client for the agents' user.
+     *
+     * Stream's Video SDK keeps one client per process and refuses a second, so one the host built
+     * without handing it over is used if it is signed in as the same user and refused otherwise.
      */
-    private fun client(joining: CallCredentials, credentials: CallCredentialsProvider): StreamVideo {
-        StreamVideo.instanceOrNull()?.takeIf { it.user.id == joining.userId }?.let { return it }
-        // The provider is what the SDK calls when the token expires, an hour in. Handing it one
-        // that asks the backend again is what keeps a long call from dropping.
+    @OptIn(StreamClients::class)
+    private suspend fun client(): StreamVideo {
+        val backend = session.backend
+        val existing = StreamVideo.instanceOrNull()
+        if (existing != null && existing !== builtHere) {
+            if (existing.user.id != backend.user?.id) {
+                throw AgentsException.Configuration(
+                    "this process already has a StreamVideo, signed in as ${existing.user.id}: " +
+                        "sign it in as the user setUser named and hand it over with " +
+                        "agents.use(video), since Stream Video refuses a second",
+                )
+            }
+            backend.give(KIND, existing)
+        }
+        val video = backend.shared(
+            KIND,
+            open = { build(backend, it) },
+            disconnect = { StreamVideo.removeClient() },
+        )
+        val user = backend.user
+        if (user != null && video.user.id != user.id) {
+            throw AgentsException.Configuration(
+                "the video client is connected as ${video.user.id} but setUser named ${user.id}: " +
+                    "connect it as the same user, or the call is somebody else's",
+            )
+        }
+        return video
+    }
+
+    private fun build(backend: Backend, credentials: StreamCredentials): StreamVideo {
+        // The provider is what the SDK calls when the token expires, an hour in. Asking the
+        // agents' token provider again is what keeps a long call from dropping.
         val refresh = object : TokenProvider {
-            override suspend fun loadToken(): String = credentials.credentials(session.id).token
+            override suspend fun loadToken(): String = backend.streamCredentials(refresh = true).token
         }
         return StreamVideoBuilder(
             context = context.applicationContext,
-            apiKey = joining.apiKey,
-            user = User(id = joining.userId, name = joining.userName),
-            token = joining.token,
+            apiKey = credentials.apiKey,
+            user = User(id = credentials.user.id, name = credentials.user.name),
+            token = credentials.token,
             tokenProvider = refresh,
-        ).build().also { built = it }
+        ).build().also { builtHere = it }
     }
 
     public companion object {

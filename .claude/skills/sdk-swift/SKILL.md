@@ -269,13 +269,17 @@ Three layers, in order of how much they cost to run:
 2. **Live tests.** `LiveTests` is gated on `VISION_AGENTS_URL`, which is the Swift answer to
    `@pytest.mark.integration`. It creates a real session, asks the model something and waits
    for a real tool call. Mark the suite `@MainActor`, because `AgentSession` is.
+   `PostureTests` fails offline if the generated client holds an operation the spec does not
+   mark `x-client-accessible`, and with `INTEGRATION_ROUTER_KEY` and `_SECRET` checks a
+   device token's 403s against a router in `api_key` mode (see the JS README for that router).
 3. **Builds.** `VoiceSession` and `chat()` are wrappers over Stream's SDKs, and the demos are
    views; build them for the simulator. What they share is in `Backend` and tested there
    (`StreamCredentialsTests`).
 
 The package is iOS only, so the tests run on a simulator: `xcodebuild test -scheme
 vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`, with
-`TEST_RUNNER_VISION_AGENTS_URL` for the live tests.
+`TEST_RUNNER_VISION_AGENTS_URL` for the live tests and `TEST_RUNNER_INTEGRATION_ROUTER_KEY`
+and `_SECRET` for the keyed posture checks.
 
 Wait on a condition with a deadline, never `Task.sleep` for a fixed guess:
 

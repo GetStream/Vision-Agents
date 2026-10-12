@@ -27,8 +27,9 @@ expected_tools:
     args: {time: "7:30", party_size: 4, patio: true}
   - name: create_reservation
     args: {time: "7:30", party_size: 4, patio: true, allergen: peanut, name: Alvarez}
+# The call is about the filler: the allergen is checked where it is booked, not in what is said.
 entities:
-  - {name: allergen, value: peanut, in_speech: true, in_tools: true, tool: create_reservation, arg: allergen}
+  - {name: allergen, value: peanut, in_speech: false, in_tools: true, tool: create_reservation, arg: allergen}
 policy:
   - Say a filler such as one moment while the tool runs. Do not go silent for 3 seconds.
 judge:

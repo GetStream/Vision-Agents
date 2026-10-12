@@ -106,6 +106,25 @@ jobs:
 
       - uses: ./.github/actions/voicebench-setup
 
+      # A router session's agent joins the call agent:<session id>, so the Stream app needs that
+      # call type. Create it when it is missing rather than fail every call on it.
+      - name: Make sure the Stream app has the agent call type
+        run: |
+          b64() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+          header=$(printf '{"alg":"HS256","typ":"JWT"}' | b64)
+          claims=$(printf '{"server":true}' | b64)
+          signature=$(printf '%s.%s' "$header" "$claims" | openssl dgst -sha256 -hmac "$STREAM_API_SECRET" -binary | b64)
+          auth=(-H "Authorization: $header.$claims.$signature" -H 'stream-auth-type: jwt')
+          calltypes="https://video.stream-io-api.com/api/v2/video/calltypes?api_key=$STREAM_API_KEY"
+          present() { curl -fsS "${auth[@]}" "$calltypes" | jq -e '.call_types | has("agent")' >/dev/null; }
+          if present; then
+            echo "The agent call type is there"
+            exit 0
+          fi
+          # Another run may create it at the same moment, which this one's create then refuses.
+          curl -fsS "${auth[@]}" -H 'Content-Type: application/json' -d '{"name":"agent"}' "$calltypes" >/dev/null || present
+          echo "Created the agent call type"
+
       # The Gemma deployment scales down when idle and takes minutes to come back, and calls
       # placed while it wakes go unanswered and score as failures. Wait for it to answer first,
       # and fail here, plainly, if it never does.
