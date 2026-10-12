@@ -91,6 +91,11 @@ public struct Backend: Sendable {
         setUser(user, token: { token })
     }
 
+    /// Acts as a guest from here on.
+    public func setUser(_ guest: Guest) {
+        setUser(User(id: guest.id, name: guest.name), token: guest.token)
+    }
+
     /// Forgets the user, which is what signing out is.
     public func clearUser() {
         identity.clear()

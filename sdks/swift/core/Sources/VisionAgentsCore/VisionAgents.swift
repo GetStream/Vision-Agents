@@ -85,8 +85,31 @@ public struct VisionAgents: Sendable {
         backend.setUser(user, token: token)
     }
 
+    /// Acts as this guest from here on.
+    public func setUser(_ guest: Guest) {
+        backend.setUser(guest)
+    }
+
     /// Forgets the user, which is what signing out is.
     public func clearUser() {
+        backend.clearUser()
+    }
+
+    /// Gets or creates a guest, so somebody can talk to an agent before they sign up.
+    ///
+    /// Remembered in `store` where there is one, so the next launch is the same guest and not
+    /// a second one with an empty history. Pass it to `setUser` to act as them. Moving a
+    /// guest's conversations onto the account they turn out to be is server-side only: it is
+    /// the backend that just authenticated them that knows which guest they were.
+    public func guestUser(
+        _ options: GuestOptions = GuestOptions(), store: (any GuestStore)? = nil
+    ) async throws -> Guest {
+        try await backend.guest(options, store: store)
+    }
+
+    /// Forgets the remembered guest without minting another, which is what signing out is.
+    public func forgetGuest(store: any GuestStore) throws {
+        try store.clear()
         backend.clearUser()
     }
 

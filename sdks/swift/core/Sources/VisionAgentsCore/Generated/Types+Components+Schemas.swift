@@ -927,6 +927,120 @@ extension Components {
             case exact = "exact"
             case variation = "variation"
         }
+        /// - Remark: Generated from `#/components/schemas/GuestUser`.
+        internal struct GuestUser: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/GuestUser/custom`.
+            internal struct CustomPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
+                /// Creates a new `CustomPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// - Remark: Generated from `#/components/schemas/GuestUser/custom`.
+            internal var custom: Components.Schemas.GuestUser.CustomPayload?
+            /// When the token stops working. A guest coming back after it asks for another.
+            ///
+            /// - Remark: Generated from `#/components/schemas/GuestUser/expires_at`.
+            internal var expiresAt: Foundation.Date?
+            /// - Remark: Generated from `#/components/schemas/GuestUser/id`.
+            internal var id: Swift.String
+            /// - Remark: Generated from `#/components/schemas/GuestUser/name`.
+            internal var name: Swift.String?
+            /// A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
+            ///
+            /// - Remark: Generated from `#/components/schemas/GuestUser/token`.
+            internal var token: Swift.String
+            /// Creates a new `GuestUser`.
+            ///
+            /// - Parameters:
+            ///   - custom:
+            ///   - expiresAt: When the token stops working. A guest coming back after it asks for another.
+            ///   - id:
+            ///   - name:
+            ///   - token: A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
+            internal init(
+                custom: Components.Schemas.GuestUser.CustomPayload? = nil,
+                expiresAt: Foundation.Date? = nil,
+                id: Swift.String,
+                name: Swift.String? = nil,
+                token: Swift.String
+            ) {
+                self.custom = custom
+                self.expiresAt = expiresAt
+                self.id = id
+                self.name = name
+                self.token = token
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case custom
+                case expiresAt = "expires_at"
+                case id
+                case name
+                case token
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/GuestUserRequest`.
+        internal struct GuestUserRequest: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/GuestUserRequest/custom`.
+            internal struct CustomPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
+                /// Creates a new `CustomPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// - Remark: Generated from `#/components/schemas/GuestUserRequest/custom`.
+            internal var custom: Components.Schemas.GuestUserRequest.CustomPayload?
+            /// A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
+            ///
+            /// - Remark: Generated from `#/components/schemas/GuestUserRequest/id`.
+            internal var id: Swift.String?
+            /// What to call them, for a transcript a person reads later.
+            ///
+            /// - Remark: Generated from `#/components/schemas/GuestUserRequest/name`.
+            internal var name: Swift.String?
+            /// Creates a new `GuestUserRequest`.
+            ///
+            /// - Parameters:
+            ///   - custom:
+            ///   - id: A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
+            ///   - name: What to call them, for a transcript a person reads later.
+            internal init(
+                custom: Components.Schemas.GuestUserRequest.CustomPayload? = nil,
+                id: Swift.String? = nil,
+                name: Swift.String? = nil
+            ) {
+                self.custom = custom
+                self.id = id
+                self.name = name
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case custom
+                case id
+                case name
+            }
+        }
         /// - Remark: Generated from `#/components/schemas/HistoryMessage`.
         internal struct HistoryMessage: Codable, Hashable, Sendable {
             /// When it was said. The model is shown it beside a person's message, so it can tell an hour ago from just now.
