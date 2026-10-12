@@ -1085,6 +1085,26 @@ func (s *HarnessSuite) TestAWrittenReplyCarryingAColleaguesQuestionIsToldNothing
 	s.NotContains(s.fast.requests()[1].Instructions, usePolicy)
 }
 
+func (s *HarnessSuite) TestAWrittenConversationLoadingItsSkillsIsToldTheSourceOrder() {
+	// With no subagent there is no colleague to hand to, so the skills arrive as load_skill
+	// and the model is told to take a skill before the knowledge base and the web.
+	built, err := DefaultTools()
+	s.Require().NoError(err)
+	lookup, _ := built.Lookup("lookup")
+	search, _ := built.Lookup("search")
+	s.skills = Skills{Skills: []Skill{{Name: "sales", Description: "pricing", Instructions: "quote"}}}
+	s.tools = Tools{Tools: []Tool{lookup, search, s.skills.LoadTool()}}
+	s.build(false)
+	s.harness.options.Text = true
+
+	s.respond("turn-1", "how much does moderation cost")
+
+	s.Require().Len(s.fast.requests(), 1)
+	instructions := s.fast.requests()[0].Instructions
+	s.Contains(instructions, s.tools.SourceOrder())
+	s.NotContains(instructions, `<ask skill=`, "a skill is loaded, not handed to a colleague")
+}
+
 func (s *HarnessSuite) TestSomebodyListeningIsToldToFillThePauseBeforeACall() {
 	s.tools = testTools()
 	s.build(true)

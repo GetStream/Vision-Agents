@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -167,6 +168,46 @@ func (t Tools) TextPrompt() string {
 		return ""
 	}
 	return textUsePolicy + " " + sayDo
+}
+
+// sources are the tools an answer can come from, most authoritative first: what the
+// business told the agent to do, then what it wrote down, then the open web. A tool's own
+// description cannot say this, since none of them knows which of the others is offered.
+var sources = []struct{ tool, what string }{
+	{LoadSkillTool, "a matching skill"},
+	{"lookup", "the knowledge base"},
+	{"search", "the web"},
+}
+
+// SourceOrder is what the model is told about the order to take answers from the sources
+// it is offered. It is empty with fewer than two, since there is nothing to order.
+func (t Tools) SourceOrder() string {
+	offers := func(name string) bool {
+		_, ok := t.Lookup(name)
+		return ok
+	}
+	var offered []string
+	for _, source := range sources {
+		if offers(source.tool) {
+			offered = append(offered, fmt.Sprintf("%s (%s)", source.what, source.tool))
+		}
+	}
+	if len(offered) < 2 {
+		return ""
+	}
+	order := "Take answers from your sources in this order: " + strings.Join(offered, ", then ") +
+		". Go to the next only when the one before has no answer. These calls depend on each " +
+		"other, so make them one at a time in that order, never together, and never let a " +
+		"later source contradict an earlier one."
+	if offers(LoadSkillTool) {
+		order += " Load a skill only when its description covers the request; when none does, " +
+			"start with the next source."
+	}
+	if offers("lookup") && offers("search") {
+		order += " Always ask the knowledge base before the web, even when you expect it to " +
+			"have nothing."
+	}
+	return order
 }
 
 // Validate reports the first tool the harness could not use.

@@ -1894,6 +1894,18 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 ## Bug Fixes
 
 - The router starts on a database that already applied the migrations shipped before customer-hosted models. That migration was numbered earlier than one already applied, and goose refuses to start when it finds an unapplied migration below the database version. It now runs after that version. A database that already created `custom_models` under the old number keeps the table.
+- A text agent takes answers from its skills before its knowledge base, and from its
+  knowledge base before the web. Its skills ran on a subagent that called no tool, so a
+  skill could never send the agent on to a pricing page or the knowledge base, and nothing
+  told the model a skill outranked `search`: a support agent searched the web for prices its
+  skill and knowledge base already held. A text session now has no subagent; its model loads
+  the skills its config names with the built-in `load_skill` tool, which returns
+  `{"name", "instructions"}` in `tool_ran`, and follows them with every tool it has. Every
+  agent offered more than one of `load_skill`, `lookup` and `search` is told that order, to
+  call them one at a time, and that a later source never contradicts an earlier one. A text
+  agent with a sandbox still hands its skills to a subagent, a text agent naming no skills
+  is offered none (the built-in set is written for a subagent), and a caller's own tool
+  named `load_skill` keeps the name.
 - `POST /v1/agents/connections/{id}/validate` no longer returns a provider error that echoes the credential. The answer's error is the same text GET and list store: every value the credential is sent as is replaced, and the text is cut at 1 KiB. When credentials change during the check, the answer keeps no provider text (AI-1078).
 - A test copy or a duplicate of an agent no longer silences the agent on its Slack bot, Linq, Telnyx or WhatsApp connection. A channel connection belongs to one live agent config: a create, update, patch or sync that newly binds one as `fixed` while another live config binds it is a 409 `channel_connection_taken` naming that config. A config tagged `draft_of` (the dashboard's test copy) is not refused, answers no channel message and subscribes to no MCP event. Configs that already shared a connection keep working: the oldest answers, and the router logs a warning naming the others. An MCP event is subscribed to once per connection, by the oldest live config that declares it, so a copy no longer opens a second conversation for each event (AI-1049, AI-1048).
 - `phone hooks -remove` works when the tunnel it names is gone. Stream refuses an update of

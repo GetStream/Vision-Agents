@@ -327,12 +327,32 @@ func (s *SpecSuite) TestThinkingBecomesTheReasoningEffort() {
 	s.Equal("high", spec.LLMOverwrites().ReasoningEffort)
 }
 
-func (s *SpecSuite) TestATextSessionThinksOnItsOwnModel() {
+func (s *SpecSuite) TestATextSessionHasNoSubagent() {
+	// Its model loads the skills itself, keeping the tools a subagent would not have.
 	spec := Spec{CustomerID: "acme", Text: true, LLMTarget: "llm-fast", SubagentTarget: "llm-thinking"}
 
 	s.Require().NoError(spec.Normalize())
 
+	s.Empty(spec.SubagentTarget)
+	s.Equal("llm-fast", spec.reviewTarget(), "it is still reviewed on the model that held it")
+}
+
+func (s *SpecSuite) TestATextSessionWithASandboxThinksOnItsOwnModel() {
+	// Only a subagent is given the sandbox, so its skills are still handed over.
+	spec := Spec{CustomerID: "acme", Text: true, LLMTarget: "llm-fast", SubagentTarget: "llm-thinking", Sandbox: "daytona"}
+
+	s.Require().NoError(spec.Normalize())
+
 	s.Equal("llm-fast", spec.SubagentTarget)
+}
+
+func (s *SpecSuite) TestStoppingVoiceLeavesNoSubagentAndStartingItAgainRestoresIt() {
+	spec := Spec{CustomerID: "acme", CallID: "call", LLMTarget: "llm-fast", SubagentTarget: "llm-thinking"}
+	s.Require().NoError(spec.Normalize())
+
+	written := spec.Written()
+	s.Empty(written.SubagentTarget)
+	s.Equal("llm-thinking", written.Voiced().SubagentTarget)
 }
 
 func (s *SpecSuite) TestAVoiceSessionKeepsItsThinkingModel() {

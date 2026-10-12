@@ -121,8 +121,8 @@ type Options struct {
 	// the same router as LLMTarget. Empty falls back to LLMTarget, so a caller who names no
 	// controller shares the conversation's model.
 	ControllerTarget string
-	// Skills are what the voice model may hand over. They mean nothing without a
-	// subagent to run them.
+	// Skills are what the voice model may hand over to the subagent. A written
+	// conversation with no subagent loads them itself, with load_skill.
 	Skills harness.Skills
 	// Telephony is what the agent may do to the call itself. Without it the agent can
 	// only talk, which is what a call that is not on a phone network can do.

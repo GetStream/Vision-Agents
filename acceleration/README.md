@@ -953,14 +953,18 @@ curl -s localhost:8080/v1/agents/sessions -H 'X-Customer-Id: acme' \
 ```
 
 Everything between hearing a question and answering it is unchanged, which is the point. A
-text session has the same instructions, the same skills handed to the same slower model and
-the same knowledge base as a call would have had, so an agent can be built and argued with
-in writing before anybody rings it, and a documentation agent or a support chat is the voice
-agent with the voice left off.
+text session has the same instructions, the same skills and the same knowledge base as a call
+would have had, so an agent can be built and argued with in writing before anybody rings it,
+and a documentation agent or a support chat is the voice agent with the voice left off. The
+one difference is who runs a skill: nobody is waiting on a voice, so the model holding the
+conversation loads the skills its config names itself, with `load_skill`, and keeps every
+tool while it follows one. It takes answers from a matching skill first, then the knowledge
+base (`lookup`), then the web (`search`). A text agent with a sandbox still hands its skills
+to a subagent, since only a subagent runs code.
 
 It is driven over the session's own socket: `respond` goes in, `response_delta` and
-`responded` come back, along with `looked_up`, `delegated` and `task_settled` as the agent
-works. `say` and `interrupt` do nothing useful here, since there is nothing being spoken to
+`responded` come back, along with `looked_up`, `tool_ran`, `delegated` and `task_settled` as
+the agent works. `say` and `interrupt` do nothing useful here, since there is nothing being spoken to
 interrupt.
 
 ### Conversations held over a socket

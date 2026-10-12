@@ -856,6 +856,9 @@ func (h *Harness) instructions(turn Turn, working []string) string {
 	}
 	if !h.asking && use != "" {
 		parts = append(parts, use)
+		if order := h.options.Tools.SourceOrder(); order != "" {
+			parts = append(parts, order)
+		}
 	}
 	// Said on every turn rather than only those handing something over, so the
 	// instructions stay the same from one turn to the next and a provider that keeps its
