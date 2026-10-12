@@ -47,6 +47,14 @@ jobs:
       - name: Test core
         run: ./gradlew -PcoreOnly :core:test
 
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Generated models match the spec
+        run: |
+          uv run generate.py
+          changed=$(git status --porcelain -- core/src/main/kotlin/io/getstream/visionagents/core/generated)
+          if [ -n "$changed" ]; then echo "$changed"; git diff; exit 1; fi
+
   kotlin-android:
     runs-on: ubuntu-latest
     # compileSdk 37, which this image carries and the runner's own Android SDK may not.
@@ -93,10 +101,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The examples add StreamChatAI, which needs Xcode 27 to resolve with SwiftPM.
+      # The examples add StreamChatAI, whose iOS 13 target Xcode 26 refuses beside MarkdownUI's
+      # iOS 15. Named rather than latest-stable, so a runner without 27 fails here.
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: '27'
+
+      - uses: astral-sh/setup-uv@v6
+
+      - uses: actions/cache@v4
+        id: generator
+        with:
+          path: .codegen/swift/swift-openapi-generator
+          key: swift-openapi-generator-1.13.1-${{ runner.os }}-xcode27
+
+      - name: Build swift-openapi-generator
+        if: steps.generator.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/oapigen .codegen/swift
+          cat > /tmp/oapigen/Package.swift <<'EOF'
+          // swift-tools-version:6.0
+          import PackageDescription
+          let package = Package(
+              name: "oapigen",
+              dependencies: [.package(url: "https://github.com/apple/swift-openapi-generator", exact: "1.13.1")]
+          )
+          EOF
+          swift build -c release --product swift-openapi-generator --package-path /tmp/oapigen
+          cp /tmp/oapigen/.build/release/swift-openapi-generator .codegen/swift/
+
+      - name: Generated client matches the spec
+        run: |
+          uv run sdks/swift/generate.py
+          changed=$(git status --porcelain -- sdks/swift/core/Sources/VisionAgentsCore/Generated)
+          if [ -n "$changed" ]; then echo "$changed"; git diff; exit 1; fi
 
       # The package is iOS only, so it is tested on a simulator rather than with `swift test`.
       - name: Test core
