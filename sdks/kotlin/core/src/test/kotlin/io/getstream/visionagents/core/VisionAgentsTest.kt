@@ -90,7 +90,7 @@ class VisionAgentsTest {
         val arrived = router.requests.single()
         assertEquals("acme", arrived.header("X-Customer-Id"))
         assertEquals("jlahey", arrived.header("X-Stream-User-Id"))
-        assertNull(arrived.header("X-Api-Key"))
+        assertNull(arrived.query["api_key"])
         assertNull(arrived.header("Authorization"))
         assertEquals("stream-key", local.backend.streamCredentials().apiKey)
         local.close()
@@ -107,7 +107,8 @@ class VisionAgentsTest {
         keyed.sessions.query()
 
         assertEquals(listOf("Bearer token-1", "Bearer token-1"), router.requests.map { it.header("Authorization") })
-        assertEquals("key-1", router.requests.first().header("X-Api-Key"))
+        assertEquals(listOf("key-1"), router.requests.first().query["api_key"])
+        assertNull(router.requests.first().header("X-Api-Key"))
         assertEquals("jwt", router.requests.first().header("Stream-Auth-Type"))
         assertNull(router.requests.first().header("X-Customer-Id"))
         keyed.close()

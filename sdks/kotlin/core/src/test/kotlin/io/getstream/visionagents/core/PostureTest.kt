@@ -160,7 +160,7 @@ class KeyedRouterPostureTest {
 
     /** Sends what the SDK sends for this device, to a path the SDK has no method for. */
     private suspend fun send(method: String, path: String): Pair<Int, String?> {
-        val request = HttpRequest.newBuilder(URI.create(url + path))
+        val request = HttpRequest.newBuilder(URI.create(agents.backend.url(*path.trim('/').split('/').toTypedArray())))
             .method(method, if (method == "POST") HttpRequest.BodyPublishers.ofString("{}") else HttpRequest.BodyPublishers.noBody())
             .header("Content-Type", "application/json")
         agents.backend.headers().forEach { (name, value) -> request.header(name, value) }

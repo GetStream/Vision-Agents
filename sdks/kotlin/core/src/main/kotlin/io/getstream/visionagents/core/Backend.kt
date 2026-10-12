@@ -225,7 +225,8 @@ public class Backend(
      * `Stream-Auth-Type: jwt` says this caller is somebody's device rather than their backend.
      * It is what makes the router refuse the paths that configure an agent, and it is sent
      * even to a router with nothing in front of it, which would otherwise take the caller for
-     * a backend.
+     * a backend. The key travels in the query instead, where both Stream's proxy and the router
+     * read it.
      */
     internal suspend fun headers(): Map<String, String> {
         val headers = linkedMapOf("Stream-Auth-Type" to "jwt")
@@ -243,7 +244,6 @@ public class Backend(
                 "an api key needs a user token to go with it; call setUser first",
             )
         }
-        headers["X-Api-Key"] = apiKey
         headers["Authorization"] = "Bearer ${token(who)}"
         return headers
     }
@@ -257,17 +257,21 @@ public class Backend(
         return customerId.isEmpty() && apiKey.isNotEmpty() && identity != null
     }
 
-    /** The URL for a path under the router, with its segments encoded. */
+    /**
+     * The URL for a path under the router, with its segments encoded and the API key, the
+     * public half of the credential, in the query.
+     */
     internal fun url(vararg segments: String, query: List<Pair<String, String>> = emptyList()): String =
         URLBuilder(url).apply {
             appendPathSegments(segments.toList(), encodeSlash = true)
+            if (customerId.isEmpty() && apiKey.isNotEmpty()) parameters.append("api_key", apiKey)
             query.forEach { (name, value) -> parameters.append(name, value) }
         }.buildString()
 
     /**
      * The socket URL for a path under the router.
      *
-     * Credentials go in the handshake's headers rather than the query string, which a phone
+     * The token goes in the handshake's headers rather than the query string, which a phone
      * can do and a browser cannot: a token in a URL ends up in every log that URL passes
      * through.
      */
