@@ -5198,6 +5198,10 @@ export type components = {
         };
         readonly CreateResponseRequest: {
             readonly images?: readonly components["schemas"]["ImageSource"][];
+            /** @description Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's. */
+            readonly max_output_tokens?: number;
+            /** @description How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's. */
+            readonly reasoning_effort?: string;
             /** @description Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id. */
             readonly request_id?: string;
             /** @description What to answer, as though it had been said. */

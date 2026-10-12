@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -322,7 +323,7 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, comma
 				found.Report(fmt.Errorf("durable commands currently support text only"), "llm")
 				return true
 			}
-			if _, _, err := found.RespondCommand(context.Background(), command.CommandID, command.Text, ""); err != nil {
+			if _, _, err := found.RespondCommand(context.Background(), command.CommandID, command.Text, "", options.LLM{}); err != nil {
 				found.Report(err, "llm")
 			}
 			return true
@@ -332,7 +333,7 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, comma
 			found.Report(err, "llm")
 			return true
 		}
-		if _, err := found.Respond(context.Background(), command.Text, images); err != nil {
+		if _, err := found.Respond(context.Background(), command.Text, images, options.LLM{}); err != nil {
 			found.Report(err, "llm")
 		}
 

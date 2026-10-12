@@ -130,6 +130,9 @@ type Turn struct {
 	// Answers says the reply is offered no tools and must answer from what it has: the
 	// chain of tools before it has gone on as long as the caller can be kept waiting.
 	Answers bool
+	// Asked is what the caller asked to change about this reply, written over the
+	// session's own overwrites.
+	Asked llmoptions.LLM
 }
 
 // answerNow is the note a reply that Answers is given.
@@ -360,7 +363,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		// they are written to the provider's cache once under a key the agent owns and
 		// read back from there on every turn after.
 		PromptCacheKey: h.options.CacheKey,
-	}.Overwrite(overwrites))
+	}.Overwrite(overwrites).Overwrite(turn.Asked))
 }
 
 // Release makes what a reply was handed owed to the caller again, because that reply was

@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -462,7 +463,7 @@ func (s *SessionSuite) joins(spec Spec) *Session {
 // says hands a session a line to answer, for tests that care about what comes back on the
 // events rather than the id the turn was recorded under.
 func (s *SessionSuite) says(created *Session, text string) {
-	_, err := created.Respond(s.ctx, text, nil)
+	_, err := created.Respond(s.ctx, text, nil, options.LLM{})
 	s.Require().NoError(err)
 }
 
@@ -955,7 +956,7 @@ func (s *SessionSuite) TestAnLLMOnlyManagerAnswersTextAndRefusesVoice() {
 	created := s.writes(Spec{})
 	events, detach := created.Watch()
 	defer detach()
-	_, err = created.Respond(s.ctx, "hello", nil)
+	_, err = created.Respond(s.ctx, "hello", nil, options.LLM{})
 	s.Require().NoError(err)
 	s.Equal("Hello.", awaitReply(events))
 	_, err = manager.Create(s.ctx, Spec{CallID: "voice", CustomerID: "acme"})
@@ -1628,7 +1629,7 @@ func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
 func (s *SessionSuite) TestImagesAreRefusedWhenNeitherASkillNorTheModelCanSeeThem() {
 	s.manages()
 	created := s.joins(Spec{})
-	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{1, 2, 3}}})
+	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{1, 2, 3}}}, options.LLM{})
 	s.ErrorIs(err, agent.ErrCannotSeeImages)
 }
 
@@ -1637,7 +1638,7 @@ func (s *SessionSuite) TestAConversationModelThatSeesIsShownImagesWhenThereIsNoV
 	s.model.sees = true
 	created := s.joins(Spec{})
 
-	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}})
+	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}, options.LLM{})
 	s.Require().NoError(err)
 
 	s.eventually(func() bool {
@@ -1657,7 +1658,7 @@ func (s *SessionSuite) TestAPictureIsShownOnlyToTheReplyItCameWith() {
 	events, detach := created.Watch()
 	defer detach()
 
-	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}})
+	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}, options.LLM{})
 	s.Require().NoError(err)
 	s.Require().NotEmpty(awaitReply(events), "the picture was never answered")
 	s.says(created, "and what should I do")

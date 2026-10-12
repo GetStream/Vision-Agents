@@ -10,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -207,7 +208,7 @@ func (s *Server) respondSession(ctx context.Context, request *respondSessionRequ
 	}
 
 	if id := value(request.Body.RequestId); id != "" && found.Durable() {
-		receipt, _, err := found.RespondCommand(ctx, id, request.Body.Text, value(request.Body.ClientId))
+		receipt, _, err := found.RespondCommand(ctx, id, request.Body.Text, value(request.Body.ClientId), options.LLM{})
 		if errors.Is(err, conversation.ErrCommandConflict) {
 			return nil, conflict(err.Error())
 		}
@@ -219,7 +220,7 @@ func (s *Server) respondSession(ctx context.Context, request *respondSessionRequ
 			AssistantMessageId: receipt.AssistantMessageID, State: receipt.State, Duplicate: receipt.Duplicate,
 		}}, nil
 	}
-	if _, err := found.Respond(ctx, request.Body.Text, nil); err != nil {
+	if _, err := found.Respond(ctx, request.Body.Text, nil, options.LLM{}); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
 	return &respondSessionResponse{Status: http.StatusNoContent}, nil
