@@ -18,6 +18,10 @@ const (
 	MaxBargeInStopMS = 800
 )
 
+// BargeInIntoSilence is the barge-in stop of a call whose caller barged in while the agent
+// was silent: the agent had stopped, or never started, so there was nothing to stop.
+const BargeInIntoSilence = -2
+
 // Timing is one voice-to-voice gap.
 type Timing struct {
 	TurnID string `json:"turn_id"`
@@ -317,7 +321,8 @@ func Mean(samples []int) int {
 	return int(math.Round(float64(sum) / float64(len(samples))))
 }
 
-// BargeInStopMS is time from barge-in start until agent energy drops.
+// BargeInStopMS is time from barge-in start until agent energy drops, -1 when the caller
+// never barged in, and BargeInIntoSilence when the agent was not speaking as they did.
 func BargeInStopMS(rec caller.Result) int {
 	const alignmentToleranceMS = 120
 	var barge caller.Event
@@ -342,7 +347,7 @@ func BargeInStopMS(rec caller.Result) int {
 			return stop
 		}
 	}
-	return -1
+	return BargeInIntoSilence
 }
 
 // sentencePauseMs is the longest pause that still counts as one reply when scoring an
@@ -585,7 +590,7 @@ func ApplyGates(m *Metrics, sc scenario.Scenario) {
 	if len(m.FillerFail) > 0 {
 		notes = append(notes, "filler")
 	}
-	if sc.HasBargeIn() && m.BargeInStopMS < 0 {
+	if sc.HasBargeIn() && m.BargeInStopMS == -1 {
 		notes = append(notes, "barge_in")
 	} else if m.BargeInStopMS > MaxBargeInStopMS {
 		notes = append(notes, "barge_in")

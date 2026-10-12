@@ -12,7 +12,8 @@ tools:
   - name: create_reservation
     description: >
       Book the table. Call this before telling the caller they are booked.
-      allergen is required. time is h:mm 12-hour, like 7:30.
+      allergen is required: the allergen alone, like peanut or gluten, or none.
+      time is h:mm 12-hour, like 7:30.
     parameters:
       type: object
       properties:
@@ -26,7 +27,9 @@ tools:
         notes: {type: string}
       required: [time, party_size, name, allergen]
   - name: update_reservation
-    description: Update an existing reservation. time is h:mm 12-hour, like 7:30.
+    description: >
+      Update an existing reservation. time is h:mm 12-hour, like 7:30. allergen is the
+      allergen alone, like peanut or gluten.
     parameters:
       type: object
       properties:
@@ -43,7 +46,9 @@ tools:
       type: object
       properties: {}
   - name: create_order
-    description: Place a pickup order. allergen is required.
+    description: >
+      Place a pickup order. items are menu item names, like burger; modifiers go in
+      modifiers. allergen is required: the allergen alone, like peanut or gluten, or none.
     parameters:
       type: object
       properties:
@@ -51,10 +56,7 @@ tools:
         allergen: {type: string}
         items:
           type: array
-          items:
-            type: object
-            properties:
-              name: {type: string}
+          items: {type: string}
         pickup_window: {type: string}
         modifiers:
           type: array

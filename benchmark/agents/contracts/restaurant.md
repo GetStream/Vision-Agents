@@ -39,4 +39,4 @@ successful booking, read back name, time, party size, and allergen from that res
 | `create_reservation` | `time` string, `party_size` int, `name` string, `allergen` string (required), `patio` bool, `high_chair` bool, `phone` string, `notes` string | Call before telling the caller they are booked. |
 | `update_reservation` | `time` string, `party_size` int, `allergen` string, `name` string, `phone` string, `patio` bool, `high_chair` bool | Updates the active reservation. |
 | `lookup_menu` | none | Includes 86'd items and substitutes. |
-| `create_order` | `name` string, `allergen` string (required), `items` list of `{name}`, `pickup_window` string, `modifiers` list | Allergen required. |
+| `create_order` | `name` string, `allergen` string (required), `items` list of menu item names, `pickup_window` string, `modifiers` list | Allergen required. |

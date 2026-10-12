@@ -88,9 +88,15 @@ type CallDetail struct {
 	JudgeNotes string
 }
 
-// Cause is the call's main reason for failing: that of its first failure that is not a
-// consequence of another, or "" when it passed.
+// Cause is the call's main reason for failing, or "" when it passed: hearing when the agent
+// never heard a value it needed, since what it then did wrong follows from that, and
+// otherwise that of its first failure that is not a consequence of another.
 func (d CallDetail) Cause() string {
+	for _, failure := range d.Failures {
+		if failure.Cause == CauseHeard {
+			return CauseHeard
+		}
+	}
 	for _, failure := range d.Failures {
 		if !failure.Cascade {
 			return failure.Cause
@@ -321,6 +327,9 @@ func turnTaking(m score.Metrics) []string {
 	}
 	if m.BargeInStopMS > 0 {
 		out = append(out, fmt.Sprintf("stopped %d ms after the caller barged in (limit %d ms)", m.BargeInStopMS, score.MaxBargeInStopMS))
+	}
+	if m.BargeInStopMS == score.BargeInIntoSilence {
+		out = append(out, "was silent when the caller barged in, so there was nothing to stop")
 	}
 	for _, dropped := range m.Dropped {
 		out = append(out, fmt.Sprintf("no reply time for turn %s: %s", dropped.TurnID, strings.ReplaceAll(dropped.Reason, "_", " ")))

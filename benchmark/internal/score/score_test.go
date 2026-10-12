@@ -50,8 +50,8 @@ func TestBargeInStopMSUnmeasured(t *testing.T) {
 		Kind:       scenario.TriggerBargeIn,
 		RecStartMs: 400,
 	}}
-	if got := BargeInStopMS(rec); got != -1 {
-		t.Fatalf("no straddle: %d", got)
+	if got := BargeInStopMS(rec); got != BargeInIntoSilence {
+		t.Fatalf("the agent was silent when the caller barged in: %d", got)
 	}
 }
 
@@ -125,6 +125,11 @@ func TestApplyGatesBargeIn(t *testing.T) {
 	ApplyGates(&m, scenario.Scenario{Turns: []scenario.Turn{{Trigger: scenario.Trigger{Kind: scenario.TriggerBargeIn}}}})
 	if m.Passed {
 		t.Fatal("expected unmeasured barge_in fail")
+	}
+	m = Metrics{SelectivityHold: true, HoldThroughOverlap: true, BargeInStopMS: BargeInIntoSilence}
+	ApplyGates(&m, scenario.Scenario{Turns: []scenario.Turn{{Trigger: scenario.Trigger{Kind: scenario.TriggerBargeIn}}}})
+	if !m.Passed {
+		t.Fatalf("a barge-in while the agent was silent had nothing to stop: %v", m.GateNotes)
 	}
 }
 
