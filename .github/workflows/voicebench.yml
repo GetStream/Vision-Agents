@@ -10,7 +10,7 @@ on:
         options: [agents, components]
         default: agents
       set:
-        description: "Scenario set: frozen (the nightly, compared with the previous night), short (a quicker check), or extended (scenarios outside the frozen set)"
+        description: "Scenario set: frozen (the nightly, compared with the previous night), short (a quicker check), supershort (one coherence call a pack, the quickest), or extended (scenarios outside the frozen set)"
         type: choice
         options: [frozen, short, extended, supershort]
         default: frozen
