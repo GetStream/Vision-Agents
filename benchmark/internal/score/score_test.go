@@ -211,6 +211,37 @@ func TestScoreFiller(t *testing.T) {
 	}
 }
 
+func TestAFillerSaidAsTheToolStartsCounts(t *testing.T) {
+	// Word timings run a little early: "One" is stamped 40 ms before the tool it announces.
+	words := []TranscriptWord{
+		{Text: "One", StartMS: 960, EndMS: 1280},
+		{Text: "moment", StartMS: 1280, EndMS: 1600},
+	}
+	if !containsTimedFiller(words, 1000, 4000) {
+		t.Fatal("a filler still being spoken when the tool starts is said during it")
+	}
+	if containsTimedFiller(words, 1700, 4000) {
+		t.Fatal("a filler finished before the tool started was not said during it")
+	}
+}
+
+func TestAQuietSentenceIsStillTheAgentTalking(t *testing.T) {
+	// "Just a moment" loud, "while I see if we can" rendered far quieter, then loud again,
+	// with a side talker across the quiet part.
+	rate := audio.Rate
+	rec := caller.Result{
+		Agent: audio.Concat(audio.Tone(rate, 220, 12000), audio.Tone(rate*2, 220, 300), audio.Tone(rate, 220, 12000)),
+		Rate:  rate,
+		Events: []caller.Event{
+			{TurnID: "talker", Kind: scenario.TriggerDuringAgent, RecStartMs: 1400, RecEndMs: 2600, OverlapSound: "talker"},
+		},
+	}
+	checks := ScoreOverlaps(rec)
+	if !HoldThroughOverlap(checks) || !SelectivityHold(checks) {
+		t.Fatalf("the agent talked straight through the talker: %+v", checks)
+	}
+}
+
 func TestHoldThroughOverlap(t *testing.T) {
 	rate := audio.Rate
 	agent := audio.Concat(audio.Silence(rate/10), audio.Tone(rate, 220, 12000))

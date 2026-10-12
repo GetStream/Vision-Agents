@@ -1,5 +1,5 @@
 ---
-description: read back truncated PIN or last four; skip when PIN, last four and address are already complete
+description: read back truncated PIN or last four; skip when PIN, last four and address are already complete, and never for a yes or a go-ahead, which is when you call the tool yourself
 deadline: 15s
 ---
 You are the identity half of a residential internet support agent. The caller is

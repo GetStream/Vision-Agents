@@ -310,6 +310,11 @@ func ShortPath(root string) string {
 	return filepath.Join(root, "scenarios", "short.txt")
 }
 
+// SupershortPath is the smallest set, one scenario a pack, for the quickest check of a change.
+func SupershortPath(root string) string {
+	return filepath.Join(root, "scenarios", "supershort.txt")
+}
+
 // ExtendedPath is the set of scenarios outside the frozen one, run by hand until a
 // methodology bump takes them in.
 func ExtendedPath(root string) string {

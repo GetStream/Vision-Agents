@@ -1,33 +1,33 @@
 name: Voicebench
 on:
   schedule:
-    - cron: '0 4 * * *'
+    - cron: "0 4 * * *"
   workflow_dispatch:
     inputs:
       bench:
-        description: 'agents (calls against the agent) or components (the STT and TTS benches)'
+        description: "agents (calls against the agent) or components (the STT and TTS benches)"
         type: choice
-        options: [ agents, components ]
+        options: [agents, components]
         default: agents
       set:
-        description: 'Scenario set: frozen (the nightly, compared with the previous night), short (a quicker check), or extended (scenarios outside the frozen set)'
+        description: "Scenario set: frozen (the nightly, compared with the previous night), short (a quicker check), supershort (one coherence call a pack, the quickest), or extended (scenarios outside the frozen set)"
         type: choice
-        options: [ frozen, short, extended ]
+        options: [frozen, short, extended, supershort]
         default: frozen
       packs:
-        description: 'Packs to run: all (the nightly) or one of them (a quicker check, compared with nothing)'
+        description: "Packs to run: all (the nightly) or one of them (a quicker check, compared with nothing)"
         type: choice
-        options: [ all, restaurant, healthcare, telecom ]
+        options: [all, restaurant, healthcare, telecom]
         default: all
       k:
-        description: 'Calls per scenario: 1 (the nightly) or 3 (a pass rate per scenario, three times the calls and cost)'
+        description: "Calls per scenario: 1 (the nightly) or 3 (a pass rate per scenario, three times the calls and cost)"
         type: choice
-        options: [ '1', '3' ]
-        default: '1'
+        options: ["1", "3"]
+        default: "1"
       channel:
-        description: 'Slack channel ID to post the digest to instead of the usual one (the bot has to be in it)'
+        description: "Slack channel ID to post the digest to instead of the usual one (the bot has to be in it)"
         type: string
-        default: ''
+        default: ""
 
 permissions:
   contents: read
@@ -35,7 +35,7 @@ permissions:
 # Live calls against the providers below, on a router built from this checkout.
 # The network profile names the runner, so a CI number never lands in a laptop's series.
 env:
-  CGO_ENABLED: '1'
+  CGO_ENABLED: "1"
   VOICEBENCH_NETWORK_PROFILE: github-ubuntu-latest
   STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
   STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
@@ -96,7 +96,7 @@ jobs:
       # Only the frozen set on every pack at k=1 is a night: anything else is a check that the
       # previous night is not comparable with.
       VOICEBENCH_NIGHT: ${{ (inputs.set || 'frozen') == 'frozen' && (inputs.packs || 'all') == 'all' && (inputs.k || '1') == '1' }}
-      VOICEBENCH_LIVEKIT_ARMS: ''
+      VOICEBENCH_LIVEKIT_ARMS: ""
       VOICEBENCH_SLACK_BOT_TOKEN: ${{ secrets.VOICEBENCH_SLACK_BOT_TOKEN }}
       VOICEBENCH_SLACK_CHANNEL: ${{ inputs.channel || secrets.VOICEBENCH_SLACK_CHANNEL }}
     steps:
@@ -211,7 +211,6 @@ jobs:
           name: voicebench-nightly
           path: benchmark/out/nightly
           retention-days: 30
-
 
   # Nightly too: the STT bench on the short set's caller lines and the TTS bench on the
   # scenarios' agent lines, against a router built from the checkout. No calls are placed.

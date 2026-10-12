@@ -192,6 +192,36 @@ func TestFrozenListLoads(t *testing.T) {
 	}
 }
 
+func TestSupershortListIsOneFrozenScenarioAPack(t *testing.T) {
+	root := findRepoRoot(t)
+	supershort, err := LoadIDList(SupershortPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := LoadIDList(FrozenPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inFrozen := map[string]bool{}
+	for _, id := range frozen {
+		inFrozen[id] = true
+	}
+	packs := map[string]bool{}
+	for _, id := range supershort {
+		if !inFrozen[id] {
+			t.Fatalf("%s is not in the frozen set", id)
+		}
+		pack, _, _ := strings.Cut(id, ".")
+		if packs[pack] {
+			t.Fatalf("%s is a second %s scenario", id, pack)
+		}
+		packs[pack] = true
+	}
+	if len(packs) != 3 {
+		t.Fatalf("got packs %v, want one scenario in each of the three", packs)
+	}
+}
+
 func TestShortListIsFrozenSubset(t *testing.T) {
 	root := findRepoRoot(t)
 	short, err := LoadIDList(ShortPath(root))
