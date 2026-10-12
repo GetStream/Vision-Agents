@@ -193,6 +193,15 @@ func (s *connectorFixture) chosen(alias string, tools ...string) store.Connector
 		Connection: store.ConnectionBinding{Type: selectionSession}, Tools: grants(tools...)}
 }
 
+// withPatterns is binding granting patterns instead of named tools. An empty patterns list
+// matches every tool the connection lists, as plugins.Offered does.
+func withPatterns(binding store.ConnectorBinding, patterns ...string) store.ConnectorBinding {
+	listed := append([]string(nil), patterns...)
+	binding.Tools = nil
+	binding.ToolPatterns = &listed
+	return binding
+}
+
 // byName is binding with each grant naming its tool alone, as a session binding may.
 func byName(binding store.ConnectorBinding) store.ConnectorBinding {
 	for i := range binding.Tools {
@@ -311,35 +320,7 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 	p := &accountsProvider{called: map[string]int{}, methods: map[string][]string{}, limited: map[string]string{}}
 	servers := map[string]*mcpsdk.Server{}
 	for _, account := range []string{"primary", "secondary", "moved"} {
-		server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: account, Version: "1"}, nil)
-		server.AddTool(toolWhoami, whoami(account))
-		server.AddTool(toolSecret, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the secret"}}}, nil
-		})
-		server.AddTool(toolSlow, func(ctx context.Context, _ *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-			select {
-			case <-time.After(slowFor):
-			case <-ctx.Done():
-			}
-			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "done"}}}, nil
-		})
-		server.AddTool(toolEcho, func(_ context.Context, request *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-			var sent struct {
-				Note string `json:"note"`
-			}
-			_ = json.Unmarshal(request.Params.Arguments, &sent)
-			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "you said " + sent.Note}}}, nil
-		})
-		server.AddTool(toolOpen, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "opened"}}}, nil
-		})
-		server.AddTool(toolFails, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-			return &mcpsdk.CallToolResult{IsError: true, Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the record is locked"}}}, nil
-		})
-		server.AddTool(toolGuarded, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "guarded ran"}}}, nil
-		})
-		servers[account] = server
+		servers[account] = accountServer(account)
 	}
 	p.servers = servers
 	p.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -412,11 +393,54 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 	return p
 }
 
+// accountServer is account's MCP server, with the provider's stock tools.
+func accountServer(account string) *mcpsdk.Server {
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: account, Version: "1"}, nil)
+	server.AddTool(toolWhoami, whoami(account))
+	server.AddTool(toolSecret, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the secret"}}}, nil
+	})
+	server.AddTool(toolSlow, func(ctx context.Context, _ *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		select {
+		case <-time.After(slowFor):
+		case <-ctx.Done():
+		}
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "done"}}}, nil
+	})
+	server.AddTool(toolEcho, func(_ context.Context, request *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		var sent struct {
+			Note string `json:"note"`
+		}
+		_ = json.Unmarshal(request.Params.Arguments, &sent)
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "you said " + sent.Note}}}, nil
+	})
+	server.AddTool(toolOpen, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "opened"}}}, nil
+	})
+	server.AddTool(toolFails, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		return &mcpsdk.CallToolResult{IsError: true, Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the record is locked"}}}, nil
+	})
+	server.AddTool(toolGuarded, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "guarded ran"}}}, nil
+	})
+	return server
+}
+
 // whoami answers with account's name.
 func whoami(account string) mcpsdk.ToolHandler {
 	return func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: account}}}, nil
 	}
+}
+
+// addTool has account list one more tool, until forget rebuilds the server.
+func (p *accountsProvider) addTool(account, name, description string) {
+	p.servers[account].AddTool(&mcpsdk.Tool{
+		Name: name, Description: description,
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	}, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: name}}}, nil
+	})
 }
 
 // redescribe has account list whoami with description, a schema change, until forget.
@@ -438,8 +462,8 @@ func (p *accountsProvider) forget() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.called, p.methods, p.streams, p.limited = map[string]int{}, map[string][]string{}, false, map[string]string{}
-	for account, server := range p.servers {
-		server.AddTool(toolWhoami, whoami(account))
+	for account := range p.servers {
+		p.servers[account] = accountServer(account)
 	}
 }
 

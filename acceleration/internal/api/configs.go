@@ -546,12 +546,23 @@ func connectorBindingsComplaint(bindings *[]AgentConnectorBinding) (string, bool
 			if tools[tool.Name] {
 				return fmt.Sprintf("connector binding %q grants %q twice", alias, tool.Name), false
 			}
+			// A pattern binding lists no tools, so it never reaches this line: its digests are
+			// pinned per connection on first use, a fixed connection included (tool_patterns).
+			// A fixed binding that grants tools by name still needs each digest.
 			if tool.SchemaDigest == "" && binding.Connection.Type != AgentConnectorSelectionTypeSession {
 				return fmt.Sprintf("connector binding %q grants %q with no schema_digest, and only a session binding "+
 					"may: a fixed binding's connection is the app's own, so grant the digest GET "+
 					"/v1/agents/connections/{id}/tools lists for it", alias, tool.Name), false
 			}
 			tools[tool.Name] = true
+		}
+		if binding.ToolPatterns != nil && len(binding.Tools) > 0 {
+			return fmt.Sprintf("connector binding %q sets tool_patterns and tools, and a binding has one or the other", alias), false
+		}
+		if binding.ToolPatterns != nil {
+			if err := plugins.CheckToolPatterns(*binding.ToolPatterns); err != nil {
+				return fmt.Sprintf("connector binding %q has a tool_patterns entry that is not a tool name or pattern", alias), false
+			}
 		}
 	}
 	return "", true
@@ -656,11 +667,12 @@ func storedBindings(bindings []AgentConnectorBinding) []store.ConnectorBinding {
 				Type:         string(binding.Connection.Type),
 				ConnectionID: value(binding.Connection.ConnectionId),
 			},
-			Tools:     tools,
-			Required:  value(binding.Required),
-			TimeoutMs: value(binding.TimeoutMs),
-			Events:    bindingEventsOf(binding.Events),
-			Policy:    bindingPolicyOf(binding.Policy),
+			Tools:        tools,
+			ToolPatterns: copyPatterns(binding.ToolPatterns),
+			Required:     value(binding.Required),
+			TimeoutMs:    value(binding.TimeoutMs),
+			Events:       bindingEventsOf(binding.Events),
+			Policy:       bindingPolicyOf(binding.Policy),
 		})
 	}
 	return stored
@@ -677,6 +689,16 @@ func bindingPolicyOf(policy *ConnectorBindingPolicy) *store.BindingPolicy {
 		OnInterrupt: string(value(policy.OnInterrupt)),
 		Cancellable: policy.Cancellable,
 	}
+}
+
+// copyPatterns is patterns, copied, or nil when none were set, so a binding without
+// tool_patterns is read back without the field.
+func copyPatterns(patterns *[]string) *[]string {
+	if patterns == nil {
+		return nil
+	}
+	copied := append([]string(nil), (*patterns)...)
+	return &copied
 }
 
 // bindingEventsOf reads the events a caller declared on a binding, or nothing for none, so a
@@ -709,8 +731,9 @@ func bindingsOf(bindings []store.ConnectorBinding) []AgentConnectorBinding {
 				Type:         AgentConnectorSelectionType(binding.Connection.Type),
 				ConnectionId: optional(binding.Connection.ConnectionID),
 			},
-			Tools:    tools,
-			Required: &required,
+			Tools:        tools,
+			ToolPatterns: copyPatterns(binding.ToolPatterns),
+			Required:     &required,
 		}
 		if binding.TimeoutMs > 0 {
 			timeout := binding.TimeoutMs
@@ -1749,18 +1772,20 @@ func progressiveOf(stored bool, tools *AgentTools) bool {
 // and tool search are offered as a___search, and a cut at the first aliasSeparator reads alias
 // a and tool _search. A config holds at most 64 bindings (the maxItems on each connectors
 // field), the cap visible_tools already has, and 128 tools is the most OpenAI documents taking
-// in one request. Neither was measured for connectors, so both are unverified. The 30000 ms ceiling is the prototype's
+// in one request. tool_patterns has that same 128, and a session offers at most that many
+// matches. Neither was measured for connectors, so both are unverified. The 30000 ms ceiling is the prototype's
 // (internal/api/connectors.go:1176 at cf62af0d), and nothing there says why 30 seconds; it is
 // unverified.
 type AgentConnectorBinding struct {
-	Name        string                   `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place."`
-	ConnectorId string                   `json:"connector_id" doc:"A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_."`
-	Connection  AgentConnectorSelection  `json:"connection"`
-	Tools       []ConnectorToolGrant     `json:"tools" maxItems:"128" nullable:"false" doc:"The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use."`
-	Required    *bool                    `json:"required,omitempty" default:"false" doc:"Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it."`
-	TimeoutMs   *int                     `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
-	Events      *[]ConnectorBindingEvent `json:"events,omitempty" maxItems:"32" doc:"MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open."`
-	Policy      *ConnectorBindingPolicy  `json:"policy,omitempty" doc:"How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs."`
+	Name         string                   `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place."`
+	ConnectorId  string                   `json:"connector_id" doc:"A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_."`
+	Connection   AgentConnectorSelection  `json:"connection"`
+	Tools        []ConnectorToolGrant     `json:"tools" maxItems:"128" nullable:"false" doc:"The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use. A binding that sets tool_patterns sends an empty list: the patterns are the grant instead."`
+	ToolPatterns *[]string                `json:"tool_patterns,omitempty" maxItems:"128" doc:"Names or path.Match patterns of the tools this binding offers, such as search or linear_*. Set, they are the grant and tools is empty: a binding has one or the other, and these are refused together with a non-empty tools list. A session binding or a fixed one may set them. Each tool a connection lists that matches is pinned on that connection the first time, at the digest listed then, and a later session offers it only while that digest still matches. An empty list matches every tool the connection lists. At most 128, the same cap as tools, which is also the most one session offers when more match."`
+	Required     *bool                    `json:"required,omitempty" default:"false" doc:"Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it."`
+	TimeoutMs    *int                     `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
+	Events       *[]ConnectorBindingEvent `json:"events,omitempty" maxItems:"32" doc:"MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open."`
+	Policy       *ConnectorBindingPolicy  `json:"policy,omitempty" doc:"How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs."`
 }
 
 // ConnectorBindingPolicy is a binding's policy envelope, read back as it was written.
@@ -1808,8 +1833,10 @@ func (*ConnectorBindingEvent) TransformSchema(_ huma.Registry, schema *huma.Sche
 
 func (*AgentConnectorBinding) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "A connector whose tools an agent config may call, under an alias. The binding is " +
-		"the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against, or " +
-		"for a tool a session binding grants by name alone, to the schema its connection first offered it with."
+		"the grant: the tools it lists, each pinned to the schema it was reviewed against, or for a tool a " +
+		"session binding grants by name alone, to the schema its connection first offered it with. Or " +
+		"tool_patterns, names or path.Match patterns, pinned per connection on first use, on a session " +
+		"binding or a fixed one. A binding has one or the other."
 	return schema
 }
 

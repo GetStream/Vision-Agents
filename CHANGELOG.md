@@ -612,6 +612,14 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### Connector bindings can name tools by pattern
+
+A connector binding may set `tool_patterns` instead of `tools`: tool names or `path.Match`
+patterns, at most 128. A binding has one or the other. A `*` offers every tool the connection
+lists. Each match is pinned on that connection the first time a session opens it, including a
+fixed connection, and a later session offers the tool only while that digest still matches.
+When more than 128 tools match, the session offers the first 128 by name.
+
 ### Bring your own model
 
 A language model you serve yourself behind an OpenAI-compatible endpoint (a fine-tune on

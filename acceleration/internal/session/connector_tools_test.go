@@ -4,7 +4,9 @@ package session
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -447,6 +449,154 @@ func (s *AttachConnectorsSuite) TestAFixedBindingNeverPinsAToolGrantedByName() {
 // whoami offered, nothing unavailable, server/discover, tools/list and tools/call sent, and a
 // config with no bindings opening no dispatcher.
 func (s *AttachConnectorsSuite) TestAGrantWithADigestOpensAsBeforeAndPinsNothing() {
+	alice := s.connection("alice", "primary")
+
+	d, tools, unavailable, err := s.attach(s.spec(s.config(s.chosen("crm", "whoami")), "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+	said, err := s.call(d, "crm__whoami", "{}")
+	s.Require().NoError(err)
+	none, noTools, noneUnavailable, err := s.attach(s.spec(s.config(), "alice", nil))
+	s.Require().NoError(err)
+
+	s.Equal([]string{"crm__whoami"}, names(tools))
+	s.Empty(unavailable)
+	s.Equal("primary", said)
+	s.Equal([]string{"server/discover", "tools/list", "tools/call"}, s.provider.sent("primary"))
+	s.Nil(none)
+	s.Empty(noTools)
+	s.Empty(noneUnavailable)
+	var pins int
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+		"SELECT count(*) FROM connector_tool_pins WHERE connection_id = ?", alice).Scan(&pins))
+	s.Zero(pins)
+}
+
+// TestAStarPatternOffersEveryListedTool: tool_patterns ["*"] offers every tool the connection
+// lists, the plugins rule that an allowlist of * offers each one (plugins.Offered).
+func (s *AttachConnectorsSuite) TestAStarPatternOffersEveryListedTool() {
+	alice := s.connection("alice", "primary")
+	config := s.config(withPatterns(s.chosen("crm"), "*"))
+
+	_, tools, unavailable, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+
+	s.Require().NoError(err)
+	s.Empty(unavailable)
+	var want []string
+	for name := range providerTools {
+		want = append(want, "crm__"+name)
+		s.Equal(grants(name)[0].SchemaDigest, s.pinOf(alice, name).SchemaDigest, name)
+	}
+	s.ElementsMatch(want, names(tools))
+}
+
+// TestAToolAddedLaterIsPinnedAndOfferedOnTheNextSession: a tool the server gains after the
+// first session is pinned at the digest listed then, and the next session offers it.
+func (s *AttachConnectorsSuite) TestAToolAddedLaterIsPinnedAndOfferedOnTheNextSession() {
+	alice := s.connection("alice", "primary")
+	config := s.config(withPatterns(s.chosen("crm"), "*"))
+	_, first, _, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+	s.NotContains(names(first), "crm__later")
+	s.provider.addTool("primary", "later", "Added after the first session.")
+
+	_, second, unavailable, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+
+	s.Require().NoError(err)
+	s.Empty(unavailable)
+	s.Contains(names(second), "crm__later")
+	s.NotEmpty(s.pinOf(alice, "later").SchemaDigest)
+	s.Equal(grants("whoami")[0].SchemaDigest, s.pinOf(alice, "whoami").SchemaDigest)
+}
+
+// TestAPatternMatchedToolWhoseSchemaChangedIsNotOffered: whoami's description changes after
+// its pin. The next session leaves it out and warns once; the pin stays, and the tools whose
+// schemas did not move are still offered.
+func (s *AttachConnectorsSuite) TestAPatternMatchedToolWhoseSchemaChangedIsNotOffered() {
+	alice := s.connection("alice", "primary")
+	config := s.config(withPatterns(s.chosen("crm"), "*"))
+	_, _, _, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+	s.provider.redescribe("primary", "Says which account this is, and now something else too.")
+	manager := s.managerWith(fixtureRequestTimeout)
+	var logged bytes.Buffer
+	manager.logger = slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	spec := s.spec(config, "alice", map[string]string{"crm": alice})
+
+	d, tools, unavailable, err := manager.attachConnectors(s.ctx, &spec)
+
+	s.Require().NoError(err)
+	s.T().Cleanup(d.Close)
+	s.NotContains(names(tools), "crm__whoami")
+	s.Contains(names(tools), "crm__secret")
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableTool}}, unavailable)
+	s.Equal(grants("whoami")[0].SchemaDigest, s.pinOf(alice, "whoami").SchemaDigest)
+	s.Equal(1, strings.Count(logged.String(), "schema it was pinned at"))
+}
+
+// TestPatternPinsArePerConnection: Alice's pin is not Bob's. His provider lists whoami with
+// another description, which his first session pins for his connection.
+func (s *AttachConnectorsSuite) TestPatternPinsArePerConnection() {
+	alice, bob := s.connection("alice", "primary"), s.connection("bob", "secondary")
+	config := s.config(withPatterns(s.chosen("crm"), "whoami"))
+	s.provider.redescribe("secondary", "Says which account this is, for Bob.")
+
+	_, alices, _, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+	_, bobs, unavailable, err := s.attach(s.spec(config, "bob", map[string]string{"crm": bob}))
+	s.Require().NoError(err)
+
+	s.Empty(unavailable)
+	s.Equal([]string{"crm__whoami"}, names(alices))
+	s.Equal([]string{"crm__whoami"}, names(bobs))
+	s.NotEqual(s.pinOf(alice, "whoami").SchemaDigest, s.pinOf(bob, "whoami").SchemaDigest)
+}
+
+// TestAFixedPatternBindingPinsOnFirstUse: a fixed binding with patterns and no digests pins
+// the app connection's tools on first use and offers them.
+func (s *AttachConnectorsSuite) TestAFixedPatternBindingPinsOnFirstUse() {
+	app := s.connection("", "primary")
+
+	_, tools, unavailable, err := s.attach(s.spec(s.config(withPatterns(s.fixed("crm", app), "*")), "", nil))
+
+	s.Require().NoError(err)
+	s.Empty(unavailable)
+	s.Contains(names(tools), "crm__whoami")
+	s.Equal(grants("whoami")[0].SchemaDigest, s.pinOf(app, "whoami").SchemaDigest)
+}
+
+// TestMoreThan128PatternMatchesOffersTheFirst128ByName: 129 matches, so the session offers
+// the first 128 by name and warns once. 128 is patternToolCap, Tools' maxItems.
+func (s *AttachConnectorsSuite) TestMoreThan128PatternMatchesOffersTheFirst128ByName() {
+	alice := s.connection("alice", "primary")
+	for index := range 129 {
+		s.provider.addTool("primary", fmt.Sprintf("n%03d", index), "One of too many.")
+	}
+	manager := s.managerWith(fixtureRequestTimeout)
+	var logged bytes.Buffer
+	manager.logger = slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	spec := s.spec(s.config(withPatterns(s.chosen("crm"), "n*")), "alice", map[string]string{"crm": alice})
+
+	d, tools, unavailable, err := manager.attachConnectors(s.ctx, &spec)
+
+	s.Require().NoError(err)
+	s.T().Cleanup(d.Close)
+	s.Empty(unavailable)
+	offered := names(tools)
+	s.Len(offered, 128)
+	for index := range 128 {
+		s.Contains(offered, "crm__"+fmt.Sprintf("n%03d", index))
+	}
+	s.NotContains(offered, "crm__n128")
+	s.Equal(1, strings.Count(logged.String(), "first 128 by name"))
+	s.Equal(1, strings.Count(logged.String(), "level=WARN"))
+}
+
+// TestABindingWithOnlyToolsOpensAsOnBase is the control. On e70351d4, before tool_patterns,
+// TestAGrantWithADigestOpensAsBeforeAndPinsNothing passed against model_router_test_w9_pat_test
+// (2026-10-12): whoami offered, nothing unavailable, the call answered "primary", the server
+// was sent server/discover then tools/list then tools/call, a config with no bindings opened
+// no dispatcher, and the connection had no pins.
+func (s *AttachConnectorsSuite) TestABindingWithOnlyToolsOpensAsOnBase() {
 	alice := s.connection("alice", "primary")
 
 	d, tools, unavailable, err := s.attach(s.spec(s.config(s.chosen("crm", "whoami")), "alice", map[string]string{"crm": alice}))
