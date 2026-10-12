@@ -831,6 +831,51 @@ class TestSyncAgent:
             }
         ]
 
+    async def test_an_object_name_is_kept_as_written_like_the_go_sdk(
+        self, router: Router, support_dir
+    ):
+        # Same yaml Go reads in sdks/go/agents/folder.go: the alias stays " github ",
+        # so the binding's connector_id is that string and not github's company account.
+        router.connection_pages = [[app_connection("co-1", "company", " github ")]]
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n"
+            '  - name: " github "\n    connection: company\n'
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.connection_queries[0]["connector_id"] == " github "
+        assert router.configs[result.config.id]["connectors"] == [
+            {
+                "name": " github ",
+                "connector_id": " github ",
+                "connection": {"type": "fixed", "connection_id": "co-1"},
+                "tools": [],
+                "tool_patterns": ["*"],
+            }
+        ]
+
+    async def test_an_object_connector_id_is_kept_as_written(
+        self, router: Router, support_dir
+    ):
+        router.connection_pages = [[app_connection("co-1", "company", " linear ")]]
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n"
+            '  - name: work\n    connector: " linear "\n    connection: company\n'
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.connection_queries[0]["connector_id"] == " linear "
+        binding = router.configs[result.config.id]["connectors"][0]
+        assert binding["name"] == "work"
+        assert binding["connector_id"] == " linear "
+        assert binding["connection"] == {"type": "fixed", "connection_id": "co-1"}
+
     async def test_an_object_keeps_its_patterns_alias_and_required_flag(
         self, router: Router, support_dir
     ):

@@ -625,8 +625,8 @@ def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
         extra = set(item) - {"name", "connector", "tools", "connection", "required"}
         if extra:
             raise ValueError(f"{path} unknown connectors setting: {sorted(extra)[0]}")
-        name = _word(item.get("name"))
-        if not name:
+        name = _text(item.get("name"))
+        if not name.strip():
             raise ValueError("a connector needs a name")
         connector = ""
         if "connector" in item and item.get("connector") is not None:

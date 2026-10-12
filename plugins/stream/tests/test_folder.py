@@ -229,6 +229,32 @@ class TestFolder:
 
         assert load(root).settings.connectors == [ConnectorSettings(name=" linear ")]
 
+    def test_an_object_name_and_connector_are_kept_as_written(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n"
+            '  - name: " github "\n    connector: " linear "\n    connection: company\n',
+        )
+
+        assert load(root).settings.connectors == [
+            ConnectorSettings(
+                name=" github ", connector=" linear ", connection="company"
+            )
+        ]
+
+    def test_a_whitespace_only_object_name_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            'name: triage\nconnectors:\n  - name: "   "\n    connection: company\n',
+        )
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
     def test_a_null_connector_entry_is_refused(self, tmp_path: Path):
         root = tmp_path / "triage"
         write(root, "agent.yaml", "name: triage\nconnectors:\n  - ~\n")
