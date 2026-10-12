@@ -61,4 +61,66 @@ void main() {
       byCustomer.close();
     });
   });
+
+  // The windows of thinking the router puts on a reply's live updates, as `reasoningWindow` in
+  // `acceleration/internal/conversation/reasoning.go` writes them.
+  group('LiveReasoning', () {
+    late LiveReasoning reasoning;
+
+    void window(String text, int offset, [String id = 'r1']) => reasoning.read(
+      stream.Message(
+        text: 'ignored',
+        extraData: {
+          'reasoning': {'id': id, 'offset': offset, 'text': text, 'length': offset + text.length},
+        },
+      ),
+    );
+
+    setUp(() => reasoning = LiveReasoning());
+
+    test('windows in order make the whole thinking', () {
+      window('The order was ', 0);
+      window('delivered unopened.', 14);
+
+      expect(reasoning['r1'], 'The order was delivered unopened.');
+    });
+
+    test('a repeat of recent thinking adds only what is new', () {
+      window('Checking the policy', 0);
+
+      window('the policy, which allows 30 days', 9);
+      window('policy', 13);
+
+      expect(reasoning['r1'], 'Checking the policy, which allows 30 days');
+    });
+
+    test('a missed window leaves a paragraph break rather than running on', () {
+      window('First thought.', 0);
+
+      window('Much later.', 40);
+
+      expect(reasoning['r1'], 'First thought.\n\nMuch later.');
+    });
+
+    test('somebody joining midway starts from the window they get', () {
+      window('the rest of it', 300, 'r2');
+
+      expect(reasoning['r2'], 'the rest of it');
+      expect(reasoning['r1'], isNull);
+    });
+
+    test('positions count code points as the router does', () {
+      window('café ', 0);
+
+      window(' 🌸 bloom', 4);
+
+      expect(reasoning['r1'], 'café 🌸 bloom');
+    });
+
+    test('a message with no window changes nothing', () {
+      reasoning.read(stream.Message(text: 'Hello'));
+
+      expect(reasoning['r1'], isNull);
+    });
+  });
 }

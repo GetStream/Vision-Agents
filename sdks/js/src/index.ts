@@ -90,6 +90,8 @@ export {
 
 export { Tools, render, type ParameterSchema, type Tool, type ToolApproval } from "./tools.js";
 
+export { LiveReasoning } from "./reasoning.js";
+
 export type { ChatClient, StreamClients, VideoClient } from "./stream.js";
 
 export {
