@@ -1,6 +1,8 @@
 package harness
 
 import (
+	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -9,6 +11,10 @@ import (
 const (
 	kindAsk  = "ask"
 	kindDrop = "drop"
+	// kindCall is a tool call written as a tag. Gemma writes `<call tool="create_reservation"
+	// party_size=4 time="7:30"/>` after the tags it has seen, and spoken it books nothing
+	// while the reply says it did.
+	kindCall = "call"
 )
 
 // tagLimit bounds how much text may be held back waiting for an opening tag to finish.
@@ -20,10 +26,12 @@ const tagLimit = 256
 type directive struct {
 	source string
 	frames string
-	// kind is ask or drop.
+	// kind is ask, drop or call.
 	kind string
-	// skill names which skill the request is for.
+	// skill names which skill the request is for, or for a call, which tool.
 	skill string
+	// arguments are a call's attributes other than its tool.
+	arguments map[string]any
 	// body is what was asked for. A drop has none.
 	body string
 }
@@ -159,6 +167,10 @@ func openTag(text string) (directive, string, tagState) {
 	}
 
 	found := directive{kind: kind, skill: attribute(head, "skill"), source: attribute(head, "source"), frames: attribute(head, "frames")}
+	if kind == kindCall {
+		found.skill = attribute(head, "tool")
+		found.arguments = callArguments(head)
+	}
 	if strings.HasSuffix(head, "/") {
 		return found, rest, tagSelfClosed
 	}
@@ -169,7 +181,7 @@ func openTag(text string) (directive, string, tagState) {
 // followed by something that could not be part of a longer word, so a model saying
 // "<asking>" is not read as a request for help.
 func openingKind(text string) (string, bool) {
-	for _, kind := range []string{kindAsk, kindDrop} {
+	for _, kind := range []string{kindAsk, kindDrop, kindCall} {
 		prefix := "<" + kind
 		if !strings.HasPrefix(text, prefix) {
 			continue
@@ -183,7 +195,7 @@ func openingKind(text string) (string, bool) {
 
 // couldOpen reports whether more text might still turn this into an opening tag.
 func couldOpen(text string) bool {
-	for _, kind := range []string{kindAsk, kindDrop} {
+	for _, kind := range []string{kindAsk, kindDrop, kindCall} {
 		if strings.HasPrefix("<"+kind, text) {
 			return true
 		}
@@ -206,6 +218,48 @@ func attribute(tag, name string) string {
 	value, _, closed := strings.Cut(rest, "\"")
 	if !closed {
 		return ""
+	}
+	return value
+}
+
+// callArguments reads a call tag's attributes, other than its tool, as the call's arguments.
+// A quoted value is a string. A bare one is a number or a boolean when it reads as one, as in
+// party_size=4, and a string otherwise.
+func callArguments(head string) map[string]any {
+	arguments := map[string]any{}
+	rest := strings.TrimSuffix(strings.TrimPrefix(head, "<"+kindCall), "/")
+	for {
+		rest = strings.TrimLeft(rest, " \t\r\n")
+		key, value, found := strings.Cut(rest, "=")
+		if !found || key == "" || strings.ContainsAny(key, " \t\r\n\"") {
+			break
+		}
+		if strings.HasPrefix(value, `"`) {
+			quoted, tail, closed := strings.Cut(value[1:], `"`)
+			if !closed {
+				break
+			}
+			arguments[key] = quoted
+			rest = tail
+			continue
+		}
+		end := strings.IndexAny(value, " \t\r\n")
+		if end < 0 {
+			end = len(value)
+		}
+		arguments[key] = bareValue(value[:end])
+		rest = value[end:]
+	}
+	delete(arguments, "tool")
+	return arguments
+}
+
+func bareValue(value string) any {
+	if parsed, err := strconv.ParseBool(value); err == nil {
+		return parsed
+	}
+	if _, err := strconv.ParseFloat(value, 64); err == nil {
+		return json.Number(value)
 	}
 	return value
 }

@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -50,6 +51,28 @@ func (s *DirectiveSuite) TestARequestForHelpIsTakenOutOfWhatIsSpoken() {
 	s.Equal(kindAsk, directives[0].kind)
 	s.Equal("think", directives[0].skill)
 	s.Equal("what is 15% of 84.20", directives[0].body)
+}
+
+func (s *DirectiveSuite) TestAToolCallWrittenAsATagIsTakenOutOfWhatIsSpoken() {
+	speech, directives := scan(
+		`I'll just get that booked for you now. <call tool="create_reservation" `,
+		`name="Alvarez" party_size=4 patio=true time="7:30" allergen="peanut"/>`,
+	)
+
+	s.Equal("I'll just get that booked for you now. ", speech, "the caller never hears the call")
+	s.Require().Len(directives, 1)
+	s.Equal(kindCall, directives[0].kind)
+	s.Equal("create_reservation", directives[0].skill)
+	s.Equal(map[string]any{
+		"name": "Alvarez", "party_size": json.Number("4"), "patio": true, "time": "7:30", "allergen": "peanut",
+	}, directives[0].arguments)
+}
+
+func (s *DirectiveSuite) TestAWordStartingWithCallIsNotATag() {
+	speech, directives := scan("I'll <calling> you back.")
+
+	s.Equal("I'll <calling> you back.", speech)
+	s.Empty(directives)
 }
 
 func (s *DirectiveSuite) TestATagSplitAcrossDeltasIsStillFound() {

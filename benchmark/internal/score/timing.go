@@ -357,9 +357,16 @@ func BargeInStopMS(rec caller.Result) int {
 // stops for the sound and answers it leaves a second or more.
 const sentencePauseMs = 600
 
+// agentSpeechThreshold is the energy gate for the agent's own recording when scoring an
+// overlap. That recording is the voice alone over digital silence (about 1e-10), and a voice
+// can render a sentence far quieter than the next: at the caller's gate a quiet "while I see
+// if we can get that set up" read as the agent having stopped for a side talker it talked
+// straight through.
+const agentSpeechThreshold = audio.DefaultSpeechThreshold / 100
+
 // ScoreOverlaps evaluates every non-directed sound in the script.
 func ScoreOverlaps(rec caller.Result) []OverlapCheck {
-	agent := joinPauses(audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs), sentencePauseMs)
+	agent := joinPauses(audio.DetectSpeech(rec.Agent, rec.Rate, agentSpeechThreshold, audio.DefaultHangoverMs), sentencePauseMs)
 	var checks []OverlapCheck
 	for _, event := range rec.Events {
 		if event.OverlapSound == "" {
@@ -451,7 +458,10 @@ func containsTimedFiller(words []TranscriptWord, startMS, endMS int) bool {
 	for _, phrase := range fillerPhrases {
 		parts := strings.Fields(phrase)
 		for i := 0; i+len(parts) <= len(words); i++ {
-			if words[i].StartMS < startMS || words[i].StartMS >= endMS {
+			// A filler said in the same breath as the tool call starts as the tool does, and word
+			// timings run a few tens of milliseconds early: it counts while its first word is
+			// still being spoken when the tool starts.
+			if words[i].EndMS <= startMS || words[i].StartMS >= endMS {
 				continue
 			}
 			matched := true
