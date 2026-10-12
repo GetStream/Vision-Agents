@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -2935,6 +2936,45 @@ func (s *AgentSuite) TestBargeInStopsTheModelAndTheVoice() {
 		"talking over the agent should stop it mid-sentence")
 	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
 		"the interruption was never reported")
+}
+
+func (s *AgentSuite) TestAQuietPhraseIsRaisedBeforeTheCallHearsIt() {
+	// An expressive voice can read a phrase 20 dB below the sentence before it. The caller
+	// hears it raised towards the rest, so the agent does not seem to trail off or finish.
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.voice.silent = true
+	s.speak(participant)
+	s.says(participant, "hello")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	turnID := s.model.requests()[0].ID
+
+	sine := func(ms int, amplitude float64) []int16 {
+		samples := make([]int16, 16*ms)
+		for i := range samples {
+			samples[i] = int16(amplitude * 32767 * math.Sin(2*math.Pi*220*float64(i)/16_000))
+		}
+		return samples
+	}
+	quiet := append(sine(1000, 0.1), sine(1500, 0.01)...)
+	for start := 0; start < len(quiet); start += 320 {
+		s.voice.emitter.Send(tts.AudioChunk{
+			SynthesisID: turnID,
+			Audio:       audio.PcmData{Samples: quiet[start:min(start+320, len(quiet))], SampleRate: 16_000, Channels: 1},
+		})
+	}
+
+	s.eventually(func() bool { return len(s.edge.heard()) == len(quiet)/320 }, "the reply was never published")
+	var last []int16
+	for _, chunk := range s.edge.heard()[len(quiet)/320-25:] {
+		last = append(last, chunk.Samples...)
+	}
+	var sum float64
+	for _, sample := range last {
+		sum += float64(sample) * float64(sample)
+	}
+	rms := math.Sqrt(sum/float64(len(last))) / 32767
+	s.Greater(rms, 0.01/math.Sqrt2*5, "the end of the quiet phrase reached the call at least 14 dB louder")
 }
 
 func (s *AgentSuite) TestBargeInThrowsAwaySpeechNotHeardYet() {

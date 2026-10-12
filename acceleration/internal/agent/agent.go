@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -3324,6 +3325,9 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 		default:
 		}
 	}
+	// An expressive voice can read a phrase 20 to 30 dB below the one before it, which a
+	// caller hears as the agent trailing off and their phone hears as it having finished.
+	leveller := audio.NewLeveller()
 
 	speak := func(event tts.Event) {
 		switch typed := event.(type) {
@@ -3365,14 +3369,15 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				holds = append(holds, hold)
 				return
 			}
+			speech := leveller.Level(typed.Audio)
 			var err error
 			if marked, ok := a.options.Edge.(MarkedPlayout); ok {
 				// Publishing returns once the chunk is queued, which for a long one is well
 				// after the participants could have heard it begin, so the edge says when.
-				err = marked.PublishAudioMarked(publishCtx, typed.Audio,
+				err = marked.PublishAudioMarked(publishCtx, speech,
 					a.turns.marksFor(turnOf(typed.SynthesisID)))
 			} else if playout, ok := a.options.Edge.(ContextPlayout); ok {
-				err = playout.PublishAudioContext(publishCtx, typed.Audio)
+				err = playout.PublishAudioContext(publishCtx, speech)
 			} else {
 				// An edge without cancellable playout gets the legacy call while Agent.mu
 				// is held, so its bounded chunk write cannot race past DropSpeech.
@@ -3383,7 +3388,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 					a.turns.dropped(turnOf(typed.SynthesisID), typed.Audio.DurationMs())
 					return
 				}
-				err = a.options.Edge.PublishAudio(typed.Audio)
+				err = a.options.Edge.PublishAudio(speech)
 				a.mu.Unlock()
 			}
 			if errors.Is(err, context.Canceled) || publishCtx.Err() != nil {

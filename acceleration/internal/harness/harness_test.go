@@ -1344,6 +1344,34 @@ func (s *HarnessSuite) TestASkillThatNamesAToolIsAskedAsOne() {
 	s.JSONEq(`{"digits":"1"}`, requested[0].Call.Arguments)
 }
 
+func (s *HarnessSuite) TestAToolCallWrittenAsATagIsRun() {
+	// Gemma writes a call after the tags it has seen. Spoken, it books nothing while the
+	// reply says it did.
+	s.tools = testTools()
+	s.build(false)
+	s.respond("turn-1", "put me through to sales")
+
+	spoken := s.reply("turn-1", `Transferring you now. <call tool="transfer" to="sales"/>`)
+
+	s.Equal("Transferring you now. ", spoken)
+	asked := s.harness.TakeAsked()
+	s.Require().Len(asked, 1)
+	s.Equal("transfer", asked[0].Name)
+	s.JSONEq(`{"to":"sales"}`, asked[0].Arguments)
+}
+
+func (s *HarnessSuite) TestACallToAToolThatDoesNotExistIsNotRun() {
+	s.tools = testTools()
+	s.build(false)
+	s.respond("turn-1", "book it")
+
+	s.reply("turn-1", `All set. <call tool="book_table" party_size=4/>`)
+
+	s.Empty(s.harness.TakeAsked())
+	s.respond("turn-2", "")
+	s.Contains(s.fast.requests()[1].Instructions, "no tool named book_table, so nothing was done")
+}
+
 func (s *HarnessSuite) TestAnAbandonedReplyDoesNotKeepTheToolsItAskedFor() {
 	s.tools = testTools()
 	s.build(false)

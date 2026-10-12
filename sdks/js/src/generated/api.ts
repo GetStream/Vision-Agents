@@ -3887,7 +3887,7 @@ export type components = {
             /** @description Provider-specific voice id. */
             readonly voice?: string;
         };
-        /** @description A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with. */
+        /** @description A connector whose tools an agent config may call, under an alias. The binding is the grant: the tools it lists, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with. Or tool_patterns, names or path.Match patterns, pinned per connection on first use, on a session binding or a fixed one. A binding has one or the other. */
         readonly AgentConnectorBinding: {
             readonly connection: components["schemas"]["AgentConnectorSelection"];
             /** @description A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_. */
@@ -3908,7 +3908,9 @@ export type components = {
              * @description How long one tool call may take, in milliseconds. Omitted, the session's default applies.
              */
             readonly timeout_ms?: number;
-            /** @description The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use. */
+            /** @description Names or path.Match patterns of the tools this binding offers, such as search or linear_*. Set, they are the grant and tools is empty: a binding has one or the other, and these are refused together with a non-empty tools list. A session binding or a fixed one may set them. Each tool a connection lists that matches is pinned on that connection the first time, at the digest listed then, and a later session offers it only while that digest still matches. An empty list is refused. At most 128, the same cap as tools, which is also the most one session offers when more match. */
+            readonly tool_patterns?: readonly string[];
+            /** @description The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use. A binding that sets tool_patterns sends an empty list: the patterns are the grant instead. */
             readonly tools: readonly components["schemas"]["ConnectorToolGrant"][];
         };
         /** @description Which connection a binding's tools are called through. */

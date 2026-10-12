@@ -30,10 +30,11 @@ func (c *channelSplitter) Write(delta string) (text, thought string) {
 	var answer, thinking strings.Builder
 	for {
 		if !c.started {
-			if strings.HasPrefix(channelName, c.pending) {
+			name, undecided := bareChannelName(c.pending)
+			if undecided {
 				return answer.String(), thinking.String()
 			}
-			c.pending = strings.TrimPrefix(c.pending, channelName)
+			c.pending = c.pending[name:]
 			c.started = true
 		}
 		if c.inChannel {
@@ -68,12 +69,41 @@ func (c *channelSplitter) Flush() (text, thought string) {
 	rest := c.pending
 	c.pending = ""
 	if !c.started {
-		rest = strings.TrimPrefix(rest, channelName)
+		if name, _ := bareChannelName(rest + "\n"); name > 0 {
+			rest = ""
+		}
 	}
 	if c.inChannel {
 		return "", rest
 	}
 	return rest, ""
+}
+
+// bareChannelName is how much of the start of s is a channel name vLLM left behind, with the
+// whitespace around it, and whether more text could still make it one. After a tool result
+// the name can come after a newline or a space, and before a space or a carriage return, as
+// in "\nthought \r\n You're all set!": a reply that opens on the word and then says more,
+// "thought about it", is not one.
+func bareChannelName(s string) (n int, undecided bool) {
+	const whitespace = " \t\r\n"
+	word := strings.TrimSuffix(channelName, "\n")
+	start := len(s) - len(strings.TrimLeft(s, whitespace))
+	rest := s[start:]
+	if len(rest) <= len(word) {
+		return 0, strings.HasPrefix(word, rest)
+	}
+	if !strings.HasPrefix(rest, word) {
+		return 0, false
+	}
+	after := rest[len(word):]
+	spaces := len(after) - len(strings.TrimLeft(after, " \t\r"))
+	switch {
+	case spaces == len(after):
+		return 0, true
+	case after[spaces] == '\n':
+		return start + len(word) + spaces + 1, false
+	}
+	return 0, false
 }
 
 // partialSuffix is the length of the longest end of s that is a proper start of marker.

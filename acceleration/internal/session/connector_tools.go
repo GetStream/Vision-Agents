@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -75,8 +76,8 @@ const (
 	// deployment has connectors off.
 	unavailableOpenFailed = "open_failed"
 	// unavailableTool: the provider no longer offers a granted tool with the schema it was
-	// granted against, or for a grant by name, pinned at for the connection (pinGrants). The
-	// tools it still offers are kept.
+	// granted against, or for a grant by name or a pattern match, pinned at for the connection
+	// (pinGrants, patternGrants). The tools it still offers are kept.
 	unavailableTool = "tool_unavailable"
 	// unavailableDropped: a fork's or a reopened chat's selection for an alias its config no
 	// longer declares as a session binding.
@@ -319,16 +320,29 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 		Manifest:   manifest,
 		HTTP:       transports.Client(ref, scheme),
 	}
-	grants := make([]core.ToolGrant, 0, len(binding.Tools))
+	var grants []core.ToolGrant
+	var patternMiss []string
 	digests := make(map[string]string, len(binding.Tools))
-	for _, grant := range binding.Tools {
-		grants = append(grants, core.ToolGrant{Name: grant.Name, SchemaDigest: grant.SchemaDigest})
-		digests[grant.Name] = grant.SchemaDigest
-	}
-	if binding.Connection.Type == selectionSession {
-		reason, err := m.pinGrants(ctx, binding.Name, connection, resolved, grants)
+	if binding.ToolPatterns != nil {
+		var reason string
+		grants, patternMiss, reason, err = m.patternGrants(ctx, binding, connection, resolved)
 		if reason != "" || err != nil {
 			return reason, err
+		}
+		for _, grant := range grants {
+			digests[grant.Name] = grant.SchemaDigest
+		}
+	} else {
+		grants = make([]core.ToolGrant, 0, len(binding.Tools))
+		for _, grant := range binding.Tools {
+			grants = append(grants, core.ToolGrant{Name: grant.Name, SchemaDigest: grant.SchemaDigest})
+			digests[grant.Name] = grant.SchemaDigest
+		}
+		if binding.Connection.Type == selectionSession {
+			reason, err := m.pinGrants(ctx, binding.Name, connection, resolved, grants)
+			if reason != "" || err != nil {
+				return reason, err
+			}
 		}
 	}
 	timeout := defaultConnectorTimeout
@@ -360,6 +374,9 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 			offered++
 		}
 	}
+	if len(patternMiss) > 0 {
+		return unavailableTool, nil
+	}
 	if offered < len(binding.Tools) {
 		var changed []string
 		for _, grant := range binding.Tools {
@@ -375,6 +392,87 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 		return unavailableTool, nil
 	}
 	return "", nil
+}
+
+// patternToolCap is how many tools one pattern binding offers. It is the maxItems on
+// AgentConnectorBinding.Tools and on ToolPatterns (internal/api/configs.go), OpenAI's
+// per-request tool limit, already marked unverified there.
+const patternToolCap = 128
+
+// patternGrants lists the connection's tools, keeps those binding.ToolPatterns names
+// (plugins.Offered), and pins each unpinned match at the
+// digest listed now. A match already pinned at another digest is left out: the schema moved,
+// and a reconnect pins again. More than patternToolCap matches keeps the first that many by
+// name and warns once. It says why the binding cannot be used when the provider cannot list
+// its tools; an error is the store failing.
+//
+// The list is a separate tools/list from the one Open does. Folding the match into Open is
+// left for later.
+func (m *Manager) patternGrants(ctx context.Context, binding store.ConnectorBinding, connection store.ConnectorConnection, resolved core.ResolvedBinding) ([]core.ToolGrant, []string, string, error) {
+	listed := map[string]string{}
+	for _, kind := range sourceKinds(resolved.Manifest) {
+		source, found := m.options.Connectors.Registry.ToolSources[kind]
+		if !found {
+			m.logger.Warn("a connector binding cannot be opened: no such tool source", "connector", binding.Name, "source", kind)
+			return nil, nil, unavailableOpenFailed, nil
+		}
+		specs, err := source.Discover(ctx, resolved)
+		if err != nil {
+			m.logger.Warn("a connector binding cannot be opened", "connector", binding.Name, "error", err)
+			return nil, nil, unavailableOpenFailed, nil
+		}
+		for _, spec := range specs {
+			listed[spec.Name] = spec.SchemaDigest
+		}
+	}
+	patterns := []string{}
+	if binding.ToolPatterns != nil {
+		patterns = *binding.ToolPatterns
+	}
+	var matched []string
+	for name := range listed {
+		if plugins.Offered(patterns, name) {
+			matched = append(matched, name)
+		}
+	}
+	slices.Sort(matched)
+	if len(matched) > patternToolCap {
+		m.logger.Warn(fmt.Sprintf("a pattern binding matches more tools than one request can offer, so the first %d by name are offered", patternToolCap),
+			"connector", binding.Name, "connection", connection.ID, "matched", len(matched))
+		matched = matched[:patternToolCap]
+	}
+	pins, err := m.options.Store.ConnectorToolPins(ctx, connection.ID, connection.ConnectedAt)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	first := map[string]string{}
+	for _, name := range matched {
+		if _, pinned := pins[name]; !pinned {
+			first[name] = listed[name]
+		}
+	}
+	if len(first) > 0 {
+		pins, err = m.options.Store.PinConnectorTools(ctx, connection.ID, connection.ConnectedAt, first)
+		if err != nil {
+			return nil, nil, "", err
+		}
+	}
+	var missed []string
+	grants := make([]core.ToolGrant, 0, len(matched))
+	for _, name := range matched {
+		pin, pinned := pins[name]
+		if !pinned || pin != listed[name] {
+			missed = append(missed, name)
+			continue
+		}
+		grants = append(grants, core.ToolGrant{Name: name, SchemaDigest: pin})
+	}
+	if len(missed) > 0 {
+		m.logger.Warn("a tool a pattern matches is not offered: the connection no longer lists it with the "+
+			"schema it was pinned at, and a reconnect approves it again",
+			"connector", binding.Name, "connection", connection.ID, "tools", missed)
+	}
+	return grants, missed, "", nil
 }
 
 // pinGrants gives each of a session binding's grants that names its tool alone the digest the

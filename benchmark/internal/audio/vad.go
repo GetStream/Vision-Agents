@@ -76,5 +76,12 @@ func DetectSpeech(samples []int16, rate int, threshold float64, hangoverMs int) 
 // DefaultSpeechThreshold is a conservative energy gate for 16 kHz PCM recordings.
 const DefaultSpeechThreshold = 0.0015
 
+// AgentSpeechThreshold is the energy gate for the agent's own track: a voice alone over
+// decoded digital silence (about 1e-10), with no room or line noise under it. A voice can
+// render a phrase 20 to 30 dB quieter than the one before, still plainly audible, and at
+// DefaultSpeechThreshold that read as the agent having stopped: the scripted caller spoke
+// over it, and the louder words after it counted as the agent cutting in.
+const AgentSpeechThreshold = DefaultSpeechThreshold / 100
+
 // DefaultHangoverMs covers a short pause without splitting a turn.
 const DefaultHangoverMs = 250

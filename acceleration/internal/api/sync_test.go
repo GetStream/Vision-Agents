@@ -627,6 +627,18 @@ func (s *SyncSuite) TestASyncWithAnAliasHoldingTheToolSeparatorIsRefused() {
 	s.Empty(s.configsNamed("support"))
 }
 
+func (s *SyncSuite) TestASyncAnswersToolPatterns() {
+	binding := sessionSlack("inbox")
+	binding["tools"] = []map[string]any{}
+	binding["tool_patterns"] = []string{"*"}
+
+	synced := s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{binding}})
+
+	s.Equal([]string{"*"}, value(value(synced.Config.Connectors)[0].ToolPatterns))
+	s.Empty(value(synced.Config.Connectors)[0].Tools)
+	s.Equal([]string{"*"}, value(value(s.configsNamed("support")[0].Connectors)[0].ToolPatterns))
+}
+
 func (s *SyncSuite) TestASyncAddingAPluginABindingIsCalledIsRefused() {
 	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("linear")}})
 

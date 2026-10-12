@@ -244,6 +244,55 @@ func (s *TwilioSuite) TestBuyingANumberReturnsWhatIsNeededToManageItLater() {
 	s.Equal(int64(1_150_000), bought.MonthlyCostMicros)
 }
 
+// boughtAsTwilioAnswers is a purchase as Twilio really answers it: the number resource has
+// neither a country nor a price.
+const boughtAsTwilioAnswers = `{"sid":"PN9","phone_number":"+15125551234",
+	"capabilities":{"voice":true,"SMS":true}}`
+
+func (s *TwilioSuite) TestBuyingANumberKeepsTheOrdersCountryWhenTwilioNamesNone() {
+	s.answerWithPrices(boughtAsTwilioAnswers, usPrices)
+
+	bought, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234", Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal("US", bought.Country)
+}
+
+func (s *TwilioSuite) TestBuyingANumberIsPricedLikeTheSearchThatOfferedIt() {
+	s.answerWithPrices(boughtAsTwilioAnswers, usPrices)
+
+	bought, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234", Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal(int64(1_000_000), bought.MonthlyCostMicros, "the local price, since twilio quotes none on the number")
+	s.Equal("/v1/PhoneNumbers/Countries/US", s.seenPricing.path)
+}
+
+func (s *TwilioSuite) TestBuyingATollFreeNumberIsPricedAsTollFree() {
+	s.answerWithPrices(`{"sid":"PN9","phone_number":"+18885551234"}`, usPrices)
+
+	bought, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+18885551234", Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal(int64(2_000_000), bought.MonthlyCostMicros)
+}
+
+func (s *TwilioSuite) TestBuyingANumberStillSucceedsWhenPricesCannotBeHad() {
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/") {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(boughtAsTwilioAnswers))
+	}
+
+	bought, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234", Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal("PN9", bought.VendorID)
+	s.Zero(bought.MonthlyCostMicros)
+}
+
 func (s *TwilioSuite) TestReleasingANumberLooksUpItsSidFirst() {
 	var paths []string
 	s.respond = func(w http.ResponseWriter, r *http.Request) {
