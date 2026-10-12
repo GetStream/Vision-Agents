@@ -1473,9 +1473,15 @@ go test ./...
 
 # Integration tests hit real providers, Postgres and Redis
 go test -tags integration ./...
+
+# Manual live full-duplex proof for GPT-Live (requires OPENAI_API_KEY and ffmpeg)
+go test -tags integration -count=1 -v -run '^TestOpenAILiveIntegrationSuite/TestTheModelHearsAndAnswersWhileTheCallerIsStillSpeaking$' ./internal/sts/openailive
 ```
 
 Integration tests skip themselves when the credentials or services they need are absent.
+CI checks caller-audio forwarding against a fake Live socket and compiles the shared STS
+integration suite without calling providers. The full-duplex proof is manual; providers that
+do not declare `FullDuplex` or the needed transcript capabilities skip it.
 
 `internal/agent/conversation_test.go` is the conversation-quality suite: a synthesised caller
 is played into a real agent at the rate a real call delivers audio, in silence, in a noisy
