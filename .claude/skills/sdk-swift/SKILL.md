@@ -294,7 +294,8 @@ and `_SECRET` for the keyed posture checks.
 CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on the `xcode-27` runner,
 on any change under `sdks/swift`, the two demos' apps or the spec. It builds
 `swift-openapi-generator` (cached), runs `generate.py` again and fails if the generated client
-differs from what is committed, runs the core tests on the iPhone 18 Pro simulator, and builds
+differs from what is committed, runs the core tests on the first iPhone simulator the runner
+has, and builds
 `swift_demo` and `flower_spotter`.
 
 Wait on a condition with a deadline, never `Task.sleep` for a fixed guess:
