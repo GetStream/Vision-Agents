@@ -633,7 +633,7 @@ the stored bindings; an empty list removes them.
 
 `sts-duplex` routes only to realtime speech models whose provider declares they can listen
 while speaking. Failover stays within that eligible set. Go `DefineRouter` and `SyncRouters`
-support STS targets and provider-specific overwrites; partial STT/TTS updates preserve them.
+support STS targets and provider-specific overwrites; partial STT/TTS updates preserve them (#887).
 
 ### Bring your own model
 
