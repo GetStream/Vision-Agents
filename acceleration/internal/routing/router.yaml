@@ -1960,7 +1960,7 @@ sts:
       languages: [en, pt]
       realtime: true
       tier: high-quality
-      supports: [tools, text, input_transcript, output_transcript]
+      supports: [full_duplex, tools, text, input_transcript, output_transcript]
       data_policy:
         trains_on_data: "no"
         retention: unknown
@@ -2035,6 +2035,12 @@ sts:
       require_realtime: true
       tier: low-latency
       prefer: gemini/gemini-3.8-live
+
+    sts-duplex:
+      title: Full duplex
+      description: "A native voice model that listens while it speaks."
+      require_terms: [full_duplex]
+      require_realtime: true
 
     # A conversation the model can watch as well as hear. Pinned to GPT-Realtime-2, which
     # is what vlm pins for the same reason.

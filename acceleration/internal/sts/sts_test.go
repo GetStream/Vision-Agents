@@ -21,10 +21,10 @@ func TestSTSSuite(t *testing.T) {
 func (s *STSSuite) TestCapabilitiesExpressOnlyWhatTheyDeclare() {
 	all := Capabilities{
 		Text: true, Tools: true, InputTranscript: true, OutputTranscript: true,
-		SemanticTurns: true, ManualTurns: true, Endpointing: true,
+		SemanticTurns: true, ManualTurns: true, Endpointing: true, FullDuplex: true,
 	}
 	for _, term := range []options.Term{
-		options.SemanticTurns, options.ManualTurns, options.Endpointing, options.Tools,
+		options.SemanticTurns, options.FullDuplex, options.ManualTurns, options.Endpointing, options.Tools,
 		options.TextInput, options.InputTranscript, options.OutputTranscript,
 	} {
 		s.True(all.Expresses(term), "%s should be expressible when declared", term)

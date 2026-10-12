@@ -629,6 +629,12 @@ object names the connector, the tool patterns, an app connection (its id, or the
 connection with that label) and whether the binding is required. Leaving the key out leaves
 the stored bindings; an empty list removes them.
 
+### Native full-duplex speech routing
+
+`sts-duplex` routes only to realtime speech models whose provider declares they can listen
+while speaking. Failover stays within that eligible set. Go `DefineRouter` and `SyncRouters`
+support STS targets and provider-specific overwrites; partial STT/TTS updates preserve them (#887).
+
 ### Bring your own model
 
 A language model you serve yourself behind an OpenAI-compatible endpoint (a fine-tune on

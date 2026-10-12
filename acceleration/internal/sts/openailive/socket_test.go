@@ -271,6 +271,77 @@ func (s *OpenAILiveSocketSuite) TestTheCallersAudioGoesUpAtTheSessionRate() {
 	s.Len(decoded, len(audio.Resample(pcm, SampleRate, 1).Bytes()), "100ms at 16 kHz goes up as 100ms at 24 kHz")
 }
 
+func (s *OpenAILiveSocketSuite) TestCallerAudioPassesThroughDuringAnOpenReply() {
+	fake := newFakeLive("")
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{ReplyGap: 5 * time.Second})
+	defer func() {
+		_ = conn.Close()
+		_ = provider.Close()
+	}()
+
+	var transcript string
+	nextAudio := func() sts.AudioChunk {
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		for {
+			select {
+			case event, open := <-provider.Events():
+				if !open {
+					s.FailNow("provider closed its event stream")
+				}
+				switch typed := event.(type) {
+				case sts.AudioChunk:
+					return typed
+				case sts.InputTranscript:
+					transcript += typed.Text
+				case sts.Error:
+					s.FailNowf("provider rejected response audio", "context=%q", typed.Context)
+				case sts.ResponseComplete:
+					s.FailNow("response completed before the next output chunk")
+				}
+			case <-timer.C:
+				s.FailNow("timed out waiting for provider audio")
+			}
+		}
+	}
+
+	firstAudio := sts.PcmData{Samples: []int16{400, -401}, SampleRate: SampleRate, Channels: 1}
+	s.Require().NoError(conn.WriteJSON(serverEvent{Type: eventAudioDelta, Delta: base64.StdEncoding.EncodeToString(firstAudio.Bytes())}))
+	first := nextAudio()
+	s.Equal(firstAudio.Samples, first.Audio.Samples)
+
+	caller := sts.PcmData{Samples: make([]int16, 1600), SampleRate: sts.InputSampleRate, Channels: 1}
+	for i := range caller.Samples {
+		caller.Samples[i] = int16(700 - i%1300)
+	}
+	processDone := make(chan error, 1)
+	go func() { processDone <- provider.ProcessAudio(caller, sts.Participant{ID: "caller"}) }()
+	input := s.nextFrame(conn)
+	select {
+	case err := <-processDone:
+		s.Require().NoError(err)
+	case <-time.After(5 * time.Second):
+		s.FailNow("caller audio processing did not finish after forwarding the chunk")
+	}
+	s.Require().Equal(eventAudioAppend, input["type"])
+	decoded, err := base64.StdEncoding.DecodeString(input["audio"].(string))
+	s.Require().NoError(err)
+	s.Equal(audio.Resample(caller, SampleRate, 1).Bytes(), decoded, "the complete caller chunk must reach the provider while its reply is open")
+
+	const callerTranscript = "I have a new question for you."
+	s.Require().NoError(conn.WriteJSON(serverEvent{Type: eventInputTranscript, Delta: callerTranscript}))
+	secondAudio := sts.PcmData{Samples: []int16{-900, 901}, SampleRate: SampleRate, Channels: 1}
+	s.Require().NoError(conn.WriteJSON(serverEvent{Type: eventAudioDelta, Delta: base64.StdEncoding.EncodeToString(secondAudio.Bytes())}))
+	second := nextAudio()
+
+	s.Equal(callerTranscript, transcript)
+	s.Equal(first.ResponseID, second.ResponseID, "caller audio must not roll the live response over")
+	s.Equal(first.Generation, second.Generation, "caller audio must not start a new generation")
+	s.Equal(first.Index+1, second.Index, "the next output chunk keeps its place in the original response")
+	s.Equal(secondAudio.Samples, second.Audio.Samples, "the distinctive second chunk must arrive intact")
+}
+
 func (s *OpenAILiveSocketSuite) TestAToolAnswerContinuesTheBackend() {
 	fake := newFakeLive("")
 	defer fake.close()
