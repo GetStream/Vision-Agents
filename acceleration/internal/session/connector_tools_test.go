@@ -205,6 +205,7 @@ func (s *AttachConnectorsSuite) TestNoSelectionImpliesNothingForAnUnverifiedCall
 	config := s.config(s.chosen("crm", "whoami"))
 	shared := s.spec(config, "alice", nil)
 	shared.ConversationID = "agent:" + persistent.ThreadChannelPrefix + "0199"
+	shared.Thread = true
 	guest, anonymous := s.spec(config, "alice", nil), s.spec(config, "alice", nil)
 	guest.CallerKind, anonymous.CallerKind = auth.KindGuest, auth.KindAnonymous
 
@@ -320,6 +321,7 @@ func (s *AttachConnectorsSuite) TestASharedConversationUsesTheAppsConnectionsOnl
 	app, alice := s.connection("", "primary"), s.connection("alice", "secondary")
 	spec := s.spec(s.config(s.fixed("team", app, "whoami"), s.chosen("mine", "whoami")), "alice", map[string]string{"mine": alice})
 	spec.ConversationID = "agent:" + persistent.ThreadChannelPrefix + "0199"
+	spec.Thread = true
 
 	_, tools, unavailable, err := s.attach(spec)
 
