@@ -48,9 +48,7 @@ async def create_agent(**kwargs) -> Agent:
         description="Dispatch a technician. Reboot must have failed first. window is am or pm"
     )
     async def dispatch_tech(window: Window, ticket_id: str = "") -> dict:
-        return world.call(
-            "dispatch_tech", window=Window(window).value, ticket_id=ticket_id
-        )
+        return world.call("dispatch_tech", window=window, ticket_id=ticket_id)
 
     @llm.register_function(description="Apply a bill credit if eligible")
     async def apply_credit(amount: float) -> dict:
