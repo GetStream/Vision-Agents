@@ -17,6 +17,7 @@ from ._generated.models import (
     PhoneCapability,
     PhoneNumber,
     PhoneNumberType,
+    SessionPhone,
     SimulationRequest,
     SkippedVendor,
 )
@@ -88,6 +89,7 @@ __all__ = [
     "Session",
     "SessionEvent",
     "SessionOptions",
+    "SessionPhone",
     "Sessions",
     "SimulationRequest",
     "SimulationRuns",
