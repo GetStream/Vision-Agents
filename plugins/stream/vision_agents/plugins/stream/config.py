@@ -10,6 +10,7 @@ from ._generated.api.default import (
     create_agent_config,
     create_skill,
     list_agent_configs,
+    list_connections,
     list_skills,
     sync_agent as sync_agent_request,
     update_agent_config,
@@ -19,11 +20,15 @@ from ._generated.models import (
     AgentChannels,
     AgentConfig,
     AgentConfigRequest,
+    AgentConnectorBinding,
+    AgentConnectorSelection,
+    AgentConnectorSelectionType,
     AgentDispatch,
     AgentMode,
     AgentTools,
     ChannelIdentity,
     ChannelLineRequest,
+    ConnectionOwnerType,
     DispatchSetting,
     ErrorResponse,
     Greeting,
@@ -43,9 +48,11 @@ from ._generated.models import (
     SyncAgentRequestTags,
     SyncAgentResult,
 )
+from ._generated.types import UNSET, Unset
 from ._generated.models import Sandbox as SandboxProvider
 from .folder import (
     AGENT_STAMP,
+    ConnectorSettings,
     Folder,
     MCPServerSettings,
     PluginSettings,
@@ -133,7 +140,7 @@ async def sync_agent(
         body.knowledge_urls = pages
     if folder.simulations is not None:
         body.simulations = [_simulation(item) for item in folder.simulations]
-    _declare_settings(body, folder.settings)
+    await _declare_settings(body, folder.settings, client)
 
     result = _answer(await sync_agent_request.asyncio(client=client, body=body))
     await asyncio.to_thread(write_stamp, folder.path, AGENT_STAMP, fingerprint)
@@ -323,7 +330,9 @@ async def define_skills(
     return skills
 
 
-def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
+async def _declare_settings(
+    body: SyncAgentRequest, settings: Settings, client: AuthenticatedClient
+) -> None:
     """Carry what `agent.yaml` declared onto the sync request.
 
     Only what the file names is sent. A setting it says nothing about is left out rather
@@ -365,6 +374,10 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
             body.greeting.mode = GreetingMode(settings.greeting.mode)
     if settings.plugins:
         body.plugins = [_plugin_entry(plugin) for plugin in settings.plugins]
+    if settings.connectors is not None:
+        body.connectors = [
+            await _connector_binding(client, entry) for entry in settings.connectors
+        ]
     if settings.mcp_servers:
         body.mcp_servers = [_mcp_server(server) for server in settings.mcp_servers]
     if settings.tools is not None:
@@ -428,6 +441,76 @@ def _plugin_entry(plugin: PluginSettings) -> PluginWithOptions | str:
     if plugin.tools:
         declared.tools = plugin.tools
     return declared
+
+
+async def _connector_binding(
+    client: AuthenticatedClient, entry: ConnectorSettings
+) -> AgentConnectorBinding:
+    """One agent.yaml connector as the binding the sync request sends.
+
+    A name alone, or an object that names no connection, is a session binding. `connection`
+    is the app's connection: its id, or the label of exactly one of that connector's, read
+    across every page of the list.
+    """
+    if entry.connection:
+        selection = AgentConnectorSelection(
+            type_=AgentConnectorSelectionType.FIXED,
+            connection_id=await _fixed_connection_id(client, entry),
+        )
+    else:
+        selection = AgentConnectorSelection(type_=AgentConnectorSelectionType.SESSION)
+    return AgentConnectorBinding(
+        connection=selection,
+        connector_id=entry.connector or entry.name,
+        name=entry.name,
+        tools=[],
+        tool_patterns=list(entry.tools) if entry.tools is not None else ["*"],
+        required=UNSET if entry.required is None else entry.required,
+    )
+
+
+async def _fixed_connection_id(
+    client: AuthenticatedClient, entry: ConnectorSettings
+) -> str:
+    """The id `entry.connection` names: an exact id, else the one connection with that label."""
+    connector_id = entry.connector or entry.name
+    matched_id = ""
+    label_ids: list[str] = []
+    cursor: str | Unset = UNSET
+    seen: set[str] = set()
+    while True:
+        page = _answer(
+            await list_connections.asyncio(
+                client=client,
+                owner_type=ConnectionOwnerType.CONNECTION_OWNER_TYPE_APP,
+                connector_id=connector_id,
+                cursor=cursor,
+            )
+        )
+        for item in page.items or []:
+            if item.id == entry.connection:
+                matched_id = item.id
+            label = item.label
+            if not isinstance(label, Unset) and label == entry.connection:
+                label_ids.append(item.id)
+        nxt = page.next_cursor
+        if not page.has_more or isinstance(nxt, Unset) or not nxt or nxt in seen:
+            break
+        seen.add(nxt)
+        cursor = nxt
+    if matched_id:
+        return matched_id
+    if len(label_ids) == 1:
+        return label_ids[0]
+    if not label_ids:
+        raise ValueError(
+            f'agents: connector "{entry.name}": no app connection with id or label'
+            f' "{entry.connection}"'
+        )
+    raise ValueError(
+        f'agents: connector "{entry.name}": "{entry.connection}" matches'
+        f" {len(label_ids)} app connections"
+    )
 
 
 def _mcp_server(server: MCPServerSettings) -> McpServer:

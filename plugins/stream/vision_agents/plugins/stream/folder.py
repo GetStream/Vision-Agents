@@ -165,6 +165,26 @@ class PluginSettings:
 
 
 @dataclass
+class ConnectorSettings:
+    """One connector the agent binds.
+
+    `agent.yaml` gives it as the connector's id alone, a session binding offering every
+    tool, or as a mapping naming the alias with the rest.
+    """
+
+    name: str
+    connector: str = ""
+    """The connector id. Empty is the alias."""
+    tools: list[str] | None = None
+    """Names or patterns to offer, as written. None offers every tool."""
+    connection: str = ""
+    """An app connection's id, or the label of exactly one of them. Empty is a session
+    binding, filled when a session opens."""
+    required: bool | None = None
+    """Whether a session needs this connector. None when the file says nothing about it."""
+
+
+@dataclass
 class ToolSettings:
     """How plugin, MCP server and connector tools are offered."""
 
@@ -212,6 +232,9 @@ class Settings:
     plugins: list[PluginSettings] = field(default_factory=list)
     """Catalog MCP servers the app connects once, on the dashboard, for every session, or
     each end user with their own account, in the chat, for one with `user`."""
+    connectors: list[ConnectorSettings] | None = None
+    """Connectors the agent binds. None when the file says nothing about them, which
+    leaves whatever is stored; an empty list removes them."""
     mcp_servers: list[MCPServerSettings] = field(default_factory=list)
     """MCP servers outside the catalog, opened by the router by their URL, with a login
     when the server asks for one."""
@@ -455,6 +478,8 @@ def _declare(path: Path) -> Settings:
             settings.sandbox_options = _sandbox_options(path, value)
         elif field_name == "plugins":
             settings.plugins = _plugins(path, field_name, value)
+        elif field_name == "connectors":
+            settings.connectors = _connectors(path, value)
         elif field_name == "mcp_servers":
             settings.mcp_servers = _mcp_servers(path, value)
         elif field_name == "tools":
@@ -477,6 +502,7 @@ def _declare(path: Path) -> Settings:
             raise ValueError(
                 f"{path} declares {field_name!r}, which is not something an agent has"
             )
+    _refuse_connector_aliases(settings)
     return settings
 
 
@@ -570,6 +596,108 @@ def _plugins(path: Path, field_name: str, value: object) -> list[PluginSettings]
             )
         )
     return named
+
+
+def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
+    """The connectors one list binds, each an id or a mapping naming the alias.
+
+    None, the key left out or set to null, leaves the stored bindings. An empty list
+    removes them. A blank entry is refused: dropping it would sync an empty list and
+    wipe what is stored. A name is kept as written. `tools` left out or null offers
+    every tool; `tools: []` grants nothing and is refused.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError(f"{path} should give connectors as a list")
+    named: list[ConnectorSettings] = []
+    for item in value:
+        # A null element, including one whose value is only a comment, is not "left out".
+        if item is None or item == "":
+            raise ValueError("a connector needs a name")
+        if isinstance(item, str):
+            named.append(ConnectorSettings(name=item))
+            continue
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"{path} should give each of connectors as a connector id or a mapping"
+            )
+        extra = set(item) - {"name", "connector", "tools", "connection", "required"}
+        if extra:
+            raise ValueError(f"{path} unknown connectors setting: {sorted(extra)[0]}")
+        name = _text(item.get("name"))
+        if not name.strip():
+            raise ValueError("a connector needs a name")
+        connector = ""
+        if "connector" in item and item.get("connector") is not None:
+            raw_connector = item.get("connector")
+            if not isinstance(raw_connector, str):
+                raise ValueError(f"{path} connector must be a connector id")
+            connector = raw_connector
+        connection = ""
+        if "connection" in item and item.get("connection") is not None:
+            raw_connection = item.get("connection")
+            if not isinstance(raw_connection, str) or raw_connection == "":
+                raise ValueError(
+                    f'connector "{name}": connection must be a connection id or label'
+                )
+            connection = raw_connection
+        required: bool | None = None
+        if "required" in item and item.get("required") is not None:
+            flag = item.get("required")
+            if not isinstance(flag, bool):
+                raise ValueError(
+                    f"{path} should give connectors required as true or false"
+                )
+            required = flag
+        named.append(
+            ConnectorSettings(
+                name=name,
+                connector=connector,
+                tools=_connector_tools(path, name, item),
+                connection=connection,
+                required=required,
+            )
+        )
+    return named
+
+
+def _connector_tools(
+    path: Path, name: str, item: dict[str, object]
+) -> list[str] | None:
+    """Patterns as written. Absent or null offers every tool; an empty list grants none."""
+    if "tools" not in item or item.get("tools") is None:
+        return None
+    raw = item.get("tools")
+    if not isinstance(raw, list):
+        raise ValueError(f"{path} should give connectors.tools as a list")
+    if len(raw) == 0:
+        raise ValueError(
+            f'connector "{name}": tools: [] grants nothing; leave tools out for every tool'
+        )
+    patterns: list[str] = []
+    for piece in raw:
+        if not isinstance(piece, str):
+            raise ValueError(f"{path} should give connectors.tools as a list")
+        patterns.append(piece)
+    return patterns
+
+
+def _refuse_connector_aliases(settings: Settings) -> None:
+    """An alias is also how its tools are prefixed, so it cannot be a plugin or MCP name."""
+    if not settings.connectors:
+        return
+    plugins = {plugin.name for plugin in settings.plugins}
+    servers = {server.name for server in settings.mcp_servers}
+    for entry in settings.connectors:
+        if entry.name in servers:
+            raise ValueError(
+                f'"{entry.name}" is named under both connectors and mcp_servers'
+            )
+        if entry.name in plugins:
+            raise ValueError(
+                f'"{entry.name}" is named under both connectors and plugins'
+            )
 
 
 def _greeting(path: Path, value: object) -> GreetingSettings | None:
