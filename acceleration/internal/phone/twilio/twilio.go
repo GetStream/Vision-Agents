@@ -7,6 +7,7 @@
 package twilio
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -256,7 +257,8 @@ func (p *Provider) Dials(feature phone.CallFeature) bool {
 }
 
 // BuyNumber buys a number, which is what starts Twilio charging for it. Twilio buys by
-// number, so the order's country is not needed.
+// number, but its answer names neither the country nor the price, so both come from the
+// order and from the same price list the search quoted.
 func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Number, error) {
 	if order.E164 == "" {
 		return phone.Number{}, stack.Wrap(errors.New("twilio: a number is required"))
@@ -273,14 +275,33 @@ func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Numb
 		return phone.Number{}, err
 	}
 
+	country := cmp.Or(bought.ISOCountry, strings.ToUpper(order.Country))
+	price := dollarsToMicros(bought.MonthlyPrice)
+	if price == 0 && country != "" {
+		price = p.monthlyPrice(ctx, country, numberType(order.E164))
+	}
 	return phone.Number{
 		E164:              bought.PhoneNumber,
 		Vendor:            p.Vendor(),
-		Country:           bought.ISOCountry,
+		Country:           country,
 		VendorID:          bought.SID,
 		Capabilities:      bought.Capabilities.list(),
-		MonthlyCostMicros: dollarsToMicros(bought.MonthlyPrice),
+		MonthlyCostMicros: price,
 	}, nil
+}
+
+// tollFreeCodes are the North American toll-free area codes.
+var tollFreeCodes = []string{"800", "833", "844", "855", "866", "877", "888"}
+
+// numberType tells a toll-free number from a local one by its area code. Twilio's answer to
+// a purchase does not say, and the numbers sold are North American, where the code decides.
+func numberType(e164 string) phone.NumberType {
+	for _, code := range tollFreeCodes {
+		if strings.HasPrefix(e164, "+1"+code) {
+			return phone.TollFree
+		}
+	}
+	return phone.Local
 }
 
 // ReleaseNumber gives a number back, which is what stops the charge.
