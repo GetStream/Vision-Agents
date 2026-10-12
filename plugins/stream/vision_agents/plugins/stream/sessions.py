@@ -106,6 +106,8 @@ class SessionOptions:
         start_voice: Have the agent join the session's own call, ``agent:<session id>``, as
             soon as it opens. False holds the conversation in writing, and
             ``Session.voice`` starts it later.
+        navigating: The agent is about to place a phone call into this session, so it lets
+            recordings finish, answers phone menus and waits for the person to speak first.
         history: The conversation so far, oldest first, for a backend that keeps its own
             thread: the model is handed it before the first response and the router
             records none of it. Up to 100 messages. Server side only.
@@ -128,6 +130,7 @@ class SessionOptions:
     model_overwrites: Optional[ModelOverwrites] = None
 
     start_voice: bool = False
+    navigating: bool = False
     history: Optional[list[HistoryMessage]] = None
     user_id: str = ""
     connector_bindings: Optional[dict[str, str]] = None
@@ -348,6 +351,8 @@ class Sessions:
                 setattr(request, name, getattr(options, name))
         if options.start_voice:
             request.start_voice = True
+        if options.navigating:
+            request.navigating = True
         if options.history:
             request.history = options.history
         if options.user_id:
