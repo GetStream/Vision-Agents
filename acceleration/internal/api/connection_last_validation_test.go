@@ -253,6 +253,8 @@ func (s *ConnectionToolsSuite) TestAPendingConnectionsValidateIsRecordedWithoutA
 	s.Equal(validationPending, string(got.Status))
 	s.Equal(validation.Error, got.Error)
 	s.Empty(got.Code)
+	// Probe on e70351d4: nothing is sent, and the answer is this sentence.
+	s.Equal("no credentials yet: start a consent or set its credentials", validation.Error)
 }
 
 // TestANewTokenHidesTheLastValidationOfTheOldOne (R1.1 of PR #874): what a validate found of
@@ -447,14 +449,18 @@ func (s *ConnectionToolsSuite) TestATokenSavedDuringAValidateIsNotStoredFromTheP
 	connector := s.connectorAt(echo.URL + "/mcp")
 	id := s.connectionTo(connector)
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, tokenA), nil))
+	var validation ConnectionValidation
 	done := make(chan int, 1)
 	go func() {
-		done <- s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil, nil)
+		done <- s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil, &validation)
 	}()
 	<-arrived
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(s.get(id).Revision, tokenB), nil))
 	close(release)
 	s.Require().Equal(http.StatusOK, <-done)
+	// The answer is the stored text, which is empty once the revision has moved (AI-1078).
+	s.False(validation.Error != "", "a validate whose revision moved keeps provider text in the answer")
+	s.False(strings.Contains(validation.Error, tokenB), "the answer holds the token saved during the validate")
 
 	var row, errorText string
 	var revision int
@@ -539,6 +545,85 @@ func (s *ConnectionToolsSuite) codeGrant() (string, string) {
 	s.Require().NoError(json.NewDecoder(response.Body).Decode(&tokens))
 	s.Require().NotEmpty(tokens.RefreshToken)
 	return tokens.AccessToken, tokens.RefreshToken
+}
+
+// TestA4xxThatEchoesACredentialLeavesItOutOfTheAnswer (AI-1078): a bearer or api_key connection
+// a provider refuses with 4xx, echoing the header it was sent, is moved, and the answer is the
+// rejection. Probe on e70351d4: that text has no credential, and it matches GET and list.
+func (s *ConnectionToolsSuite) TestA4xxThatEchoesACredentialLeavesItOutOfTheAnswer() {
+	for _, scheme := range []string{bearer.Name, apikey.Name} {
+		s.Run(scheme, func() {
+			secret := s.token + "-4xx-" + scheme
+			validation, connection, listed := s.echoCredential(scheme, http.StatusBadRequest, secret)
+
+			s.Equal(validationNeedsReauthorization, string(validation.Status))
+			s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), connection.Status)
+			for _, text := range []string{validation.Error, connection.LastValidation.Error, listed} {
+				s.False(strings.Contains(text, secret), "holds the credential")
+				s.True(text == rejectedStaticError, "the rejection, with the credential left out")
+			}
+		})
+	}
+}
+
+// TestAValidateAnswerCutsACredentialTheProviderEchoed (AI-1078): a non-transient failure that
+// leaves the connection connected returns the provider's body. Probe on e70351d4: a 501 whose
+// body echoes the bearer or the api_key header puts that value in the validate answer, while
+// GET and list already store it cut. The answer is that stored text.
+func (s *ConnectionToolsSuite) TestAValidateAnswerCutsACredentialTheProviderEchoed() {
+	for _, scheme := range []string{bearer.Name, apikey.Name} {
+		s.Run(scheme, func() {
+			secret := s.token + "-echo-" + scheme
+			validation, connection, listed := s.echoCredential(scheme, http.StatusNotImplemented, secret)
+
+			s.Equal(validationFailed, string(validation.Status))
+			s.Equal(ConnectionStatus(store.ConnectionConnected), connection.Status)
+			for _, text := range []string{validation.Error, connection.LastValidation.Error, listed} {
+				// s.False on strings.Contains, not s.NotContains, so a failure never prints the secret.
+				s.False(strings.Contains(text, secret), "holds the credential")
+				s.True(strings.Contains(text, "echoed "+storedRedacted), "keeps the provider's error")
+				s.LessOrEqual(len(text), maxStoredErrorBytes)
+				s.True(strings.HasSuffix(text, storedErrorCut))
+			}
+			s.True(validation.Error == connection.LastValidation.Error && validation.Error == listed, "answer, get and list")
+		})
+	}
+}
+
+// echoCredential validates a connection of scheme whose provider answers status with a body
+// that echoes the header the credential is sent in, padded past maxStoredErrorBytes.
+// listed is the list page's last-validation error.
+func (s *ConnectionToolsSuite) echoCredential(scheme string, status int, secret string) (ConnectionValidation, Connection, string) {
+	const header = "X-Api-Key"
+	echo := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		sent := r.Header.Get("Authorization")
+		if scheme == apikey.Name {
+			sent = r.Header.Get(header)
+		}
+		message := "echoed " + sent + " " + strings.Repeat("x", maxStoredErrorBytes)
+		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "error": map[string]any{"code": -32600, "message": message}})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write(body)
+	}))
+	s.T().Cleanup(echo.Close)
+	connector := s.connectorWith(scheme, echo.URL+"/mcp")
+	id := s.connectionTo(connector)
+	credentials := s.bearerToken(1, secret)
+	if scheme == apikey.Name {
+		credentials = map[string]any{"expected_revision": 1, "values": map[string]string{apikey.SuppliedKey: secret, apikey.SuppliedHeader: header}}
+	}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", credentials, nil))
+
+	validation := s.validate(id)
+	connection := s.get(id)
+	s.Require().NotNil(connection.LastValidation)
+	var page ConnectionPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections?owner_type=app&connector_id="+connector, nil, &page))
+	s.Require().Len(page.Items, 1)
+	s.Require().NotNil(page.Items[0].LastValidation)
+	return validation, connection, page.Items[0].LastValidation.Error
 }
 
 // connectorAt stores a bearer connector of the suite's app whose MCP endpoint is mcp.

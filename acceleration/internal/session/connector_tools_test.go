@@ -205,6 +205,7 @@ func (s *AttachConnectorsSuite) TestNoSelectionImpliesNothingForAnUnverifiedCall
 	config := s.config(s.chosen("crm", "whoami"))
 	shared := s.spec(config, "alice", nil)
 	shared.ConversationID = "agent:" + persistent.ThreadChannelPrefix + "0199"
+	shared.Thread = true
 	guest, anonymous := s.spec(config, "alice", nil), s.spec(config, "alice", nil)
 	guest.CallerKind, anonymous.CallerKind = auth.KindGuest, auth.KindAnonymous
 
@@ -320,6 +321,7 @@ func (s *AttachConnectorsSuite) TestASharedConversationUsesTheAppsConnectionsOnl
 	app, alice := s.connection("", "primary"), s.connection("alice", "secondary")
 	spec := s.spec(s.config(s.fixed("team", app, "whoami"), s.chosen("mine", "whoami")), "alice", map[string]string{"mine": alice})
 	spec.ConversationID = "agent:" + persistent.ThreadChannelPrefix + "0199"
+	spec.Thread = true
 
 	_, tools, unavailable, err := s.attach(spec)
 
@@ -396,6 +398,25 @@ func (s *AttachConnectorsSuite) TestAToolGrantedByNameWhoseSchemaChangedSinceIts
 func (s *AttachConnectorsSuite) TestAReconnectPinsAToolGrantedByNameAgain() {
 	alice := s.connection("alice", "primary")
 	config := s.config(byName(s.chosen("crm", "whoami")))
+	_, _, _, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+	s.provider.redescribe("primary", "Says which account this is, as changed.")
+	s.setState(alice, func(state *core.CredentialState) { state.ConnectedAt = time.Now().UTC().Add(time.Second) })
+
+	_, tools, unavailable, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+
+	s.Require().NoError(err)
+	s.Empty(unavailable)
+	s.Equal([]string{"crm__whoami"}, names(tools))
+	s.Equal("Says which account this is, as changed.", tools[0].Description)
+	s.NotEqual(grants("whoami")[0].SchemaDigest, s.pinOf(alice, "whoami").SchemaDigest)
+}
+
+// TestAReconnectPinsAPatternMatchedToolAgain: a consent connects Alice's connection anew, a
+// new trust event, so the next session pins the pattern's whoami as the provider lists it now.
+func (s *AttachConnectorsSuite) TestAReconnectPinsAPatternMatchedToolAgain() {
+	alice := s.connection("alice", "primary")
+	config := s.config(withPatterns(s.chosen("crm"), "whoami"))
 	_, _, _, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
 	s.Require().NoError(err)
 	s.provider.redescribe("primary", "Says which account this is, as changed.")
