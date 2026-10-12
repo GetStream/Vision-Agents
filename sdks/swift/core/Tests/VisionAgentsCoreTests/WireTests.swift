@@ -110,6 +110,33 @@ import Testing
         #expect(event.toolCall == nil)
     }
 
+    @Test func aStepUpFrameReadsAsTheStepUp() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self,
+            from: Data(
+                #"{"type":"connector_scope_required","name":"crm","connector_id":"custom_crm","connection_id":"conn-1","scopes":["files:read","files:write"],"authorization_id":"attempt-1","launch_url":"https://router.example/v1/agents/connectors/oauth/launch/attempt-1","handoff_token":"handoff","expires_at":"2026-10-07T12:00:00Z"}"#
+                    .utf8))
+
+        let asked = try #require(event.connectorScopeRequired)
+
+        #expect(event.kind == .connectorScopeRequired)
+        #expect(asked.name == "crm")
+        #expect(asked.connectorID == "custom_crm")
+        #expect(asked.connectionID == "conn-1")
+        #expect(asked.scopes == ["files:read", "files:write"])
+        #expect(asked.authorizationID == "attempt-1")
+        #expect(asked.launchURL == "https://router.example/v1/agents/connectors/oauth/launch/attempt-1")
+        #expect(asked.handoffToken == "handoff")
+        #expect(asked.expiresAt == Date(timeIntervalSince1970: 1_791_374_400))
+    }
+
+    @Test func anotherKindIsNotAStepUp() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self, from: Data(#"{"type":"tool_ran","tool":"lookup_order"}"#.utf8))
+
+        #expect(event.connectorScopeRequired == nil)
+    }
+
     /// The router reads one flat struct, so a command has to put its fields at the top level
     /// under the names in `readCommands`.
     @Test(arguments: [

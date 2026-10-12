@@ -1,6 +1,7 @@
 package io.getstream.visionagents.core
 
 import kotlin.test.Test
+import kotlin.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
@@ -44,6 +45,30 @@ class WireTest {
         assertEquals("A-1042", call.argumentValues["order_id"]?.jsonPrimitive?.content)
         assertEquals("cmd", call.requestId)
         assertEquals("t1", call.turnId)
+    }
+
+    @Test
+    fun `a step-up frame reads as the step-up`() {
+        val event = assertNotNull(
+            AgentEvent.decode(
+                """{"type":"connector_scope_required","name":"crm","connector_id":"custom_crm","connection_id":"conn-1","scopes":["files:read","files:write"],"authorization_id":"attempt-1","launch_url":"https://router.example/v1/agents/connectors/oauth/launch/attempt-1","handoff_token":"handoff","expires_at":"2026-10-07T12:00:00Z"}""",
+            ),
+        )
+
+        assertEquals(
+            AgentEvent.ConnectorScopeRequired(
+                name = "crm",
+                connectorId = "custom_crm",
+                connectionId = "conn-1",
+                scopes = listOf("files:read", "files:write"),
+                authorizationId = "attempt-1",
+                launchUrl = "https://router.example/v1/agents/connectors/oauth/launch/attempt-1",
+                handoffToken = "handoff",
+                expiresAt = Instant.parse("2026-10-07T12:00:00Z"),
+            ),
+            event.connectorScopeRequired,
+        )
+        assertNull(assertNotNull(AgentEvent.decode("""{"type":"tool_ran"}""")).connectorScopeRequired)
     }
 
     @Test
