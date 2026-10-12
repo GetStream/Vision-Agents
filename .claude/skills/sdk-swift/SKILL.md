@@ -31,7 +31,8 @@ That is the price of one artifact; do not split it back up without being asked.
   adding the views resolves the version core does; `StreamChat` alone would build from 5.3
   (4.x's `ChatClient` is not `Sendable`, and 5.0 to 5.2 fail inside `stream-core-swift`).
 - Core builds with Xcode 26 and 27. `StreamChatAI` needs Xcode 27 to add with SPM, and
-  `StreamVideoSwiftUI` 1.54 does not compile under Xcode 27: an app cannot use both yet.
+  `stream-video-swift` is required from 1.54.0, since 1.51.0's `StreamVideoSwiftUI` does not
+  compile under Xcode 27. `flower_spotter` uses both and builds.
 - Declare `platforms:`. An unspecified platform makes consumers discover availability
   failures inside generated code.
 
