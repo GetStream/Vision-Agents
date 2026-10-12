@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -28,7 +29,11 @@ type backend struct {
 	configs []acceleration.AgentConfig
 	skills  []acceleration.Skill
 	syncs   []acceleration.SyncAgentRequest
+	syncRaw [][]byte
 	updates []string
+	// connections answers GET /v1/agents/connections. Nil answers an empty page.
+	connections       func(*http.Request) acceleration.ConnectionPage
+	connectionQueries []string
 }
 
 func newBackend(t *testing.T) *backend {
@@ -107,12 +112,30 @@ func newBackend(t *testing.T) *backend {
 		})
 	})
 
+	mux.HandleFunc("GET /v1/agents/connections", func(w http.ResponseWriter, r *http.Request) {
+		router.mu.Lock()
+		router.connectionQueries = append(router.connectionQueries, r.URL.RawQuery)
+		answer := router.connections
+		router.mu.Unlock()
+		if answer == nil {
+			reply(w, http.StatusOK, acceleration.ConnectionPage{})
+			return
+		}
+		reply(w, http.StatusOK, answer(r))
+	})
+
 	mux.HandleFunc("POST /v1/agents/sync", func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		var request acceleration.SyncAgentRequest
-		_ = json.NewDecoder(r.Body).Decode(&request)
+		_ = json.Unmarshal(raw, &request)
 
 		router.mu.Lock()
 		defer router.mu.Unlock()
+		router.syncRaw = append(router.syncRaw, raw)
 		router.syncs = append(router.syncs, request)
 		stored := acceleration.AgentConfig{
 			Id: "config-" + request.Name, Name: request.Name, Instructions: request.Instructions,
@@ -136,6 +159,12 @@ func newBackend(t *testing.T) *backend {
 	router.Server = httptest.NewServer(mux)
 	t.Cleanup(router.Close)
 	return router
+}
+
+func (b *backend) answerConnections(answer func(*http.Request) acceleration.ConnectionPage) {
+	b.mu.Lock()
+	b.connections = answer
+	b.mu.Unlock()
 }
 
 func reply(w http.ResponseWriter, status int, body any) {
@@ -580,7 +609,7 @@ func TestSyncWarnsThatPluginsAreDeprecatedAndStillSendsThem(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(logged.String(), `level=WARN msg="agent.yaml plugins and plugin_events are deprecated: bind connectors instead" agent=triage plugins=[sentry] plugin_events=1`) {
+	if !strings.Contains(logged.String(), `level=WARN msg="agent.yaml plugins are deprecated: rename plugins to connectors" agent=triage plugins=[sentry] plugin_events=1`) {
 		t.Errorf("no deprecation warning in %q", logged.String())
 	}
 	router.mu.Lock()
@@ -773,4 +802,262 @@ func TestSeveralSubagentsWithNoDefaultIsRefused(t *testing.T) {
 	if err := harness.Validate(); err == nil {
 		t.Fatal("which one runs skills would be decided by map iteration order")
 	}
+}
+
+// controlYAML is an agent.yaml with no connectors key. Its sync body was probed on
+// 80773902 (connectors/tool-patterns), before connectors were read.
+const controlYAML = "name: concierge\nllm: openai/gpt-5.6\nplugins:\n  - sentry\nmcp_servers:\n  - name: notes\n    url: https://notes.example/mcp\n"
+
+func TestSyncWithoutConnectorsSendsTheBodyItSentBefore(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", controlYAML)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	const probed = `{"hash":"9d57177d6eb6a640963fc6c6775fa120","llm":"openai/gpt-5.6","mcp_servers":[{"name":"notes","url":"https://notes.example/mcp"}],"name":"concierge","plugins":["sentry"]}`
+	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
+		t.Errorf("body = %s", router.syncRaw)
+	}
+	if len(router.connectionQueries) != 0 {
+		t.Errorf("connections were listed: %v", router.connectionQueries)
+	}
+}
+
+func TestSyncSendsAConnectorNamedAloneAsASessionBinding(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	sent := router.syncs[0].Connectors
+	if sent == nil || len(*sent) != 1 {
+		t.Fatalf("connectors went as %+v", sent)
+	}
+	linear := (*sent)[0]
+	if linear.Name != "linear" || linear.ConnectorId != "linear" ||
+		linear.Connection.Type != acceleration.AgentConnectorSelectionTypeSession || linear.Connection.ConnectionId != nil ||
+		linear.ToolPatterns == nil || strings.Join(*linear.ToolPatterns, ",") != "*" || len(linear.Tools) != 0 || linear.Required != nil {
+		t.Errorf("linear went as %+v", linear)
+	}
+	if strings.Contains(string(router.syncRaw[0]), `"tools":null`) {
+		t.Errorf("body = %s", router.syncRaw[0])
+	}
+	if len(router.connectionQueries) != 0 {
+		t.Errorf("a session binding listed connections: %v", router.connectionQueries)
+	}
+}
+
+func TestSyncSendsConnectorToolsAsPatterns(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    tools: [list_*, get_issue]\n    required: true\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	sent := router.syncs[0].Connectors
+	if sent == nil || len(*sent) != 1 {
+		t.Fatalf("connectors went as %+v", sent)
+	}
+	github := (*sent)[0]
+	if github.Name != "github" || github.ConnectorId != "github" ||
+		github.Connection.Type != acceleration.AgentConnectorSelectionTypeSession ||
+		github.ToolPatterns == nil || strings.Join(*github.ToolPatterns, ",") != "list_*,get_issue" ||
+		github.Required == nil || !*github.Required || len(github.Tools) != 0 {
+		t.Errorf("github went as %+v", github)
+	}
+}
+
+func TestSyncSendsEveryToolWhenToolsAreNull(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    tools: null\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	sent := router.syncs[0].Connectors
+	if sent == nil || len(*sent) != 1 || (*sent)[0].ToolPatterns == nil || strings.Join(*(*sent)[0].ToolPatterns, ",") != "*" {
+		t.Errorf("null tools went as %+v", sent)
+	}
+}
+
+func TestSyncSendsRequiredFalse(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    required: false\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	sent := router.syncs[0].Connectors
+	if sent == nil || len(*sent) != 1 || (*sent)[0].Required == nil || *(*sent)[0].Required ||
+		(*sent)[0].ToolPatterns == nil || strings.Join(*(*sent)[0].ToolPatterns, ",") != "*" {
+		t.Errorf("required went as %+v", sent)
+	}
+	if !strings.Contains(string(router.syncRaw[0]), `"required":false`) {
+		t.Errorf("body = %s", router.syncRaw[0])
+	}
+}
+
+func TestSyncOfAnEmptyConnectorListClearsThem(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors: []\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if router.syncs[0].Connectors == nil || len(*router.syncs[0].Connectors) != 0 {
+		t.Errorf("connectors went as %+v", router.syncs[0].Connectors)
+	}
+	if !strings.Contains(string(router.syncRaw[0]), `"connectors":[]`) {
+		t.Errorf("body = %s", router.syncRaw[0])
+	}
+}
+
+func TestSyncResolvesAConnectionIdBeforeItsLabel(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connector: linear\n    connection: acct\n")
+	router := newBackend(t)
+	router.answerConnections(func(r *http.Request) acceleration.ConnectionPage {
+		query := r.URL.Query()
+		if query.Get("owner_type") != "app" || query.Get("connector_id") != "linear" {
+			t.Errorf("listed %s", r.URL.RawQuery)
+		}
+		if query.Get("cursor") == "" {
+			return connectionPage("2", listedConnection("wrong", "acct"))
+		}
+		return connectionPage("", listedConnection("acct", "other"))
+	})
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.connectionQueries) != 2 {
+		t.Fatalf("queries = %v", router.connectionQueries)
+	}
+	sent := router.syncs[0].Connectors
+	if sent == nil || len(*sent) != 1 {
+		t.Fatalf("connectors went as %+v", sent)
+	}
+	got := (*sent)[0]
+	if got.Name != "issues" || got.ConnectorId != "linear" ||
+		got.Connection.Type != acceleration.AgentConnectorSelectionTypeFixed ||
+		got.Connection.ConnectionId == nil || *got.Connection.ConnectionId != "acct" {
+		t.Errorf("issues went as %+v", got)
+	}
+}
+
+func TestSyncResolvesTheOneConnectionWithThatLabel(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connector: linear\n    connection: work\n")
+	router := newBackend(t)
+	router.answerConnections(func(r *http.Request) acceleration.ConnectionPage {
+		if r.URL.Query().Get("connector_id") != "linear" {
+			t.Errorf("listed connector %s", r.URL.Query().Get("connector_id"))
+		}
+		if r.URL.Query().Get("cursor") == "" {
+			return connectionPage("2", listedConnection("other", "nope"))
+		}
+		return connectionPage("", listedConnection("the-one", "work"))
+	})
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	sent := router.syncs[0].Connectors
+	if sent == nil || len(*sent) != 1 || (*sent)[0].Connection.ConnectionId == nil || *(*sent)[0].Connection.ConnectionId != "the-one" {
+		t.Errorf("issues went as %+v, queries %v", sent, router.connectionQueries)
+	}
+	if len(router.connectionQueries) != 2 {
+		t.Errorf("queries = %v", router.connectionQueries)
+	}
+}
+
+func TestSyncRefusesAConnectionNobodyHas(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connection: missing\n")
+	router := newBackend(t)
+	router.answerConnections(func(r *http.Request) acceleration.ConnectionPage {
+		return connectionPage("", listedConnection("other", "work"))
+	})
+	agent := agentOn(t, router, Options{Dir: root})
+
+	_, err := agent.Sync(t.Context())
+	if err == nil || !strings.Contains(err.Error(), `connector "issues"`) || !strings.Contains(err.Error(), `"missing"`) {
+		t.Fatalf("sync error = %v", err)
+	}
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.syncRaw) != 0 {
+		t.Errorf("a sync was sent: %s", router.syncRaw[0])
+	}
+}
+
+func TestSyncRefusesALabelSharedByTwoConnections(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connection: work\n")
+	router := newBackend(t)
+	router.answerConnections(func(r *http.Request) acceleration.ConnectionPage {
+		if r.URL.Query().Get("cursor") == "" {
+			return connectionPage("2", listedConnection("a", "work"))
+		}
+		return connectionPage("", listedConnection("b", "work"))
+	})
+	agent := agentOn(t, router, Options{Dir: root})
+
+	_, err := agent.Sync(t.Context())
+	if err == nil || !strings.Contains(err.Error(), `connector "issues"`) || !strings.Contains(err.Error(), "matches 2") {
+		t.Fatalf("sync error = %v", err)
+	}
+}
+
+func listedConnection(id, label string) acceleration.Connection {
+	return acceleration.Connection{Id: &id, Label: &label}
+}
+
+func connectionPage(next string, items ...acceleration.Connection) acceleration.ConnectionPage {
+	copied := append([]acceleration.Connection(nil), items...)
+	page := acceleration.ConnectionPage{Items: &copied}
+	if next != "" {
+		page.NextCursor = &next
+	}
+	return page
 }
