@@ -975,6 +975,39 @@ func (s *ConfigsSuite) TestAFixedBindingCannotGrantAToolByNameAlone() {
 	s.Contains(failure, `grants "search" with no schema_digest`)
 }
 
+// TestAnEmptyToolPatternsListIsRefused: tool_patterns [] is not a grant of every tool.
+// The field requires at least one pattern, on create, replace, patch and sync.
+func (s *ConfigsSuite) TestAnEmptyToolPatternsListIsRefused() {
+	binding := sessionSlack("inbox")
+	binding["tools"] = []map[string]any{}
+	binding["tool_patterns"] = []string{}
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("inbox")}})
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "patterned", "connectors": []map[string]any{binding}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "expected array length >= 1")
+
+	status, failure = s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "expected array length >= 1")
+
+	status, failure = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"connectors": []map[string]any{binding}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "expected array length >= 1")
+
+	status, failure = s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "synced", "hash": "v1", "connectors": []map[string]any{binding}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "expected array length >= 1")
+
+	kept := value(s.read(created.Id).Connectors)[0]
+	s.Nil(kept.ToolPatterns)
+	s.Equal([]ConnectorToolGrant{{Name: "search", SchemaDigest: toolDigest}}, kept.Tools)
+}
+
 func (s *ConfigsSuite) TestPatternsAndToolsTogetherAreRefused() {
 	binding := sessionSlack("inbox")
 	binding["tool_patterns"] = []string{"*"}

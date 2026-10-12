@@ -64,6 +64,56 @@ func (s *DispatcherSuite) TestAGrantRemovedFromAnOpenSessionIsNotCalled() {
 	s.Equal(1, s.provider.calls("primary"), "the refused call never reached the provider")
 }
 
+// TestAPatternMatchedToolCanBeCalled: a session binding that grants whoami by pattern offers
+// it and the call reaches the connection. recheck allows it because the current patterns
+// still match, not because tools lists the pin.
+func (s *DispatcherSuite) TestAPatternMatchedToolCanBeCalled() {
+	alice := s.connection("alice", "primary")
+	d, tools, unavailable, err := s.attach(s.spec(s.config(withPatterns(s.chosen("crm"), "whoami")), "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+	s.Empty(unavailable)
+	s.Equal([]string{"crm__whoami"}, names(tools))
+
+	said, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().NoError(err)
+	s.Equal("primary", said)
+	s.Equal(1, s.provider.calls("primary"))
+}
+
+// TestAFixedPatternMatchedToolCanBeCalled: a fixed binding with patterns and no digests
+// offers whoami, and the call reaches the app's connection.
+func (s *DispatcherSuite) TestAFixedPatternMatchedToolCanBeCalled() {
+	app := s.connection("", "primary")
+	d, tools, _, err := s.attach(s.spec(s.config(withPatterns(s.fixed("crm", app), "whoami")), "", nil))
+	s.Require().NoError(err)
+	s.Equal([]string{"crm__whoami"}, names(tools))
+
+	said, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().NoError(err)
+	s.Equal("primary", said)
+	s.Equal(1, s.provider.calls("primary"))
+}
+
+// TestAPatternNarrowedMidSessionIsNotCalled: the config drops whoami from the patterns after
+// the session opened. The call is refused and never sent; a tool the patterns still match is.
+func (s *DispatcherSuite) TestAPatternNarrowedMidSessionIsNotCalled() {
+	alice := s.connection("alice", "primary")
+	config := s.config(withPatterns(s.chosen("crm"), "whoami", "secret"))
+	d, _, _, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+
+	s.rebind(config, withPatterns(s.chosen("crm"), "secret"))
+	_, refused := s.call(d, "crm__whoami", "{}")
+	said, err := s.call(d, "crm__secret", "{}")
+
+	s.ErrorContains(refused, `connector "crm": the tool is no longer granted, so crm__whoami was not called`)
+	s.Require().NoError(err)
+	s.Equal("the secret", said)
+	s.Equal(1, s.provider.calls("primary"), "the refused call never reached the provider")
+}
+
 func (s *DispatcherSuite) TestABindingRemovedFromAnOpenSessionIsNotCalled() {
 	app := s.connection("", "primary")
 	config := s.config(s.fixed("crm", app, "whoami"))

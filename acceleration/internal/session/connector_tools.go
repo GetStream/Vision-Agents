@@ -400,7 +400,7 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 const patternToolCap = 128
 
 // patternGrants lists the connection's tools, keeps those binding.ToolPatterns names
-// (plugins.Offered: an empty list matches every tool), and pins each unpinned match at the
+// (plugins.Offered), and pins each unpinned match at the
 // digest listed now. A match already pinned at another digest is left out: the schema moved,
 // and a reconnect pins again. More than patternToolCap matches keeps the first that many by
 // name and warns once. It says why the binding cannot be used when the provider cannot list

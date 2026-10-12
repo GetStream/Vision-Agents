@@ -193,8 +193,7 @@ func (s *connectorFixture) chosen(alias string, tools ...string) store.Connector
 		Connection: store.ConnectionBinding{Type: selectionSession}, Tools: grants(tools...)}
 }
 
-// withPatterns is binding granting patterns instead of named tools. An empty patterns list
-// matches every tool the connection lists, as plugins.Offered does.
+// withPatterns is binding granting patterns instead of named tools.
 func withPatterns(binding store.ConnectorBinding, patterns ...string) store.ConnectorBinding {
 	listed := append([]string(nil), patterns...)
 	binding.Tools = nil
