@@ -501,3 +501,182 @@ func TestSomethingThatIsNotADirectoryIsNotAnAgent(t *testing.T) {
 		t.Fatal("a file is not an agent directory")
 	}
 }
+
+func TestAConnectorNamedAloneIsASessionBindingOfEveryTool(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := folder.Settings.Connectors
+	if len(got) != 1 || got[0].Name != "linear" || got[0].Connector != "" || got[0].Tools != nil || got[0].Connection != nil || got[0].Required != nil {
+		t.Errorf("linear read as %+v", got)
+	}
+}
+
+func TestAConnectorObjectDefaultsItsConnectorToItsName(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    tools: [list_*, get_issue]\n    required: true\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := folder.Settings.Connectors
+	if len(got) != 1 || got[0].Name != "github" || got[0].Connector != "" || got[0].Connection != nil {
+		t.Fatalf("github read as %+v", got)
+	}
+	if got[0].Tools == nil || strings.Join(*got[0].Tools, ",") != "list_*,get_issue" || got[0].Required == nil || !*got[0].Required {
+		t.Errorf("github read as %+v", got[0])
+	}
+}
+
+func TestAConnectorNamesAnotherConnectorUnderItsAlias(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connector: linear\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := folder.Settings.Connectors
+	if len(got) != 1 || got[0].Name != "issues" || got[0].Connector != "linear" || got[0].Tools != nil {
+		t.Errorf("issues read as %+v", got)
+	}
+}
+
+func TestAConnectorWithoutToolsOffersEveryTool(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    tools: null\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folder.Settings.Connectors[0].Tools != nil {
+		t.Errorf("null tools read as %v", folder.Settings.Connectors[0].Tools)
+	}
+}
+
+func TestANullConnectorEntryIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - ~\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "a connector needs a name") {
+		t.Fatalf("a null connector loaded: %v", err)
+	}
+}
+
+func TestACommentedOutConnectorEntryIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - # linear\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "a connector needs a name") {
+		t.Fatalf("a commented-out connector loaded: %v", err)
+	}
+}
+
+func TestAConnectorWithoutANameIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - connector: linear\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "a connector needs a name") {
+		t.Fatalf("a nameless connector loaded: %v", err)
+	}
+}
+
+func TestAnEmptyConnectionIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    connection: \"\"\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), `connector "github"`) || !strings.Contains(err.Error(), "connection must be a connection id or label") {
+		t.Fatalf("an empty connection loaded: %v", err)
+	}
+}
+
+func TestAnEmptyConnectorToolListIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    tools: []\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), `connector "github"`) || !strings.Contains(err.Error(), "tools: [] grants nothing") {
+		t.Fatalf("empty tools loaded: %v", err)
+	}
+}
+
+func TestAConnectorEntryWithAKeyNobodyKnowsIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    plugin: github\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "plugin") {
+		t.Errorf("an entry with a key nobody knows loaded: %v", err)
+	}
+}
+
+func TestAConnectorAliasThatIsAlsoAPluginIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nplugins:\n  - linear\nconnectors:\n  - linear\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), `"linear" is named under both connectors and plugins`) {
+		t.Fatalf("the shared alias loaded: %v", err)
+	}
+}
+
+func TestAConnectorAliasThatIsAlsoAnMCPServerIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: linear\n    connector: github\nmcp_servers:\n  - name: linear\n    url: https://example.com/mcp\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), `"linear" is named under both connectors and mcp_servers`) {
+		t.Fatalf("the shared alias loaded: %v", err)
+	}
+}
+
+func TestAConnectorAliasMayDifferFromItsPluginAndMCPName(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", `name: concierge
+plugins:
+  - linear
+connectors:
+  - name: issues
+    connector: linear
+  - name: tickets
+    connector: notes
+mcp_servers:
+  - name: notes
+    url: https://example.com/mcp
+`)
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := folder.Settings.Connectors
+	if len(got) != 2 || got[0].Name != "issues" || got[0].Connector != "linear" || got[1].Name != "tickets" || got[1].Connector != "notes" {
+		t.Errorf("the aliases read as %+v", got)
+	}
+}
+
+func TestAnEmptyConnectorListIsNotTheSameAsNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\n")
+	without, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "agent.yaml", "name: concierge\nconnectors: []\n")
+	empty, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if without.Settings.Connectors != nil || empty.Settings.Connectors == nil || len(empty.Settings.Connectors) != 0 {
+		t.Errorf("without = %#v, empty = %#v", without.Settings.Connectors, empty.Settings.Connectors)
+	}
+}

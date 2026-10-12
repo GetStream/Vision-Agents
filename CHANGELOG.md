@@ -612,14 +612,6 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
-### agent.yaml connectors in the Python SDK
-
-`agent.yaml` may name `connectors`. A name is a session binding that offers every tool, kept
-as written. An empty name is refused, so a blank entry cannot wipe the stored bindings. An
-object names the connector, the tool patterns, an app connection (its id, or the one
-connection with that label) and whether the binding is required. Leaving the key out leaves
-the stored bindings; an empty list removes them.
-
 ### Connector bindings can name tools by pattern
 
 A connector binding may set `tool_patterns` instead of `tools`: tool names or `path.Match`
@@ -628,6 +620,14 @@ refused. A `*` offers every tool the connection lists. Each match is pinned on t
 the first time a session opens it, including a fixed connection, and a later session offers the
 tool only while that digest still matches. When more than 128 tools match, the session offers
 the first 128 by name.
+
+### agent.yaml connectors in the Python SDK
+
+`agent.yaml` may name `connectors`. A name is a session binding that offers every tool, kept
+as written. An empty name is refused, so a blank entry cannot wipe the stored bindings. An
+object names the connector, the tool patterns, an app connection (its id, or the one
+connection with that label) and whether the binding is required. Leaving the key out leaves
+the stored bindings; an empty list removes them.
 
 ### Bring your own model
 
