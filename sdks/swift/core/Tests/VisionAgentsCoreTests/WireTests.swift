@@ -78,6 +78,22 @@ import Testing
         #expect(try JSONDecoder().decode(JSONValue.self, from: body).objectValue["request_id"] == nil)
     }
 
+    @Test func oneAnswerCanBeCappedAndToldHowLongToThinkAndNeitherIsSentUnasked() throws {
+        let tuned = try JSONDecoder().decode(
+            JSONValue.self,
+            from: JSONEncoder().encode(
+                Responses.body("Think hard", images: [], maxOutputTokens: 512, reasoningEffort: "high"))
+        ).objectValue
+        let plain = try JSONDecoder().decode(
+            JSONValue.self, from: JSONEncoder().encode(Responses.body("Plain", images: []))
+        ).objectValue
+
+        #expect(tuned["max_output_tokens"] == .number(512))
+        #expect(tuned["reasoning_effort"] == .string("high"))
+        #expect(tuned["request_id"] != nil)
+        #expect(Set(plain.keys) == ["request_id", "text"])
+    }
+
     @Test func aToolCallWhoseArgumentsAreNotAnObjectYieldsNoArguments() throws {
         let event = try JSONDecoder().decode(
             AgentEvent.self,

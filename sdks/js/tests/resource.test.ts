@@ -529,6 +529,23 @@ describe("responses", () => {
     assert.equal(body["request_id"], undefined);
   });
 
+  it("caps one answer and sets how long it thinks, and sends neither unasked", async () => {
+    router.serve("POST", "/v1/agents/sessions/session-1/responses", {
+      status: 202,
+      body: { id: "response-1", session_id: "session-1", status: "running", created_at: new Date().toISOString() },
+    });
+
+    await held.responses.create("Think hard", { maxOutputTokens: 512, reasoningEffort: "high" });
+    const tuned = router.last.body as Record<string, unknown>;
+    await held.responses.create("Plain");
+    const plain = router.last.body as Record<string, unknown>;
+
+    assert.equal(tuned["max_output_tokens"], 512);
+    assert.equal(tuned["reasoning_effort"], "high");
+    assert.match(String(tuned["request_id"]), /^[0-9a-f-]{36}$/, "still text only");
+    assert.deepEqual(Object.keys(plain).sort(), ["request_id", "text"]);
+  });
+
   it("reads one turn's items rather than the whole conversation's", async () => {
     router.serve("POST", "/v1/agents/sessions/session-1/responses", {
       status: 202,

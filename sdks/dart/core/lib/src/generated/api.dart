@@ -380,7 +380,14 @@ final class CallUsage {
 }
 
 final class CreateResponseRequest {
-  const CreateResponseRequest({this.images, this.requestId, required this.text, this.videos});
+  const CreateResponseRequest({
+    this.images,
+    this.maxOutputTokens,
+    this.reasoningEffort,
+    this.requestId,
+    required this.text,
+    this.videos,
+  });
 
   factory CreateResponseRequest.fromJson(Object? value) {
     final json = _object(value, 'CreateResponseRequest');
@@ -391,6 +398,14 @@ final class CreateResponseRequest {
           for (final item in _list(value, 'CreateResponseRequest.images'))
             ImageSource.fromJson(item),
         ],
+      },
+      maxOutputTokens: switch (json['max_output_tokens']) {
+        null => null,
+        final Object value => _int(value, 'CreateResponseRequest.max_output_tokens'),
+      },
+      reasoningEffort: switch (json['reasoning_effort']) {
+        null => null,
+        final Object value => _string(value, 'CreateResponseRequest.reasoning_effort'),
       },
       requestId: switch (json['request_id']) {
         null => null,
@@ -408,12 +423,16 @@ final class CreateResponseRequest {
   }
 
   final List<ImageSource>? images;
+  final int? maxOutputTokens;
+  final String? reasoningEffort;
   final String? requestId;
   final String text;
   final List<VideoSource>? videos;
 
   Map<String, Object?> toJson() => {
     if (images case final value?) 'images': [for (final item in value) item.toJson()],
+    'max_output_tokens': ?maxOutputTokens,
+    'reasoning_effort': ?reasoningEffort,
     'request_id': ?requestId,
     'text': text,
     if (videos case final value?) 'videos': [for (final item in value) item.toJson()],

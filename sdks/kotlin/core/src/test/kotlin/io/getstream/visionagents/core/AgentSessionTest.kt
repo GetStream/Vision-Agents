@@ -92,6 +92,19 @@ class AgentSessionTest {
     }
 
     @Test
+    fun `one answer can be capped and told how long to think, still as a text question`() = runBlocking {
+        val chat = agents.chat()
+
+        chat.responses.create("think hard", maxOutputTokens = 512, reasoningEffort = "high")
+
+        val body = Json.parseToJsonElement(router.requests.last { it.path.endsWith("/responses") }.body).jsonObject
+        assertEquals(setOf("text", "request_id", "max_output_tokens", "reasoning_effort"), body.keys)
+        assertEquals(JsonPrimitive(512), body["max_output_tokens"])
+        assertEquals(JsonPrimitive("high"), body["reasoning_effort"])
+        chat.close()
+    }
+
+    @Test
     fun `a tool call is answered with nobody collecting events, repeating its turn and request`() = runBlocking {
         val asked = CopyOnWriteArrayList<String>()
         val lookup = AgentTool(

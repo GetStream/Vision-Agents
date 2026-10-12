@@ -290,6 +290,14 @@ extension Components {
         internal struct CreateResponseRequest: Codable, Hashable, Sendable {
             /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/images`.
             internal var images: [Components.Schemas.ImageSource]?
+            /// Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/max_output_tokens`.
+            internal var maxOutputTokens: Swift.Int?
+            /// How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/reasoning_effort`.
+            internal var reasoningEffort: Swift.String?
             /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateResponseRequest/request_id`.
@@ -306,22 +314,30 @@ extension Components {
             ///
             /// - Parameters:
             ///   - images:
+            ///   - maxOutputTokens: Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
+            ///   - reasoningEffort: How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
             ///   - requestId: Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
             ///   - text: What to answer, as though it had been said.
             ///   - videos: Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
             internal init(
                 images: [Components.Schemas.ImageSource]? = nil,
+                maxOutputTokens: Swift.Int? = nil,
+                reasoningEffort: Swift.String? = nil,
                 requestId: Swift.String? = nil,
                 text: Swift.String,
                 videos: [Components.Schemas.VideoSource]? = nil
             ) {
                 self.images = images
+                self.maxOutputTokens = maxOutputTokens
+                self.reasoningEffort = reasoningEffort
                 self.requestId = requestId
                 self.text = text
                 self.videos = videos
             }
             internal enum CodingKeys: String, CodingKey {
                 case images
+                case maxOutputTokens = "max_output_tokens"
+                case reasoningEffort = "reasoning_effort"
                 case requestId = "request_id"
                 case text
                 case videos

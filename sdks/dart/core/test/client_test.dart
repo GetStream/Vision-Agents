@@ -523,6 +523,24 @@ void main() {
       });
     });
 
+    test('caps one answer and sets how long it thinks, still as a text question', () async {
+      router.answer(
+        'POST /v1/agents/sessions/s1/responses',
+        Answer(202, responseJson('r1', status: 'running')),
+      );
+
+      await agents.sessions
+          .responses('s1')
+          .create('Think hard', maxOutputTokens: 512, reasoningEffort: 'high');
+
+      expect(router.last('POST /v1/agents/sessions/s1/responses').json, {
+        'max_output_tokens': 512,
+        'reasoning_effort': 'high',
+        'request_id': matches(RegExp(r'^[0-9a-f]{32}$')),
+        'text': 'Think hard',
+      });
+    });
+
     test('lists a page of turns, oldest first, with their finish times', () async {
       router.answer(
         'GET /v1/agents/sessions/s1/responses',

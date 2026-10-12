@@ -28,8 +28,16 @@ public struct Responses: Sendable {
     /// so the result is a handle on an answer in progress: `items(responseID:)` reads what has
     /// been written down so far. A text question carries a fresh request id, so a retry of the
     /// same request starts no second turn.
-    public func create(_ text: String, images: [ImageSource] = []) async throws -> Response {
-        let body = Self.body(text, images: images)
+    ///
+    /// `maxOutputTokens` caps this answer, reasoning included, and `reasoningEffort` is how long
+    /// the model may think first, one of the efforts the session's model accepts. Both cover the
+    /// replies that finish it after its tools; left nil, the session's own apply.
+    public func create(
+        _ text: String, images: [ImageSource] = [], maxOutputTokens: Int? = nil,
+        reasoningEffort: String? = nil
+    ) async throws -> Response {
+        let body = Self.body(
+            text, images: images, maxOutputTokens: maxOutputTokens, reasoningEffort: reasoningEffort)
         await asked?(text)
         let output = try await backend.call {
             try await $0.createResponse(path: .init(id: sessionID), body: .json(body))
@@ -42,11 +50,15 @@ public struct Responses: Sendable {
         }
     }
 
-    static func body(_ text: String, images: [ImageSource]) -> Components.Schemas.CreateResponseRequest {
+    static func body(
+        _ text: String, images: [ImageSource], maxOutputTokens: Int? = nil,
+        reasoningEffort: String? = nil
+    ) -> Components.Schemas.CreateResponseRequest {
         // The router refuses a request id on a question with images.
         .init(
-            images: images.isEmpty ? nil : images.map(\.schema),
-            requestId: images.isEmpty ? UUID().uuidString : nil, text: text)
+            images: images.isEmpty ? nil : images.map(\.schema), maxOutputTokens: maxOutputTokens,
+            reasoningEffort: reasoningEffort, requestId: images.isEmpty ? UUID().uuidString : nil,
+            text: text)
     }
 
     /// One page of the turns so far, oldest first.
