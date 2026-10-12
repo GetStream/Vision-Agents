@@ -3,6 +3,8 @@ package world
 import (
 	"fmt"
 	"strings"
+
+	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 )
 
 func registerHealthcare(s *Server) {
@@ -10,9 +12,9 @@ func registerHealthcare(s *Server) {
 		patients := getList(sess.State, "patients")
 		name := strings.ToLower(strArg(args, "name"))
 		dob := strArg(args, "dob")
-		extra := strings.ToLower(strArg(args, "member_id"))
+		extra := strArg(args, "member_id")
 		if extra == "" {
-			extra = strings.ToLower(strArg(args, "phone"))
+			extra = strArg(args, "phone")
 		}
 		for _, raw := range patients {
 			p, _ := raw.(map[string]any)
@@ -25,9 +27,10 @@ func registerHealthcare(s *Server) {
 			if asString(p["dob"]) != dob {
 				continue
 			}
-			member := strings.ToLower(asString(p["member_id"]))
-			phone := strings.ToLower(asString(p["phone"]))
-			if extra != "" && extra != member && extra != phone {
+			// "qw4t98821" is the member ID QW4T9-8821 written down without its dash.
+			member := asString(p["member_id"])
+			phone := asString(p["phone"])
+			if extra != "" && !scenario.MatchStructuredValue(extra, member) && !scenario.MatchStructuredValue(extra, phone) {
 				continue
 			}
 			sess.State["verified_patient"] = p["id"]

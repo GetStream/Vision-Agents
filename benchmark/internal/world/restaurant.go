@@ -122,6 +122,9 @@ func registerRestaurant(s *Server) {
 		var total float64
 		for _, raw := range items {
 			line, _ := raw.(map[string]any)
+			if name, ok := raw.(string); ok {
+				line = map[string]any{"name": name}
+			}
 			if line == nil {
 				continue
 			}

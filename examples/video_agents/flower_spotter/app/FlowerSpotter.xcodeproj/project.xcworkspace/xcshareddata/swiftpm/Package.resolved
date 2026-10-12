@@ -1,13 +1,49 @@
 {
-  "originHash" : "9d346dd5fa889a35eb3ebcd306d575a9da1133cff141122941989e9589392fb7",
+  "originHash" : "a514df01e2884673ec3f441445d6404a2cb0ddafcb0cdccb5f76c97e3a49da74",
   "pins" : [
+    {
+      "identity" : "networkimage",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/gonzalezreal/NetworkImage",
+      "state" : {
+        "revision" : "2849f5323265386e200484b0d0f896e73c3411b9",
+        "version" : "6.0.1"
+      }
+    },
+    {
+      "identity" : "splash",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/JohnSundell/Splash.git",
+      "state" : {
+        "revision" : "7f4df436eb78fe64fe2c32c58006e9949fa28ad8",
+        "version" : "0.16.0"
+      }
+    },
+    {
+      "identity" : "stream-chat-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/GetStream/stream-chat-swift",
+      "state" : {
+        "revision" : "508268e51c3084b9ddd09626234b42cb654288b9",
+        "version" : "5.13.0"
+      }
+    },
     {
       "identity" : "stream-core-swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/GetStream/stream-core-swift.git",
       "state" : {
-        "revision" : "fc4cc112690e1389e5ca3172bc3b55fea1dbc0da",
-        "version" : "0.10.1"
+        "revision" : "b850c68c1a18d8dabd3e05db0d0223e5a9902a7f",
+        "version" : "0.13.0"
+      }
+    },
+    {
+      "identity" : "stream-logs-ui-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/GetStream/stream-logs-ui-swift.git",
+      "state" : {
+        "revision" : "47b7c4621169c398adacb4000ad171ae81a5adf5",
+        "version" : "0.2.0"
       }
     },
     {
@@ -44,6 +80,15 @@
       "state" : {
         "revision" : "db774a277f60063a32d854f2980299caf06da041",
         "version" : "1.6.0"
+      }
+    },
+    {
+      "identity" : "swift-markdown-ui",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/gonzalezreal/swift-markdown-ui.git",
+      "state" : {
+        "revision" : "55441810c0f678c78ed7e2ebd46dde89228e02fc",
+        "version" : "2.4.0"
       }
     },
     {

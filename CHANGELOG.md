@@ -65,6 +65,18 @@ completion. No EOT token, Google Cloud login or TPU setup is required. An explic
 unless a mode is explicitly selected. The ordinary Stream and model-provider credentials
 are still needed. (#749)
 
+### The Swift SDK is one package, and its views are Stream Chat's AI components
+
+`VisionAgentsCore` is the only Swift package. `VisionAgentsUI`, `VisionAgentsRTC` and
+`VisionAgentsChat` are gone: `VoiceSession` and `session.chat()` moved into core, which now
+depends on Stream Chat (5.13+) and Stream Video and is iOS only. `ConversationView`,
+`TranscriptView`, `Composer`, `AgentStatusView`, `VoiceCallView` and `AgentVideoView` are gone
+too; show a conversation with Stream Chat's AI components (`StreamChatAI`, from the same
+`stream-chat-swift`), as the Swift demos do. A tool may now ask the person first:
+`AgentTool.approval` holds each call in `session.approvals` until `session.decide` allows or
+declines it, and `LiveReasoning` puts a reply's whole reasoning back together from its live
+updates.
+
 ### `lcm` is now `decision_model`, with ten models behind it
 
 The modality that answers typed questions with probabilities is called `decision_model`,
@@ -110,9 +122,14 @@ A failure was `{"error": "..."}`; it is now an envelope, `ErrorResponse`, holdin
 `ErrorDetail`:
 
 ```json
-{"error": {"message": "no such agent config", "type": "not_found",
-  "code": "agent_config_not_found",
-  "doc_url": "https://getstream.io/agents/docs/api/errors/#agent_config_not_found"}}
+{
+  "error": {
+    "message": "no such agent config",
+    "type": "not_found",
+    "code": "agent_config_not_found",
+    "doc_url": "https://getstream.io/agents/docs/api/errors/#agent_config_not_found"
+  }
+}
 ```
 
 `type` is an `ErrorType` and decides the status: `invalid_request` 400, `authentication` 401,
@@ -274,12 +291,12 @@ avatar.
 The old `noauth` did two unrelated jobs: it trusted the headers a proxy set, and it was
 what a laptop ran. Those are now separate modes, and the default is neither of them.
 
-| Mode | What it does |
-| --- | --- |
-| `api_key` | The new default. Verifies a key and an HS256 token signed with its secret |
-| `proxy` | The old `noauth`. Reads `X-Stream-App-Id`, `X-Stream-Organization-Id`, `X-Stream-User-Id` and `Stream-Auth-Type` as already authenticated |
-| `noauth` | Reads `X-Customer-Id` only, and every caller is that customer's backend |
-| `custom` | An `auth.Authenticator` the embedder passes to `api.WithAuthenticator` |
+| Mode      | What it does                                                                                                                              |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `api_key` | The new default. Verifies a key and an HS256 token signed with its secret                                                                 |
+| `proxy`   | The old `noauth`. Reads `X-Stream-App-Id`, `X-Stream-Organization-Id`, `X-Stream-User-Id` and `Stream-Auth-Type` as already authenticated |
+| `noauth`  | Reads `X-Customer-Id` only, and every caller is that customer's backend                                                                   |
+| `custom`  | An `auth.Authenticator` the embedder passes to `api.WithAuthenticator`                                                                    |
 
 **A deployment behind a proxy must set `ROUTER_AUTH_MODE=proxy`.** Left on `noauth` it
 keeps working, but it stops reading the user and the auth type, so every end user becomes a
@@ -323,14 +340,14 @@ session a backend created.
 An end user's device may now reach six operations, and is answered 403 on everything
 else:
 
-| Operation | |
-| --- | --- |
-| `GET /v1/search` | ask a question |
-| `POST /v1/agents/sessions` | open a conversation |
-| `GET /v1/agents/sessions` | find the one it has |
-| `GET /v1/agents/sessions/{id}` | read the one it is having |
-| `DELETE /v1/agents/sessions/{id}` | hang up |
-| `GET /v1/agents/sessions/{id}/events` | the conversation itself |
+| Operation                             |                           |
+| ------------------------------------- | ------------------------- |
+| `GET /v1/search`                      | ask a question            |
+| `POST /v1/agents/sessions`            | open a conversation       |
+| `GET /v1/agents/sessions`             | find the one it has       |
+| `GET /v1/agents/sessions/{id}`        | read the one it is having |
+| `DELETE /v1/agents/sessions/{id}`     | hang up                   |
+| `GET /v1/agents/sessions/{id}/events` | the conversation itself   |
 
 `x-server-side-only` in `openapi.yaml` is replaced by `x-client-accessible: true` on those
 six. A caller is a device when it presents `Stream-Auth-Type: jwt` and a token naming a
@@ -815,7 +832,7 @@ reads them (`agents.MCPServerSettings.Scopes` and `.User`).
 
 ```yaml
 mcp_servers:
-  - name: crm                  # needs a login: the app connects it on the dashboard
+  - name: crm # needs a login: the app connects it on the dashboard
     url: https://crm.example.com/mcp
   - name: notes
     url: https://notes.example.com/mcp
@@ -929,7 +946,7 @@ sandbox is built and how long code may run in it (#737):
 sandbox: daytona
 sandbox_options:
   setup: [pip install --no-cache-dir bpy==5.2.2]
-  timeout: 5m      # timeout_ms on the API, at most 30 minutes
+  timeout: 5m # timeout_ms on the API, at most 30 minutes
   cpu: 2
   memory_gb: 4
 ```
@@ -1121,11 +1138,12 @@ refusal line instead of the model's reply.
 
 ```markdown
 ---
-type: lcm                 # lcm | webhook | llm
-mode: parallel            # parallel | blocking
-threshold: 0.6            # lcm and llm: refuse at or above
+type: lcm # lcm | webhook | llm
+mode: parallel # parallel | blocking
+threshold: 0.6 # lcm and llm: refuse at or above
 refusal: I can only help with questions about Stream.
 ---
+
 Only answer questions about Stream's SDKs, products and development. Refuse anything
 with nothing to do with Stream or with building software that uses it.
 ```
@@ -1133,11 +1151,11 @@ with nothing to do with Stream or with building software that uses it.
 Frontmatter says how to check; the body is the policy in prose, so the policy stays
 something a human reads and edits. There are three ways to check:
 
-| `type` | Who decides |
-| --- | --- |
-| `lcm` | The new `lcm` router, which returns a calibrated probability. The default |
-| `webhook` | Your own server, at `url`, over a signed POST |
-| `llm` | A model from the `llm` router, asked to read the policy and put a number on the turn |
+| `type`    | Who decides                                                                          |
+| --------- | ------------------------------------------------------------------------------------ |
+| `lcm`     | The new `lcm` router, which returns a calibrated probability. The default            |
+| `webhook` | Your own server, at `url`, over a signed POST                                        |
+| `llm`     | A model from the `llm` router, asked to read the policy and put a number on the turn |
 
 `mode` is the trade between latency and tokens. In `parallel`, the default, the check runs
 beside the model and the finished reply is held until the verdict arrives, which on a call
@@ -1276,7 +1294,7 @@ opening a support chat rather than ringing a number — could not be dispatched 
 Such a channel now names the agent config answering in it, in its own custom data:
 
 ```json
-{"agent_config_id": "config-1f3a…"}
+{ "agent_config_id": "config-1f3a…" }
 ```
 
 The customer is not read from the channel. Whoever creates one decides what is on it, so a
@@ -1525,7 +1543,6 @@ saved conversation links remain readable after the session ends.
 
 - Persistent Stream Chat text conversations with resumable history, thinking/tool activity, immutable tool timestamps, and a durable local write retry queue. The Go SDK exposes conversation binding and history.
 - Synchronous short STT/TTS requests work without a database; text agents can delegate product skills and cancel active tools.
-
 
 - Backend-managed Daytona research profiles keep a source workspace and Cursor process warm. Agent configs and session requests accept `sandbox_profile`; Go agents select it with `ManagedSandbox`, and receive `research_progress` events.
 - Daytona Python sandboxes use the official Go SDK, serialize concurrent creation and retain identity after failed deletion.
@@ -2158,7 +2175,7 @@ Asked for no voice, Gemini picks one on every request, and the router sends it o
 
 ### Agent metadata was overwritten by stale user data (#630)
 
-The component metadata added in #618 was merged *under* the existing `agent_user.custom`, so a pre-set `custom` won and the provider/model fields never reached the edge. Component metadata now takes precedence, and keys that don't describe a configured component are unset on the stored user, so a previous run's `tts`/`avatar`/... values are cleared instead of lingering. `StreamEdge` maps a `None` custom field to the partial-update `unset` list rather than writing a literal null.
+The component metadata added in #618 was merged _under_ the existing `agent_user.custom`, so a pre-set `custom` won and the provider/model fields never reached the edge. Component metadata now takes precedence, and keys that don't describe a configured component are unset on the stored user, so a previous run's `tts`/`avatar`/... values are cleared instead of lingering. `StreamEdge` maps a `None` custom field to the partial-update `unset` list rather than writing a literal null.
 
 # v0.6.9
 
@@ -2309,7 +2326,7 @@ Adds `inworld.LLM` and `inworld.VLM` on top of Inworld's OpenAI-compatible `/v1/
 
 ### `openai` plugin: `ChatCompletionsLLM` ignored injected/eager turn text and leaked `<think>` reasoning (#592)
 
-`ChatCompletionsLLM.simple_response` rebuilt the request purely from the conversation and ignored its `text` argument unless `participant` was `None`. Because the agent always supplies a participant, injected `agent.simple_response()` instructions produced an empty request (`400 chat content is empty`), and eager turns answered the *previous* transcript. The current `text` is now appended as the trailing user message when the conversation does not already end with it. Additionally, `<think>...</think>` reasoning spans emitted by reasoning models (e.g. MiniMax-M3) are now stripped from streamed deltas and final text so they no longer reach chat or TTS.
+`ChatCompletionsLLM.simple_response` rebuilt the request purely from the conversation and ignored its `text` argument unless `participant` was `None`. Because the agent always supplies a participant, injected `agent.simple_response()` instructions produced an empty request (`400 chat content is empty`), and eager turns answered the _previous_ transcript. The current `text` is now appended as the trailing user message when the conversation does not already end with it. Additionally, `<think>...</think>` reasoning spans emitted by reasoning models (e.g. MiniMax-M3) are now stripped from streamed deltas and final text so they no longer reach chat or TTS.
 
 ### `gemini` plugin: crash on duplicate follow-up tool calls (#588)
 
@@ -2561,7 +2578,7 @@ The internal class `STT` was renamed to `ElevenlabsSTT` to make it searchable. T
 ### Public API on `Agent` (#501)
 
 | Member                                                                | Description                                                                                                                                   |
-|-----------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `await agent.simple_response(text, participant=None, interrupt=True)` | Inject an instruction for the LLM to respond to. Replaces `agent.llm.simple_response(...)`. Routed through the active `InferenceFlow`.        |
 | `await agent.say(text, interrupt=False)`                              | Speak text directly through TTS, bypassing the LLM. New `interrupt` flag preempts an in-flight turn and clears the TTS pipeline.              |
 | `agent.resolve_inference_flow() -> InferenceFlow`                     | Extension point: picks `RealtimeInferenceFlow` for `Realtime` LLMs, otherwise `TranscribingInferenceFlow`. Override to plug in a custom flow. |
@@ -2799,7 +2816,7 @@ Required env vars: `TENCENT_SDK_APP_ID`, `TENCENT_SDK_SECRET_KEY`. Optional: `TE
 All session endpoints now include `call_id` as a path parameter:
 
 | Before                               | After                                                |
-|--------------------------------------|------------------------------------------------------|
+| ------------------------------------ | ---------------------------------------------------- |
 | `POST /sessions`                     | `POST /calls/{call_id}/sessions`                     |
 | `DELETE /sessions/{session_id}`      | `DELETE /calls/{call_id}/sessions/{session_id}`      |
 | `POST /sessions/{session_id}/close`  | `POST /calls/{call_id}/sessions/{session_id}/close`  |
@@ -2870,7 +2887,7 @@ Install with: `uv add "vision-agents[redis]"`
 **New public API on AgentLauncher:**
 
 | Method                                       | Description                            |
-|----------------------------------------------|----------------------------------------|
+| -------------------------------------------- | -------------------------------------- |
 | `get_session_info(call_id, session_id)`      | Query session info from shared storage |
 | `request_close_session(call_id, session_id)` | Request closure from any node          |
 

@@ -27,7 +27,6 @@ kotlin {
 dependencies {
     api(project(":core"))
     api(libs.stream.video.core)
-    api(libs.stream.chat.client)
     api(platform(libs.compose.bom))
     implementation(libs.stream.video.compose)
     implementation(libs.compose.foundation)

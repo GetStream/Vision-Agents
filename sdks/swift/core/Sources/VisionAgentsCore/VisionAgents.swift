@@ -62,9 +62,10 @@ public struct VisionAgents: Sendable {
         backend = Backend(apiKey: apiKey, url: url, urlSession: urlSession)
     }
 
-    /// A router running locally with nothing in front of it.
-    public init(url: URL, customerID: String, urlSession: URLSession = .shared) {
-        backend = Backend(url: url, customerID: customerID, urlSession: urlSession)
+    /// A router running locally with nothing in front of it. `apiKey` is only for Stream Chat
+    /// and Video, which connect with it as the user `setUser` names.
+    public init(url: URL, customerID: String, apiKey: String = "", urlSession: URLSession = .shared) {
+        backend = Backend(url: url, customerID: customerID, apiKey: apiKey, urlSession: urlSession)
     }
 
     public init(backend: Backend) {
@@ -87,6 +88,13 @@ public struct VisionAgents: Sendable {
     /// Forgets the user, which is what signing out is.
     public func clearUser() {
         backend.clearUser()
+    }
+
+    /// Disconnects the Stream Chat and Video clients built for the app's sessions. Clients the
+    /// app handed over with `use` are its own and stay connected; closing a session
+    /// disconnects nothing.
+    public func disconnect() async {
+        await backend.disconnectStream()
     }
 
     /// One agent, by the name its config was synced under.
@@ -121,7 +129,7 @@ public struct VisionAgents: Sendable {
     /// Puts an agent on the session's own call, `agent:<session id>`, and follows it.
     ///
     /// The agent joins as soon as this returns. Joining the same call from this device is what
-    /// the RTC package is for; this only starts the agent and gives you the state layer.
+    /// `VoiceSession` is for; this only starts the agent and gives you the state layer.
     public func voice(agent: String? = nil, tools: [AgentTool] = []) async throws -> AgentSession {
         var options = SessionOptions(agent: agent)
         options.tools = tools
@@ -154,6 +162,11 @@ public struct VisionAgents: Sendable {
             title: options.title,
             tools: options.tools.map {
                 Components.Schemas.SessionTool(
+                    approval: $0.approval.map {
+                        .init(
+                            allowTitle: $0.allowTitle, declineTitle: $0.declineTitle,
+                            message: $0.message, reasonArgument: $0.reasonArgument, title: $0.title)
+                    },
                     description: $0.description,
                     displayTitle: $0.displayTitle,
                     executor: $0.executor.flatMap { .init(rawValue: $0.rawValue) },

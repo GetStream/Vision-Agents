@@ -2,6 +2,7 @@ import type { Client, Schemas } from "./client.js";
 import { ConfigurationError } from "./errors.js";
 import { Responses } from "./responses.js";
 import { Socket, type Frame, flag, nested, text } from "./socket.js";
+import type { ChatClient, VideoClient } from "./stream.js";
 import type { Tools } from "./tools.js";
 
 /**
@@ -89,51 +90,6 @@ export interface SessionVideo {
   client: VideoClient;
   /** The call the agent is in, ready to be joined. */
   call: unknown;
-}
-
-interface ChatClient {
-  channel(type: string, id: string): unknown;
-  connectUser(user: { id: string }, token: string): Promise<unknown>;
-  disconnectUser(): Promise<unknown>;
-}
-
-interface VideoClient {
-  call(type: string, id: string): unknown;
-  disconnectUser(): Promise<unknown>;
-}
-
-interface ChatModule {
-  StreamChat: new (apiKey: string) => ChatClient;
-}
-
-interface VideoModule {
-  StreamVideoClient: new (options: {
-    apiKey: string;
-    user: { id: string };
-    token: string;
-  }) => VideoClient;
-}
-
-/**
- * Imports an optional peer dependency, or says which one is missing.
- *
- * Dynamic rather than a top-level import so a caller who never touches chat or video
- * installs neither and bundles neither: this package has no dependencies, and adding two
- * large ones to make two getters work would be paid for by everybody.
- *
- * The specifier goes through a variable because a bundler that can see a literal will try to
- * resolve it at build time and fail the build over a package the caller deliberately did not
- * install.
- */
-async function peer<T>(name: string, what: string): Promise<T> {
-  try {
-    return (await import(/* @vite-ignore */ /* webpackIgnore: true */ name)) as T;
-  } catch (cause) {
-    throw new ConfigurationError(
-      `${what} needs ${name}, which is an optional peer dependency: install it with ` +
-        `npm install ${name} (${String(cause)})`,
-    );
-  }
 }
 
 /**
@@ -373,17 +329,16 @@ export class Session {
   /**
    * The Stream Chat channel this conversation is written into.
    *
-   * `stream-chat` is an optional peer dependency and is imported on first use, so a caller
-   * who never touches chat installs nothing and ships nothing. A caller who does and has not
-   * installed it gets told that rather than a module-not-found from inside this package.
+   * `stream-chat` is an optional peer dependency, opted into by importing
+   * `@stream-io/vision-agents/chat` once, so a caller who never touches chat installs nothing
+   * and ships nothing. A caller who forgot the import is told which one.
    *
-   * It needs a credential of its own: the channel is Stream Chat, not this router, so a
-   * client reached by customer id has nothing to connect with. A caller already holding a
-   * connected `StreamChat` passes it as `client`, and the channel is opened on that one
-   * rather than on a second connection.
+   * It opens on the `StreamChat` handed over with `client.use`, or else on one connected as
+   * the user `setUser` named, with the Stream key the client was given, which every session
+   * of this client shares.
    */
-  chat(options: { client?: ChatClient } = {}): Promise<SessionChat> {
-    this.chatPeer ??= this.openChat(options.client);
+  chat(): Promise<SessionChat> {
+    this.chatPeer ??= this.openChat();
     return this.chatPeer;
   }
 
@@ -391,7 +346,9 @@ export class Session {
    * The Stream video call the agent is on, `agent:<session id>`.
    *
    * The same arrangement as chat: `@stream-io/video-client` is an optional peer dependency,
-   * imported on first use. A session held in writing has no call, and asking for one says so.
+   * opted into by importing `@stream-io/vision-agents/video` once, and the client handed over
+   * with `client.use` is used when there is one. A session held in writing has no call, and
+   * asking for one says so.
    */
   video(): Promise<SessionVideo> {
     this.videoPeer ??= this.openVideo();
@@ -507,7 +464,7 @@ export class Session {
     }
   }
 
-  private async openChat(client?: ChatClient): Promise<SessionChat> {
+  private async openChat(): Promise<SessionChat> {
     const channel = this.created.conversation_id ?? "";
     if (!channel) {
       throw new ConfigurationError(
@@ -519,22 +476,7 @@ export class Session {
     // conversation. Splitting it here keeps that spelling out of the caller's way.
     const [type, ...rest] = channel.split(":");
 
-    // A page that already holds a connected client has no second connection to make.
-    if (client) {
-      return { client, channel: client.channel(type ?? "agent", rest.join(":")) };
-    }
-
-    const credentials = await this.client.backend.streamCredentials();
-    if (!credentials) {
-      throw new ConfigurationError(
-        "chat connects to Stream rather than to this router, so it needs an apiKey and a " +
-          "user: call setUser, or pass apiKey with apiSecret and userId",
-      );
-    }
-
-    const chat = await peer<ChatModule>("stream-chat", "chat");
-    const connected = new chat.StreamChat(credentials.apiKey);
-    await connected.connectUser(credentials.user, credentials.token);
+    const connected = await this.client.peers.chat();
     return { client: connected, channel: connected.channel(type ?? "agent", rest.join(":")) };
   }
 
@@ -545,20 +487,7 @@ export class Session {
       );
     }
 
-    const credentials = await this.client.backend.streamCredentials();
-    if (!credentials) {
-      throw new ConfigurationError(
-        "video connects to Stream rather than to this router, so it needs an apiKey and a " +
-          "user: call setUser, or pass apiKey with apiSecret and userId",
-      );
-    }
-
-    const video = await peer<VideoModule>("@stream-io/video-client", "video");
-    const connected = new video.StreamVideoClient({
-      apiKey: credentials.apiKey,
-      user: credentials.user,
-      token: credentials.token,
-    });
+    const connected = await this.client.peers.video();
     return { client: connected, call: connected.call("agent", this.id) };
   }
 

@@ -22,6 +22,10 @@ public struct AgentTool: Sendable {
     /// your location". At most 80 characters.
     public let displayTitle: String?
 
+    /// What a person is asked before each call runs, or nil to run every call straight away.
+    /// A call that asks waits in `AgentSession.approvals` until `decide` answers it.
+    public let approval: Approval?
+
     /// Runs the tool. What it returns is given to the model as the result; throwing tells the
     /// model the tool failed and why.
     public let run: @Sendable ([String: JSONValue]) async throws -> String
@@ -32,12 +36,47 @@ public struct AgentTool: Sendable {
         case client
     }
 
+    /// A tool's question to the person whose message a call answers.
+    ///
+    /// In a conversation kept in Stream Chat the call's step carries it as `awaiting_approval`,
+    /// which Stream's AI components ask from, and every channel member can read it: keep
+    /// anything private out of it. A client tool is asked about only once the router knows the
+    /// install to address it to; until then, declare it with the server executor.
+    public struct Approval: Sendable, Hashable {
+        /// The question, such as "Share your location?". At most 80 characters.
+        public var title: String
+        /// What allowing it shares or does, such as "Only your city is shared."
+        public var message: String?
+        /// The string argument in which the model says why it wants the call, shown beside the
+        /// question. Declare it in `parameters` so the model fills it in.
+        public var reasonArgument: String?
+        /// The label of the button that allows the call.
+        public var allowTitle: String?
+        /// The label of the button that declines it.
+        public var declineTitle: String?
+
+        public init(
+            title: String,
+            message: String? = nil,
+            reasonArgument: String? = nil,
+            allowTitle: String? = nil,
+            declineTitle: String? = nil
+        ) {
+            self.title = title
+            self.message = message
+            self.reasonArgument = reasonArgument
+            self.allowTitle = allowTitle
+            self.declineTitle = declineTitle
+        }
+    }
+
     public init(
         name: String,
         description: String,
         parameters: JSONValue? = nil,
         executor: Executor? = nil,
         displayTitle: String? = nil,
+        approval: Approval? = nil,
         run: @escaping @Sendable ([String: JSONValue]) async throws -> String
     ) {
         self.name = name
@@ -45,6 +84,7 @@ public struct AgentTool: Sendable {
         self.parameters = parameters
         self.executor = executor
         self.displayTitle = displayTitle
+        self.approval = approval
         self.run = run
     }
 }

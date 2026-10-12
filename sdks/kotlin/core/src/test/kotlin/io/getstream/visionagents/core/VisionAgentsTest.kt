@@ -20,19 +20,19 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
 /** A session as the router answers one: every required field and a handful of the optional ones. */
-private fun sessionJson(id: String = "s1", state: String = "live", callId: String = "", modality: String = "text") =
+internal fun sessionJson(id: String = "s1", state: String = "live", callId: String = "", modality: String = "text") =
     """{"id":"$id","call_id":"$callId","call_type":"agent","user_id":"u1","agent_id":"a1","state":"$state",""" +
         """"modality":"$modality","created_at":"2026-09-24T04:03:19.979138Z","text":${callId.isEmpty()},"agent":"docs",""" +
         """"title":"Billing","project_id":"Health","custom":{"tenant":"acme"},"closed_at":"2026-09-24T04:03:20Z",""" +
         """"some_field_added_later":1}"""
 
-private fun responseJson(id: String, status: String = "completed") =
+internal fun responseJson(id: String, status: String = "completed") =
     """{"id":"$id","session_id":"s1","said":"hi","status":"$status","created_at":"2026-09-24T04:03:19Z"}"""
 
 private fun itemJson(response: String, ordinal: Int, kind: String = "answer") =
     """{"response_id":"$response","ordinal":$ordinal,"kind":"$kind","text":"t$ordinal","at":"2026-09-24T04:03:19.5Z"}"""
 
-private fun pageJson(items: List<String>, next: String? = null) =
+internal fun pageJson(items: List<String>, next: String? = null) =
     """{"items":${items.joinToString(",", "[", "]")},"has_more":${next != null}""" +
         (if (next != null) ""","next_cursor":"$next"}""" else "}")
 
@@ -80,6 +80,23 @@ class VisionAgentsTest {
     }
 
     @Test
+    fun `a key beside a customer id is Stream's, and the router is still reached by customer id`() = runTest {
+        val local = VisionAgents(url = router.url, customerId = "acme", apiKey = "stream-key")
+        local.setUser(User("jlahey"), "token-for-jlahey")
+        router.answer = { Reply(200, EMPTY_PAGE) }
+
+        local.sessions.query()
+
+        val arrived = router.requests.single()
+        assertEquals("acme", arrived.header("X-Customer-Id"))
+        assertEquals("jlahey", arrived.header("X-Stream-User-Id"))
+        assertNull(arrived.query["api_key"])
+        assertNull(arrived.header("Authorization"))
+        assertEquals("stream-key", local.backend.streamCredentials().apiKey)
+        local.close()
+    }
+
+    @Test
     fun `behind a verifying deployment the token is the credential, asked for once`() = runTest {
         val asked = AtomicInteger()
         val keyed = VisionAgents(url = router.url, apiKey = "key-1")
@@ -90,7 +107,8 @@ class VisionAgentsTest {
         keyed.sessions.query()
 
         assertEquals(listOf("Bearer token-1", "Bearer token-1"), router.requests.map { it.header("Authorization") })
-        assertEquals("key-1", router.requests.first().header("X-Api-Key"))
+        assertEquals(listOf("key-1"), router.requests.first().query["api_key"])
+        assertNull(router.requests.first().header("X-Api-Key"))
         assertEquals("jwt", router.requests.first().header("Stream-Auth-Type"))
         assertNull(router.requests.first().header("X-Customer-Id"))
         keyed.close()

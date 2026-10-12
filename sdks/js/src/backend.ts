@@ -59,7 +59,12 @@ export interface BackendOptions {
    * `STREAM_ACCELERATION_CUSTOMER_ID`.
    */
   customerId?: string;
-  /** The public half of a Stream credential. Falls back to `STREAM_API_KEY`. */
+  /**
+   * The public half of a Stream credential. Falls back to `STREAM_API_KEY`.
+   *
+   * Beside `customerId` it is Stream's alone: the router is still reached by customer id,
+   * and the key is what chat and video connect with once `setUser` names somebody.
+   */
   apiKey?: string;
   /**
    * The secret belonging to that key, which mints a server-side token.
@@ -122,6 +127,8 @@ export class Backend {
   readonly apiKey: string;
   /** Whether the credential is spelled for Stream's proxy rather than for the router. */
   readonly authenticate: boolean;
+  /** Whether the router is told the customer rather than shown a credential. */
+  private readonly byCustomer: boolean;
   /**
    * Mutable, and `declaredSecret` is what says whether it may be dropped: a secret that was
    * passed is the caller's own claim to be the app's backend, and one that was only lying
@@ -162,6 +169,10 @@ export class Backend {
     this.userIdValue = options.userId ?? "";
     this.authenticate =
       options.authenticate ?? (boolean(env(AUTHENTICATE_ENV)) || this.url === DEFAULT_URL);
+    // A customer that was named is chosen over a key that was also passed, because the key
+    // is then there for Stream's own clients. The proxy reads no customer, so it never is.
+    this.byCustomer =
+      !this.authenticate && Boolean(this.customerId) && (Boolean(options.customerId) || !this.apiKey);
     this.webSocketImpl = options.webSocket ?? globalWebSocket();
 
     // Bound, because a browser only lets fetch be called on the window: kept as a field and
@@ -257,7 +268,7 @@ export class Backend {
           `trusts one, or apiKey with either apiSecret or token`,
       );
     }
-    if (this.apiKey && !this.apiSecret && !this.token) {
+    if (!this.byCustomer && !this.apiSecret && !this.token) {
       throw new ConfigurationError(
         "apiKey needs the secret it belongs to, a token minted with it, or a setUser call",
       );
@@ -272,7 +283,7 @@ export class Backend {
    * before a call rather than reading a 403 afterwards.
    */
   get serverSide(): boolean {
-    return Boolean(this.apiSecret) || (!this.apiKey && Boolean(this.customerId));
+    return Boolean(this.apiSecret) || this.byCustomer;
   }
 
   /**
@@ -286,7 +297,7 @@ export class Backend {
     const acting: Record<string, string> = this.actingForValue
       ? { "X-Stream-User-Id": this.actingForValue }
       : {};
-    if (!this.apiKey) {
+    if (this.byCustomer) {
       return { "X-Customer-Id": this.customerId, ...acting };
     }
 
@@ -332,7 +343,7 @@ export class Backend {
       url.searchParams.set(name, value);
     }
 
-    if (this.apiKey) {
+    if (!this.byCustomer) {
       const token = this.authenticate
         ? await this.proxyToken()
         : this.apiSecret
@@ -376,7 +387,7 @@ export class Backend {
    * read the same way.
    */
   query(): Record<string, string> {
-    return !this.apiKey && this.customerId && this.userId ? { user_id: this.userId } : {};
+    return this.byCustomer && this.userId ? { user_id: this.userId } : {};
   }
 
   /** Sends one request. Exposed so the client and the sockets share one fetch. */
@@ -387,9 +398,9 @@ export class Backend {
   /**
    * What Stream's own chat and video clients need to connect, or undefined.
    *
-   * Undefined for a backend reached by customer id: that is this router's own way of
-   * trusting a caller and means nothing to Stream, so there is no credential to pass on. A
-   * server-side backend gets a token minted for the user it is acting for rather than its
+   * Undefined without a Stream key: a customer id is this router's own way of trusting a
+   * caller and means nothing to Stream, so one reached that way needs `apiKey` and `setUser`
+   * as well before chat or video can connect. A server-side backend gets a token minted for the user it is acting for rather than its
    * own server token, because a chat client connects as somebody.
    */
   async streamCredentials(): Promise<StreamCredentials | undefined> {

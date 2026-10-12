@@ -1,16 +1,17 @@
 # Kotlin SDKs
 
-Three Gradle modules for talking to an agent from an Android app.
+Four Gradle modules for talking to an agent from an Android app.
 
 | Module | Artifact | Depends on | What it is |
 | --- | --- | --- | --- |
 | `core/` | `io.getstream:vision-agents-core` | coroutines, kotlinx.serialization, Ktor on OkHttp | Sessions, responses, the event socket and the conversation as `StateFlow`. Plain JVM |
 | `ui/` | `io.getstream:vision-agents-ui` | `core`, Compose | Compose views over that state |
-| `rtc/` | `io.getstream:vision-agents-rtc` | `core`, Stream Video 1.34.0, Stream Chat 7.12.0 | Joining the call, so the conversation can be spoken |
+| `rtc/` | `io.getstream:vision-agents-rtc` | `core`, Stream Video 1.34.0 | Joining the call, so the conversation can be spoken |
+| `chat/` | `io.getstream:vision-agents-chat` | `core`, Stream Chat 7.12.0 | The Stream Chat channel a text conversation is kept in |
 
 `core` has nothing Android in it, so an app that only holds a text conversation does not pull
-in WebRTC, and its tests run on a plain JDK. `ui` and `rtc` need minSdk 24 and compileSdk 37,
-which is what Stream's SDKs require.
+in WebRTC, and its tests run on a plain JDK. `ui`, `rtc` and `chat` need minSdk 24 and
+compileSdk 37, which is what Stream's SDKs require.
 
 ## Using them
 
@@ -24,18 +25,42 @@ chat.responses.create("What are your opening hours?")
 // chat.conversation is a StateFlow: the question shows at once, the turns grow as the reply
 // streams in, and its state says what the agent is doing.
 
+// The Stream Chat channel the conversation is kept in, with vision-agents-chat.
+val channel: ChannelClient = chat.chat(context)
+
 // Out loud. The agent joins a call and so does this device.
 val voice = VoiceSession.start(context, agents, options = SessionOptions(agent = "docs"))
-voice.join(credentials = yourBackend::callCredentials)
+voice.join()
+
+// Signing out: closes the Stream Chat and Video clients the SDK built.
+agents.disconnect()
 ```
 
 `VisionAgents(apiKey = ...)` reaches Stream's hosted router; pass `url` for another. A router
 running locally with nothing in front of it is reached by customer id instead:
-`VisionAgents(url = "http://localhost:8080", customerId = "acme")`.
+`VisionAgents(url = "http://localhost:8080", customerId = "acme")`. Pass `apiKey` beside it and
+the key is Stream's alone, so chat and video connect on a local router too.
 
-The agent is named rather than configured, and `join` is handed a function rather than minting
-its own token. Both are the same fact: writing configs and minting a call token are server-side
-only, so the app is told which agent it talks to and is handed the token to join with.
+Stream is set up once. The key, and the user and token `setUser` is given, are what the router,
+Stream Chat and Stream Video all connect with. Nothing connects when the user is set: the first
+session to ask for `chat()` or `join()` builds the client, and every session after it shares
+that one, so the user is one connection and one presence to Stream however many conversations
+are open. Leaving a call or closing a session disconnects nothing; `agents.disconnect()` does.
+
+An app that already has a `ChatClient` or a `StreamVideo` hands it over, connected as the same
+user, and it is used instead of a second one and never disconnected here:
+
+```kotlin
+agents.use(ChatClient.instance())
+agents.use(StreamVideo.instance())
+```
+
+Both are one per process on Android. One the app built without handing it over is used if it is
+connected as the user `setUser` named, and refused otherwise, rather than replaced.
+
+The agent is named rather than configured, and nothing here mints a token. Both are the same
+fact: writing configs and minting tokens are server-side only, so the app is told which agent it
+talks to and is handed the user's token by its own backend.
 
 `AgentSession` owns a coroutine scope and `close()` ends it, so the usual home is a `ViewModel`
 that closes it in `onCleared`. Closing stops the session and keeps what it recorded and
@@ -137,7 +162,7 @@ not open.
 | Not here | Ask your backend for |
 | --- | --- |
 | Writing a config, syncing a folder, dispatching agents | The agent's name, which is all the app needs |
-| A token to join the agent's call | `CallCredentials`, which `join` is handed |
+| A token for the user | The token `setUser` is given, which the router, Chat and Video all take |
 | Moving a guest's history onto the account they signed up with | Nothing: the backend that authenticated them does it |
 | Changing a session's models or voice | Your backend, which has the Go or Node SDK's `update` |
 | Interrupting over HTTP | Nothing: `interrupt()` goes over the socket |
@@ -175,12 +200,28 @@ docker run --rm -v "$PWD":/repo -v ~/.cache/vision-agents-kotlin/gradle:/gradle-
   -e VISION_AGENTS_CUSTOMER_ID=examples -w /repo/sdks/kotlin gradle:jdk21 \
   ./gradlew -PcoreOnly :core:test
 
-# ui and rtc: built rather than tested, since they are views and a WebRTC wrapper
+# the same, plus a device token's 403s against a router in api_key mode
+docker run --rm -v "$PWD":/repo -v ~/.cache/vision-agents-kotlin/gradle:/gradle-home \
+  -e GRADLE_USER_HOME=/gradle-home -e INTEGRATION_ROUTER_URL=http://host.docker.internal:8099 \
+  -e INTEGRATION_ROUTER_KEY=vak_live_… -e INTEGRATION_ROUTER_SECRET=vas_live_… \
+  -w /repo/sdks/kotlin gradle:jdk21 ./gradlew -PcoreOnly :core:test
+
+# ui, rtc and chat: built rather than tested, since they are views and wrappers over Stream's SDKs
 docker run --rm --platform linux/amd64 -u root -v "$PWD":/repo \
   -v ~/.cache/vision-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
   -w /repo/sdks/kotlin cimg/android:2026.08.1 \
-  ./gradlew :ui:assembleRelease :rtc:assembleRelease
+  ./gradlew :ui:assembleRelease :rtc:assembleRelease :chat:assembleRelease
 ```
+
+`StreamClientsTest` is what keeps a second Stream connection from being opened: sessions asking
+at once share one client, the app's own is used and left connected, and `disconnect` closes only
+what was built. `PostureTest` drives every operation the SDK has against the loopback router and
+fails if any is one the spec does not mark `x-client-accessible`. `KeyedRouterPostureTest` runs
+only with `INTEGRATION_ROUTER_KEY` set; the router it needs is set up as in the
+[JavaScript README](../js/README.md#working-on-this-package).
+
+Run the Android build and `:core:test` one after the other, not at once: both lock the same
+`.gradle` directory.
 
 `-PcoreOnly` leaves the Android modules out of the build, so the JDK image needs no Android
 SDK. `cimg/android` publishes no arm64 image, hence `--platform linux/amd64`.

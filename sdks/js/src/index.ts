@@ -90,6 +90,8 @@ export {
 
 export { Tools, render, type ParameterSchema, type Tool } from "./tools.js";
 
+export type { ChatClient, StreamClients, VideoClient } from "./stream.js";
+
 export {
   Session,
   Voice,
