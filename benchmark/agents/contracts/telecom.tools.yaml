@@ -35,7 +35,7 @@ tools:
     parameters:
       type: object
       properties:
-        window: {type: string}
+        window: {type: string, enum: [am, pm]}
         ticket_id: {type: string}
       required: [window]
   - name: apply_credit
