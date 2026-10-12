@@ -560,6 +560,36 @@ func TestAConnectorWithoutToolsOffersEveryTool(t *testing.T) {
 	}
 }
 
+func TestANullConnectorEntryIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - ~\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "a connector needs a name") {
+		t.Fatalf("a null connector loaded: %v", err)
+	}
+}
+
+func TestACommentedOutConnectorEntryIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - # linear\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "a connector needs a name") {
+		t.Fatalf("a commented-out connector loaded: %v", err)
+	}
+}
+
+func TestAConnectorWithoutANameIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - connector: linear\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "a connector needs a name") {
+		t.Fatalf("a nameless connector loaded: %v", err)
+	}
+}
+
 func TestAnEmptyConnectionIsRefused(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    connection: \"\"\n")

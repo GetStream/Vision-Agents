@@ -167,8 +167,9 @@ type Settings struct {
 	Plugins []PluginSettings `yaml:"plugins"`
 	// Connectors are the connectors whose tools the agent may call. Nil when the
 	// declaration says nothing, which leaves the bindings stored; empty when the
-	// file lists none, which removes them.
-	Connectors []ConnectorSettings `yaml:"connectors"`
+	// file lists none, which removes them. A null entry is refused: dropping it
+	// would sync an empty list and wipe the stored bindings.
+	Connectors connectorList `yaml:"connectors"`
 	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
 	// a text conversation when it arrives.
 	PluginEvents []PluginEventSettings `yaml:"plugin_events"`
@@ -287,6 +288,29 @@ func (c *ConnectorSettings) UnmarshalYAML(node *yaml.Node) error {
 	if c.Connection != nil && *c.Connection == "" {
 		return fmt.Errorf("connector %q: connection must be a connection id or label", c.Name)
 	}
+	return nil
+}
+
+// connectorList is the connectors list. yaml.v3 drops a null element of a plain
+// struct slice without calling UnmarshalYAML, so the entry is walked here.
+type connectorList []ConnectorSettings
+
+func (c *connectorList) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.SequenceNode {
+		return errors.New("connectors must be a list")
+	}
+	items := make(connectorList, 0, len(node.Content))
+	for _, item := range node.Content {
+		if item.ShortTag() == "!!null" {
+			return errors.New("a connector needs a name")
+		}
+		var entry ConnectorSettings
+		if err := item.Decode(&entry); err != nil {
+			return err
+		}
+		items = append(items, entry)
+	}
+	*c = items
 	return nil
 }
 

@@ -1031,6 +1031,35 @@ func TestSyncRefusesAConnectionNobodyHas(t *testing.T) {
 	}
 }
 
+func TestSyncStopsWhenAConnectionPageRepeatsItsCursor(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connector: linear\n    connection: work\n")
+	router := newBackend(t)
+	router.answerConnections(func(r *http.Request) acceleration.ConnectionPage {
+		if r.URL.Query().Get("cursor") == "" {
+			return connectionPage("again", listedConnection("other", "nope"))
+		}
+		return connectionPage("again", listedConnection("the-one", "work"))
+	})
+	agent := agentOn(t, router, Options{Dir: root})
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if _, err := agent.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.connectionQueries) != 2 {
+		t.Fatalf("queries = %v", router.connectionQueries)
+	}
+	sent := router.syncs[0].Connectors
+	if sent == nil || len(*sent) != 1 || (*sent)[0].Connection.ConnectionId == nil || *(*sent)[0].Connection.ConnectionId != "the-one" {
+		t.Errorf("issues went as %+v", sent)
+	}
+}
+
 func TestSyncRefusesALabelSharedByTwoConnections(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connection: work\n")
