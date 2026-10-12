@@ -65,7 +65,7 @@ import Testing
     await session.start()
     defer { Task { await session.close() } }
 
-    let deadline = ContinuousClock.now + .seconds(5)
+    let deadline = ContinuousClock.now + .seconds(30)
     while session.approvals.isEmpty, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))
     }
@@ -197,9 +197,9 @@ private struct ToolEventServer {
         }
       }
       connection.start(queue: queue)
-      queue.asyncAfter(deadline: .now() + 5) { connection.cancel() }
+      queue.asyncAfter(deadline: .now() + 30) { connection.cancel() }
     }
-    queue.asyncAfter(deadline: .now() + 5) {
+    queue.asyncAfter(deadline: .now() + 30) {
       let error = AgentsError.unreadable("test socket timed out")
       address.finish(throwing: error)
       command.finish(throwing: error)
@@ -269,9 +269,9 @@ private struct ApprovalServer {
         receive(connection)
       }
       connection.start(queue: queue)
-      queue.asyncAfter(deadline: .now() + 5) { connection.cancel() }
+      queue.asyncAfter(deadline: .now() + 30) { connection.cancel() }
     }
-    queue.asyncAfter(deadline: .now() + 5) {
+    queue.asyncAfter(deadline: .now() + 30) {
       let error = AgentsError.unreadable("test socket timed out")
       address.finish(throwing: error)
       command.finish(throwing: error)

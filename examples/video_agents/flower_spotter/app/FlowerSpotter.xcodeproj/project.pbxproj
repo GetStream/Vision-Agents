@@ -303,7 +303,7 @@
 			repositoryURL = "https://github.com/GetStream/stream-video-swift";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 1.51.0;
+				minimumVersion = 1.54.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

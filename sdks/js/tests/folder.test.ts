@@ -133,6 +133,68 @@ describe("loadFolder", () => {
     }
   });
 
+  it("reads connectors named alone and written out, with tools as a list either way", async () => {
+    const folder = await loadFolder(
+      await agentDir({
+        "agent.yaml": [
+          "name: concierge",
+          "plugins:",
+          "  - linear",
+          "connectors:",
+          "  - github",
+          "  - name: issues",
+          "    connector: linear",
+          "    tools: [list_*, get_issue]",
+          "    connection: work",
+          "    required: true",
+          "  -",
+          "    name: notes",
+          "    tools:",
+          "      - read_*",
+          "    required: false",
+          "  - name: crm",
+          "    tools: null",
+          "",
+        ].join("\n"),
+      }),
+    );
+
+    assert.deepEqual(folder.settings?.connectors, [
+      { name: "github" },
+      { name: "issues", connector: "linear", tools: ["list_*", "get_issue"], connection: "work", required: true },
+      { name: "notes", tools: ["read_*"], required: false },
+      { name: "crm" },
+    ]);
+  });
+
+  it("tells an empty connectors list from none, since one removes the bindings and the other keeps them", async () => {
+    const without = await loadFolder(await agentDir({ "agent.yaml": "name: concierge\n" }));
+    const empty = await loadFolder(await agentDir({ "agent.yaml": "name: concierge\nconnectors: []\n" }));
+
+    assert.equal(without.settings?.connectors, undefined);
+    assert.deepEqual(empty.settings?.connectors, []);
+  });
+
+  it("refuses a connector it would otherwise have to guess at", async () => {
+    for (const [declaration, reason] of [
+      ["connectors:\n  - ~\n", /a connector needs a name/],
+      ["connectors:\n  - # linear\n", /a connector needs a name/],
+      ["connectors:\n  - connector: linear\n", /a connector needs a name/],
+      ['connectors:\n  - name: github\n    connection: ""\n', /connector "github": connection must be a connection id or label/],
+      ["connectors:\n  - name: github\n    tools: []\n", /connector "github": tools: \[\] grants nothing/],
+      ["connectors:\n  - name: github\n    plugin: github\n", /"plugin" is not something a connector says/],
+      ["connectors:\n  - name: github\n    required: yes please\n", /required must be true or false/],
+      ["connectors:\n  - linear\n    tools: [a]\n", /belongs to no connector/],
+      ["plugins:\n  - linear\nconnectors:\n  - linear\n", /"linear" is named under both connectors and plugins/],
+    ] as const) {
+      await assert.rejects(
+        async () => loadFolder(await agentDir({ "agent.yaml": declaration })),
+        reason,
+        declaration,
+      );
+    }
+  });
+
   it("reads knowledge in path order, with the source a reader would recognise", async () => {
     const path = await agentDir({
       "knowledge/b.md": "second",

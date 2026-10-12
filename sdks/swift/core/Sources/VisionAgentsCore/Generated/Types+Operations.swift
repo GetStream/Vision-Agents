@@ -11,6 +11,250 @@ import struct Foundation.Date
 #endif
 /// API operations, with input and output types, generated from `#/paths` in the OpenAPI document.
 internal enum Operations {
+    /// Mint a guest so somebody can talk to an agent before signing up
+    ///
+    /// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+    /// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
+    ///
+    /// - Remark: HTTP `POST /v1/agents/guests`.
+    /// - Remark: Generated from `#/paths//v1/agents/guests/post(createGuestUser)`.
+    internal enum CreateGuestUser {
+        internal static let id: Swift.String = "createGuestUser"
+        internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/guests/POST/header`.
+            internal struct Headers: Sendable, Hashable {
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.CreateGuestUser.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.CreateGuestUser.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            internal var headers: Operations.CreateGuestUser.Input.Headers
+            /// - Remark: Generated from `#/paths/v1/agents/guests/POST/requestBody`.
+            internal enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/guests/POST/requestBody/content/application\/json`.
+                case json(Components.Schemas.GuestUserRequest)
+            }
+            internal var body: Operations.CreateGuestUser.Input.Body?
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            ///   - body:
+            internal init(
+                headers: Operations.CreateGuestUser.Input.Headers = .init(),
+                body: Operations.CreateGuestUser.Input.Body? = nil
+            ) {
+                self.headers = headers
+                self.body = body
+            }
+        }
+        internal enum Output: Sendable, Hashable {
+            internal struct Created: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/201/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/201/content/application\/json`.
+                    case json(Components.Schemas.GuestUser)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.GuestUser {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.CreateGuestUser.Output.Created.Body
+                /// Creates a new `Created`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.CreateGuestUser.Output.Created.Body) {
+                    self.body = body
+                }
+            }
+            /// The guest and a token for them
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/guests/post(createGuestUser)/responses/201`.
+            ///
+            /// HTTP response code: `201 created`.
+            case created(Operations.CreateGuestUser.Output.Created)
+            /// The associated value of the enum case if `self` is `.created`.
+            ///
+            /// - Throws: An error if `self` is not `.created`.
+            /// - SeeAlso: `.created`.
+            internal var created: Operations.CreateGuestUser.Output.Created {
+                get throws {
+                    switch self {
+                    case let .created(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "created",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The request was malformed
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/guests/post(createGuestUser)/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Components.Responses.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            internal var badRequest: Components.Responses.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The customer header is missing
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/guests/post(createGuestUser)/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Components.Responses.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            internal var unauthorized: Components.Responses.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            internal struct Forbidden: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/403/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/guests/POST/responses/403/content/application\/json`.
+                    case json(Components.Schemas.ErrorResponse)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.ErrorResponse {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.CreateGuestUser.Output.Forbidden.Body
+                /// Creates a new `Forbidden`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.CreateGuestUser.Output.Forbidden.Body) {
+                    self.body = body
+                }
+            }
+            /// This app does not admit guests
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/guests/post(createGuestUser)/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Operations.CreateGuestUser.Output.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            internal var forbidden: Operations.CreateGuestUser.Output.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Something went wrong that is not the caller's doing. The body says only that: quote the response's X-Request-Id to find out more.
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/guests/post(createGuestUser)/responses/500`.
+            ///
+            /// HTTP response code: `500 internalServerError`.
+            case internalServerError(Components.Responses.InternalError)
+            /// The associated value of the enum case if `self` is `.internalServerError`.
+            ///
+            /// - Throws: An error if `self` is not `.internalServerError`.
+            /// - SeeAlso: `.internalServerError`.
+            internal var internalServerError: Components.Responses.InternalError {
+                get throws {
+                    switch self {
+                    case let .internalServerError(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "internalServerError",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        internal enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            internal init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            internal var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            internal static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
     /// Join a call as a voice agent
     ///
     /// The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.

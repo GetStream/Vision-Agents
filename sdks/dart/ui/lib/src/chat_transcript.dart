@@ -7,8 +7,8 @@ import 'transcript_view.dart';
 /// The Stream Chat channel a conversation is kept in, or null for one that is not.
 ///
 /// A text session that is not incognito names its channel as `type:id`. Reading it
-/// takes a chat client connected as the person holding the conversation, which the app's
-/// backend mints a Chat token for.
+/// takes a chat client connected as the person holding the conversation; `session.chat()` in
+/// `vision_agents_chat` opens it on the one client every session shares.
 Channel? conversationChannel(StreamChatClient client, Session session) {
   final cid = session.conversationId;
   final colon = cid.indexOf(':');

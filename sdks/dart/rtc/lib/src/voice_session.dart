@@ -1,36 +1,23 @@
 import 'package:stream_video_flutter/stream_video_flutter.dart' as video;
 import 'package:vision_agents_core/vision_agents_core.dart';
 
-/// Credentials for joining the Stream call an agent is on.
-///
-/// Minting these is server-side only, so they come from the app's own backend rather than
-/// from this device. A backend holding the Go or Python SDK asks the router for a call token
-/// and hands down what is here.
-final class CallCredentials {
-  const CallCredentials({
-    required this.apiKey,
-    required this.token,
-    required this.userId,
-    required this.callId,
-    this.userName = '',
-    this.callType = 'agent',
-  });
+const _kind = 'video';
 
-  final String apiKey;
-  final String token;
-  final String userId;
-  final String userName;
-
-  /// The Stream call to join: the session's id, under the `agent` call type.
-  final String callId;
-  final String callType;
+/// The app's own Stream Video client.
+extension VideoClients on VisionAgents {
+  /// Hands over the app's own Stream Video client, so every call is joined on it rather than
+  /// on a second one. It must be connected as the agents' `userId`, and [disconnect] leaves it
+  /// alone.
+  void useVideo(video.StreamVideo client) {
+    if (client.currentUser.id != backend.userId) {
+      throw ArgumentError(
+        'the video client is for ${client.currentUser.id} but these agents are for '
+        '${backend.userId}: hand over a client for the same user',
+      );
+    }
+    backend.give(_kind, client);
+  }
 }
-
-/// Asks the app's backend for credentials to join the call a session is holding.
-///
-/// A function rather than a value because a token expires an hour in, and a long call that
-/// was handed one value would drop when it did.
-typedef CallCredentialsProvider = Future<CallCredentials> Function(String sessionId);
 
 /// Where a spoken conversation is: joined or not, microphone, camera, and why it failed.
 final class VoiceState {
@@ -68,12 +55,11 @@ final class CallFailure implements Exception {
 
 /// A spoken conversation: the agent on a call, and this device on the same call.
 ///
-/// Three things happen, in this order, and the order matters:
+/// Two things happen, in this order, and the order matters:
 ///
 /// 1. The router starts a session, which puts the agent on the session's own call,
 ///    `agent:<session id>`.
-/// 2. The app's backend mints a token for joining that call.
-/// 3. Stream Video joins it, and audio starts flowing.
+/// 2. Stream Video joins it with the agents' key, user and token, and audio starts flowing.
 ///
 /// The transcript comes over the session socket rather than out of the call, so what is said
 /// is readable even before anybody is listening to it. That is [session], the same
@@ -110,7 +96,6 @@ final class VoiceSession {
   /// True when this device called [start]. Leaving closes only a session this device owns.
   final bool _createdLocally;
   final _state = LiveValueController(const VoiceState());
-  video.StreamVideo? _video;
   bool _joining = false;
 
   LiveValue<VoiceState> get state => _state;
@@ -124,28 +109,18 @@ final class VoiceSession {
   /// Both are join settings rather than changed afterwards, so no front-facing frame is ever
   /// published.
   ///
-  /// [credentials] is asked for the token to join with, and asked again when it expires.
-  Future<void> join({bool camera = false, required CallCredentialsProvider credentials}) async {
+  /// It joins on the client handed over with `useVideo`, or else on one built from the
+  /// agents' key, user and token, which every voice session then shares. Without a key, user
+  /// and token there is nothing to join with, which is an [ArgumentError].
+  Future<void> join({bool camera = false}) async {
     if (_joining || call != null) {
       return;
     }
     _joining = true;
     try {
-      final joining = await credentials(session.id);
-      // `create` rather than the singleton constructor: a library installing Stream Video's
-      // singleton would collide with a host that has its own.
-      final client = video.StreamVideo.create(
-        joining.apiKey,
-        user: video.User.regular(userId: joining.userId, name: joining.userName),
-        userToken: joining.token,
-        // Asked when the token expires, which it does an hour in. Asking the backend again is
-        // what keeps a long call from dropping.
-        tokenLoader: (_) async => (await credentials(session.id)).token,
-      );
-      _video = client;
-      final joined = client.makeCall(
-        callType: video.StreamCallType.fromString(joining.callType),
-        id: joining.callId,
+      final joined = (await _client()).makeCall(
+        callType: video.StreamCallType.fromString(session.session.callType),
+        id: session.session.callId,
       );
       // `join` creates the call too: which of the agent and this device arrives first is a
       // race.
@@ -160,8 +135,6 @@ final class VoiceSession {
         ),
       );
       if (result case video.Failure(:final error)) {
-        await client.dispose();
-        _video = null;
         _state.value = _state.value._with(failure: CallFailure(error.message));
         return;
       }
@@ -202,7 +175,8 @@ final class VoiceSession {
   }
 
   /// Leaves this device's call. Closes the router session only if this device started it;
-  /// an attached device navigating away leaves it running.
+  /// an attached device navigating away leaves it running. The Video client stays connected
+  /// for the next call, until [VisionAgents.disconnect].
   Future<void> leave() => _leave(closeSession: _createdLocally);
 
   /// Hangs up: leaves the call and ends the agent session, whoever started it.
@@ -210,16 +184,31 @@ final class VoiceSession {
 
   Future<void> _leave({required bool closeSession}) async {
     final call = this.call;
-    final client = _video;
-    _video = null;
     _state.value = VoiceState(failure: _state.value.failure);
     if (call != null) {
       await call.leave();
     }
-    await client?.dispose();
     if (closeSession) {
       await session.close();
     }
+  }
+
+  Future<video.StreamVideo> _client() {
+    final backend = session.backend;
+    return backend.shared<video.StreamVideo>(
+      _kind,
+      // `create` rather than the singleton constructor: a library installing Stream Video's
+      // singleton would collide with a host that has its own.
+      open: (credentials) async => video.StreamVideo.create(
+        credentials.apiKey,
+        user: video.User.regular(userId: credentials.userId),
+        userToken: credentials.token,
+        // Asked when the token expires, which it does an hour in. Asking the agents' token
+        // provider again is what keeps a long call from dropping.
+        tokenLoader: (_) async => (await backend.streamCredentials()).token,
+      ),
+      disconnect: (client) => client.dispose(),
+    );
   }
 
   bool _failed(video.Result<video.None> result) {

@@ -253,6 +253,123 @@ void main() {
       await chat.close();
     });
 
+    group('a tool that asks first', () {
+      const refundCall =
+          '{"type":"tool_call","id":"c1","name":"issue_refund",'
+          r'"arguments":"{\"order_id\":\"A-1042\",\"reason\":\"it arrived unopened\"}",'
+          '"request_id":"m1","turn_id":"t1"}';
+      late List<Object?> ran;
+
+      Future<AgentSession> open() => agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool(
+              name: 'issue_refund',
+              description: 'Refund an order.',
+              approval: const ToolApproval(
+                title: 'Refund order A-1042?',
+                reasonArgument: 'reason',
+                allowTitle: 'Refund',
+              ),
+              run: (arguments) async {
+                ran.add(arguments['order_id']);
+                return 'Refunded ${arguments['order_id']}';
+              },
+            ),
+          ],
+        ),
+      );
+
+      setUp(() => ran = []);
+
+      test('declares its question and waits for the person before it runs', () async {
+        final chat = await open();
+        final declared = (router.last('POST /v1/agents/sessions').json as Map)['tools'] as List;
+        expect((declared.single as Map)['approval'], {
+          'title': 'Refund order A-1042?',
+          'allow_title': 'Refund',
+          'reason_argument': 'reason',
+        });
+        final socket = await router.socket();
+
+        socket.send(refundCall);
+        await until(() => chat.approvals.value.isNotEmpty);
+        final waiting = chat.approvals.value.single;
+        expect(waiting.approval.title, 'Refund order A-1042?');
+        expect(waiting.reason, 'it arrived unopened');
+        expect(ran, isEmpty);
+
+        chat.decide('c1', allowed: true);
+
+        expect(chat.approvals.value, isEmpty);
+        expect(await socket.next(), {
+          'type': 'tool_approval',
+          'tool_call_id': 'c1',
+          'allowed': true,
+          'request_id': 'm1',
+          'turn_id': 't1',
+        });
+        expect(await socket.next(), {
+          'type': 'tool_result',
+          'tool_call_id': 'c1',
+          'output': 'Refunded A-1042',
+          'error': '',
+          'request_id': 'm1',
+          'turn_id': 't1',
+        });
+        expect(ran, ['A-1042']);
+        await chat.close();
+      });
+
+      test('declined, never runs, tells the model so, and a second answer does nothing', () async {
+        final chat = await open();
+        final socket = await router.socket();
+
+        socket.send(refundCall);
+        await until(() => chat.approvals.value.isNotEmpty);
+        chat
+          ..decide('c1', allowed: false, summary: 'Kept the order')
+          ..decide('c1', allowed: true)
+          ..say('still there?');
+
+        expect(await socket.next(), {
+          'type': 'tool_approval',
+          'tool_call_id': 'c1',
+          'allowed': false,
+          'summary': 'Kept the order',
+          'request_id': 'm1',
+          'turn_id': 't1',
+        });
+        expect(await socket.next(), {
+          'type': 'tool_result',
+          'tool_call_id': 'c1',
+          'output': '',
+          'error': 'The person declined this call.',
+          'request_id': 'm1',
+          'turn_id': 't1',
+        });
+        expect(await socket.next(), {'type': 'say', 'text': 'still there?'});
+        expect(ran, isEmpty);
+        await chat.close();
+      });
+
+      test('stops waiting when the router cancels the call', () async {
+        final chat = await open();
+        final socket = await router.socket();
+
+        socket.send(refundCall);
+        await until(() => chat.approvals.value.isNotEmpty);
+        socket.send('{"type":"tool_cancel","id":"c1","request_id":"m1","turn_id":"t1"}');
+        await until(() => chat.approvals.value.isEmpty);
+        chat
+          ..decide('c1', allowed: true)
+          ..say('still there?');
+
+        expect(await socket.next(), {'type': 'say', 'text': 'still there?'});
+        await chat.close();
+      });
+    });
+
     test('two readers of events each get every event', () async {
       final chat = await agents.chat();
       final socket = await router.socket();

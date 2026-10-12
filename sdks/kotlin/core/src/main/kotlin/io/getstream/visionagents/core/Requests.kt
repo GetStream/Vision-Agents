@@ -38,7 +38,8 @@ private const val MAX_ERROR_BODY = 512
  *
  * A request refused with a 401 is sent once more with a fresh token, because the likeliest
  * reason is that the one held expired. A failure to reach the router is [AgentsException.Transport];
- * an answer is [AgentsException.Http], whatever it says.
+ * an answer is [AgentsException.Http], whatever it says. One sent [anonymously] carries only the
+ * app's key, and a 401 to it means the router admits no anonymous callers.
  */
 internal suspend fun <T> Backend.send(
     method: HttpMethod,
@@ -46,10 +47,14 @@ internal suspend fun <T> Backend.send(
     answer: KSerializer<T>?,
     query: List<Pair<String, String>> = emptyList(),
     body: String? = null,
+    anonymously: Boolean = false,
 ): T? {
-    var response = attempt(method, path, query, body)
+    var response = attempt(method, path, query, body, anonymously)
+    if (anonymously && response.status.value == 401) {
+        throw AgentsException.Configuration(ANONYMOUS_GUEST_REFUSED)
+    }
     if (response.status.value == 401 && expireToken()) {
-        response = attempt(method, path, query, body)
+        response = attempt(method, path, query, body, anonymously)
     }
 
     val text = try {
@@ -81,15 +86,17 @@ internal suspend fun <B, T> Backend.post(
     request: KSerializer<B>,
     body: B,
     answer: KSerializer<T>,
-): T = send(HttpMethod.Post, path, answer, body = wire.encodeToString(request, body))!!
+    anonymously: Boolean = false,
+): T = send(HttpMethod.Post, path, answer, body = wire.encodeToString(request, body), anonymously = anonymously)!!
 
 private suspend fun Backend.attempt(
     method: HttpMethod,
     path: List<String>,
     query: List<Pair<String, String>>,
     body: String?,
+    anonymously: Boolean,
 ): HttpResponse {
-    val headers = headers()
+    val headers = if (anonymously) mapOf("Stream-Auth-Type" to "anonymous") else headers()
     return try {
         http.request(url(*path.toTypedArray(), query = query)) {
             this.method = method

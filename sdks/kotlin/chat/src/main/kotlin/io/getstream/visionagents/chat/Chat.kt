@@ -4,11 +4,13 @@ import android.content.Context
 import io.getstream.chat.android.client.ChatClient
 import io.getstream.chat.android.client.channel.ChannelClient
 import io.getstream.chat.android.client.token.TokenProvider
+import io.getstream.chat.android.models.Message
 import io.getstream.chat.android.models.User
 import io.getstream.result.Result
 import io.getstream.visionagents.core.AgentSession
 import io.getstream.visionagents.core.AgentsException
 import io.getstream.visionagents.core.Backend
+import io.getstream.visionagents.core.LiveReasoning
 import io.getstream.visionagents.core.StreamClients
 import io.getstream.visionagents.core.VisionAgents
 import java.util.concurrent.atomic.AtomicReference
@@ -101,6 +103,15 @@ private suspend fun connect(
     ).await()
     if (connecting is Result.Failure) throw ChatFailed(connecting.value.message)
     return client
+}
+
+/** Reads the window of thinking a live update of a reply carries, if it carries one. */
+public fun LiveReasoning.read(message: Message) {
+    val window = message.extraData["reasoning"] as? Map<*, *> ?: return
+    val id = window["id"] as? String ?: return
+    val offset = window["offset"] as? Number ?: return
+    val text = window["text"] as? String ?: return
+    add(text, offset.toInt(), id)
 }
 
 /** Connecting to Stream Chat failed for a reason Stream's Chat SDK gave rather than threw. */

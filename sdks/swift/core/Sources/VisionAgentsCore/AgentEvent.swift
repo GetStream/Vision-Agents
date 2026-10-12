@@ -62,6 +62,7 @@ public struct AgentEvent: Sendable, Hashable {
         case interrupted
         case overlapDecided = "overlap_decided"
         case conversationCompacted = "conversation_compacted"
+        case connectorScopeRequired = "connector_scope_required"
         case error
         case left
     }
@@ -117,6 +118,42 @@ extension AgentEvent {
             else { return [:] }
             return decoded.objectValue
         }
+    }
+}
+
+extension AgentEvent {
+    /// A connector tool call the provider refused because the person's own connection lacks
+    /// access it asked for, and the step-up consent the router began for it, or nil when this
+    /// event is not one. The old grant keeps working until the step-up succeeds, and the same
+    /// call works afterwards in the same session.
+    ///
+    /// An app cannot finish the step-up yet: `launchURL` takes `handoffToken` only from a page
+    /// on the dashboard's origin, as for a `connector_authorization` attachment.
+    public var connectorScopeRequired: ConnectorScopeRequired? {
+        guard kind == .connectorScopeRequired else { return nil }
+        return ConnectorScopeRequired(
+            name: self["name"].stringValue,
+            connectorID: self["connector_id"].stringValue,
+            connectionID: self["connection_id"].stringValue,
+            scopes: self["scopes"].arrayValue.map(\.stringValue),
+            authorizationID: self["authorization_id"].stringValue,
+            launchURL: self["launch_url"].stringValue,
+            handoffToken: self["handoff_token"].stringValue,
+            expiresAt: try? RouterDates().decode(self["expires_at"].stringValue))
+    }
+
+    /// The access a connector tool call needs, and where the person grants it.
+    public struct ConnectorScopeRequired: Sendable, Hashable {
+        /// The binding's alias.
+        public let name: String
+        public let connectorID: String
+        public let connectionID: String
+        /// What the provider asked for, empty for a claims challenge.
+        public let scopes: [String]
+        public let authorizationID: String
+        public let launchURL: String
+        public let handoffToken: String
+        public let expiresAt: Date?
     }
 }
 
