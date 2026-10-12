@@ -412,6 +412,25 @@ func (s *AttachConnectorsSuite) TestAReconnectPinsAToolGrantedByNameAgain() {
 	s.NotEqual(grants("whoami")[0].SchemaDigest, s.pinOf(alice, "whoami").SchemaDigest)
 }
 
+// TestAReconnectPinsAPatternMatchedToolAgain: a consent connects Alice's connection anew, a
+// new trust event, so the next session pins the pattern's whoami as the provider lists it now.
+func (s *AttachConnectorsSuite) TestAReconnectPinsAPatternMatchedToolAgain() {
+	alice := s.connection("alice", "primary")
+	config := s.config(withPatterns(s.chosen("crm"), "whoami"))
+	_, _, _, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+	s.Require().NoError(err)
+	s.provider.redescribe("primary", "Says which account this is, as changed.")
+	s.setState(alice, func(state *core.CredentialState) { state.ConnectedAt = time.Now().UTC().Add(time.Second) })
+
+	_, tools, unavailable, err := s.attach(s.spec(config, "alice", map[string]string{"crm": alice}))
+
+	s.Require().NoError(err)
+	s.Empty(unavailable)
+	s.Equal([]string{"crm__whoami"}, names(tools))
+	s.Equal("Says which account this is, as changed.", tools[0].Description)
+	s.NotEqual(grants("whoami")[0].SchemaDigest, s.pinOf(alice, "whoami").SchemaDigest)
+}
+
 // TestEachConnectionIsPinnedOnItsOwn: Alice's pin is not Bob's. Bob's provider lists whoami
 // with another description, which his first session pins for his connection.
 func (s *AttachConnectorsSuite) TestEachConnectionIsPinnedOnItsOwn() {

@@ -50,8 +50,8 @@ class AgentConnectorBinding:
                 or linear_*. Set, they are the grant and tools is empty: a binding has one or the other, and these are refused
                 together with a non-empty tools list. A session binding or a fixed one may set them. Each tool a connection
                 lists that matches is pinned on that connection the first time, at the digest listed then, and a later session
-                offers it only while that digest still matches. An empty list matches every tool the connection lists. At most
-                128, the same cap as tools, which is also the most one session offers when more match.
+                offers it only while that digest still matches. An empty list is refused. At most 128, the same cap as tools,
+                which is also the most one session offers when more match.
     """
 
     connection: AgentConnectorSelection

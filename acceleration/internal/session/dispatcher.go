@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -349,7 +350,9 @@ func rateLimited(name string, wait time.Duration) string {
 // anything is sent: the prototype's authorizeConnectorTool
 // (internal/session/connector_tools.go:229-288 on codex/connector-support at cf62af0d). The
 // config must still hold the binding, with the same connector and connection, and grant the
-// tool at the digest it was opened with. The connection must still be live, connected, one
+// tool at the digest it was opened with. A binding opened through tool_patterns is granted
+// while the current patterns still match the tool: Open already kept digest == pin. The
+// connection must still be live, connected, one
 // the binding may use, and reach where it reached when the session opened: the same
 // definition revision, inputs and captured metadata, which are what its endpoints are built
 // from. Two reads by primary key per call.
@@ -370,6 +373,10 @@ func (d *dispatcher) recheck(ctx context.Context, r route) error {
 	switch {
 	case current.ConnectorID != r.binding.ConnectorID || current.Connection.Type != r.binding.Connection.Type:
 		return refuse("the agent config binds it differently now")
+	case r.binding.ToolPatterns != nil && current.ToolPatterns != nil:
+		if !plugins.Offered(*current.ToolPatterns, r.tool) {
+			return refuse("the tool is no longer granted")
+		}
 	case !slices.Contains(current.Tools, store.ToolGrant{Name: r.tool, SchemaDigest: r.digest}):
 		return refuse("the tool is no longer granted")
 	}

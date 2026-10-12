@@ -446,8 +446,8 @@ type ConnectorBinding struct {
 	Connection  ConnectionBinding `json:"connection"`
 	Tools       []ToolGrant       `json:"tools"`
 	// ToolPatterns, when set, are the grant instead of Tools: tool names or path.Match
-	// patterns. Nil is a binding that grants Tools. An empty list matches every listed tool,
-	// as plugins.Offered does. The field is JSON inside agent_configs.connectors, so an older
+	// patterns. Nil is a binding that grants Tools. The API refuses an empty list. The field
+	// is JSON inside agent_configs.connectors, so an older
 	// router drops it and reads Tools, which a pattern binding leaves empty: it grants none.
 	ToolPatterns *[]string `json:"tool_patterns,omitempty"`
 	Required     bool      `json:"required"`

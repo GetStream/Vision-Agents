@@ -2726,7 +2726,7 @@ type AgentConnectorBinding struct {
 	// TimeoutMs How long one tool call may take, in milliseconds. Omitted, the session's default applies.
 	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
 
-	// ToolPatterns Names or path.Match patterns of the tools this binding offers, such as search or linear_*. Set, they are the grant and tools is empty: a binding has one or the other, and these are refused together with a non-empty tools list. A session binding or a fixed one may set them. Each tool a connection lists that matches is pinned on that connection the first time, at the digest listed then, and a later session offers it only while that digest still matches. An empty list matches every tool the connection lists. At most 128, the same cap as tools, which is also the most one session offers when more match.
+	// ToolPatterns Names or path.Match patterns of the tools this binding offers, such as search or linear_*. Set, they are the grant and tools is empty: a binding has one or the other, and these are refused together with a non-empty tools list. A session binding or a fixed one may set them. Each tool a connection lists that matches is pinned on that connection the first time, at the digest listed then, and a later session offers it only while that digest still matches. An empty list is refused. At most 128, the same cap as tools, which is also the most one session offers when more match.
 	ToolPatterns *[]string `json:"tool_patterns,omitempty"`
 
 	// Tools The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use. A binding that sets tool_patterns sends an empty list: the patterns are the grant instead.
