@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -21,9 +21,10 @@ T = TypeVar("T", bound="AgentConnectorBinding")
 
 @_attrs_define
 class AgentConnectorBinding:
-    """A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists
-    are offered, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name
-    alone, to the schema its connection first offered it with.
+    """A connector whose tools an agent config may call, under an alias. The binding is the grant: the tools it lists, each
+    pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema
+    its connection first offered it with. Or tool_patterns, names or path.Match patterns, pinned per connection on first
+    use, on a session binding or a fixed one. A binding has one or the other.
 
         Attributes:
             connection (AgentConnectorSelection): Which connection a binding's tools are called through.
@@ -34,7 +35,7 @@ class AgentConnectorBinding:
                 __, so a __ inside the alias or a _ at its end would split it in the wrong place.
             tools (list[ConnectorToolGrant]): The exact tools allowed, each named once. There is no wildcard, and an empty
                 list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on
-                first use.
+                first use. A binding that sets tool_patterns sends an empty list: the patterns are the grant instead.
             events (list[ConnectorBindingEvent] | Unset): MCP events the binding's fixed connection is subscribed to, each
                 opening a text conversation from the config when it arrives. Subscribed when the connection is next validated.
                 Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an
@@ -45,6 +46,12 @@ class AgentConnectorBinding:
                 session; an optional one is left out of it. Default: False.
             timeout_ms (int | Unset): How long one tool call may take, in milliseconds. Omitted, the session's default
                 applies.
+            tool_patterns (list[str] | Unset): Names or path.Match patterns of the tools this binding offers, such as search
+                or linear_*. Set, they are the grant and tools is empty: a binding has one or the other, and these are refused
+                together with a non-empty tools list. A session binding or a fixed one may set them. Each tool a connection
+                lists that matches is pinned on that connection the first time, at the digest listed then, and a later session
+                offers it only while that digest still matches. An empty list matches every tool the connection lists. At most
+                128, the same cap as tools, which is also the most one session offers when more match.
     """
 
     connection: AgentConnectorSelection
@@ -55,6 +62,7 @@ class AgentConnectorBinding:
     policy: ConnectorBindingPolicy | Unset = UNSET
     required: bool | Unset = False
     timeout_ms: int | Unset = UNSET
+    tool_patterns: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -84,6 +92,10 @@ class AgentConnectorBinding:
 
         timeout_ms = self.timeout_ms
 
+        tool_patterns: list[str] | Unset = UNSET
+        if not isinstance(self.tool_patterns, Unset):
+            tool_patterns = self.tool_patterns
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -102,6 +114,8 @@ class AgentConnectorBinding:
             field_dict["required"] = required
         if timeout_ms is not UNSET:
             field_dict["timeout_ms"] = timeout_ms
+        if tool_patterns is not UNSET:
+            field_dict["tool_patterns"] = tool_patterns
 
         return field_dict
 
@@ -146,6 +160,8 @@ class AgentConnectorBinding:
 
         timeout_ms = d.pop("timeout_ms", UNSET)
 
+        tool_patterns = cast(list[str], d.pop("tool_patterns", UNSET))
+
         agent_connector_binding = cls(
             connection=connection,
             connector_id=connector_id,
@@ -155,6 +171,7 @@ class AgentConnectorBinding:
             policy=policy,
             required=required,
             timeout_ms=timeout_ms,
+            tool_patterns=tool_patterns,
         )
 
         agent_connector_binding.additional_properties = d
