@@ -352,6 +352,7 @@ func CapabilitiesFor(string) sts.Capabilities {
 	return sts.Capabilities{
 		Text:             true,
 		Tools:            true,
+		FullDuplex:       true,
 		InputTranscript:  true,
 		OutputTranscript: true,
 		ToolsMidSession:  true,

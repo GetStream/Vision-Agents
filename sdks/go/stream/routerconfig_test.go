@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -89,8 +90,25 @@ func decodeConfig(w http.ResponseWriter, r *http.Request) (acceleration.RouterCo
 func storedFrom(wanted acceleration.RouterConfigRequest, id string) acceleration.RouterConfig {
 	return acceleration.RouterConfig{
 		Id: id, Name: wanted.Name,
-		Stt: wanted.Stt, Tts: wanted.Tts, Llm: wanted.Llm, Search: wanted.Search,
+		Stt: wanted.Stt, Tts: wanted.Tts, Llm: wanted.Llm, Search: wanted.Search, Sts: wanted.Sts,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+}
+
+func routerSTSOptions() *acceleration.StsOptions {
+	target := "sts-duplex"
+	overwrites := map[string]interface{}{
+		"openai": map[string]interface{}{"backend_model": "gpt-5.6-terra"},
+		"gemini": map[string]interface{}{"thinking_level": "low"},
+	}
+	return &acceleration.StsOptions{Target: &target, Overwrites: &overwrites}
+}
+
+func assertRouterSTSOptions(t *testing.T, got *acceleration.StsOptions) {
+	t.Helper()
+	want := routerSTSOptions()
+	if got == nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("the speech-to-speech config came back as %+v, want %+v", got, want)
 	}
 }
 
@@ -165,6 +183,7 @@ func TestConfigureSTTCarriesTheOtherModalitiesForward(t *testing.T) {
 	if _, err := clientFor(t, server).DefineRouter(t.Context(), RouterOptions{
 		Name: "healthcare",
 		TTS:  &acceleration.TtsOptions{Voice: &voice},
+		STS:  routerSTSOptions(),
 	}); err != nil {
 		t.Fatalf("defining the config: %v", err)
 	}
@@ -182,6 +201,7 @@ func TestConfigureSTTCarriesTheOtherModalitiesForward(t *testing.T) {
 	if stored.Tts == nil || stored.Tts.Voice == nil || *stored.Tts.Voice != "sonic" {
 		t.Error("writing how a config hears should not drop how it speaks")
 	}
+	assertRouterSTSOptions(t, stored.Sts)
 	if server.count() != 1 {
 		t.Errorf("the backend is holding %d configs, not 1", server.count())
 	}
@@ -205,6 +225,7 @@ func TestConfigureTTSCarriesTheOtherModalitiesForward(t *testing.T) {
 	if _, err := clientFor(t, server).DefineRouter(t.Context(), RouterOptions{
 		Name: "healthcare",
 		STT:  &acceleration.SttOptions{Providers: &[]string{"deepgram"}},
+		STS:  routerSTSOptions(),
 	}); err != nil {
 		t.Fatalf("defining the config: %v", err)
 	}
@@ -232,6 +253,7 @@ func TestConfigureTTSCarriesTheOtherModalitiesForward(t *testing.T) {
 	if stored.Stt == nil || stored.Stt.Providers == nil {
 		t.Error("writing how a config speaks should not drop how it hears")
 	}
+	assertRouterSTSOptions(t, stored.Sts)
 	if server.count() != 1 {
 		t.Errorf("the backend is holding %d configs, not 1", server.count())
 	}
@@ -258,6 +280,13 @@ stt:
   data_policy:
     allow_training: false
     retention: none
+sts:
+  target: sts-duplex
+  overwrites:
+    openai:
+      backend_model: gpt-5.6-terra
+    gemini:
+      thinking_level: low
 `)
 	write(t, directory, "support.yaml", "name: support-desk\nstt:\n  providers: [grok]\n")
 
@@ -281,6 +310,7 @@ stt:
 		policy.Retention == nil || *policy.Retention != "none" {
 		t.Errorf("the data policy came back as %+v", stored[0].Stt.DataPolicy)
 	}
+	assertRouterSTSOptions(t, stored[0].Sts)
 }
 
 func TestSyncingTheSameDirectoryTwiceEditsWhatIsStored(t *testing.T) {

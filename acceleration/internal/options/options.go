@@ -70,6 +70,7 @@ const (
 	// and typed turns are terms because one of the vendors has neither, and a tool
 	// definition that was accepted and never called is worse than one that was refused.
 	SemanticTurns    Term = "semantic_turns"
+	FullDuplex       Term = "full_duplex"
 	ManualTurns      Term = "manual_turns"
 	Tools            Term = "tools"
 	TextInput        Term = "text"
