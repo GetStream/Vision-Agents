@@ -384,7 +384,9 @@ type Agent struct {
 	heardText       string
 	nativeListening bool
 	nativeAwaiting  bool
-	nativeCalls     map[string]struct{}
+	nativeCalls     map[string]llm.ToolCall
+	// nativeRetries counts replacements across the call; swapping protects it.
+	nativeRetries int
 	// cadence turns evolving transcript revisions into stable candidates without relying
 	// on provider turn boundaries.
 	cadence *cadence
@@ -1031,15 +1033,15 @@ func (a *Agent) close() error {
 	a.closed = true
 	cancel := a.cancel
 	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	// A swap waiting for its turn boundary gives up once closed is set, and one already
 	// changing the pipeline finishes first, so the pipeline released below is whole.
 	a.swapping.Lock()
 	defer a.swapping.Unlock()
 
 	a.cadence.Close()
-	if cancel != nil {
-		cancel()
-	}
 
 	// The edge leaves first: it is the source of the audio that keeps the rest busy.
 	var failures []error

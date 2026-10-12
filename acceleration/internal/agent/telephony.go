@@ -254,7 +254,14 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 				a.mu.Lock()
 				a.nativeAwaiting = false
 				a.mu.Unlock()
-				a.fail(err, "sts")
+				capabilities := model.Capabilities()
+				if a.switching.Load() {
+					a.logger.Warn("could not deliver a tool result while the speech session was being replaced", "error", err)
+				} else if !capabilities.Resumable && capabilities.Tools {
+					a.loseNativeWrite(model, err)
+				} else {
+					a.fail(err, "sts")
+				}
 			}
 		}
 		if left {
