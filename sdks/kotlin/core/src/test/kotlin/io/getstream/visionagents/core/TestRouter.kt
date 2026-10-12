@@ -78,8 +78,17 @@ class TestRouter : AutoCloseable {
     private val server: EmbeddedServer<*, *> = embeddedServer(CIO, port = 0, host = "127.0.0.1") {
         install(WebSockets)
         intercept(ApplicationCallPipeline.Plugins) {
+            if (!call.request.path().endsWith("/events")) return@intercept
+            // Recorded before the upgrade is answered: the SDK counts as connected once it is.
+            handshakes += Arrived(
+                "GET",
+                call.request.path(),
+                call.request.queryParameters.entries().associate { it.key to it.value },
+                call.request.headers.entries().associate { it.key to it.value.joinToString(",") },
+                "",
+            )
             val refusal = refuseHandshake
-            if (refusal != null && call.request.path().endsWith("/events")) {
+            if (refusal != null) {
                 refusal.headers.forEach { (name, value) -> call.response.header(name, value) }
                 call.respondText(refusal.body, ContentType.Application.Json, HttpStatusCode.fromValue(refusal.status))
                 finish()
@@ -87,13 +96,6 @@ class TestRouter : AutoCloseable {
         }
         routing {
             webSocket("/v1/agents/sessions/{id}/events") {
-                handshakes += Arrived(
-                    "GET",
-                    call.request.path(),
-                    call.request.queryParameters.entries().associate { it.key to it.value },
-                    call.request.headers.entries().associate { it.key to it.value.joinToString(",") },
-                    "",
-                )
                 val reading = launch {
                     for (frame in incoming) {
                         if (frame is Frame.Text) sent.send(frame.readText())

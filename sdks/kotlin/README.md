@@ -41,6 +41,10 @@ running locally with nothing in front of it is reached by customer id instead:
 `VisionAgents(url = "http://localhost:8080", customerId = "acme")`. Pass `apiKey` beside it and
 the key is Stream's alone, so chat and video connect on a local router too.
 
+An app targeting SDK 37 reaches a router on the local network (the emulator's `10.0.2.2`, or a
+Mac on the same Wi-Fi) only with `android.permission.ACCESS_LOCAL_NETWORK`, declared in the
+manifest and asked for at runtime. Without it the connection times out rather than failing.
+
 Stream is set up once. The key, and the user and token `setUser` is given, are what the router,
 Stream Chat and Stream Video all connect with. Nothing connects when the user is set: the first
 session to ask for `chat()` or `join()` builds the client, and every session after it shares
