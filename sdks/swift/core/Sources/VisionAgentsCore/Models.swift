@@ -60,6 +60,38 @@ public struct Session: Sendable, Hashable, Identifiable {
     }
 }
 
+/// Somebody talking to an agent before they have signed up.
+public struct Guest: Sendable, Hashable {
+    public let id: String
+    /// A Stream user token with role guest, which chat and video connect with as well.
+    public let token: String
+    public let name: String
+    public let custom: [String: JSONValue]
+    /// When the token stops working, or nil when the router did not say.
+    public let expiresAt: Date?
+
+    public init(
+        id: String, token: String, name: String = "", custom: [String: JSONValue] = [:],
+        expiresAt: Date? = nil
+    ) {
+        self.id = id
+        self.token = token
+        self.name = name
+        self.custom = custom
+        self.expiresAt = expiresAt
+    }
+
+    init(_ schema: Components.Schemas.GuestUser) {
+        id = schema.id
+        token = schema.token
+        name = schema.name ?? ""
+        custom =
+            schema.custom.flatMap { try? JSONEncoder().encode($0) }
+            .flatMap { try? JSONDecoder().decode([String: JSONValue].self, from: $0) } ?? [:]
+        expiresAt = schema.expiresAt
+    }
+}
+
 /// One page of a list, and where the next one starts.
 public struct Page<Item: Sendable>: Sendable {
     public let items: [Item]

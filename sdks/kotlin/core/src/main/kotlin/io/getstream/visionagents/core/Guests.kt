@@ -44,6 +44,14 @@ public class FileGuestStore(private val file: File) : GuestStore {
     }
 }
 
+/**
+ * What a device asking for a guest with no token is told when the router, or Stream's proxy in
+ * front of it, admits no anonymous callers.
+ */
+internal const val ANONYMOUS_GUEST_REFUSED =
+    "this router admits no anonymous callers, so a device cannot mint its own guest: mint it " +
+        "on your backend with the server SDK's guestUser and pass it to setUser"
+
 /** Who a new guest is, for a transcript a person reads later. */
 public data class GuestOptions(
     val name: String? = null,
@@ -74,6 +82,7 @@ internal suspend fun Backend.guest(options: GuestOptions, store: GuestStore?): G
         GuestUserRequest.serializer(),
         GuestUserRequest(id = held?.id, name = options.name, custom = options.custom),
         GuestSchema.serializer(),
+        anonymously = anonymous,
     )
     store?.write(wire.encodeToString(GuestSchema.serializer(), minted))
     return Guest.of(minted)

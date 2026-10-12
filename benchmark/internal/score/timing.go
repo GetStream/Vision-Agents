@@ -359,7 +359,7 @@ const sentencePauseMs = 600
 
 // ScoreOverlaps evaluates every non-directed sound in the script.
 func ScoreOverlaps(rec caller.Result) []OverlapCheck {
-	agent := joinPauses(audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs), sentencePauseMs)
+	agent := joinPauses(audio.DetectSpeech(rec.Agent, rec.Rate, audio.AgentSpeechThreshold, audio.DefaultHangoverMs), sentencePauseMs)
 	var checks []OverlapCheck
 	for _, event := range rec.Events {
 		if event.OverlapSound == "" {
@@ -415,7 +415,7 @@ func HoldThroughOverlap(checks []OverlapCheck) bool {
 // FalseCutoff counts agent starts inside scripted, non-barge caller utterances.
 // Script intervals remain authoritative when the caller leg also contains a noise bed.
 func FalseCutoff(rec caller.Result) int {
-	agentSpans := audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
+	agentSpans := audio.DetectSpeech(rec.Agent, rec.Rate, audio.AgentSpeechThreshold, audio.DefaultHangoverMs)
 	n := 0
 	for _, agent := range agentSpans {
 		for _, event := range rec.Events {
@@ -451,7 +451,10 @@ func containsTimedFiller(words []TranscriptWord, startMS, endMS int) bool {
 	for _, phrase := range fillerPhrases {
 		parts := strings.Fields(phrase)
 		for i := 0; i+len(parts) <= len(words); i++ {
-			if words[i].StartMS < startMS || words[i].StartMS >= endMS {
+			// A filler said in the same breath as the tool call starts as the tool does, and word
+			// timings run a few tens of milliseconds early: it counts while its first word is
+			// still being spoken when the tool starts.
+			if words[i].EndMS <= startMS || words[i].StartMS >= endMS {
 				continue
 			}
 			matched := true

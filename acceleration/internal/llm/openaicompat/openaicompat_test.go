@@ -364,6 +364,34 @@ func (s *OpenAICompatSuite) TestABareChannelNameOpeningAReplyIsNeverSpoken() {
 	s.Equal(" You're all set!", response.OutputText)
 }
 
+func (s *OpenAICompatSuite) TestABareChannelNameAfterWhitespaceIsNeverSpoken() {
+	// After a tool result in Voicebench, the caller heard "Thought, you're all set": the name
+	// came with whitespace around it rather than first and bare.
+	for _, frames := range [][]string{
+		{"\nthought\n", " You're all set!"},
+		{" thou", "ght \r\n You're all set!"},
+		{"thought\r", "\n You're all set!"},
+	} {
+		s.Run(frames[0], func() {
+			s.frames = []string{textFrame(frames[0]), textFrame(frames[1]), usageFrame(20, 0, 8, 0, "stop")}
+			provider := s.provider(Options{ThoughtChannel: true})
+
+			response, _ := s.ask(provider, hello())
+
+			s.Equal(" You're all set!", response.OutputText)
+		})
+	}
+}
+
+func (s *OpenAICompatSuite) TestAReplyThatIsOnlyAChannelNameSaysNothing() {
+	s.frames = []string{textFrame("\nthought"), usageFrame(20, 0, 8, 0, "stop")}
+	provider := s.provider(Options{ThoughtChannel: true})
+
+	response, _ := s.ask(provider, hello())
+
+	s.Empty(response.OutputText)
+}
+
 func (s *OpenAICompatSuite) TestAReplyThatMerelyLooksLikeAChannelIsSpokenWhole() {
 	s.frames = []string{
 		textFrame("thought"),

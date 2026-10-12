@@ -309,6 +309,8 @@ type Alias struct {
 	Description string `yaml:"description"`
 
 	RequireInputModalities []string `yaml:"require_input_modalities"`
+	// RequireTerms are the terms every candidate must be able to express.
+	RequireTerms []options.Term `yaml:"require_terms"`
 	// Only names the candidates outright, for the shortcut whose members have nothing
 	// declarable in common. It is the exception to everything above: a name here is a
 	// judgement about which models are wanted rather than a fact about what they can do,
@@ -350,7 +352,7 @@ func (a Alias) matches(provider ProviderConfig) bool {
 	if a.Tier != "" && provider.tier() != a.Tier {
 		return false
 	}
-	return provider.Speaks(a.Languages) && provider.Sees(a.RequireInputModalities)
+	return provider.Speaks(a.Languages) && provider.Sees(a.RequireInputModalities) && provider.Supports(a.RequireTerms)
 }
 
 // ModalityConfig is the capability configuration for one modality.

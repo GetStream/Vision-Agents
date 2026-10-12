@@ -28,12 +28,13 @@ type RouterOptions struct {
 	// Name is what the config is called, which is also how Router{Config: name} finds it.
 	// In a file it defaults to the file's own name.
 	Name string `json:"name,omitempty"`
-	// STT, TTS, LLM and Search are how it transcribes, speaks, answers and looks things
-	// up. Each is a default that a per-call option overrides.
+	// STT, TTS, LLM, Search and STS are how it transcribes, speaks, answers, looks things
+	// up and holds a native audio conversation. Each is a default a per-call option overrides.
 	STT    *acceleration.SttOptions    `json:"stt,omitempty"`
 	TTS    *acceleration.TtsOptions    `json:"tts,omitempty"`
 	LLM    *acceleration.LlmOptions    `json:"llm,omitempty"`
 	Search *acceleration.SearchOptions `json:"search,omitempty"`
+	STS    *acceleration.StsOptions    `json:"sts,omitempty"`
 }
 
 // DefineRouter stores the routing options a Router can then be named after.
@@ -98,7 +99,7 @@ func (r Router) ConfigureSTT(
 	// Carried forward rather than restated: a config is one row, and writing the speech
 	// half of it should not silently drop the voice half.
 	if stored != nil {
-		wanted.Tts, wanted.Llm, wanted.Search = stored.Tts, stored.Llm, stored.Search
+		wanted.Tts, wanted.Llm, wanted.Search, wanted.Sts = stored.Tts, stored.Llm, stored.Search, stored.Sts
 	}
 
 	return storeRouterConfig(ctx, client, wanted, stored)
@@ -130,7 +131,7 @@ func (r Router) ConfigureTTS(
 
 	wanted := acceleration.RouterConfigRequest{Name: r.Config, Tts: options}
 	if stored != nil {
-		wanted.Stt, wanted.Llm, wanted.Search = stored.Stt, stored.Llm, stored.Search
+		wanted.Stt, wanted.Llm, wanted.Search, wanted.Sts = stored.Stt, stored.Llm, stored.Search, stored.Sts
 	}
 
 	return storeRouterConfig(ctx, client, wanted, stored)
@@ -184,6 +185,7 @@ func (o RouterOptions) request() acceleration.RouterConfigRequest {
 		Tts:    o.TTS,
 		Llm:    o.LLM,
 		Search: o.Search,
+		Sts:    o.STS,
 	}
 	return wanted
 }

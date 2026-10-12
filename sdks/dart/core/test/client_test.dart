@@ -47,11 +47,36 @@ void main() {
       keyed.close();
 
       final request = router.last('GET /v1/agents/sessions/s1');
-      expect(request.header('X-Api-Key'), 'key');
+      expect(request.query['api_key'], 'key');
+      expect(request.header('X-Api-Key'), isNull);
       expect(request.header('Authorization'), 'Bearer token-2');
       expect(request.header('Stream-Auth-Type'), 'jwt');
       expect(request.header('X-Customer-Id'), isNull);
     });
+
+    test(
+      "a key beside a customer id is Stream's, and the router is reached by customer id",
+      () async {
+        router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+        final local = VisionAgents(
+          url: router.url,
+          customerId: 'acme',
+          apiKey: 'stream-key',
+          userId: 'jlahey',
+          token: () async => 'token-for-jlahey',
+        );
+
+        await local.sessions.get('s1');
+        local.close();
+
+        final request = router.last('GET /v1/agents/sessions/s1');
+        expect(request.header('X-Customer-Id'), 'acme');
+        expect(request.header('X-Stream-User-Id'), 'jlahey');
+        expect(request.query['api_key'], isNull);
+        expect(request.header('Authorization'), isNull);
+        expect((await local.backend.streamCredentials()).apiKey, 'stream-key');
+      },
+    );
 
     test('goes to the hosted router when no url is named', () {
       final backend = Backend(apiKey: 'key', token: () async => 'token');
@@ -60,8 +85,13 @@ void main() {
       expect(backend.url.toString(), 'https://accelerate.gcp.stream-io-api.com');
     });
 
-    test('refuses an api key with no token before sending anything', () {
-      expect(() => Backend(url: Uri.parse('http://x'), apiKey: 'key'), throwsArgumentError);
+    test('an api key with no token asks for nothing but a guest', () async {
+      final keyed = VisionAgents(url: router.url, apiKey: 'key');
+
+      await expectLater(keyed.sessions.get('s1'), throwsArgumentError);
+      keyed.close();
+
+      expect(router.arrived, isEmpty);
       expect(() => Backend(url: Uri.parse('http://x')), throwsArgumentError);
     });
 
@@ -498,6 +528,24 @@ void main() {
       });
     });
 
+    test('caps one answer and sets how long it thinks, still as a text question', () async {
+      router.answer(
+        'POST /v1/agents/sessions/s1/responses',
+        Answer(202, responseJson('r1', status: 'running')),
+      );
+
+      await agents.sessions
+          .responses('s1')
+          .create('Think hard', maxOutputTokens: 512, reasoningEffort: 'high');
+
+      expect(router.last('POST /v1/agents/sessions/s1/responses').json, {
+        'max_output_tokens': 512,
+        'reasoning_effort': 'high',
+        'request_id': matches(RegExp(r'^[0-9a-f]{32}$')),
+        'text': 'Think hard',
+      });
+    });
+
     test('lists a page of turns, oldest first, with their finish times', () async {
       router.answer(
         'GET /v1/agents/sessions/s1/responses',
@@ -629,6 +677,38 @@ void main() {
       await store.write('{truncated');
 
       expect((await agents.guestUser(store: store)).id, 'guest-3');
+    });
+
+    test('a device with only the app key asks for a guest anonymously', () async {
+      router.answer('POST /v1/agents/guests', Answer(201, guest('guest-1')));
+      final keyed = VisionAgents(url: router.url, apiKey: 'key');
+
+      final minted = await keyed.guestUser();
+      keyed.close();
+
+      expect(minted.id, 'guest-1');
+      final request = router.last('POST /v1/agents/guests');
+      expect(request.header('Stream-Auth-Type'), 'anonymous');
+      expect(request.header('Authorization'), isNull);
+      expect(request.query['api_key'], 'key');
+    });
+
+    test('a router admitting no anonymous callers says to mint the guest on the backend', () async {
+      router.answer(
+        'POST /v1/agents/guests',
+        const Answer(401, {
+          'code': 2,
+          'message': 'anonymous access is not available on the acceleration api',
+          'StatusCode': 401,
+        }),
+      );
+      final keyed = VisionAgents(url: router.url, apiKey: 'key');
+
+      await expectLater(
+        keyed.guestUser(),
+        throwsA(isA<StateError>().having((e) => e.message, 'message', contains('withGuest'))),
+      );
+      keyed.close();
     });
 
     test('asks as the guest afterwards', () async {

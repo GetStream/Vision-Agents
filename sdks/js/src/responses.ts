@@ -9,6 +9,10 @@ export type ImageSource = Schemas["ImageSource"];
 
 export interface CreateResponseOptions {
   images?: ImageSource[];
+  /** Caps this answer, reasoning included, and the replies that finish it after its tools. */
+  maxOutputTokens?: number;
+  /** How long the model may think first: one of the efforts the session's model accepts. */
+  reasoningEffort?: string;
 }
 
 /**
@@ -181,6 +185,8 @@ export async function createResponse(
     body: {
       text,
       ...(options.images?.length ? { images: options.images } : {}),
+      ...(options.maxOutputTokens !== undefined ? { max_output_tokens: options.maxOutputTokens } : {}),
+      ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
       ...(id ? { request_id: id } : {}),
     },
   });

@@ -5,6 +5,14 @@ import { ConfigurationError } from "./errors.js";
 /** Where a guest is remembered between page loads. */
 export const GUEST_STORAGE_KEY = "stream-vision-agents-guest";
 
+/**
+ * What a page asking for a guest with no token is told when the router, or Stream's proxy in
+ * front of it, admits no anonymous callers.
+ */
+export const ANONYMOUS_GUEST_REFUSED =
+  "this router admits no anonymous callers, so a page cannot mint its own guest: mint it on " +
+  "your backend with guestUser and pass it to setUser";
+
 /** How long the cookie a guest is remembered in lasts, in days. */
 const COOKIE_DAYS = 30;
 
@@ -44,6 +52,9 @@ export type Guest = Schemas["GuestUser"];
  * reloading the page is the same guest and not a second one with an empty history. On a
  * server nothing is remembered, because there is no "this person" there to remember: a
  * process handling two visitors would hand them each other's conversations.
+ *
+ * A page with only the app's key asks anonymously, which the router must admit; one that does
+ * not throws a `ConfigurationError`, and the guest is minted by the app's backend instead.
  *
  * The remembered token is not checked here. It is a JWT the router verifies, and verifying
  * it in the page would mean shipping the key to do it; a token that has expired fails on the

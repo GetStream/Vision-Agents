@@ -78,7 +78,9 @@ public class VisionAgents(public val backend: Backend) : AutoCloseable {
      * Gets or creates a guest, so somebody can talk to an agent before they sign up.
      *
      * Remembered in [store] where there is one, so the next launch is the same guest and not a
-     * second one with an empty history. Pass it to [setUser] to act as them. Moving a guest's
+     * second one with an empty history. Pass it to [setUser] to act as them. With no user set it
+     * is asked for anonymously, which a router must admit; one that does not is answered with a
+     * guest your backend mints instead. Moving a guest's
      * conversations onto the account they turn out to be is server-side only: it is the backend
      * that just authenticated them that knows which guest they were.
      */

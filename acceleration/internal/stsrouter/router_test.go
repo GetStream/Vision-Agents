@@ -202,12 +202,26 @@ func (s *STSRouterSuite) TestOpenAIServesLiveAndRealtimeModelsFromOneName() {
 	live, err := registry.Build("openai", routing.Spec{Model: "gpt-live-1"})
 	s.Require().NoError(err)
 	s.False(live.Capabilities().SemanticTurns, "the Live API has no turn detector to tune")
+	s.True(live.Capabilities().FullDuplex, "the Live API can listen while producing audio")
 	s.False(live.Capabilities().Accepts("image"), "the Live API does not see")
 
 	realtime, err := registry.Build("openai", routing.Spec{Model: "gpt-realtime-2"})
 	s.Require().NoError(err)
 	s.True(realtime.Capabilities().SemanticTurns, "a Realtime model keeps its semantic turn detector")
+	s.False(realtime.Capabilities().FullDuplex, "the Realtime API is not verified for full-duplex audio")
 	s.True(realtime.Capabilities().Accepts("image"), "a Realtime model keeps its eyes")
+}
+
+func (s *STSRouterSuite) TestFullDuplexShortcutResolvesToOpenAILive() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "sts-duplex"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+	s.Equal("openai", session.Provider())
+	s.Require().Len(built, 1)
+	s.Equal("gpt-live-1", built[0].Model)
 }
 
 func (s *STSRouterSuite) TestAConfigPromisingWhatItsProviderCannotSendIsRefusedAtBoot() {
@@ -223,6 +237,39 @@ func (s *STSRouterSuite) TestAConfigPromisingWhatItsProviderCannotSendIsRefusedA
 	_, err := New(Options{Config: config, Registry: DefaultRegistry()})
 	s.ErrorContains(err, "declares tools, which its provider cannot express",
 		"a term declared and never sent is the one thing terms exist to prevent")
+}
+
+func (s *STSRouterSuite) TestAConfigCannotPromiseFullDuplexForOpenAIRealtime() {
+	config := routing.ModalityConfig{Providers: []routing.ProviderConfig{{
+		Provider:   "openai",
+		Model:      "gpt-realtime-2",
+		Languages:  []string{"en"},
+		Realtime:   true,
+		Terms:      []options.Term{options.FullDuplex},
+		DataPolicy: options.DataHandling{TrainsOnData: options.ClaimUnknown, Retention: options.RetentionUnknown},
+	}}}
+
+	_, err := New(Options{Config: config, Registry: DefaultRegistry()})
+	s.ErrorContains(err, "declares full_duplex, which its provider cannot express")
+}
+
+func (s *STSRouterSuite) TestBuiltProviderCannotClaimFullDuplexAtSessionStart() {
+	config := routing.ModalityConfig{Providers: []routing.ProviderConfig{{
+		Provider:   "thirdparty",
+		Model:      "duplex",
+		Languages:  []string{"en"},
+		Realtime:   true,
+		Terms:      []options.Term{options.FullDuplex},
+		DataPolicy: options.DataHandling{TrainsOnData: options.ClaimUnknown, Retention: options.RetentionUnknown},
+	}}}
+	registry := NewRegistry()
+	registry.Register("thirdparty", func(routing.Spec) (sts.STS, error) { return newStubSTS(), nil })
+	router, err := New(Options{Config: config, Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+
+	_, err = router.Start(s.ctx, Request{CustomerID: "acme", Target: "thirdparty/duplex"})
+	s.ErrorContains(err, "declares full_duplex, which its provider cannot express")
 }
 
 func (s *STSRouterSuite) TestFastConversationalLandsOnGemini38Live() {

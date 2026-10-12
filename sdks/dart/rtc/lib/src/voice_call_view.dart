@@ -8,17 +8,9 @@ import 'voice_session.dart';
 /// It draws no transcript. Showing what was said is the UI package's job, over the same
 /// `session` the voice session holds, so a host can put the two together however it likes.
 class VoiceCallView extends StatefulWidget {
-  /// [credentials] is asked for the token this device joins the call with. Minting one is
-  /// server-side only, so it comes from the app's own backend.
-  const VoiceCallView({
-    super.key,
-    required this.voice,
-    required this.credentials,
-    this.camera = false,
-  });
+  const VoiceCallView({super.key, required this.voice, this.camera = false});
 
   final VoiceSession voice;
-  final CallCredentialsProvider credentials;
   final bool camera;
 
   @override
@@ -29,7 +21,7 @@ class _VoiceCallViewState extends State<VoiceCallView> {
   @override
   void initState() {
     super.initState();
-    widget.voice.join(camera: widget.camera, credentials: widget.credentials);
+    widget.voice.join(camera: widget.camera);
   }
 
   @override

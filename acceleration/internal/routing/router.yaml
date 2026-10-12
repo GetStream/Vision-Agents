@@ -1960,7 +1960,7 @@ sts:
       languages: [en, pt]
       realtime: true
       tier: high-quality
-      supports: [tools, text, input_transcript, output_transcript]
+      supports: [full_duplex, tools, text, input_transcript, output_transcript]
       data_policy:
         trains_on_data: "no"
         retention: unknown
@@ -2035,6 +2035,12 @@ sts:
       require_realtime: true
       tier: low-latency
       prefer: gemini/gemini-3.8-live
+
+    sts-duplex:
+      title: Full duplex
+      description: "A native voice model that listens while it speaks."
+      require_terms: [full_duplex]
+      require_realtime: true
 
     # A conversation the model can watch as well as hear. Pinned to GPT-Realtime-2, which
     # is what vlm pins for the same reason.
@@ -2768,12 +2774,15 @@ llm:
     # while the caller is still talking. So it is pinned to a model that starts writing at
     # once rather than one that thinks first -- thinking spends the whole tiny token budget
     # before the JSON is closed, and adds a round trip of latency to every decision the
-    # caller waits through. Pinned to Gemini for now so a Cerebras RPM limit does not
-    # swallow barge-in follow-ups; prefer cerebras/gemma-4-31b again when the quota is back.
+    # caller waits through. Pinned to Gemma on our own GPUs: it has no RPM limit to
+    # swallow barge-in follow-ups, as Cerebras' did, and with thinking off it rules in
+    # about 130 ms. Gemini 3.8 Flash thinks at least "low" and took 1.4-3 s, so every ruling
+    # on speech over the agent ran past its 750 ms deadline and stopped the agent, and a
+    # finished pause past the 3 s one was answered mid-monologue.
     llm-flow:
       require_realtime: true
       tier: low-latency
-      prefer: gemini/gemini-3.8-flash
+      prefer: gemma/gemma-4-26B-A4B-it
 
     # What a skill runs on: the model asked the part of a turn the talking model could not
     # answer itself. The conversation carries on while it thinks, so this is the shorthand

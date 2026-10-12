@@ -445,7 +445,12 @@ type ConnectorBinding struct {
 	ConnectorID string            `json:"connector_id"`
 	Connection  ConnectionBinding `json:"connection"`
 	Tools       []ToolGrant       `json:"tools"`
-	Required    bool              `json:"required"`
+	// ToolPatterns, when set, are the grant instead of Tools: tool names or path.Match
+	// patterns. Nil is a binding that grants Tools. The API refuses an empty list. The field
+	// is JSON inside agent_configs.connectors, so an older
+	// router drops it and reads Tools, which a pattern binding leaves empty: it grants none.
+	ToolPatterns *[]string `json:"tool_patterns,omitempty"`
+	Required     bool      `json:"required"`
 	// TimeoutMs is how long one tool call may take. Zero leaves the session's default.
 	TimeoutMs int `json:"timeout_ms,omitempty"`
 	// Events are the MCP events the binding's fixed connection is subscribed to, each opening

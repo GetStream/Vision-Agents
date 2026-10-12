@@ -368,6 +368,9 @@ func (s *Server) validateConnection(ctx context.Context, request *validateConnec
 	if !moved {
 		record.Error = storedError(validation.Error, s.connectors.Schemes[connection.AuthScheme], credential)
 	}
+	// The answer is the stored text (AI-1078). GET and list already show record.Error, and a
+	// revision that moved keeps no provider text, so the answer is empty then too.
+	response.Body.Error = record.Error
 	if validation.CheckedAt != nil {
 		record.CheckedAt = *validation.CheckedAt
 	}
@@ -551,7 +554,7 @@ const storedRedacted = "[redacted]"
 // storedError is text as a last validation keeps it: every value scheme sends credential as cut
 // out, since a provider can echo a request in its error (an Authorization header in a JSON-RPC
 // error message), then at most maxStoredErrorBytes of what is left, never splitting a UTF-8
-// sequence. The validate's own answer is left as it is.
+// sequence. The validate answer is this text too (AI-1078).
 func storedError(text string, scheme core.Scheme, credential core.AccessCredential) string {
 	for _, value := range sentValues(scheme, credential) {
 		text = strings.ReplaceAll(text, value, storedRedacted)

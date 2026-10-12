@@ -61,6 +61,34 @@ final class ToolResultCommand extends Command {
   };
 }
 
+/// A person's answer to a tool call that waited for them. A declined call's step shows
+/// [summary]. The call is still answered with [ToolResultCommand] either way.
+final class ToolApprovalCommand extends Command {
+  const ToolApprovalCommand(
+    this.toolCallId, {
+    required this.allowed,
+    this.summary = '',
+    this.requestId = '',
+    this.turnId = '',
+  });
+
+  final String toolCallId;
+  final bool allowed;
+  final String summary;
+  final String requestId;
+  final String turnId;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'type': 'tool_approval',
+    'tool_call_id': toolCallId,
+    'allowed': allowed,
+    if (summary.isNotEmpty) 'summary': summary,
+    if (requestId.isNotEmpty) 'request_id': requestId,
+    if (turnId.isNotEmpty) 'turn_id': turnId,
+  };
+}
+
 /// End the session.
 final class CloseCommand extends Command {
   const CloseCommand();

@@ -34,6 +34,7 @@ from ._generated.models import (
     SessionConnectorBinding,
     SessionFilter,
     SessionPage,
+    SessionPhone,
     SessionQuery,
     SessionTool,
     SessionToolParameters,
@@ -108,6 +109,8 @@ class SessionOptions:
             ``Session.voice`` starts it later.
         navigating: The agent is about to place a phone call into this session, so it lets
             recordings finish, answers phone menus and waits for the person to speak first.
+        phone: The number the session acts from, one of your own. Set it and the agent can
+            transfer the caller to a person, who sees this number calling.
         history: The conversation so far, oldest first, for a backend that keeps its own
             thread: the model is handed it before the first response and the router
             records none of it. Up to 100 messages. Server side only.
@@ -131,6 +134,7 @@ class SessionOptions:
 
     start_voice: bool = False
     navigating: bool = False
+    phone: Optional[SessionPhone] = None
     history: Optional[list[HistoryMessage]] = None
     user_id: str = ""
     connector_bindings: Optional[dict[str, str]] = None
@@ -353,6 +357,8 @@ class Sessions:
             request.start_voice = True
         if options.navigating:
             request.navigating = True
+        if options.phone is not None:
+            request.phone = options.phone
         if options.history:
             request.history = options.history
         if options.user_id:

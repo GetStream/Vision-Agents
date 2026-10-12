@@ -94,6 +94,8 @@ Options become `Terms()`, and only models whose `supports:` lists every term ask
 candidates. A term nothing can serve is a 400 naming it, not a session that quietly lacks
 it. `images` is not a term: it is an input modality, gated by `input_modalities: [image]`
 the way `vlm` gates a text model, and `sts-vision` is the alias that requires it.
+`full_duplex` means a model can receive caller audio while producing its own audio; realtime
+transport or asynchronous tools alone do not establish it.
 
 `supports:` is a promise about the Go code, checked twice. `stsrouter.New` walks the config
 at boot against each provider package's `CapabilitiesFor` and refuses an entry that

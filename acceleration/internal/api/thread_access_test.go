@@ -396,6 +396,56 @@ func (s *SlackChannelSuite) answerTo(client *testClient, method, path string, bo
 	return answered
 }
 
+// TestAThreadTheMessageHookOpensIsSharedAndOffersNoCallerConnection: the message hook
+// opens the thread channel's session through threadSession (threadhooks.go:177), which is
+// what makes it shared. The caller's own binding is left out; a session named thread-…
+// with no channel_threads row is not this path (spec_test.go TestASessionNamedLikeAThreadChannelIsNoThread).
+func (s *SlackChannelSuite) TestAThreadTheMessageHookOpensIsSharedAndOffersNoCallerConnection() {
+	s.config.Connectors = append(s.config.Connectors, store.ConnectorBinding{
+		Name: "mine", ConnectorID: "slack_bot",
+		Connection: store.ConnectionBinding{Type: "session"},
+	})
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	data, foundChannel := s.chat.Channel(channel)
+	s.Require().True(foundChannel)
+	custom, _ := data["custom"].(map[string]any)
+	thread, err := s.store.ChannelThread(context.Background(), channel)
+	s.Require().NoError(err)
+
+	// The same event the message hook hands answerThread, which calls threadSession.
+	event := messageEvent{ChannelType: chatlog.ChannelType, ChannelID: channel, ChannelCustom: custom}
+	event.Message.Text = "is the build green?"
+	created, err := s.router.threadSession(context.Background(), hookOrigin{
+		customer: s.customerID(), app: thread.StreamAppPK,
+	}, thread, event)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() {
+		_, _ = s.manager.Close(created.ID(), session.OwnerOf(created.Spec()))
+	})
+
+	s.True(created.Spec().Shared())
+	s.Equal(chatlog.ChannelType+":"+channel, created.Spec().ConversationID)
+	for _, name := range created.Tools() {
+		s.False(strings.HasPrefix(name, "mine__"), "a caller's own tool %s", name)
+	}
+	events, detach := created.Watch()
+	defer detach()
+	reason := ""
+draining:
+	for {
+		select {
+		case event := <-events:
+			if unavailable, ok := event.(session.ConnectorUnavailable); ok && unavailable.Name == "mine" {
+				reason = unavailable.Reason
+			}
+		default:
+			break draining
+		}
+	}
+	s.Equal("shared_session", reason)
+}
+
 // answeredFor is what a created session says of itself that does not differ by its ids: the
 // agent id it was asked for, the sort of conversation it keeps, its state and modality.
 func answeredFor(opened Session, agentID string) []any {

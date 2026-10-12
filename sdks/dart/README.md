@@ -1,17 +1,18 @@
 # Dart SDKs
 
-Three packages for talking to an agent from a Dart or Flutter app. The core is pure Dart, so the
-same conversation runs in a Flutter app, a CLI or a server-side Dart process; the other two are
-Flutter.
+Four packages for talking to an agent from a Dart or Flutter app. The core and chat are pure
+Dart, so the same conversation runs in a Flutter app, a CLI or a server-side Dart process; ui and
+rtc are Flutter.
 
 | Package | pub name | Depends on | What it is |
 | --- | --- | --- | --- |
 | `core/` | `vision_agents_core` | `http`, `web_socket` | The generated client, the session socket, and the conversation state |
+| `chat/` | `vision_agents_chat` | `core`, `stream_chat` 10.4.0 | The Stream Chat channel a conversation is kept in, on one shared client |
 | `ui/` | `vision_agents_ui` | `core`, `stream_chat_flutter_core` 10.4.0 | Flutter widgets over that state, and a conversation kept in Stream Chat |
 | `rtc/` | `vision_agents_rtc` | `core`, `stream_video_flutter` 1.6.0 | Joining the call, so the conversation can be spoken |
 
-They are three packages rather than one pub workspace. A workspace resolves as one, so a
-Flutter member would make the pure-Dart core unresolvable without the Flutter SDK. `ui` and `rtc`
+They are four packages rather than one pub workspace. A workspace resolves as one, so a
+Flutter member would make the pure-Dart core unresolvable without the Flutter SDK. The others
 depend on `vision_agents_core` from pub.dev, and a committed `pubspec_overrides.yaml` points them
 at `../core` in this repository.
 
@@ -26,17 +27,37 @@ await chat.responses.create('What are your opening hours?');
 // chat.conversation.value is the transcript and what the agent is doing, and
 // chat.conversation.stream says each time it changes. The question shows there at once.
 
+// The Stream Chat channel the conversation is kept in, with vision_agents_chat.
+final channel = await chat.chat();
+
 // Out loud. The agent joins a call and so does this device.
 final voice = await VoiceSession.start(agents, agent: 'support');
-await voice.join(credentials: yourBackend.callCredentials);
+await voice.join();
+
+// Signing out: closes the Stream Chat and Video clients the SDK built.
+await agents.disconnect();
 ```
 
 `VisionAgents(apiKey: ...)` reaches Stream's hosted router; pass `url:` for another. A router
 running locally with nothing in front of it is reached by customer id instead:
-`VisionAgents(url: Uri.parse('http://localhost:8080'), customerId: 'acme')`.
+`VisionAgents(url: Uri.parse('http://localhost:8080'), customerId: 'acme')`. Pass `apiKey`,
+`userId` and `token` beside it and the key is Stream's alone, so chat and video connect on a
+local router too.
 
-`join` is handed a function rather than minting its own token: minting a call token is
-server-side only, so the app is handed the token to join with, and asks again when it expires.
+Stream is set up once. The key, the user and the token are what the router, Stream Chat and
+Stream Video all connect with. Nothing connects up front: the first session to ask for `chat()`
+or `join()` builds the client, and every session after it shares that one, so the user is one
+connection and one presence to Stream however many conversations are open. The token function
+is asked again when Stream's token expires, an hour in. Leaving a call or closing a session
+disconnects nothing; `agents.disconnect()` does.
+
+An app that already has a `StreamChatClient` or a `StreamVideo` hands it over, connected as the
+same user, and it is used instead of a second one and never disconnected here:
+
+```dart
+agents.useChat(yourChatClient);
+agents.useVideo(yourVideoClient);
+```
 
 State is a `LiveValue`: the current value, and a stream that starts with it. Nothing here
 depends on a state-management package; `LiveValueBuilder` and `LiveValueNotifier` in
@@ -130,6 +151,10 @@ final more = await asGuest.agent('support').sessions.query(
 final answer = await agents.router(config: 'healthcare').search('perioperative antibiotic guidance');
 ```
 
+`VisionAgents(apiKey: ...)` with no token asks for a guest anonymously and may do nothing else
+until `withGuest` or `withUser`. A router that admits no anonymous callers, Stream's hosted one
+for now, throws a `StateError`, and your backend mints the guest instead.
+
 A guest is kept in the `GuestStore` you hand it (shared preferences, secure storage) and reused
 until it expires. Lists come a page at a time: ask again with the page's `nextCursor`, which is
 null on the last one.
@@ -144,8 +169,7 @@ ever fails.
 | Not here | Ask your backend for |
 | --- | --- |
 | Writing a config, syncing a folder, dispatching agents | The agent name, which is all the app needs |
-| A token to join the agent's call | `CallCredentials`, which `join` is handed |
-| A Stream Chat token | A connected `StreamChatClient` for `ChatTranscriptView` |
+| Minting the user's token | The token the router, Stream Chat and Stream Video all connect with |
 | Claiming a guest's history for a signed-in user | `claimGuestUser`, which is server-side only |
 | Renaming a session or changing its models | `updateSession`, which is server-side only |
 
@@ -176,6 +200,8 @@ docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cach
   -w /repo/sdks/dart/core dart:stable sh -c 'dart pub get && dart analyze && dart test'
 ```
 
+`chat` the same way, from `sdks/dart/chat`.
+
 The Flutter packages in Cirrus Labs' Flutter image:
 
 ```bash
@@ -198,3 +224,15 @@ docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cach
 ```
 
 Without `VISION_AGENTS_URL` they are skipped.
+
+`posture_test.dart` checks offline that every request the SDK makes is one the spec marks
+`x-client-accessible`. `keyed_router_posture_test.dart` checks a real router in `api_key` mode
+refuses a device the server-side operations, and is skipped without `INTEGRATION_ROUTER_KEY`;
+set the router up as in the [JavaScript README](../js/README.md):
+
+```bash
+docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
+  -e INTEGRATION_ROUTER_URL=http://host.docker.internal:8099 \
+  -e INTEGRATION_ROUTER_KEY=vak_... -e INTEGRATION_ROUTER_SECRET=vas_... \
+  -w /repo/sdks/dart/core dart:stable dart test -t live test/keyed_router_posture_test.dart
+```

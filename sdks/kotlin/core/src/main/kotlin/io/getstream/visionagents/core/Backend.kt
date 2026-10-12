@@ -249,6 +249,13 @@ public class Backend(
     }
 
     /**
+     * Whether this device holds the app's key and nobody to act for yet, which is how a guest is
+     * asked for before there is one: `Stream-Auth-Type: anonymous` and no token.
+     */
+    internal val anonymous: Boolean
+        get() = customerId.isEmpty() && apiKey.isNotEmpty() && identity == null
+
+    /**
      * Drops the token held, so the next request asks the provider again. Reports whether
      * there was a provider to ask, which is whether a retry could go any differently.
      */

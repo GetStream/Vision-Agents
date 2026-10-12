@@ -285,6 +285,126 @@ describe("Session", () => {
     await session.close();
   });
 
+  describe("a function that asks first", () => {
+    const refundCall = {
+      type: "tool_call",
+      id: "call_1",
+      name: "issue_refund",
+      arguments: JSON.stringify({ order_id: "A-1042", reason: "it arrived unopened" }),
+      request_id: "m1",
+      turn_id: "t1",
+    };
+    let ran: string[];
+    const refunds = (): Tools =>
+      new Tools().register<{ order_id: string }>({
+        name: "issue_refund",
+        description: "Refund an order",
+        approval: { title: "Refund order A-1042?", reasonArgument: "reason" },
+        run: (input) => {
+          ran.push(input.order_id);
+          return `Refunded ${input.order_id}`;
+        },
+      });
+
+    beforeEach(() => {
+      ran = [];
+    });
+
+    async function waiting(session: Session): Promise<void> {
+      for await (const event of session.events()) {
+        if (event.kind === "tool_call") {
+          return;
+        }
+      }
+    }
+
+    it("waits for the person, then runs once allowed", async () => {
+      const [session, connection] = await opened(refunds());
+
+      connection.send(refundCall);
+      await waiting(session);
+      assert.deepEqual(session.approvals, [
+        {
+          id: "call_1",
+          name: "issue_refund",
+          arguments: refundCall.arguments,
+          approval: { title: "Refund order A-1042?", reasonArgument: "reason" },
+          reason: "it arrived unopened",
+        },
+      ]);
+      assert.deepEqual(ran, []);
+
+      session.decide("call_1", { allowed: true });
+
+      assert.deepEqual(session.approvals, []);
+      assert.deepEqual(await connection.next(), {
+        type: "tool_approval",
+        tool_call_id: "call_1",
+        allowed: true,
+        request_id: "m1",
+        turn_id: "t1",
+      });
+      assert.deepEqual(await connection.next(), {
+        type: "tool_result",
+        tool_call_id: "call_1",
+        request_id: "m1",
+        turn_id: "t1",
+        output: "Refunded A-1042",
+      });
+      assert.deepEqual(ran, ["A-1042"]);
+      await session.close();
+    });
+
+    it("declined, never runs, tells the model so, and a second answer does nothing", async () => {
+      const [session, connection] = await opened(refunds());
+
+      connection.send(refundCall);
+      await waiting(session);
+      session.decide("call_1", { allowed: false, summary: "Kept the order" });
+      session.decide("call_1", { allowed: true });
+      session.say("still there?");
+
+      assert.deepEqual(await connection.next(), {
+        type: "tool_approval",
+        tool_call_id: "call_1",
+        allowed: false,
+        summary: "Kept the order",
+        request_id: "m1",
+        turn_id: "t1",
+      });
+      assert.deepEqual(await connection.next(), {
+        type: "tool_result",
+        tool_call_id: "call_1",
+        request_id: "m1",
+        turn_id: "t1",
+        error: "The person declined this call.",
+      });
+      assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+      assert.deepEqual(ran, []);
+      await session.close();
+    });
+
+    it("stops waiting when the model cancels the call", async () => {
+      const [session, connection] = await opened(refunds());
+
+      connection.send(refundCall);
+      await waiting(session);
+      connection.send({ type: "tool_cancel", id: "call_1" });
+      connection.send({ type: "responded", text: "never mind" });
+      for await (const event of session.events()) {
+        if (event.kind === "responded") {
+          break;
+        }
+      }
+
+      assert.deepEqual(session.approvals, []);
+      session.decide("call_1", { allowed: true });
+      session.say("still there?");
+      assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+      await session.close();
+    });
+  });
+
   it("does not hand a tool call to whoever is reading events", async () => {
     const tools = new Tools().register({
       name: "ping",

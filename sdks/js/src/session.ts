@@ -3,7 +3,7 @@ import { ConfigurationError } from "./errors.js";
 import { Responses } from "./responses.js";
 import { Socket, type Frame, flag, nested, text } from "./socket.js";
 import type { ChatClient, VideoClient } from "./stream.js";
-import type { Tools } from "./tools.js";
+import type { ToolApproval, Tools } from "./tools.js";
 
 /**
  * How many events are held for a caller that is not reading them yet.
@@ -13,6 +13,23 @@ import type { Tools } from "./tools.js";
  * rather than by whoever is iterating, so dropping an event never drops a turn.
  */
 const BUFFERED_EVENTS = 256;
+
+/** A call of one of the caller's functions, waiting for the person to allow it. */
+export interface ToolApprovalRequest {
+  /** The call's id, which `decide` answers it by. */
+  readonly id: string;
+  /** The function the model wants run. */
+  readonly name: string;
+  /** The arguments as the model wrote them, a JSON object encoded as a string. */
+  readonly arguments: string;
+  /** The question the function asks. */
+  readonly approval: ToolApproval;
+  /**
+   * The model's own words for why it wants the call, from the argument the approval names,
+   * or the empty string.
+   */
+  readonly reason: string;
+}
 
 /** Somebody on the call, as the backend reports them. */
 export interface Participant {
@@ -27,7 +44,8 @@ export interface Participant {
  * `kind` is the backend's own name for it: joined, hearing, heard, decision, responding,
  * response_delta, responded, blocked, spoke, turn, delegated, task_settled, task_cancelled,
  * tool_started, tool_ran, transferred, pressed, looked_up, backchannel, interrupted,
- * overlap_decided, conversation_compacted, conversation_updated, error and left. The fields
+ * overlap_decided, conversation_compacted, conversation_updated, error and left, and
+ * tool_call for a call waiting in `session.approvals`. The fields
  * below are filled from whichever of those carry them, and `frame` is the whole thing for
  * anything they do not cover.
  */
@@ -121,6 +139,7 @@ export class Session {
   private readonly buffered: SessionEvent[] = [];
   private readonly waiting: ((next: IteratorResult<SessionEvent>) => void)[] = [];
   private readonly running = new Map<string, AbortController>();
+  private readonly asking = new Map<string, { request: ToolApprovalRequest; frame: Frame }>();
   private readonly finished: Promise<void>;
   private ended = false;
 
@@ -215,6 +234,53 @@ export class Session {
   /** Whether the conversation is still being held. */
   get live(): boolean {
     return !this.ended;
+  }
+
+  /**
+   * Calls of functions that ask first, waiting for the person to answer with `decide`,
+   * oldest first. Each also arrives through `events` as a `tool_call`.
+   */
+  get approvals(): readonly ToolApprovalRequest[] {
+    return [...this.asking.values()].map(({ request }) => request);
+  }
+
+  /**
+   * Answers a call waiting in `approvals`.
+   *
+   * Allowed, the function runs and its result goes back as it would have. Declined, it never
+   * runs: the model is told the person declined, and the call's step shows `summary`. A call
+   * that is not waiting is left alone, so answering twice does nothing. If the answer cannot
+   * be sent, the call goes on waiting.
+   */
+  decide(id: string, answer: { allowed: boolean; summary?: string }): void {
+    const waiting = this.asking.get(id);
+    if (!waiting) {
+      return;
+    }
+    const ids: Record<string, string> = {};
+    for (const key of ["request_id", "turn_id"]) {
+      if (text(waiting.frame, key)) {
+        ids[key] = text(waiting.frame, key);
+      }
+    }
+    this.held().send({
+      type: "tool_approval",
+      tool_call_id: id,
+      allowed: answer.allowed,
+      ...(answer.summary ? { summary: answer.summary } : {}),
+      ...ids,
+    });
+    this.asking.delete(id);
+    if (answer.allowed) {
+      void this.runTool(waiting.frame);
+    } else {
+      this.held().send({
+        type: "tool_result",
+        tool_call_id: id,
+        ...ids,
+        error: "The person declined this call.",
+      });
+    }
   }
 
   /**
@@ -408,17 +474,25 @@ export class Session {
         }
 
         if (message.type === "tool_call") {
-          void this.runTool(message);
+          const approval = this.tools?.approval(text(message, "name"));
+          if (approval) {
+            this.hold(message, approval);
+            this.deliver(eventOf(message));
+          } else {
+            void this.runTool(message);
+          }
           continue;
         }
         if (message.type === "tool_cancel") {
           this.running.get(text(message, "id"))?.abort();
+          this.asking.delete(text(message, "id"));
           continue;
         }
         this.deliver(eventOf(message));
       }
     } finally {
       this.ended = true;
+      this.asking.clear();
       for (const cancel of this.running.values()) {
         cancel.abort();
       }
@@ -426,6 +500,24 @@ export class Session {
         resolve({ done: true, value: undefined });
       }
     }
+  }
+
+  private hold(frame: Frame, approval: ToolApproval): void {
+    let reason = "";
+    if (approval.reasonArgument) {
+      try {
+        const args: unknown = JSON.parse(text(frame, "arguments") || "{}");
+        const said = (args as Record<string, unknown> | null)?.[approval.reasonArgument];
+        reason = typeof said === "string" ? said : "";
+      } catch {
+        // Arguments the model garbled carry no reason; the call itself still waits.
+      }
+    }
+    const id = text(frame, "id");
+    this.asking.set(id, {
+      request: { id, name: text(frame, "name"), arguments: text(frame, "arguments"), approval, reason },
+      frame,
+    });
   }
 
   /**

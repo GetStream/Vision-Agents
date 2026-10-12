@@ -287,12 +287,26 @@ export class Backend {
   }
 
   /**
+   * Whether this holds the app's key and nothing to prove who is calling yet, which is how a
+   * guest is asked for before there is one: `stream-auth-type: anonymous` and no token.
+   */
+  get anonymous(): boolean {
+    return Boolean(this.apiKey) && !this.byCustomer && !this.apiSecret && !this.token;
+  }
+
+  /**
    * What every request to the router carries.
    *
    * Minted per call, so a client left idle longer than a token lasts does not wake up
-   * holding an expired one.
+   * holding an expired one. `anonymously` sends the key alone, for a guest asked for by
+   * nobody yet.
    */
-  async headers(): Promise<Record<string, string>> {
+  async headers(anonymously = false): Promise<Record<string, string>> {
+    if (anonymously) {
+      return this.authenticate
+        ? { api_key: this.apiKey, "stream-auth-type": "anonymous" }
+        : { "X-Api-Key": this.apiKey, "Stream-Auth-Type": "anonymous" };
+    }
     this.assertCredentialed();
     const acting: Record<string, string> = this.actingForValue
       ? { "X-Stream-User-Id": this.actingForValue }

@@ -612,6 +612,29 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### Connector bindings can name tools by pattern
+
+A connector binding may set `tool_patterns` instead of `tools`: tool names or `path.Match`
+patterns, at least one and at most 128. A binding has one or the other. An empty list is
+refused. A `*` offers every tool the connection lists. Each match is pinned on that connection
+the first time a session opens it, including a fixed connection, and a later session offers the
+tool only while that digest still matches. When more than 128 tools match, the session offers
+the first 128 by name.
+
+### agent.yaml connectors in the Python SDK
+
+`agent.yaml` may name `connectors`. A name is a session binding that offers every tool, kept
+as written. An empty name is refused, so a blank entry cannot wipe the stored bindings. An
+object names the connector, the tool patterns, an app connection (its id, or the one
+connection with that label) and whether the binding is required. Leaving the key out leaves
+the stored bindings; an empty list removes them.
+
+### Native full-duplex speech routing
+
+`sts-duplex` routes only to realtime speech models whose provider declares they can listen
+while speaking. Failover stays within that eligible set. Go `DefineRouter` and `SyncRouters`
+support STS targets and provider-specific overwrites; partial STT/TTS updates preserve them (#887).
+
 ### Bring your own model
 
 A language model you serve yourself behind an OpenAI-compatible endpoint (a fine-tune on
@@ -1870,6 +1893,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- `POST /v1/agents/connections/{id}/validate` no longer returns a provider error that echoes the credential. The answer's error is the same text GET and list store: every value the credential is sent as is replaced, and the text is cut at 1 KiB. When credentials change during the check, the answer keeps no provider text (AI-1078).
 - A test copy or a duplicate of an agent no longer silences the agent on its Slack bot, Linq, Telnyx or WhatsApp connection. A channel connection belongs to one live agent config: a create, update, patch or sync that newly binds one as `fixed` while another live config binds it is a 409 `channel_connection_taken` naming that config. A config tagged `draft_of` (the dashboard's test copy) is not refused, answers no channel message and subscribes to no MCP event. Configs that already shared a connection keep working: the oldest answers, and the router logs a warning naming the others. An MCP event is subscribed to once per connection, by the oldest live config that declares it, so a copy no longer opens a second conversation for each event (AI-1049, AI-1048).
 - `phone hooks -remove` works when the tunnel it names is gone. Stream refuses an update of
   the app's hooks while any hook in it is at a host that does not resolve, and the command

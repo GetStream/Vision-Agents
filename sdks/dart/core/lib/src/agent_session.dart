@@ -68,6 +68,9 @@ final class AgentSession {
        _sessions = sessions,
        _tools = {for (final tool in tools.reversed) tool.name: tool};
 
+  /// Where this conversation is held, and who is holding it.
+  Backend get backend => _backend;
+
   /// The session the router opened, as of the last [update].
   Session get session => _session;
   Session _session;
@@ -86,6 +89,7 @@ final class AgentSession {
   final Map<String, AgentTool> _tools;
   final _conversation = LiveValueController(const Conversation());
   final _connection = LiveValueController<Connection>(Connection.notStarted);
+  final _approvals = LiveValueController<List<ToolApprovalRequest>>(const []);
   final Set<_Subscriber> _subscribers = {};
   final Set<String> _running = {};
   final Set<String> _cancelled = {};
@@ -100,6 +104,10 @@ final class AgentSession {
 
   /// Whether the socket is carrying the conversation, and why it stopped.
   LiveValue<Connection> get connection => _connection;
+
+  /// Calls of tools that ask first, waiting for the person to answer with [decide], oldest
+  /// first.
+  LiveValue<List<ToolApprovalRequest>> get approvals => _approvals;
 
   List<Turn> get turns => _conversation.value.turns;
   ConversationState get state => _conversation.value.state;
@@ -167,6 +175,44 @@ final class AgentSession {
 
   /// Abandons the reply in flight.
   void interrupt() => _held().send(const InterruptCommand());
+
+  /// Answers a call waiting in [approvals].
+  ///
+  /// Allowed, the tool runs and its result goes back as it would have. Declined, it never
+  /// runs: the model is told the person declined, and the call's step shows [summary]. A call
+  /// that is not waiting is left alone, so answering twice does nothing. If the answer cannot
+  /// be sent, the call goes on waiting.
+  void decide(String toolCallId, {required bool allowed, String summary = ''}) {
+    final waiting = _approvals.value;
+    final index = waiting.indexWhere((request) => request.id == toolCallId);
+    if (index < 0) {
+      return;
+    }
+    final request = waiting[index];
+    final call = request.call;
+    _held().send(
+      ToolApprovalCommand(
+        call.id,
+        allowed: allowed,
+        summary: summary,
+        requestId: call.requestId,
+        turnId: call.turnId,
+      ),
+    );
+    _approvals.value = [...waiting]..removeAt(index);
+    if (allowed) {
+      _run(call, request._tool);
+    } else {
+      _held().send(
+        ToolResultCommand(
+          call.id,
+          error: 'The person declined this call.',
+          requestId: call.requestId,
+          turnId: call.turnId,
+        ),
+      );
+    }
+  }
 
   /// Puts the agent on this session's own call, `agent:<session id>`, and returns [session]
   /// as it now is.
@@ -257,6 +303,10 @@ final class AgentSession {
         if (id is String && _running.contains(id)) {
           _cancelled.add(id);
         }
+        _approvals.value = [
+          for (final request in _approvals.value)
+            if (request.id != id) request,
+        ];
       default:
         break;
     }
@@ -271,12 +321,8 @@ final class AgentSession {
     }
   }
 
-  /// Runs a tool the model asked for and sends back what it returned.
-  ///
-  /// On its own, not awaited, so a slow tool holds up neither the transcript nor the
-  /// `tool_cancel` that might be on its way for it. A tool that throws is answered with the
-  /// error: the model is waiting, and can only say something useful about a tool that did
-  /// not work if it is told so.
+  /// Runs a tool the model asked for, or holds the call for the person when the tool asks
+  /// first.
   void _answer(ToolCall call) {
     // Session events go to observers as well as to whoever owns the tool. A worker elsewhere
     // may own this one, and an observer must not answer it first.
@@ -284,6 +330,20 @@ final class AgentSession {
     if (tool == null) {
       return;
     }
+    if (tool.approval case final approval?) {
+      _approvals.value = [..._approvals.value, ToolApprovalRequest._(call, approval, tool)];
+    } else {
+      _run(call, tool);
+    }
+  }
+
+  /// Runs a tool and sends back what it returned.
+  ///
+  /// On its own, not awaited, so a slow tool holds up neither the transcript nor the
+  /// `tool_cancel` that might be on its way for it. A tool that throws is answered with the
+  /// error: the model is waiting, and can only say something useful about a tool that did
+  /// not work if it is told so.
+  void _run(ToolCall call, AgentTool tool) {
     _running.add(call.id);
     unawaited(() async {
       ToolResultCommand result;
@@ -325,9 +385,34 @@ final class AgentSession {
       subscriber.controller.close();
     }
     _subscribers.clear();
+    _approvals.value = const [];
     _conversation.close();
     _connection.close();
+    _approvals.close();
   }
+}
+
+/// A call of one of your tools, waiting for the person to allow it.
+final class ToolApprovalRequest {
+  ToolApprovalRequest._(this.call, this.approval, this._tool);
+
+  final ToolCall call;
+
+  /// The question the tool asks.
+  final ToolApproval approval;
+  final AgentTool _tool;
+
+  String get id => call.id;
+
+  /// The model's own words for why it wants the call, from the argument the approval names,
+  /// or the empty string.
+  String get reason => switch (approval.reasonArgument) {
+    final name? => switch (call.argumentValues[name]) {
+      final String text => text,
+      _ => '',
+    },
+    null => '',
+  };
 }
 
 final class _Subscriber {

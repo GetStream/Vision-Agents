@@ -87,10 +87,8 @@ call ends (hang-up, not navigating back).
 
 The app shows the video with Stream Video's SwiftUI components and the transcript
 with Stream Chat's AI components (`StreamingMessageView`, `AITypingIndicatorView`).
-The AI components need Xcode 27 to add with SPM, and `StreamVideoSwiftUI` 1.54.0
-does not compile under Xcode 27 yet, so the app does not build until
-stream-video-swift ships a release that does. Everything else in it builds against
-`VisionAgentsCore`.
+It needs Xcode 27 and stream-video-swift 1.54.0 or later; 1.51.0's `StreamVideoSwiftUI`
+does not compile under Xcode 27.
 
 Open `app/FlowerSpotter.xcodeproj` on a **physical device**. The camera is the
 point; the simulator can reach the router but cannot usefully point a camera.
