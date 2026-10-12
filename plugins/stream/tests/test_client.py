@@ -350,6 +350,20 @@ class TestSessions:
         assert body["id"] == "chosen-id_1"
         assert body["start_voice"] is True
         assert body.get("navigating", False) is False
+        assert "phone" not in body
+
+    async def test_a_session_on_a_phone_number_can_transfer_from_it(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create(
+            stream.SessionOptions(
+                start_voice=True, phone=stream.SessionPhone(number="+15125550100")
+            )
+        )
+        await session.close()
+
+        body = router.body("POST", "/v1/agents/sessions")
+        assert body["phone"] == {"number": "+15125550100"}
 
     async def test_a_session_that_places_a_call_asks_to_navigate(
         self, api: stream.Client, router: Router
