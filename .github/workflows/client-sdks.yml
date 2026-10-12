@@ -139,6 +139,7 @@ jobs:
       # The package is iOS only, so it is tested on a simulator rather than with `swift test`.
       - name: Test core
         working-directory: sdks/swift/core
+        timeout-minutes: 20
         run: |
           device=$(xcrun simctl list devices available -j | python3 -c "import json, sys; devices = json.load(sys.stdin)['devices']; print(next(d['udid'] for runtime, found in devices.items() if 'iOS' in runtime for d in found if d['name'].startswith('iPhone')))")
           xcodebuild test -scheme vision-agents-core -destination "platform=iOS Simulator,id=$device"

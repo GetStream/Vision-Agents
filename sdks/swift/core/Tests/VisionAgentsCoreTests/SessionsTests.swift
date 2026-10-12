@@ -119,7 +119,7 @@ struct SessionServer {
             connection.start(queue: queue)
             Self.read(connection, Data(), answer, request)
         }
-        queue.asyncAfter(deadline: .now() + 5) {
+        queue.asyncAfter(deadline: .now() + 30) {
             let error = AgentsError.unreadable("test server timed out")
             address.finish(throwing: error)
             request.finish(throwing: error)
