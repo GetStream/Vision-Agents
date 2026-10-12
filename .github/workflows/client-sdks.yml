@@ -97,15 +97,15 @@ jobs:
           dart test
 
   swift:
-    runs-on: macos-26
+    # The examples add StreamChatAI, whose iOS 13 target Xcode 26 refuses beside MarkdownUI's
+    # iOS 15. macos-26 carries only Xcode 26; this image carries 27, betas included.
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
 
-      # The examples add StreamChatAI, whose iOS 13 target Xcode 26 refuses beside MarkdownUI's
-      # iOS 15. Named rather than latest-stable, so a runner without 27 fails here.
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '27'
+          xcode-version: '27.0'
 
       - uses: astral-sh/setup-uv@v6
 
