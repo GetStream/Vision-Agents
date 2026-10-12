@@ -55,7 +55,7 @@ struct PostureTests {
 /// The same promise against a router that verifies credentials, which needs one running in
 /// `api_key` mode and a key minted for it with `router keys create`:
 ///
-///     INTEGRATION_ROUTER_URL=http://localhost:8099 INTEGRATION_ROUTER_KEY=vak_live_… INTEGRATION_ROUTER_SECRET=vas_live_… swift test
+///     TEST_RUNNER_INTEGRATION_ROUTER_URL=http://localhost:8099 TEST_RUNNER_INTEGRATION_ROUTER_KEY=vak_live_… TEST_RUNNER_INTEGRATION_ROUTER_SECRET=vas_live_… xcodebuild test -scheme vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 struct KeyedRouter {
     static let environment = ProcessInfo.processInfo.environment
     static let url = URL(string: environment["INTEGRATION_ROUTER_URL"] ?? "http://localhost:8099")!

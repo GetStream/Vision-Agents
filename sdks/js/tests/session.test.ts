@@ -389,8 +389,7 @@ describe("Session", () => {
       status: 201,
       body: {
         id: "sess_1",
-        call_id: "call-1",
-        call_type: "default",
+        call_id: "sess_1",
         user_id: "john",
         agent_id: "john",
         state: "live",

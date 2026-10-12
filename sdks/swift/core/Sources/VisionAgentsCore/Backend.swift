@@ -115,8 +115,7 @@ public struct Backend: Sendable {
 
     /// Records a Stream client the app owns, so it is used rather than another being built.
     /// It is never disconnected here, and it stays across `setUser`.
-    @_spi(Stream)
-    public func give<Client: Sendable>(_ kind: String, _ client: Client) {
+    func give<Client: Sendable>(_ kind: String, _ client: Client) {
         identity.give(kind, client)
     }
 
@@ -124,8 +123,7 @@ public struct Backend: Sendable {
     ///
     /// Built once however many sessions ask, keyed before any token is asked for, so a second
     /// session mints nothing. One that failed to open is not kept.
-    @_spi(Stream)
-    public func shared<Client: Sendable>(
+    func shared<Client: Sendable>(
         _ kind: String,
         open: @escaping @Sendable (StreamCredentials) async throws -> Client,
         disconnect: @escaping @Sendable (Client) async -> Void

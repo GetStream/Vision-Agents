@@ -1,10 +1,11 @@
 import Foundation
 import VisionAgentsCore
 
-/// Where the router is, where this app's own backend is, and the one tool it answers itself.
+/// Where the router is, where this app's own backend is, and the tools it answers itself.
 ///
-/// There is no sign-in. The router is running in the mode where it trusts the customer id it
-/// is given, `ROUTER_AUTH_MODE=noauth`, so the constants are the whole of the configuration.
+/// There is no sign-in. The router is running in the mode where it trusts the customer and
+/// user ids it is given, `ROUTER_AUTH_MODE=proxy`, so the constants are the whole of the
+/// configuration.
 /// In front of a real deployment the router is reached by the key and the same token, and
 /// nothing else here would change.
 enum Demo {
@@ -21,17 +22,19 @@ enum Demo {
     /// here works but will not appear on the dashboard.
     static let customerID = "examples"
 
-    /// The `STREAM_API_KEY` the router runs with: the call the agent is on is in that Stream
-    /// app, and this device joins it there.
+    /// The `STREAM_API_KEY` the router runs with: the chat channel a written conversation is
+    /// kept in and the call the agent is on are both in that Stream app, and this device
+    /// connects to them there.
     static let streamAPIKey = ""
 
-    /// The agent config `go run ./configure` stored, which prints the id to put here.
+    /// The agent `go run ./configure` stored, by the name in `agent.yaml`.
     ///
-    /// An id rather than a name because reading the configs is server-side only: the app is
-    /// told which agent it talks to rather than finding out.
-    static let agentID = ""
+    /// The app is told which agent it talks to rather than finding out, because reading the
+    /// configs is server-side only.
+    static let agentName = "swift_demo"
 
-    private static let user = User(id: "demo-caller", name: "Demo caller")
+    /// Who this device is. A call waiting for approval is addressed to them.
+    static let user = User(id: "demo-caller", name: "Demo caller")
 
     static let agents: VisionAgents = {
         let agents = VisionAgents(url: routerURL, customerID: customerID, apiKey: streamAPIKey)
@@ -57,6 +60,9 @@ enum Demo {
         let token: String
     }
 
+    /// The tools the agent may call, which run on this phone.
+    static let tools = [lookupOrder, issueRefund]
+
     /// Orders the agent can look up.
     ///
     /// The point of this being here rather than in the backend is that it does not have to
@@ -69,16 +75,50 @@ enum Demo {
             + "delivered on 2 September, worn",
     ]
 
-    static let lookupOrder = AgentTool(
+    private static let lookupOrder = AgentTool(
         name: "lookup_order",
         description: "Look up one of the caller's orders by its order number, such as A-1042.",
         parameters: .strings(
-            ["order_id": "the order number, such as A-1042"], required: ["order_id"])
+            ["order_id": "the order number, such as A-1042"], required: ["order_id"]),
+        displayTitle: "Looking up your order"
     ) { arguments in
         let id = arguments["order_id"]?.stringValue.uppercased() ?? ""
         guard let order = orders[id] else {
             return "There is no order \(id) on this account."
         }
         return "Order \(id): \(order)."
+    }
+
+    /// Refunds an order, once the person says it may.
+    ///
+    /// The agent decides a refund is owed; the person decides whether it goes ahead. Each call
+    /// waits in the session's `approvals` until they answer: on the reply's step in Chat,
+    /// where Stream's AI components ask, or on the card over the call in Voice.
+    private static let issueRefund = AgentTool(
+        name: "issue_refund",
+        description: "Refund one of the caller's orders to the card it was paid with, once the "
+            + "refund skill has said they are owed it.",
+        parameters: .strings(
+            [
+                "order_id": "the order number, such as A-1042",
+                "amount": "how much to refund, such as 78.00",
+                "reason": "why the caller is owed it, in a few words they would recognise",
+            ],
+            required: ["order_id", "amount", "reason"]),
+        displayTitle: "Refunding your order",
+        approval: .init(
+            title: "Refund this order?",
+            message: "The money goes back to the card the order was paid with.",
+            reasonArgument: "reason",
+            allowTitle: "Refund",
+            declineTitle: "Not now")
+    ) { arguments in
+        let id = arguments["order_id"]?.stringValue.uppercased() ?? ""
+        let amount = arguments["amount"]?.stringValue ?? ""
+        guard orders[id] != nil else {
+            return "There is no order \(id) on this account."
+        }
+        return "Refunded \(amount) for order \(id) to the card ending 4242. It shows within five "
+            + "working days."
     }
 }

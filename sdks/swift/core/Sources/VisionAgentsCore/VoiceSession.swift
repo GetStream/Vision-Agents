@@ -1,7 +1,6 @@
 import Foundation
 import Observation
 import StreamVideo
-@_spi(Stream) import VisionAgentsCore
 
 private let kind = "video"
 

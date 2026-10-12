@@ -53,6 +53,7 @@ public struct AgentEvent: Sendable, Hashable {
         case taskSettled = "task_settled"
         case taskCancelled = "task_cancelled"
         case toolCall = "tool_call"
+        case toolCancel = "tool_cancel"
         case toolRan = "tool_ran"
         case transferred
         case pressed
