@@ -88,7 +88,7 @@ export {
   type Message,
 } from "./socket.js";
 
-export { Tools, render, type ParameterSchema, type Tool } from "./tools.js";
+export { Tools, render, type ParameterSchema, type Tool, type ToolApproval } from "./tools.js";
 
 export type { ChatClient, StreamClients, VideoClient } from "./stream.js";
 
@@ -102,6 +102,7 @@ export {
   type SessionEvent,
   type SessionOptions,
   type SessionVideo,
+  type ToolApprovalRequest,
 } from "./session.js";
 
 export {

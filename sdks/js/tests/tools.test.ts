@@ -23,6 +23,27 @@ describe("Tools", () => {
     ]);
   });
 
+  it("declares who runs it, what a call is doing and what the person is asked", () => {
+    const tools = new Tools().register({
+      name: "issue_refund",
+      description: "Refund an order",
+      executor: "client",
+      displayTitle: "Refunding your order",
+      approval: { title: "Refund order A-1042?", reasonArgument: "reason", allowTitle: "Refund" },
+      run: () => "refunded",
+    });
+
+    assert.deepEqual(tools.declared(), [
+      {
+        name: "issue_refund",
+        description: "Refund an order",
+        executor: "client",
+        display_title: "Refunding your order",
+        approval: { title: "Refund order A-1042?", reason_argument: "reason", allow_title: "Refund" },
+      },
+    ]);
+  });
+
   it("leaves out parameters for a function that takes none", () => {
     const tools = new Tools().register({
       name: "now",

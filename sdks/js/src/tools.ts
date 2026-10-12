@@ -17,8 +17,49 @@ export interface Tool<In = Readonly<Record<string, unknown>>> {
    * runs and a schema guessed from one would be a schema the model was told wrongly.
    */
   parameters?: ParameterSchema;
+  /**
+   * Who runs it, as the conversation shows it: `server`, what the router assumes, or
+   * `client`, a person's device, whose call is shown with its arguments to every channel
+   * member. Either way this process answers it.
+   */
+  executor?: "server" | "client";
+  /**
+   * What a call is doing, in words for the people in the conversation, such as "Checking
+   * your location". At most 80 characters, shown on the reply's tool call attachment.
+   */
+  displayTitle?: string;
+  /**
+   * What a person is asked before each call runs. A call that asks waits in
+   * `session.approvals` until `session.decide` answers it. A tool hosted through dispatch is
+   * never asked about: its calls run straight away.
+   */
+  approval?: ToolApproval;
   /** Runs it. What it returns is rendered for the model; a string is used as it is. */
   run: (input: In, signal: AbortSignal) => unknown;
+}
+
+/**
+ * A tool's question to the person whose message a call answers.
+ *
+ * In a conversation kept in Stream Chat the call's step carries it as `awaiting_approval`,
+ * and every channel member can read it: keep anything private out of it. A client tool is
+ * asked about only once the router knows the install to address it to; until then, declare
+ * it with the server executor.
+ */
+export interface ToolApproval {
+  /** The question, such as "Share your location?". At most 80 characters. */
+  title: string;
+  /** What allowing it shares or does, such as "Only your city is shared." */
+  message?: string;
+  /**
+   * The string argument in which the model says why it wants the call, shown beside the
+   * question. Declare it in `parameters` so the model fills it in.
+   */
+  reasonArgument?: string;
+  /** The label of the button that allows the call. */
+  allowTitle?: string;
+  /** The label of the button that declines it. */
+  declineTitle?: string;
 }
 
 /**
@@ -59,7 +100,15 @@ export class Tools {
       name: tool.name,
       description: tool.description,
       ...(tool.parameters ? { parameters: tool.parameters } : {}),
+      ...(tool.executor ? { executor: tool.executor } : {}),
+      ...(tool.displayTitle ? { display_title: tool.displayTitle } : {}),
+      ...(tool.approval ? { approval: approvalOf(tool.approval) } : {}),
     }));
+  }
+
+  /** The question the function named asks before it runs, if it asks one. */
+  approval(name: string): ToolApproval | undefined {
+    return this.registered.get(name)?.approval;
   }
 
   /**
@@ -86,6 +135,16 @@ export class Tools {
     }
     return render(await tool.run(input as never, signal));
   }
+}
+
+function approvalOf(approval: ToolApproval): Schemas["SessionToolApproval"] {
+  return {
+    title: approval.title,
+    ...(approval.message ? { message: approval.message } : {}),
+    ...(approval.reasonArgument ? { reason_argument: approval.reasonArgument } : {}),
+    ...(approval.allowTitle ? { allow_title: approval.allowTitle } : {}),
+    ...(approval.declineTitle ? { decline_title: approval.declineTitle } : {}),
+  };
 }
 
 /**

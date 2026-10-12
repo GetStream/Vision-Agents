@@ -34,6 +34,18 @@ public sealed interface Command {
         val turnId: String = "",
     ) : Command
 
+    /**
+     * A person's answer to a tool call that waited for them. A declined call's step shows
+     * [summary]. The call is still answered with [ToolResult] either way.
+     */
+    public data class ToolApproval(
+        val id: String,
+        val allowed: Boolean,
+        val summary: String = "",
+        val requestId: String = "",
+        val turnId: String = "",
+    ) : Command
+
     /** End the session. */
     public data object Close : Command
 
@@ -58,6 +70,14 @@ private fun Command.frame(): JsonObject = when (this) {
         // are the same thing.
         put("output", output)
         put("error", error)
+        if (requestId.isNotEmpty()) put("request_id", requestId)
+        if (turnId.isNotEmpty()) put("turn_id", turnId)
+    }
+    is Command.ToolApproval -> buildJsonObject {
+        put("type", "tool_approval")
+        put("tool_call_id", id)
+        put("allowed", allowed)
+        if (summary.isNotEmpty()) put("summary", summary)
         if (requestId.isNotEmpty()) put("request_id", requestId)
         if (turnId.isNotEmpty()) put("turn_id", turnId)
     }
