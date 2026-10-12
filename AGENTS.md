@@ -13,10 +13,10 @@ Work happens on the `accelerate` branch here, and the agents docs live in getstr
 | `sdks/python/`    | The Python SDK: `Agent`, `Runner`, the plugin contracts                  |
 | `sdks/js/`        | The JavaScript SDK, one package for Node and the browser: every endpoint typed from the spec, sessions, tools, agent dispatch |
 | `plugins/`        | 44 Python packages, one per provider. `plugins/stream` is the client for `acceleration/` |
-| `sdks/swift/`     | Three iOS packages: `core` (state and API), `ui` (SwiftUI), `rtc` (voice over Stream Video) |
+| `sdks/swift/`     | One iOS package, `core`: state and API, the chat channel, and voice over Stream Video. Its views are Stream Chat's AI components (`StreamChatAI`) |
 | `examples/voice_agents/` | Runnable agents. `simple_voice_ai` is the smallest one                  |
 | `tui/`            | Go terminal UI for a conversation with an agent: the terminal counterpart of `dashboard/` |
-| `sdks/kotlin/`, `sdks/dart/` | Client-side SDKs for Android and Flutter, each a core, ui and rtc package like Swift's |
+| `sdks/kotlin/`, `sdks/dart/` | Client-side SDKs for Android and Flutter, each a core, ui and rtc package |
 | `sdks/dotnet/`, `sdks/ruby/`, `sdks/rust/`, `sdks/php/` | Server-side SDKs: agents, dispatch, folder sync and the router. Built and tested in Docker; each has an `sdk-<lang>` skill |
 | `sdks/go/`, `benchmark/` | The Go SDK and the voice benchmark. `go.work` ties the Go modules together |
 

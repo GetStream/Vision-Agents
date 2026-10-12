@@ -115,6 +115,35 @@ func TestHealthcareBlocksPHIBeforeVerify(t *testing.T) {
 	postTool(t, srv.Addr, "lookup_appointment", map[string]any{})
 }
 
+func TestVerifyIdentityReadsAMemberIDWithoutItsDash(t *testing.T) {
+	srv := New(nil)
+	if err := srv.ListenAndServe("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	time.Sleep(20 * time.Millisecond)
+	srv.Seed(scenario.Scenario{
+		ID: "h", Pack: "healthcare",
+		Seed: map[string]any{
+			"patients": []any{
+				map[string]any{"id": "p3", "name": "Priyanka Radhakrishnan", "dob": "1991-11-02", "member_id": "QW4T9-8821"},
+			},
+		},
+	})
+	resp := postToolRaw(t, srv.Addr, "verify_identity", map[string]any{
+		"name": "Priyanka Radhakrishnan", "dob": "1991-11-02", "member_id": "qw4t98821",
+	})
+	if resp["ok"] != true {
+		t.Fatalf("verify_identity = %v, want ok", resp)
+	}
+	resp = postToolRaw(t, srv.Addr, "verify_identity", map[string]any{
+		"name": "Priyanka Radhakrishnan", "dob": "1991-11-02", "member_id": "QW4T9-8822",
+	})
+	if resp["ok"] != false {
+		t.Fatalf("verify_identity with a wrong digit = %v, want not ok", resp)
+	}
+}
+
 func TestUpdatePharmacyRequiresVerifyAndStoresOnThePatient(t *testing.T) {
 	srv := New(nil)
 	if err := srv.ListenAndServe("127.0.0.1:0"); err != nil {

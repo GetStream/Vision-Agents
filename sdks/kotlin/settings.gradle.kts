@@ -22,5 +22,5 @@ include(":core")
 // JVM image builds and tests core; it is asked for rather than guessed from the environment,
 // so a CI job missing its SDK fails instead of quietly skipping half the build.
 if (!providers.gradleProperty("coreOnly").isPresent) {
-    include(":ui", ":rtc")
+    include(":ui", ":rtc", ":chat")
 }

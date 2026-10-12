@@ -70,6 +70,28 @@ func TestAValueTheAgentNeverHeardIsPutDownToHearing(t *testing.T) {
 	}
 }
 
+func TestAMisheardIDIsTheCauseOfWhatFollows(t *testing.T) {
+	sc := scenario.Scenario{
+		ID:    "healthcare.golden",
+		Turns: []scenario.Turn{{ID: "identity", Text: "Maya Chen, date of birth March 4 1987, member ID ABC123456."}},
+	}
+	dir := callDir(t, map[string]string{
+		"heard.json": `[{"kind":"answer","said":"Maya Chen. Date of birth, March fourth nineteen eighty seven. Member ID, ABC one three four five six."}]`,
+	})
+	call := CallResult{ScenarioID: "healthcare.golden", Outcome: OutcomeFail, Dir: dir}
+	call.Metrics.EndStateFail = []string{"identity_verified want true got false"}
+	call.Metrics.ExpectedToolFail = []string{"verify_identity.member_id want ABC123456 got ABC13456", "lookup_appointment not called"}
+	call.Metrics.GateNotes = []string{"end_state", "expected_tools"}
+
+	detail := LoadCallDetail(call, &sc)
+	if detail.Failures[0].Cause != CauseDid {
+		t.Errorf("identity_verified names no value the caller said: %+v", detail.Failures[0])
+	}
+	if detail.Cause() != CauseHeard {
+		t.Errorf("main cause = %q, want %q: the member ID was never heard, so verification could not pass", detail.Cause(), CauseHeard)
+	}
+}
+
 func TestAnInvalidCallIsInfra(t *testing.T) {
 	detail := LoadCallDetail(CallResult{Outcome: OutcomeInvalid, InvalidReason: []string{"agent stt: deepgram HTTP 401"}}, nil)
 	if detail.Cause() != CauseInfra || len(detail.Failures) != 1 {

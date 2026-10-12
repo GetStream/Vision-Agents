@@ -36,7 +36,8 @@ private const val EVENT_BUFFER = 256
  * `ViewModel` that holds one and closes it in `onCleared` is the usual home.
  */
 public class AgentSession internal constructor(
-    private val backend: Backend,
+    /** Where this conversation is held, and who is holding it. */
+    public val backend: Backend,
     session: Session,
     tools: List<AgentTool>,
     context: CoroutineContext = Dispatchers.Default,

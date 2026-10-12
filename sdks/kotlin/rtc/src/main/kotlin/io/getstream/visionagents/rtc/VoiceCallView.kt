@@ -26,14 +26,10 @@ import kotlinx.coroutines.launch
  * It draws no transcript. Showing what was said is the ui module's job, over the same
  * [VoiceSession.session], so a host can put the two together however it likes. There is
  * nothing here for playing the agent: joining the call is what does that.
- *
- * @param credentials asked for the token this device joins with. Minting one is server-side
- *   only, so it comes from the app's own backend.
  */
 @Composable
 public fun VoiceCallView(
     voice: VoiceSession,
-    credentials: CallCredentialsProvider,
     modifier: Modifier = Modifier,
     camera: Boolean = false,
 ) {
@@ -43,7 +39,7 @@ public fun VoiceCallView(
     val failure by voice.failure.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(voice) { voice.join(camera, credentials) }
+    LaunchedEffect(voice) { voice.join(camera) }
 
     Column(
         modifier = modifier,

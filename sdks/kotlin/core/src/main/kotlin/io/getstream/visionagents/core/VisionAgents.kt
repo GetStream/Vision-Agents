@@ -14,6 +14,10 @@ import okhttp3.OkHttpClient
  * ending it is the whole of what is here, because it is the whole of what the router lets a
  * device do. Configuring an agent and minting a token to join a call are server-side only: they
  * belong to a backend, which has the Go, Python or Node SDK and hands down what the app needs.
+ *
+ * Stream is set up once: the key, and the user and token [setUser] is given, are what the router,
+ * Stream Chat (`vision-agents-chat`) and Stream Video (`vision-agents-rtc`) all connect with, and
+ * every session shares one client of each.
  */
 public class VisionAgents(public val backend: Backend) : AutoCloseable {
     public constructor(
@@ -85,6 +89,15 @@ public class VisionAgents(public val backend: Backend) : AutoCloseable {
     public fun forgetGuest(store: GuestStore) {
         store.clear()
         backend.clearUser()
+    }
+
+    /**
+     * Disconnects the Stream Chat and Video clients built for the app's sessions. Clients the
+     * app handed over with `use` are its own and stay connected; closing or leaving a session
+     * disconnects nothing.
+     */
+    public suspend fun disconnect() {
+        backend.disconnectStream()
     }
 
     override fun close() {
