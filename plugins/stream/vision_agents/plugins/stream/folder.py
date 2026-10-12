@@ -602,8 +602,9 @@ def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
     """The connectors one list binds, each an id or a mapping naming the alias.
 
     None, the key left out or set to null, leaves the stored bindings. An empty list
-    removes them. `tools` left out or null offers every tool; `tools: []` grants nothing
-    and is refused.
+    removes them. A blank entry is refused: dropping it would sync an empty list and
+    wipe what is stored. A name is kept as written. `tools` left out or null offers
+    every tool; `tools: []` grants nothing and is refused.
     """
     if value is None:
         return None
@@ -611,9 +612,11 @@ def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
         raise ValueError(f"{path} should give connectors as a list")
     named: list[ConnectorSettings] = []
     for item in value:
+        # A null element, including one whose value is only a comment, is not "left out".
+        if item is None or item == "":
+            raise ValueError("a connector needs a name")
         if isinstance(item, str):
-            if item.strip():
-                named.append(ConnectorSettings(name=item.strip()))
+            named.append(ConnectorSettings(name=item))
             continue
         if not isinstance(item, dict):
             raise ValueError(

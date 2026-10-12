@@ -19,13 +19,12 @@ A text agent on the router's connectors, plus Blender in the router's sandbox.
 TableJourney, which knows where to eat, is an MCP server the router has never heard of.
 
 `agent.yaml` is where all of it is set up, and each kind is set up differently. Sentry,
-GitHub, HubSpot and Salesforce are under `connectors`, and so are Linear, Google Calendar,
-Drive and Docs, Calendly, Cal.com and Slack. The company connects a shared account once, on
-the dashboard; a person's own account is connected in the chat the first time the agent needs
-it. A name alone is a session binding offering every tool; `tools` on an entry is the
-patterns it offers. readonly, scopes and toolsets are plugins-only. In a
-chat that request is a `plugin_authorization` attachment, a button with the plugin's logo on
-it; here it is the URL, printed. Blender is no MCP server at all: `sandbox_options` builds it into the
+GitHub, HubSpot and Salesforce are the company's accounts: each entry sets
+`connection: company`, the label of the connection created once on the dashboard, and every
+conversation uses that account. Linear, Google Calendar, Drive and Docs, Calendly, Cal.com
+and Slack are each person's. A name alone is a session binding offering every tool; `tools`
+on an entry is the patterns it offers. readonly, scopes and toolsets are plugins-only. In a
+chat that request is a `connector_authorization` attachment; here it is the URL, printed. Blender is no MCP server at all: `sandbox_options` builds it into the
 router's Daytona sandbox, and `skills/render.md` is what the subagent writes its scene
 under. The render comes back as a file of run_code, attached to the reply.
 
@@ -42,10 +41,9 @@ for that here: `channels` in `agent.yaml` names the numbers, the app connected e
 on the router, and the router answers what arrives. The README has the three steps.
 
 Needs a router: see acceleration/README.md, then point STREAM_ACCELERATION_URL at it. Sentry,
-Linear, Calendly and Cal.com register their own clients; GitHub, HubSpot, Slack and the three
-Google plugins need a <PLUGIN>_MCP_CLIENT_ID and _SECRET on the router, which the README
-lists. It also needs DAYTONA_API_KEY for Blender and Stream credentials to keep the
-conversation in Chat.
+Linear, Calendly and Cal.com register their own clients; GitHub, HubSpot, Slack and Google
+need an OAuth client, the app's or the operator's, which the README lists. It also needs
+DAYTONA_API_KEY for Blender and Stream credentials to keep the conversation in Chat.
 """
 
 USER_ID = os.environ.get("MCP_PLUGINS_USER_ID", "on-call-engineer")

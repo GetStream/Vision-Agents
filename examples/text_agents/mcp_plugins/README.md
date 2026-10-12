@@ -14,49 +14,62 @@ uv run mcp_plugins.py "render a red teapot on a checkered floor"   # Blender
 ```
 
 The directory is the agent, and nothing in `mcp_plugins.py` sets up a connector. `agent.yaml`
-connects each kind in a different way. A name alone is a session binding offering every
-tool. `readonly`, `scopes` and `toolsets` are plugins-only; `connectors` does not read them.
+connects each kind in a different way. Sentry, GitHub, HubSpot and Salesforce are the
+company's accounts: each is an object with `connection: company`, fixed to the app's
+connection of that label. Create that connection on the dashboard and label it exactly
+`company`. A name alone is a session binding: each person connects their own, in the chat,
+the first time the agent needs it, and it offers every tool. `readonly`, `scopes` and
+`toolsets` are plugins-only; `connectors` does not read them.
 
 ```yaml
 connectors:
-  - sentry          # connected once by the company, on the dashboard
-  - github
-  - hubspot
-  - salesforce
-  - linear          # a person's own: each connects it, in the chat, when the agent needs it
+  - name: sentry
+    connection: company   # the app's connection, labelled company
+    tools: [find_organizations, find_projects, search_issues]
+  - name: github
+    connection: company
+  - name: hubspot
+    connection: company
+  - name: salesforce
+    connection: company
+  - linear                  # a person's own, in the chat
   - google_calendar
   # google_drive, google_docs, calendly, calcom and slack the same way
 sandbox: daytona  # Blender, built into the router's sandbox for the render skill
 ```
 
-Not every catalog plugin registers the router as a client by itself. Sentry, Linear,
-Calendly and Cal.com do; the rest need an OAuth app of your own, whose redirect URI is the
-router's `public_url` followed by `/v1/agents/plugins/callback`. Each agent holds its own:
-on the dashboard's Tools tab, press **Set up** on the plugin, paste the app's client id and
-secret, and choose whether each user connects in the chat or the agent connects one account.
-The same thing over the API, server-side only:
+Not every catalog connector registers the router as a client by itself. Sentry, Linear,
+Calendly and Cal.com do; the rest need an OAuth client registered ahead of time. Its
+redirect URI is the router's `public_url` followed by
+`/v1/agents/connectors/oauth/callback`. That client is the app's own, stored once on the
+connector, or the operator's, from the environment. It is not set per agent.
+
+The app's client, for a connector that accepts one: on the dashboard open Library ›
+Connectors, open the connector and set its OAuth client. The same over the API,
+server-side only:
 
 ```bash
-curl -X PUT "$ROUTER/v1/agents/configs/$CONFIG_ID/plugins/google_calendar/client" \
-  -d '{"client_id": "...", "client_secret": "...", "user": true}'
+curl -X PUT "$ROUTER/v1/agents/connectors/google_calendar/oauth-client" \
+  -d '{"client_id": "...", "client_secret": "..."}'
 ```
 
-The secret is sealed with the router's `auth.kek` and never returned. A sync warns about a
-plugin each person connects that still has none, and a user who asks for it is told it is not
-available. A deployment can instead give every agent the same app through the environment:
+The secret is sealed and never returned. A connector whose registration does not list the
+app, such as Slack, refuses this and uses only the operator's client.
 
-| Plugin | What the router needs |
+The operator's client is `<ENV>_MCP_CLIENT_ID` and `<ENV>_MCP_CLIENT_SECRET` on the
+router, where `<ENV>` is the connector's client env. Google Calendar, Drive and Docs
+share one:
+
+| Connector | Operator client |
 | --- | --- |
 | `github` | `GITHUB_MCP_CLIENT_ID`, `GITHUB_MCP_CLIENT_SECRET` from a GitHub OAuth app |
 | `hubspot` | `HUBSPOT_MCP_CLIENT_ID`, `HUBSPOT_MCP_CLIENT_SECRET` from a HubSpot app |
-| `slack` | `SLACK_MCP_CLIENT_ID`, `SLACK_MCP_CLIENT_SECRET` from a Slack app |
+| `slack` | `SLACK_MCP_CLIENT_ID`, `SLACK_MCP_CLIENT_SECRET` from a Slack app. Operator only |
 | `salesforce` | `SALESFORCE_MCP_CLIENT_ID`, `SALESFORCE_MCP_CLIENT_SECRET` from an External Client App |
-| `google_calendar` | `GOOGLE_CALENDAR_MCP_CLIENT_ID`, `GOOGLE_CALENDAR_MCP_CLIENT_SECRET`, `calendarmcp.googleapis.com` enabled |
-| `google_drive` | `GOOGLE_DRIVE_MCP_CLIENT_ID`, `GOOGLE_DRIVE_MCP_CLIENT_SECRET`, `drivemcp.googleapis.com` enabled |
-| `google_docs` | `GOOGLE_DOCS_MCP_CLIENT_ID`, `GOOGLE_DOCS_MCP_CLIENT_SECRET`, `docsmcp.googleapis.com` enabled |
+| `google_calendar`, `google_drive`, `google_docs` | `GOOGLE_MCP_CLIENT_ID`, `GOOGLE_MCP_CLIENT_SECRET`. Enable `calendarmcp.googleapis.com`, `drivemcp.googleapis.com` and `docsmcp.googleapis.com` |
 
-The three Google entries can carry the same client id and secret: they are separate because
-the router reads one pair per plugin, and the Cloud project has to have each API enabled.
+The three Google connectors share that one client, and the Cloud project has to have each
+API enabled.
 
 ### Salesforce
 
@@ -68,11 +81,13 @@ needs no org host. Set the org up once, as an admin
 
 1. In Setup, open **MCP Servers**, then **Salesforce Servers**, and activate `sobject-reads`.
 2. In **External Client App Manager**, create an app with OAuth on. Its callback URL is
-   the router's `public_url` + `/v1/agents/plugins/callback`, such as
-   `http://localhost:8080/v1/agents/plugins/callback`. Its scopes are `mcp_api` and
+   the router's `public_url` + `/v1/agents/connectors/oauth/callback`, such as
+   `http://localhost:8080/v1/agents/connectors/oauth/callback`. Its scopes are `mcp_api` and
    `refresh_token`. Require PKCE, and issue JWT-based access tokens for named users.
 3. Put the app's consumer key and secret in `.env` as `SALESFORCE_MCP_CLIENT_ID` and
-   `SALESFORCE_MCP_CLIENT_SECRET`, restart the router and connect Salesforce on the dashboard.
+   `SALESFORCE_MCP_CLIENT_SECRET` (the operator's client), or set them as the app's OAuth
+   client on the Salesforce connector. Restart the router after an environment change, and
+   connect Salesforce on the dashboard with the label `company`.
 
 The agent reads the org as the person who connected it, so it sees what they see.
 
@@ -85,13 +100,11 @@ MCP:
 
 1. At [api.slack.com/apps](https://api.slack.com/apps), create an app in your workspace.
    Under **OAuth & Permissions**, add the redirect URL (the router's `public_url` +
-   `/v1/agents/plugins/callback`) and the **user token** scopes the agent will ask for.
+   `/v1/agents/connectors/oauth/callback`) and the **user token** scopes the agent will ask for.
    Slack takes only an https redirect URL, so a local router needs an https tunnel as its
    `public_url`.
-2. On the dashboard, open the agent's Tools, press **Set up** on Slack and paste the app's
-   client id and secret, with "Each user, in the conversation". The page lists these
-   steps too. `SLACK_MCP_CLIENT_ID` and `SLACK_MCP_CLIENT_SECRET` in `.env` still work, for
-   every agent that sets no client of its own.
+2. Slack's connector takes only the operator's client. Set `SLACK_MCP_CLIENT_ID` and
+   `SLACK_MCP_CLIENT_SECRET` on the router and restart it. The app cannot store its own.
 
 By default the login asks for `channels:history`, `channels:read`, `chat:write`,
 `search:read.public` and `users:read`: search and read public channels, post, and look
@@ -222,30 +235,27 @@ Google Calendar is a hosted MCP server too, but a calendar is somebody's own, so
 conversation is opened for an end user (`MCP_PLUGINS_USER_ID`, default `on-call-engineer`).
 The agent gets `google_calendar__list_tools` and `google_calendar__call_tool`. The first
 time it calls one for somebody who has not connected their calendar, the reply carries a
-`plugin_authorization` attachment:
+`connector_authorization` attachment:
 
 ```json
-{"type": "plugin_authorization", "plugin_id": "google_calendar",
- "title": "Connect Google Calendar", "authorize_url": "https://accounts.google.com/...",
- "text": "Read calendars, events and free time.",
- "thumb_url": "https://<public_url>/v1/agents/plugins/google_calendar/logo",
- "title_link": "https://accounts.google.com/..."}
+{"type": "connector_authorization", "name": "google_calendar",
+ "connector_id": "google_calendar", "title": "Connect Google Calendar",
+ "launch_url": "https://<public_url>/v1/agents/connectors/oauth/launch/...",
+ "authorization_id": "...", "connection_id": "..."}
 ```
 
-A chat client renders it as a button. `text`, `thumb_url` and `title_link` are Chat's own
-attachment fields, so a client that has never heard of `plugin_authorization` still shows a
-card with the logo, what the plugin is for and a link somebody can press. This example
-prints the URL, waits for you to connect, and asks again. A login belongs to one person on one agent and is never used for anybody
+A chat client renders it as a button. This example prints the URL, waits for you to
+connect, and asks again. A login belongs to one person on one agent and is never used for anybody
 else, so the router has to know who that person is: `api_key` mode with the app's key and
 secret naming them, or `proxy` mode. A `noauth` router treats every caller as the app's own
 backend, and an anonymous caller goes by a name nobody checked, so neither is offered the
 calendar.
 
-Google registers no client on the fly, so the agent needs one of your own. In a Google Cloud
-project, enable `calendarmcp.googleapis.com`, create an OAuth client of type *Web
-application* whose redirect URI is the router's `public_url` followed by
-`/v1/agents/plugins/callback`, and set it on the agent: **Set up** on Google Calendar in the
-Tools tab, with "Each user, in the conversation".
+Google registers no client on the fly, so the router needs the app's OAuth client or the
+operator's. In a Google Cloud project, enable `calendarmcp.googleapis.com`, create an OAuth
+client of type *Web application* whose redirect URI is the router's `public_url` followed by
+`/v1/agents/connectors/oauth/callback`, and set it on the Google Calendar connector, or as
+`GOOGLE_MCP_CLIENT_ID` and `GOOGLE_MCP_CLIENT_SECRET`. Drive and Docs use that same client.
 
 ## Blender: in the sandbox
 

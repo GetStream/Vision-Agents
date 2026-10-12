@@ -216,6 +216,111 @@ class TestFolder:
 
         assert settings.connectors == [ConnectorSettings(name="linear")]
 
+    def test_an_empty_connector_name_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", 'name: triage\nconnectors:\n  - ""\n')
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_connector_name_is_kept_as_written(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", 'name: triage\nconnectors:\n  - " linear "\n')
+
+        assert load(root).settings.connectors == [ConnectorSettings(name=" linear ")]
+
+    def test_a_null_connector_entry_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - ~\n")
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_commented_out_connector_entry_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - # linear\n")
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_connector_mapping_without_a_name_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - connector: linear\n",
+        )
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_null_connection_is_a_session_binding(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    connection: null\n",
+        )
+
+        assert load(root).settings.connectors == [ConnectorSettings(name="github")]
+
+    def test_a_null_connector_is_the_alias(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: issues\n    connector: null\n",
+        )
+
+        assert load(root).settings.connectors == [ConnectorSettings(name="issues")]
+
+    def test_a_null_required_is_left_unset(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    required: null\n",
+        )
+
+        assert load(root).settings.connectors == [
+            ConnectorSettings(name="github", required=None)
+        ]
+
+    def test_a_required_that_is_not_true_or_false_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    required: 1\n",
+        )
+
+        with pytest.raises(
+            ValueError, match="should give connectors required as true or false"
+        ):
+            load(root)
+
+    def test_a_tool_that_is_not_text_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    tools: [1]\n",
+        )
+
+        with pytest.raises(ValueError, match="should give connectors.tools as a list"):
+            load(root)
+
+    def test_a_connector_id_that_is_not_text_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    connector: 123\n",
+        )
+
+        with pytest.raises(ValueError, match="connector must be a connector id"):
+            load(root)
+
     def test_an_object_names_the_connector_patterns_connection_and_required(
         self, tmp_path: Path
     ):
@@ -341,6 +446,25 @@ class TestFolder:
         by_name = {entry.name: entry for entry in settings.connectors}
         assert by_name["github"].tools is None
         assert by_name["github"].connector == ""
+        for company in ("sentry", "github", "hubspot", "salesforce"):
+            assert by_name[company].connection == "company"
+        for person in (
+            "linear",
+            "google_calendar",
+            "google_drive",
+            "google_docs",
+            "calendly",
+            "calcom",
+            "slack",
+        ):
+            assert by_name[person].connection == ""
+        readme = (root / "README.md").read_text()
+        source = (root / "mcp_plugins.py").read_text()
+        assert "/v1/agents/connectors/oauth/callback" in readme
+        assert "/v1/agents/plugins/callback" not in readme
+        assert "Set up" not in readme
+        assert "connector_authorization" in source
+        assert "plugin_authorization" not in source
         assert by_name["sentry"].tools == [
             "find_organizations",
             "find_projects",

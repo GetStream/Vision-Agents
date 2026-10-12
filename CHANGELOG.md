@@ -614,7 +614,8 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ### agent.yaml connectors in the Python SDK
 
-`agent.yaml` may name `connectors`. A name is a session binding that offers every tool. An
+`agent.yaml` may name `connectors`. A name is a session binding that offers every tool, kept
+as written. An empty name is refused, so a blank entry cannot wipe the stored bindings. An
 object names the connector, the tool patterns, an app connection (its id, or the one
 connection with that label) and whether the binding is required. Leaving the key out leaves
 the stored bindings; an empty list removes them.

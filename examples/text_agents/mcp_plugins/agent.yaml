@@ -8,20 +8,25 @@ llm: llm-fast
 # which costs one more model turn per tool used. Off when left out.
 tools:
   progressive: true
-# A name alone is a session binding: the agent asks for that person's connection in the
-# chat the first time it needs it, and offers every tool. Name it with a mapping to offer
-# only the tools named, or matching a pattern such as get_*; left out, all of them.
-# connection names the app's own connection, by its id or its label, so one company account
-# is used in every conversation, and required fails a session that cannot open it.
+# Sentry, GitHub, HubSpot and Salesforce are the company's accounts, connected once on
+# the dashboard. connection: company is that connection's label, resolved when the folder
+# syncs, so every conversation uses it. A name alone is a session binding: the agent asks
+# for that person's connection in the chat the first time it needs it, and offers every
+# tool. Name it with a mapping to offer only the tools named, or matching a pattern such
+# as get_*; left out, all of them. required fails a session that cannot open the binding.
 # readonly, scopes, toolsets and user are plugins-only.
 # Linear, Calendly and Cal.com register their own OAuth clients, so they need nothing
 # configured on the router: ask about an issue and the login works.
 connectors:
   - name: sentry
+    connection: company
     tools: [find_organizations, find_projects, search_issues, search_errors, get_sentry_resource, analyze_issue_with_seer, update_issue]
-  - github
-  - hubspot
-  - salesforce
+  - name: github
+    connection: company
+  - name: hubspot
+    connection: company
+  - name: salesforce
+    connection: company
   - name: linear
     tools: [list_issues, get_issue, save_issue, list_comments, save_comment, list_projects, get_project, list_cycles, list_teams, list_users, list_issue_statuses]
   - google_calendar
