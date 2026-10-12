@@ -71,6 +71,9 @@ struct SessionServer {
     struct Request: Sendable {
         let method: String
         let path: String
+        let query: String
+        /// By lowercased name.
+        let headers: [String: String]
         let body: [String: JSONValue]
     }
 
@@ -152,9 +155,19 @@ struct SessionServer {
                 if body.count >= length {
                     let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: body)) ?? [:]
                     let line = head[0].split(separator: " ").map(String.init)
-                    let path = String(line[1].split(separator: "?")[0])
+                    let target = line[1].split(separator: "?", maxSplits: 1).map(String.init)
+                    let path = target[0]
+                    var headers: [String: String] = [:]
+                    for field in head.dropFirst() {
+                        let pair = field.split(separator: ":", maxSplits: 1)
+                        guard pair.count == 2 else { continue }
+                        headers[pair[0].lowercased()] = pair[1].trimmingCharacters(in: .whitespaces)
+                    }
                     respond(connection, answer ?? session(path: path, fields: fields))
-                    request.yield(Request(method: line[0], path: path, body: fields))
+                    request.yield(
+                        Request(
+                            method: line[0], path: path, query: target.count > 1 ? target[1] : "",
+                            headers: headers, body: fields))
                     request.finish()
                     return
                 }

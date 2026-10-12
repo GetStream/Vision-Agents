@@ -1,7 +1,8 @@
 import { Backend, type BackendOptions, type StreamUser, type TokenSource } from "./backend.js";
-import { errorOf, RouterError } from "./errors.js";
+import { ConfigurationError, errorOf, RouterError } from "./errors.js";
 import type { components, paths } from "./generated/api.js";
 import {
+  ANONYMOUS_GUEST_REFUSED,
   claimGuestUser,
   forgetGuest,
   guestUser,
@@ -253,6 +254,7 @@ export class Client {
     };
 
     const operation = `${method.toUpperCase()} ${template}`;
+    const anonymously = operation === "POST /v1/agents/guests" && this.backend.anonymous;
     const url = new URL(this.backend.url + fill(template, path));
     for (const [name, value] of Object.entries({ ...this.backend.query(), ...query })) {
       if (value === undefined || value === null) {
@@ -265,7 +267,7 @@ export class Client {
 
     const request: RequestInit = {
       method: method.toUpperCase(),
-      headers: { ...(await this.backend.headers()), ...headers },
+      headers: { ...(await this.backend.headers(anonymously)), ...headers },
     };
     if (body !== undefined) {
       request.headers = { ...request.headers, "Content-Type": "application/json" };
@@ -284,6 +286,9 @@ export class Client {
       throw new RouterError(0, operation, `could not reach the router: ${String(cause)}`);
     }
 
+    if (anonymously && response.status === 401) {
+      throw new ConfigurationError(ANONYMOUS_GUEST_REFUSED);
+    }
     if (!response.ok) {
       throw await errorOf(response, operation);
     }

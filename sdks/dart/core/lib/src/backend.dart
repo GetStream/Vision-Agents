@@ -23,7 +23,7 @@ final class StreamCredentials {
 /// * `customerId`, for a router in `noauth` mode, which believes the header. `userId` names
 ///   the end user, since there is no token to name them.
 /// * `apiKey` with a `token` a backend minted for this user, or a guest's token, for a router
-///   verifying tokens.
+///   verifying tokens. With no token yet, the one thing it may do is ask for a guest.
 ///
 /// The key, the user and the token are also what Stream Chat and Stream Video connect with,
 /// so Stream is set up once. Beside a `customerId` the key is Stream's alone, and the router
@@ -42,10 +42,7 @@ final class Backend {
 
   Backend._(this.url, this.customerId, this.apiKey, this.userId, this.token, this._clients) {
     if (customerId.isEmpty && apiKey.isEmpty) {
-      throw ArgumentError('a backend needs a customerId, or an apiKey with a token');
-    }
-    if (apiKey.isNotEmpty && token == null) {
-      throw ArgumentError('an apiKey is only half a credential: pass the token as well');
+      throw ArgumentError('a backend needs a customerId or an apiKey');
     }
   }
 
@@ -71,6 +68,10 @@ final class Backend {
 
   bool get _byCustomer => customerId.isNotEmpty;
 
+  /// Whether this holds the app's key and no token yet, which is how a guest is asked for
+  /// before there is one: `Stream-Auth-Type: anonymous` and no token.
+  bool get anonymous => !_byCustomer && token == null;
+
   /// The same router, asked by somebody else. Shares this one's Stream clients, which are
   /// kept per user.
   Backend withUser(String userId, {TokenProvider? token}) =>
@@ -89,7 +90,7 @@ final class Backend {
         if (userId.isNotEmpty) 'X-Stream-User-Id': userId,
       };
     }
-    return {'Authorization': 'Bearer ${await token!()}', 'Stream-Auth-Type': 'jwt'};
+    return {'Authorization': 'Bearer ${await _token()}', 'Stream-Auth-Type': 'jwt'};
   }
 
   /// The URL for a request path, with the query values that are set and the API key, the
@@ -114,7 +115,7 @@ final class Backend {
   Future<Uri> socketUri(String path, [Map<String, String> query = const {}]) async {
     final credentials = _byCustomer
         ? {'customer_id': customerId, if (userId.isNotEmpty) 'user_id': userId}
-        : {'api_key': apiKey, 'token': await token!()};
+        : {'api_key': apiKey, 'token': await _token()};
     return url.replace(
       scheme: url.scheme == 'https' ? 'wss' : 'ws',
       path: _join(url.path, path),
@@ -186,6 +187,16 @@ final class Backend {
   }
 
   String _key(String kind) => '$kind:$apiKey:$userId';
+
+  Future<String> _token() {
+    final token = this.token;
+    if (token == null) {
+      throw ArgumentError(
+        'an apiKey needs a token to go with it: pass token, or use withUser or withGuest',
+      );
+    }
+    return token();
+  }
 
   void _requireStreamIdentity() {
     if (apiKey.isEmpty) {

@@ -725,6 +725,31 @@ describe("guest users", () => {
     assert.equal(store.value, undefined);
   });
 
+  it("asks anonymously from a page holding only the app key", async () => {
+    const page = new Client({ url: router.url, apiKey: "vak_live_x" });
+
+    const guest = await page.guestUser({}, memory());
+
+    assert.equal(guest.id, "guest-1");
+    assert.equal(router.last.headers["stream-auth-type"], "anonymous");
+    assert.equal(router.last.headers["x-api-key"], "vak_live_x");
+    assert.equal(router.last.headers["authorization"], undefined);
+  });
+
+  it("says to mint the guest on the backend when the router admits no anonymous callers", async () => {
+    router.serve("POST", "/v1/agents/guests", {
+      status: 401,
+      body: { code: 2, message: "anonymous access is not available on the acceleration api" },
+    });
+    const page = new Client({ url: router.url, apiKey: "vak_live_x" });
+
+    await assert.rejects(() => page.guestUser({}, memory()), (raised: unknown) => {
+      assert.ok(raised instanceof ConfigurationError);
+      assert.match(raised.message, /setUser/);
+      return true;
+    });
+  });
+
   it("refuses a claim from a caller that is not the app's own backend", async () => {
     const page = new Client({ url: router.url, apiKey: "vak_live_x" });
     await page.setUser({ id: "jlahey" }, "token-for-jim");

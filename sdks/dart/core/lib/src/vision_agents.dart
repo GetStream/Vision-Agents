@@ -114,6 +114,8 @@ final class VisionAgents {
   /// remembered, for a "not me" button: reusing the remembered one would hand the person at
   /// the keyboard somebody else's conversations.
   ///
+  /// With an api key and no token yet it is asked for anonymously, which a router must admit;
+  /// one that does not throws a [StateError], and the guest is minted by your backend instead.
   /// Throws a [RouterException] with status 403 when the app does not admit guests.
   Future<GuestUser> guestUser({
     String? name,

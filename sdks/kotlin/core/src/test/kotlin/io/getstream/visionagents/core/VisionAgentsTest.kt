@@ -500,6 +500,33 @@ class VisionAgentsTest {
     }
 
     @Test
+    fun `a device with only the app key asks for a guest anonymously`() = runTest {
+        router.answer = { Reply(201, """{"id":"guest-1","token":"t"}""") }
+
+        val guest = VisionAgents(url = router.url, apiKey = "key").use { it.guestUser() }
+
+        assertEquals("guest-1", guest.id)
+        val arrived = router.requests.single()
+        assertEquals("anonymous", arrived.header("Stream-Auth-Type"))
+        assertNull(arrived.header("Authorization"))
+        assertEquals(listOf("key"), arrived.query["api_key"])
+    }
+
+    @Test
+    fun `a router admitting no anonymous callers says to mint the guest on the backend`() = runTest {
+        router.answer = {
+            Reply(401, """{"code":2,"message":"anonymous access is not available on the acceleration api","StatusCode":401}""")
+        }
+
+        val refused = VisionAgents(url = router.url, apiKey = "key").use {
+            assertFailsWith<AgentsException.Configuration> { it.guestUser() }
+        }
+
+        assertTrue(refused.message.orEmpty().contains("setUser"))
+        assertEquals(1, router.requests.size)
+    }
+
+    @Test
     fun `not me mints somebody new, and a store holding rubbish is not fatal`() = runTest {
         val store = FileGuestStore(File(Files.createTempDirectory("guest").toFile(), "guest.json"))
         store.write("{truncated")

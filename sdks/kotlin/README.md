@@ -153,7 +153,9 @@ agents.setUser(guest)
 ```
 
 The stored guest is reused on the next launch rather than minting a second one with an empty
-history. Against a router with an api key, `setUser(user, TokenProvider)` is asked for a token
+history. With no user set the guest is asked for anonymously; a router that admits no anonymous
+callers, Stream's hosted one for now, throws `AgentsException.Configuration`, and your backend
+mints the guest instead. Against a router with an api key, `setUser(user, TokenProvider)` is asked for a token
 when one is needed and again after a 401, never on every request.
 
 ## What is deliberately not here

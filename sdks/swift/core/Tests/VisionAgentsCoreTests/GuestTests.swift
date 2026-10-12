@@ -57,6 +57,37 @@ import Testing
         #expect(agents.backend.user == nil)
     }
 
+    @Test func aDeviceWithOnlyTheAppKeyAsksForAGuestAnonymously() async throws {
+        let server = try SessionServer(answer: Self.minted(#"{"id":"guest-1","token":"t"}"#))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(apiKey: "key", url: try await server.url())
+
+        let guest = try await agents.guestUser()
+
+        #expect(guest.id == "guest-1")
+        let request = try await server.request()
+        #expect(request.headers["stream-auth-type"] == "anonymous")
+        #expect(request.headers["authorization"] == nil)
+        #expect(request.query == "api_key=key")
+    }
+
+    @Test func aRouterAdmittingNoAnonymousCallersSaysToMintTheGuestOnTheBackend() async throws {
+        let server = try SessionServer(
+            answer: SessionServer.Answer(
+                status: 401, headers: ["Content-Type": "application/json"],
+                body: #"{"code":2,"message":"anonymous access is not available on the acceleration api","StatusCode":401}"#))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(apiKey: "key", url: try await server.url())
+
+        let error = try await #require(throws: AgentsError.self) { try await agents.guestUser() }
+
+        guard case .configuration(let message) = error else {
+            Issue.record("\(error) is not a configuration error")
+            return
+        }
+        #expect(message.contains("setUser"))
+    }
+
     @Test func aStoreHoldingRubbishIsNotFatal() async throws {
         try store.write("{truncated")
         let server = try SessionServer(answer: Self.minted(#"{"id":"guest-1","token":"t"}"#))

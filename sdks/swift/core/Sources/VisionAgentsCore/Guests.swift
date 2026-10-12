@@ -40,6 +40,12 @@ public struct FileGuestStore: GuestStore {
     }
 }
 
+/// What a device asking for a guest with no token is told when the router, or Stream's proxy in
+/// front of it, admits no anonymous callers.
+let anonymousGuestRefused =
+    "this router admits no anonymous callers, so a device cannot mint its own guest: mint it "
+    + "on your backend with the server SDK's guestUser and pass it to setUser"
+
 /// Who a new guest is, for a transcript a person reads later.
 public struct GuestOptions: Sendable {
     public var name: String?

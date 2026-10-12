@@ -207,6 +207,8 @@ agents.setUser(guest)
 
 A remembered guest whose token has expired is minted a fresh one under the same id.
 `GuestOptions(fresh: true)` is a "not me" button, and `forgetGuest(store:)` is signing out.
+With no user set the guest is asked for anonymously; a router that admits no anonymous callers,
+Stream's hosted one for now, throws `.configuration`, and your backend mints the guest instead.
 
 ## What is deliberately not here
 

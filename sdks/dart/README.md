@@ -151,6 +151,10 @@ final more = await asGuest.agent('support').sessions.query(
 final answer = await agents.router(config: 'healthcare').search('perioperative antibiotic guidance');
 ```
 
+`VisionAgents(apiKey: ...)` with no token asks for a guest anonymously and may do nothing else
+until `withGuest` or `withUser`. A router that admits no anonymous callers, Stream's hosted one
+for now, throws a `StateError`, and your backend mints the guest instead.
+
 A guest is kept in the `GuestStore` you hand it (shared preferences, secure storage) and reused
 until it expires. Lists come a page at a time: ask again with the page's `nextCursor`, which is
 null on the last one.

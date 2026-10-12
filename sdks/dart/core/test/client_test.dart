@@ -85,8 +85,13 @@ void main() {
       expect(backend.url.toString(), 'https://accelerate.gcp.stream-io-api.com');
     });
 
-    test('refuses an api key with no token before sending anything', () {
-      expect(() => Backend(url: Uri.parse('http://x'), apiKey: 'key'), throwsArgumentError);
+    test('an api key with no token asks for nothing but a guest', () async {
+      final keyed = VisionAgents(url: router.url, apiKey: 'key');
+
+      await expectLater(keyed.sessions.get('s1'), throwsArgumentError);
+      keyed.close();
+
+      expect(router.arrived, isEmpty);
       expect(() => Backend(url: Uri.parse('http://x')), throwsArgumentError);
     });
 
@@ -672,6 +677,38 @@ void main() {
       await store.write('{truncated');
 
       expect((await agents.guestUser(store: store)).id, 'guest-3');
+    });
+
+    test('a device with only the app key asks for a guest anonymously', () async {
+      router.answer('POST /v1/agents/guests', Answer(201, guest('guest-1')));
+      final keyed = VisionAgents(url: router.url, apiKey: 'key');
+
+      final minted = await keyed.guestUser();
+      keyed.close();
+
+      expect(minted.id, 'guest-1');
+      final request = router.last('POST /v1/agents/guests');
+      expect(request.header('Stream-Auth-Type'), 'anonymous');
+      expect(request.header('Authorization'), isNull);
+      expect(request.query['api_key'], 'key');
+    });
+
+    test('a router admitting no anonymous callers says to mint the guest on the backend', () async {
+      router.answer(
+        'POST /v1/agents/guests',
+        const Answer(401, {
+          'code': 2,
+          'message': 'anonymous access is not available on the acceleration api',
+          'StatusCode': 401,
+        }),
+      );
+      final keyed = VisionAgents(url: router.url, apiKey: 'key');
+
+      await expectLater(
+        keyed.guestUser(),
+        throwsA(isA<StateError>().having((e) => e.message, 'message', contains('withGuest'))),
+      );
+      keyed.close();
     });
 
     test('asks as the guest afterwards', () async {
