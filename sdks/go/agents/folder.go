@@ -165,6 +165,11 @@ type Settings struct {
 	// Plugins are the catalog plugins the agent reaches: with the app's own login, or
 	// with each end user's own account for one that sets user.
 	Plugins []PluginSettings `yaml:"plugins"`
+	// Connectors are the connectors whose tools the agent may call. Nil when the
+	// declaration says nothing, which leaves the bindings stored; empty when the
+	// file lists none, which removes them. A null entry is refused: dropping it
+	// would sync an empty list and wipe the stored bindings.
+	Connectors connectorList `yaml:"connectors"`
 	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
 	// a text conversation when it arrives.
 	PluginEvents []PluginEventSettings `yaml:"plugin_events"`
@@ -237,6 +242,76 @@ func (p *PluginSettings) UnmarshalYAML(node *yaml.Node) error {
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
 	return decoder.Decode((*plain)(p))
+}
+
+// ConnectorSettings is one connector the agent binds. agent.yaml gives it as the alias
+// alone, or as a mapping naming it with the connector, the tools, and a connection.
+type ConnectorSettings struct {
+	// Name is the alias the model sees tools under.
+	Name string `yaml:"name"`
+	// Connector is the connector id. Empty means the name.
+	Connector string `yaml:"connector"`
+	// Tools are names or path.Match patterns, sent as tool_patterns. Nil, whether the
+	// key was left out or null, means every tool. An empty list is refused: it would
+	// grant nothing.
+	Tools *[]string `yaml:"tools"`
+	// Connection is an id or a label of one of the app's connections to the connector.
+	// Nil is a session binding; set, it is fixed to the connection it names.
+	Connection *string `yaml:"connection"`
+	// Required is whether a session needs this connector. Nil leaves it optional.
+	Required *bool `yaml:"required"`
+}
+
+func (c *ConnectorSettings) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		*c = ConnectorSettings{Name: node.Value}
+	} else {
+		// A node decodes without its decoder's KnownFields, so the mapping is read again by
+		// one that refuses a key it does not know.
+		raw, err := yaml.Marshal(node)
+		if err != nil {
+			return err
+		}
+		type plain ConnectorSettings
+		decoder := yaml.NewDecoder(bytes.NewReader(raw))
+		decoder.KnownFields(true)
+		if err := decoder.Decode((*plain)(c)); err != nil {
+			return err
+		}
+	}
+	if c.Name == "" {
+		return errors.New("a connector needs a name")
+	}
+	if c.Tools != nil && len(*c.Tools) == 0 {
+		return fmt.Errorf("connector %q: tools: [] grants nothing; leave tools out for every tool", c.Name)
+	}
+	if c.Connection != nil && *c.Connection == "" {
+		return fmt.Errorf("connector %q: connection must be a connection id or label", c.Name)
+	}
+	return nil
+}
+
+// connectorList is the connectors list. yaml.v3 drops a null element of a plain
+// struct slice without calling UnmarshalYAML, so the entry is walked here.
+type connectorList []ConnectorSettings
+
+func (c *connectorList) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.SequenceNode {
+		return errors.New("connectors must be a list")
+	}
+	items := make(connectorList, 0, len(node.Content))
+	for _, item := range node.Content {
+		if item.ShortTag() == "!!null" {
+			return errors.New("a connector needs a name")
+		}
+		var entry ConnectorSettings
+		if err := item.Decode(&entry); err != nil {
+			return err
+		}
+		items = append(items, entry)
+	}
+	*c = items
+	return nil
 }
 
 // MCPServerSettings is an MCP server outside the plugin catalog. Name prefixes its tools,
@@ -570,7 +645,34 @@ func declare(raw []byte) (Settings, error) {
 		}
 		options.timeout = timeout
 	}
+	if err := refuseConnectorAliases(settings); err != nil {
+		return Settings{}, err
+	}
 	return settings, nil
+}
+
+// refuseConnectorAliases refuses an alias that is also a plugin or an MCP server name.
+// The model is offered each as <name>__<tool>, so the same name would be two tools.
+// Compared on the alias, not the connector id: issues bound to linear may sit beside a
+// linear plugin.
+func refuseConnectorAliases(settings Settings) error {
+	plugins := map[string]struct{}{}
+	for _, plugin := range settings.Plugins {
+		plugins[plugin.Name] = struct{}{}
+	}
+	servers := map[string]struct{}{}
+	for _, server := range settings.MCPServers {
+		servers[server.Name] = struct{}{}
+	}
+	for _, connector := range settings.Connectors {
+		if _, named := servers[connector.Name]; named {
+			return fmt.Errorf("%q is named under both connectors and mcp_servers", connector.Name)
+		}
+		if _, named := plugins[connector.Name]; named {
+			return fmt.Errorf("%q is named under both connectors and plugins", connector.Name)
+		}
+	}
+	return nil
 }
 
 func loadSkills(path string) ([]Skill, error) {
