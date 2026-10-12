@@ -6,7 +6,12 @@
 --
 -- The key is sealed under this deployment's key, bound to the customer, so a row copied to
 -- another customer does not open.
-CREATE TABLE custom_models (
+--
+-- Numbered 20261018120000 because 20261015120000 was merged after 20261016120000
+-- had already been applied, and goose refuses to start on an unapplied migration
+-- below the database version. IF NOT EXISTS so a database that already applied
+-- 20261015120000 keeps this table and records this version.
+CREATE TABLE IF NOT EXISTS custom_models (
     id TEXT PRIMARY KEY,
     customer_id TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -24,8 +29,8 @@ CREATE TABLE custom_models (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX custom_models_name_idx ON custom_models (customer_id, name);
-CREATE INDEX custom_models_customer_idx ON custom_models (customer_id, created_at DESC, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS custom_models_name_idx ON custom_models (customer_id, name);
+CREATE INDEX IF NOT EXISTS custom_models_customer_idx ON custom_models (customer_id, created_at DESC, id DESC);
 
 -- +goose Down
-DROP TABLE custom_models;
+DROP TABLE IF EXISTS custom_models;
