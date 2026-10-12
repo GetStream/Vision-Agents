@@ -47,6 +47,19 @@ var baseCustomModelColumns = []string{
 	"updated_at",
 }
 
+// baseCustomModelIndexes is pg_indexes (indexname, indexdef) of custom_models, in
+// indexname order, after Migrate on c891381c. The renamed migration must create that set.
+var baseCustomModelIndexes = []customModelIndex{
+	{"custom_models_customer_idx", "CREATE INDEX custom_models_customer_idx ON public.custom_models USING btree (customer_id, created_at DESC, id DESC)"},
+	{"custom_models_name_idx", "CREATE UNIQUE INDEX custom_models_name_idx ON public.custom_models USING btree (customer_id, name)"},
+	{"custom_models_pkey", "CREATE UNIQUE INDEX custom_models_pkey ON public.custom_models USING btree (id)"},
+}
+
+type customModelIndex struct {
+	name string
+	def  string
+}
+
 // oldCustomModels is the Up of 20261015120000_custom_models.sql at 75214efe: what a
 // database that already applied that file has run. It is not idempotent.
 var oldCustomModels = []string{
@@ -92,21 +105,21 @@ func (s *MigrationOrderSuite) SetupSuite() {
 	s.ctx = context.Background()
 }
 
-// TestAFreshDatabaseAppliesCustomModelsAtTheLaterVersion: an empty database ends on
-// 20261018120000, with the table the base migration created and without a row for the
-// old version.
+// TestAFreshDatabaseAppliesCustomModelsAtTheLaterVersion: an empty database applies
+// 20261018120000, with the columns and indexes the base migration created, and without
+// a row for the old version.
 func (s *MigrationOrderSuite) TestAFreshDatabaseAppliesCustomModelsAtTheLaterVersion() {
 	db := s.open()
 
 	s.Require().NoError(db.Migrate(s.ctx))
 
 	s.Equal(baseCustomModelColumns, s.customModelColumns(db))
+	s.Equal(baseCustomModelIndexes, s.customModelIndexes(db))
 	applied := s.applied(db)
 	s.True(applied[customModelsVersion])
 	s.True(applied[indexSwapVersion])
 	s.True(applied[shippedGooseVersion])
 	s.False(applied[oldCustomModelsVersion])
-	s.Equal(customModelsVersion, s.maxVersion(db))
 }
 
 // TestADatabaseAtTheShippedVersionAppliesTheLaterMigrations: goose is at
@@ -127,7 +140,6 @@ func (s *MigrationOrderSuite) TestADatabaseAtTheShippedVersionAppliesTheLaterMig
 	s.True(applied[indexSwapVersion])
 	s.True(applied[customModelsVersion])
 	s.False(applied[oldCustomModelsVersion])
-	s.Equal(customModelsVersion, s.maxVersion(db))
 }
 
 // TestADatabaseThatAppliedTheOldVersionKeepsTheTable: 20261015120000 is recorded and
@@ -147,16 +159,17 @@ VALUES ('kept', 'cust', 'kept', 'https://models.example.test/v1', 'weights')`)
 
 	s.Equal("kept", s.keptName(db))
 	s.Equal(baseCustomModelColumns, s.customModelColumns(db))
+	s.Equal(baseCustomModelIndexes, s.customModelIndexes(db))
 	applied := s.applied(db)
 	s.True(applied[oldCustomModelsVersion], "the recorded version with no file stays")
 	s.True(applied[shippedGooseVersion])
 	s.True(applied[indexSwapVersion])
 	s.True(applied[customModelsVersion])
-	s.Equal(customModelsVersion, s.maxVersion(db))
 }
 
 // TestDownOfCustomModelsSucceedsWhenTheTableIsAlreadyGone: Down is DROP TABLE IF EXISTS,
-// so a table that is already gone does not stop the version coming off.
+// so a table that is already gone does not stop the version coming off. DownTo the index
+// swap rolls this version back even when a later migration exists.
 func (s *MigrationOrderSuite) TestDownOfCustomModelsSucceedsWhenTheTableIsAlreadyGone() {
 	db := s.open()
 	s.Require().NoError(db.Migrate(s.ctx))
@@ -164,7 +177,7 @@ func (s *MigrationOrderSuite) TestDownOfCustomModelsSucceedsWhenTheTableIsAlread
 	s.False(s.customModelsExists(db))
 
 	s.goose()
-	s.Require().NoError(goose.DownContext(s.ctx, db.DB().DB, "."))
+	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", indexSwapVersion))
 
 	s.False(s.customModelsExists(db))
 	applied := s.applied(db)
@@ -242,6 +255,23 @@ func (s *MigrationOrderSuite) customModelsExists(db *Store) bool {
 	var exists bool
 	s.Require().NoError(db.DB().QueryRowContext(s.ctx, `SELECT to_regclass('public.custom_models') IS NOT NULL`).Scan(&exists))
 	return exists
+}
+
+func (s *MigrationOrderSuite) customModelIndexes(db *Store) []customModelIndex {
+	rows, err := db.DB().QueryContext(s.ctx, `
+SELECT indexname, indexdef FROM pg_indexes
+WHERE schemaname = 'public' AND tablename = 'custom_models'
+ORDER BY indexname`)
+	s.Require().NoError(err)
+	defer rows.Close()
+	var indexes []customModelIndex
+	for rows.Next() {
+		var index customModelIndex
+		s.Require().NoError(rows.Scan(&index.name, &index.def))
+		indexes = append(indexes, index)
+	}
+	s.Require().NoError(rows.Err())
+	return indexes
 }
 
 func (s *MigrationOrderSuite) customModelColumns(db *Store) []string {
