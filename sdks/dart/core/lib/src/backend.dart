@@ -57,7 +57,8 @@ final class Backend {
   /// What every request carries.
   ///
   /// `Stream-Auth-Type: jwt` declares a device, and is sent even to an open router, which
-  /// would otherwise take a caller with no proxy in front of it for a backend.
+  /// would otherwise take a caller with no proxy in front of it for a backend. The key travels
+  /// in the query instead, where both Stream's proxy and the router read it.
   Future<Map<String, String>> headers() async {
     if (apiKey.isEmpty) {
       return {
@@ -66,16 +67,16 @@ final class Backend {
         if (userId.isNotEmpty) 'X-Stream-User-Id': userId,
       };
     }
-    return {
-      'X-Api-Key': apiKey,
-      'Authorization': 'Bearer ${await token!()}',
-      'Stream-Auth-Type': 'jwt',
-    };
+    return {'Authorization': 'Bearer ${await token!()}', 'Stream-Auth-Type': 'jwt'};
   }
 
-  /// The URL for a request path, with the query values that are set.
+  /// The URL for a request path, with the query values that are set and the API key, the
+  /// public half of the credential.
   Uri requestUri(String path, [Map<String, String?> query = const {}]) {
-    final present = {for (final MapEntry(:key, :value) in query.entries) key: ?value};
+    final present = {
+      if (apiKey.isNotEmpty) 'api_key': apiKey,
+      for (final MapEntry(:key, :value) in query.entries) key: ?value,
+    };
     return url.replace(
       path: _join(url.path, path),
       queryParameters: present.isEmpty ? null : present,

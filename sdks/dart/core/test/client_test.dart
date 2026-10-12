@@ -47,7 +47,8 @@ void main() {
       keyed.close();
 
       final request = router.last('GET /v1/agents/sessions/s1');
-      expect(request.header('X-Api-Key'), 'key');
+      expect(request.query['api_key'], 'key');
+      expect(request.header('X-Api-Key'), isNull);
       expect(request.header('Authorization'), 'Bearer token-2');
       expect(request.header('Stream-Auth-Type'), 'jwt');
       expect(request.header('X-Customer-Id'), isNull);
