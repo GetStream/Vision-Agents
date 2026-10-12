@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from vision_agents.plugins.stream.folder import (
     ChannelSettings,
+    ConnectorSettings,
     GreetingSettings,
     MCPServerSettings,
     PluginSettings,
@@ -206,6 +207,175 @@ class TestFolder:
 
         with pytest.raises(ValueError, match="not something an agent has"):
             load(root)
+
+    def test_a_connector_named_by_its_id_is_a_session_binding(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - linear\n")
+
+        settings = load(root).settings
+
+        assert settings.connectors == [ConnectorSettings(name="linear")]
+
+    def test_an_object_names_the_connector_patterns_connection_and_required(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n"
+            "  - name: issues\n    connector: linear\n"
+            "    tools: [list_*, get_issue]\n    connection: desk\n    required: true\n"
+            "  - name: mail\n    tools:\n    required: false\n",
+        )
+
+        settings = load(root).settings
+
+        assert settings.connectors == [
+            ConnectorSettings(
+                name="issues",
+                connector="linear",
+                tools=["list_*", "get_issue"],
+                connection="desk",
+                required=True,
+            ),
+            ConnectorSettings(name="mail", tools=None, required=False),
+        ]
+
+    def test_tools_left_out_offers_every_tool_and_an_empty_list_is_refused(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - name: github\n")
+        assert load(root).settings.connectors == [ConnectorSettings(name="github")]
+
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    tools: []\n",
+        )
+        with pytest.raises(
+            ValueError,
+            match=r'connector "github": tools: \[\] grants nothing; leave tools out for every tool',
+        ):
+            load(root)
+
+    def test_an_empty_connection_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            'name: triage\nconnectors:\n  - name: github\n    connection: ""\n',
+        )
+
+        with pytest.raises(
+            ValueError,
+            match='connector "github": connection must be a connection id or label',
+        ):
+            load(root)
+
+    def test_a_connector_setting_nobody_knows_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    plugin: github\n",
+        )
+
+        with pytest.raises(ValueError, match="unknown connectors setting: plugin"):
+            load(root)
+
+    def test_a_connector_alias_cannot_be_a_plugin_or_mcp_server_name(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nplugins:\n  - linear\nconnectors:\n  - linear\n",
+        )
+        with pytest.raises(
+            ValueError, match='"linear" is named under both connectors and plugins'
+        ):
+            load(root)
+
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: notes\n"
+            "mcp_servers:\n  - name: notes\n    url: https://example.com/mcp\n",
+        )
+        with pytest.raises(
+            ValueError, match='"notes" is named under both connectors and mcp_servers'
+        ):
+            load(root)
+
+    def test_connectors_that_are_not_a_list_are_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors: linear\n")
+
+        with pytest.raises(ValueError, match="should give connectors as a list"):
+            load(root)
+
+    def test_a_connector_that_is_neither_an_id_nor_a_mapping_is_refused(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - [linear]\n")
+
+        with pytest.raises(ValueError, match="connectors"):
+            load(root)
+
+    def test_the_mcp_plugins_example_loads_its_connectors(self):
+        root = (
+            Path(__file__).resolve().parents[3]
+            / "examples"
+            / "text_agents"
+            / "mcp_plugins"
+        )
+
+        settings = load(root).settings
+
+        assert settings.plugins == []
+        assert settings.connectors is not None
+        by_name = {entry.name: entry for entry in settings.connectors}
+        assert by_name["github"].tools is None
+        assert by_name["github"].connector == ""
+        assert by_name["sentry"].tools == [
+            "find_organizations",
+            "find_projects",
+            "search_issues",
+            "search_errors",
+            "get_sentry_resource",
+            "analyze_issue_with_seer",
+            "update_issue",
+        ]
+        assert by_name["linear"].tools == [
+            "list_issues",
+            "get_issue",
+            "save_issue",
+            "list_comments",
+            "save_comment",
+            "list_projects",
+            "get_project",
+            "list_cycles",
+            "list_teams",
+            "list_users",
+            "list_issue_statuses",
+        ]
+        assert [(server.name, server.url) for server in settings.mcp_servers] == [
+            ("tablejourney", "https://tablejourney.com/mcp")
+        ]
+        assert settings.mcp_servers[0].tools == [
+            "search_places",
+            "place",
+            "dishes",
+            "plan_day",
+            "festivals",
+            "experiences",
+            "itineraries",
+            "cities",
+        ]
 
     def test_the_declaration_says_who_logs_into_each_mcp_server(self, tmp_path: Path):
         root = tmp_path / "triage"

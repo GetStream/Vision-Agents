@@ -13,11 +13,12 @@ uv run mcp_plugins.py                                      # issues and your cal
 uv run mcp_plugins.py "render a red teapot on a checkered floor"   # Blender
 ```
 
-The directory is the agent, and nothing in `mcp_plugins.py` sets up a plugin. `agent.yaml`
-connects each kind in a different way:
+The directory is the agent, and nothing in `mcp_plugins.py` sets up a connector. `agent.yaml`
+connects each kind in a different way. A name alone is a session binding offering every
+tool. `readonly`, `scopes` and `toolsets` are plugins-only; `connectors` does not read them.
 
 ```yaml
-plugins:
+connectors:
   - sentry          # connected once by the company, on the dashboard
   - github
   - hubspot
@@ -94,8 +95,9 @@ MCP:
 
 By default the login asks for `channels:history`, `channels:read`, `chat:write`,
 `search:read.public` and `users:read`: search and read public channels, post, and look
-people up. `scopes` replaces that list, say to search private channels and DMs as well, or
-to drop `chat:write` so the agent can only read:
+people up. `scopes` is plugins-only; `connectors` does not read it. Under `plugins` it
+replaces that list, say to search private channels and DMs as well, or to drop
+`chat:write` so the agent can only read:
 
 ```yaml
 plugins:
@@ -118,6 +120,9 @@ pair `scopes` with `tools` to keep the model from seeing it:
 ```
 
 ### Read-only, and which scopes a login asks for
+
+`readonly`, `scopes` and `toolsets` are plugins-only. This example's `connectors` entries
+do not read them; the blocks below are what `plugins` still accepts.
 
 A plugin named by its id alone is reached as the catalog has it, which for Linear is
 `https://mcp.linear.app/mcp` asking for `read` and `write`. Name it with a mapping instead
@@ -175,10 +180,11 @@ plugins:
 
 Every tool a server offers goes to the model unless `tools` says otherwise. Fewer tools
 take less context and give the agent less it may do. `tools` takes names or patterns such
-as `get_*`, works on any plugin and on `mcp_servers`, and needs no new login:
+as `get_*`, on a connector and on `mcp_servers`, and needs no new login. Left out, a
+connector offers every tool; `tools: []` is refused.
 
 ```yaml
-plugins:
+connectors:
   - name: linear
     tools: [list_issues, get_issue, save_comment]
 mcp_servers:
@@ -262,7 +268,7 @@ script prints. The router needs `DAYTONA_API_KEY` for this.
 ## TableJourney: an MCP server the router does not know
 
 Sentry and Google Calendar are in the router's catalog, which is what lets `agent.yaml` name
-them under `plugins`. Any other MCP server goes under `mcp_servers`, by
+them under `connectors`. Any other MCP server goes under `mcp_servers`, by
 its URL:
 
 ```yaml
