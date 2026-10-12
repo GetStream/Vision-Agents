@@ -349,6 +349,18 @@ class TestSessions:
         body = router.body("POST", "/v1/agents/sessions")
         assert body["id"] == "chosen-id_1"
         assert body["start_voice"] is True
+        assert body.get("navigating", False) is False
+
+    async def test_a_session_that_places_a_call_asks_to_navigate(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create(
+            stream.SessionOptions(start_voice=True, navigating=True)
+        )
+        await session.close()
+
+        body = router.body("POST", "/v1/agents/sessions")
+        assert body["navigating"] is True
 
     async def test_voice_starts_and_stops_on_a_session(
         self, api: stream.Client, router: Router
