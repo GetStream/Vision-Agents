@@ -9,7 +9,7 @@ repository = "https://github.com/GetStream/Vision-Agents"
 readme = "README.md"
 keywords = ["stream", "voice", "agents", "ai"]
 categories = ["api-bindings", "asynchronous"]
-exclude = ["generate/", ".sdk_update_log/", "tests/"]
+exclude = ["generate/", ".sdk_update_log", "tests/"]
 
 [workspace]
 members = [".", "generate"]
