@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -2230,6 +2231,9 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	// lost is set once the voice has gone, which a provider may say twice: as a fatal error
 	// and as the socket dropping.
 	lost := false
+	// An expressive voice can read a phrase 20 to 30 dB below the one before it, which a
+	// caller hears as the agent trailing off and their phone hears as it having finished.
+	leveller := audio.NewLeveller()
 
 	for event := range voice.Events() {
 		switch typed := event.(type) {
@@ -2250,13 +2254,14 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				}
 				continue
 			}
+			speech := leveller.Level(typed.Audio)
 			var err error
 			if marked, ok := a.options.Edge.(MarkedPlayout); ok {
 				// Publishing returns once the chunk is queued, which for a long one is well
 				// after the participants could have heard it begin, so the edge says when.
-				err = marked.PublishAudioMarked(typed.Audio, a.turns.marksFor(turnOf(typed.SynthesisID)))
+				err = marked.PublishAudioMarked(speech, a.turns.marksFor(turnOf(typed.SynthesisID)))
 			} else {
-				err = a.options.Edge.PublishAudio(typed.Audio)
+				err = a.options.Edge.PublishAudio(speech)
 			}
 			if err != nil {
 				a.fail(err, "edge")
