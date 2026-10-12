@@ -114,6 +114,7 @@ export {
   userIdOf,
   type AgentOptions,
   type ChatOptions,
+  type ConnectorDeclaration,
   type Declaration,
   type Folder,
   type Harness,

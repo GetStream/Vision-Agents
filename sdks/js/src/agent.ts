@@ -113,6 +113,27 @@ export interface Declaration {
    * with `dispatch.answer`.
    */
   dispatch?: Schemas["AgentDispatch"];
+  /**
+   * The connectors whose tools the agent may call. Undefined when agent.yaml says nothing,
+   * which leaves the stored bindings; empty when it lists none, which removes them.
+   */
+  connectors?: ConnectorDeclaration[];
+}
+
+/** One connector an agent binds, as agent.yaml names it. */
+export interface ConnectorDeclaration {
+  /** The alias the model sees its tools under. */
+  name: string;
+  /** The connector id. Left out means the name. */
+  connector?: string;
+  /** Tool names or `path.Match` patterns. Left out means every tool. */
+  tools?: string[];
+  /**
+   * The id, or the one label, of an app connection to always use. Left out, each session
+   * uses the caller's own.
+   */
+  connection?: string;
+  required?: boolean;
 }
 
 /**
@@ -480,7 +501,11 @@ export class Agent {
       ...(Object.keys(tags).length > 0 ? { tags } : {}),
     };
 
-    const hash = await fingerprint(body);
+    // The connectors as declared rather than as resolved, so an unchanged directory lists no
+    // connections.
+    const hash = await fingerprint(
+      declared.connectors ? { ...body, connectors: declared.connectors } : body,
+    );
     const stamp = this.folder?.stamp;
     if (stamp && (await stamp.read()) === hash) {
       const [stored] = await this.client.get("/v1/agents/configs", {
@@ -492,9 +517,73 @@ export class Agent {
       }
     }
 
-    const result = await this.client.post("/v1/agents/sync", { body: { ...body, hash } });
+    const connectors = declared.connectors && (await this.bindings(declared.connectors));
+    const result = await this.client.post("/v1/agents/sync", {
+      body: { ...body, ...(connectors ? { connectors } : {}), hash },
+    });
     await stamp?.write(hash);
     return result;
+  }
+
+  /** The connectors agent.yaml names, in the shape the sync takes. */
+  private async bindings(
+    declared: ConnectorDeclaration[],
+  ): Promise<Schemas["AgentConnectorBinding"][]> {
+    const bindings: Schemas["AgentConnectorBinding"][] = [];
+    for (const entry of declared) {
+      const connectorId = entry.connector || entry.name;
+      bindings.push({
+        name: entry.name,
+        connector_id: connectorId,
+        tools: [],
+        tool_patterns: entry.tools ?? ["*"],
+        ...(entry.required === undefined ? {} : { required: entry.required }),
+        connection:
+          entry.connection === undefined
+            ? { type: "session" }
+            : {
+                type: "fixed",
+                connection_id: await this.fixedConnection(entry.name, connectorId, entry.connection),
+              },
+      });
+    }
+    return bindings;
+  }
+
+  /**
+   * The app connection a connector entry names, by id or by the one label that matches. An
+   * id wins over a label, so every page is read first: a label is only unique once the list
+   * ends.
+   */
+  private async fixedConnection(name: string, connectorId: string, token: string): Promise<string> {
+    const connections: Schemas["Connection"][] = [];
+    const asked = new Set<string>();
+    let cursor = "";
+    while (!asked.has(cursor)) {
+      asked.add(cursor);
+      const page = await this.client.get("/v1/agents/connections", {
+        query: { owner_type: "app", connector_id: connectorId, ...(cursor ? { cursor } : {}) },
+      });
+      connections.push(...(page.items ?? []));
+      if (!page.next_cursor) {
+        break;
+      }
+      cursor = page.next_cursor;
+    }
+
+    const byId = connections.find((connection) => connection.id === token);
+    if (byId?.id) {
+      return byId.id;
+    }
+    const labelled = connections.filter((connection) => connection.id && connection.label === token);
+    if (labelled.length === 1) {
+      return labelled[0]?.id as string;
+    }
+    throw new ConfigurationError(
+      labelled.length === 0
+        ? `connector ${JSON.stringify(name)}: no app connection with id or label ${JSON.stringify(token)}`
+        : `connector ${JSON.stringify(name)}: ${JSON.stringify(token)} matches ${labelled.length} app connections`,
+    );
   }
 
   /** Renders the agent's configuration into a session and opens it. */
