@@ -54,6 +54,30 @@ void main() {
       expect(request.header('X-Customer-Id'), isNull);
     });
 
+    test(
+      "a key beside a customer id is Stream's, and the router is reached by customer id",
+      () async {
+        router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+        final local = VisionAgents(
+          url: router.url,
+          customerId: 'acme',
+          apiKey: 'stream-key',
+          userId: 'jlahey',
+          token: () async => 'token-for-jlahey',
+        );
+
+        await local.sessions.get('s1');
+        local.close();
+
+        final request = router.last('GET /v1/agents/sessions/s1');
+        expect(request.header('X-Customer-Id'), 'acme');
+        expect(request.header('X-Stream-User-Id'), 'jlahey');
+        expect(request.query['api_key'], isNull);
+        expect(request.header('Authorization'), isNull);
+        expect((await local.backend.streamCredentials()).apiKey, 'stream-key');
+      },
+    );
+
     test('goes to the hosted router when no url is named', () {
       final backend = Backend(apiKey: 'key', token: () async => 'token');
 

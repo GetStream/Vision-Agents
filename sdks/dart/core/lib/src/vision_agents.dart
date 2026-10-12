@@ -25,6 +25,10 @@ import 'wire.dart';
 /// agent is configured as and a token to join a call with are server-side only: they belong
 /// to the app's backend, which hands down what the app needs.
 ///
+/// Stream is set up once: the key, `userId` and token are the one identity for the router,
+/// Stream Chat and Stream Video. The chat and rtc packages build one client of each per user
+/// however many sessions ask, or use the app's own, and [disconnect] closes the ones built.
+///
 /// The constructor does no I/O.
 final class VisionAgents {
   VisionAgents({
@@ -135,6 +139,10 @@ final class VisionAgents {
 
   /// Forgets the remembered guest without minting another, which is what signing out does.
   Future<void> forgetGuest(GuestStore store) => store.clear();
+
+  /// Disconnects the Stream Chat and Video clients built for sessions, and none the app
+  /// handed over. Leaving a call or closing a session disconnects nothing.
+  Future<void> disconnect() => backend.disconnectStream();
 
   /// Closes the HTTP client, if this created it. Sessions close on their own.
   void close() {

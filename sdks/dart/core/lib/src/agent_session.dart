@@ -68,6 +68,9 @@ final class AgentSession {
        _sessions = sessions,
        _tools = {for (final tool in tools.reversed) tool.name: tool};
 
+  /// Where this conversation is held, and who is holding it.
+  Backend get backend => _backend;
+
   /// The session the router opened, as of the last [update].
   Session get session => _session;
   Session _session;
