@@ -357,16 +357,9 @@ func BargeInStopMS(rec caller.Result) int {
 // stops for the sound and answers it leaves a second or more.
 const sentencePauseMs = 600
 
-// agentSpeechThreshold is the energy gate for the agent's own recording when scoring an
-// overlap. That recording is the voice alone over digital silence (about 1e-10), and a voice
-// can render a sentence far quieter than the next: at the caller's gate a quiet "while I see
-// if we can get that set up" read as the agent having stopped for a side talker it talked
-// straight through.
-const agentSpeechThreshold = audio.DefaultSpeechThreshold / 100
-
 // ScoreOverlaps evaluates every non-directed sound in the script.
 func ScoreOverlaps(rec caller.Result) []OverlapCheck {
-	agent := joinPauses(audio.DetectSpeech(rec.Agent, rec.Rate, agentSpeechThreshold, audio.DefaultHangoverMs), sentencePauseMs)
+	agent := joinPauses(audio.DetectSpeech(rec.Agent, rec.Rate, audio.AgentSpeechThreshold, audio.DefaultHangoverMs), sentencePauseMs)
 	var checks []OverlapCheck
 	for _, event := range rec.Events {
 		if event.OverlapSound == "" {
@@ -422,7 +415,7 @@ func HoldThroughOverlap(checks []OverlapCheck) bool {
 // FalseCutoff counts agent starts inside scripted, non-barge caller utterances.
 // Script intervals remain authoritative when the caller leg also contains a noise bed.
 func FalseCutoff(rec caller.Result) int {
-	agentSpans := audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
+	agentSpans := audio.DetectSpeech(rec.Agent, rec.Rate, audio.AgentSpeechThreshold, audio.DefaultHangoverMs)
 	n := 0
 	for _, agent := range agentSpans {
 		for _, event := range rec.Events {
