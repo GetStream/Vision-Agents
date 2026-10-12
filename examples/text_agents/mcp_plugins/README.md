@@ -210,24 +210,10 @@ A tool left out is not listed, and the router refuses to run it.
 
 ## Sentry: once, for the company
 
-Sentry is a hosted MCP server from the router's catalog. Until somebody connects it, the
-agent's plugins list it as `not_connected`, which is what the dashboard shows as a reminder
-to finish setting it up:
-
-```bash
-curl -H "X-Customer-Id: $STREAM_ACCELERATION_CUSTOMER_ID" \
-  $STREAM_ACCELERATION_URL/v1/agents/configs/$CONFIG_ID/plugins
-# [{"plugin_id":"sentry","name":"Sentry","status":"not_connected",...}]
-```
-
-Connect it from the dashboard, or start the login yourself and open the URL it returns:
-
-```bash
-curl -X POST -H "X-Customer-Id: $STREAM_ACCELERATION_CUSTOMER_ID" \
-  $STREAM_ACCELERATION_URL/v1/agents/configs/$CONFIG_ID/plugins/sentry/authorize
-```
-
-Sentry registers the router as a client by itself, so nothing needs configuring first.
+Sentry is a hosted MCP server from the catalog. The company's account is the object in
+`agent.yaml` with `connection: company`: create that connection on the dashboard and label
+it exactly `company`. Sync resolves the label to that connection and fixes the binding to
+it. Sentry registers the router as a client by itself, so nothing needs configuring first.
 
 ## Google Calendar: each person, in the chat
 
@@ -319,8 +305,8 @@ The login is the one the MCP authorization spec describes: the authorization ser
 metadata, a client the router registers there itself, PKCE and `resource`. A server that
 needs a login the router cannot make is refused when the config is saved, and so is
 `scopes` or `user` on one that needs none. Until the app connects it, the server's tools
-fail with "connect crm on the dashboard". The app's login is listed and connected with the
-same `/v1/agents/configs/{id}/plugins` endpoints as Sentry's below. A login is only good at
+fail with "connect crm on the dashboard". Connect it on the dashboard, the same way as a
+catalog connector. A login is only good at
 the URL it was made at, and one made before a change of scopes keeps what it was granted,
 so connect again after changing either.
 

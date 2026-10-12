@@ -488,6 +488,7 @@ class TestFolder:
         source = (root / "mcp_plugins.py").read_text()
         assert "/v1/agents/connectors/oauth/callback" in readme
         assert "/v1/agents/plugins/callback" not in readme
+        assert "/plugins" not in readme
         assert "Set up" not in readme
         assert "connector_authorization" in source
         assert "plugin_authorization" not in source
