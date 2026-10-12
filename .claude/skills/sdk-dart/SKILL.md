@@ -196,6 +196,10 @@ never on a call happening.
 
 Wait on a condition with a deadline (`_until`), never a fixed sleep.
 
+CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on any change under
+`sdks/dart` or to the spec: core's and chat's checks and tests, as below. `ui` and `rtc` are not
+in it, so run them yourself when you change them.
+
 Docker only, pub's cache in the named volume `va-dart-pub`:
 
 ```bash

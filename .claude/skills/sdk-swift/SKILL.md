@@ -232,6 +232,15 @@ kept across `setUser` and never disconnected here; one connected as another user
 `.configuration` error. `agents.disconnect()` closes only what was built, and closing a session
 closes nothing. A client is built only when a session first asks for one.
 
+**Guests.** `agents.guestUser(_:store:)` mints a guest (`createGuestUser`), or hands back the
+one a `GuestStore` remembers; one whose token has expired is asked for again by id, which the
+router answers with the same guest and a fresh token. `setUser(_ guest:)` acts as them, and
+`forgetGuest(store:)` clears the store and the user. `GuestStore` is three methods so an app
+keeps the guest wherever it keeps things, the keychain included; `FileGuestStore(url:)` is the
+one provided, and a store holding something unreadable means a new guest, not an error.
+`GuestOptions(fresh: true)` is a "not me" button. Claiming a guest's history for an account is
+server-side only and not here.
+
 ## Views
 
 Core has none. An app shows a conversation with Stream Chat's AI components (`StreamChatAI`),
@@ -278,9 +287,15 @@ Three layers, in order of how much they cost to run:
    (`StreamCredentialsTests`).
 
 The package is iOS only, so the tests run on a simulator: `xcodebuild test -scheme
-vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`, with
+vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 18 Pro'`, with
 `TEST_RUNNER_VISION_AGENTS_URL` for the live tests and `TEST_RUNNER_INTEGRATION_ROUTER_KEY`
 and `_SECRET` for the keyed posture checks.
+
+CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on the `xcode-27` runner,
+on any change under `sdks/swift`, the two demos' apps or the spec. It builds
+`swift-openapi-generator` (cached), runs `generate.py` again and fails if the generated client
+differs from what is committed, runs the core tests on the iPhone 18 Pro simulator, and builds
+`swift_demo` and `flower_spotter`.
 
 Wait on a condition with a deadline, never `Task.sleep` for a fixed guess:
 
