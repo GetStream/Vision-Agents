@@ -168,7 +168,12 @@ func openTag(text string) (directive, string, tagState) {
 
 	found := directive{kind: kind, skill: attribute(head, "skill"), source: attribute(head, "source"), frames: attribute(head, "frames")}
 	if kind == kindCall {
+		// A call names its tool. Without one, "<call>" is something the model said, and
+		// read as a tag it would hold back the rest of the reply for a close never coming.
 		found.skill = attribute(head, "tool")
+		if found.skill == "" {
+			return directive{}, "", tagAbsent
+		}
 		found.arguments = callArguments(head)
 	}
 	if strings.HasSuffix(head, "/") {

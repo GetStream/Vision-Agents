@@ -75,6 +75,13 @@ func (s *DirectiveSuite) TestAWordStartingWithCallIsNotATag() {
 	s.Empty(directives)
 }
 
+func (s *DirectiveSuite) TestACallThatNamesNoToolIsSpoken() {
+	speech, directives := scan("I'll <call> you back ", "tomorrow.")
+
+	s.Equal("I'll <call> you back tomorrow.", speech)
+	s.Empty(directives)
+}
+
 func (s *DirectiveSuite) TestATagSplitAcrossDeltasIsStillFound() {
 	// A model emits a few characters at a time, so a tag almost never arrives whole.
 	speech, directives := scan(
