@@ -129,7 +129,7 @@ the other commands that read them there.
 | `TWILIO_ACCOUNT_SID`    | Twilio credentials, for buying and operating numbers       |
 | `TWILIO_AUTH_TOKEN`     | Twilio credentials                                         |
 | `TELNYX_API_KEY`        | Telnyx credentials                                         |
-| `TELNYX_CONNECTION_ID`  | The Telnyx SIP connection numbers are routed over          |
+| `TELNYX_CONNECTION_ID`  | The Telnyx TeXML application numbers and calls are on      |
 | `DEEPGRAM_API_KEY`      | Deepgram Flux credentials                                  |
 | `CARTESIA_API_KEY`      | Cartesia credentials, used by Sonic and the Ink 2 transcriber |
 | `CARTESIA_VOICE_ID`     | Optional default voice; a built-in one is used when unset  |
@@ -1371,9 +1371,9 @@ minute.
 
 | Term | Who can express it |
 | --- | --- |
-| `ring_timeout_seconds` | Everyone but Bird and Sinch |
+| `ring_timeout_seconds` | Everyone but Bird, Sinch and Telnyx |
 | `initial_digits` | Twilio, Telnyx, Bandwidth, Sinch |
-| `headers` | Telnyx only |
+| `headers` | Nobody yet |
 
 Getting past the trunk splits the vendors in two. Twilio, Telnyx and Plivo can name SIP
 digest credentials in their call plans, so the trunk's own password is enough. Vonage, Bird,
