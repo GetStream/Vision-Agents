@@ -173,6 +173,12 @@ func sipTrunkAAD(customerID, id string) []byte {
 	return []byte("sip_trunks/" + customerID + "/" + id)
 }
 
+// bridgeAAD binds a number's sealed trunk password to the customer holding it, so the
+// ciphertext does not open on another customer's row or another number.
+func bridgeAAD(customerID, e164 string) []byte {
+	return []byte("phone_numbers/" + customerID + "/" + e164)
+}
+
 // CreateSIPTrunk stores a customer's trunk with its password sealed.
 func (s *Service) CreateSIPTrunk(ctx context.Context, customerID string, settings SIPTrunkSettings) (store.SIPTrunk, error) {
 	if err := s.sipTrunksReady(); err != nil {

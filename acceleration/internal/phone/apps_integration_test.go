@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -332,6 +333,32 @@ func (s *AppsSuite) TestAPlacedCallLandsInTheCallOfTheSessionItWasPlacedFor() {
 
 	s.Equal(id, placed.SessionID)
 	s.Equal(id, placed.CallID)
+}
+
+func (s *AppsSuite) TestAnAttachedNumbersTrunkCredentialsAreKeptForItsCalls() {
+	sealer, err := auth.NewSealer("apps suite")
+	s.Require().NoError(err)
+	s.service.sealer = sealer
+
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	bridge, err := s.service.InboundBridge(s.ctx, "twilio", s.e164)
+	s.Require().NoError(err)
+	s.Equal("sip:"+s.e164+"@sip.example.test", bridge.URI, "the address names the number")
+	s.Equal(attached.TrunkID, bridge.Username)
+	s.Equal("secret", bridge.Password, "the password Stream returned at attach")
+	s.NotContains(string(s.number().BridgePasswordSealed), "secret", "the password is stored sealed")
+}
+
+func (s *AppsSuite) TestWithoutASealerANumberStillAttachesButKeepsNoCredentials() {
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	_, err = s.service.InboundBridge(s.ctx, "twilio", s.e164)
+
+	s.ErrorContains(err, "sealer")
+	s.Empty(s.number().BridgeURI)
 }
 
 func (s *AppsSuite) TestReattachingANumberMovesItToTheNewCallName() {

@@ -465,6 +465,19 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	if err != nil {
 		return Attached{}, stack.Wrap(err)
 	}
+	record := store.NumberAttachment{
+		TrunkID: trunkID, RouteID: routeID, StreamAppPK: pin, CallType: defaultCallType,
+	}
+	// Stream returns the password only now, and a vendor that asks per call where to send a
+	// caller needs it then. Without a key it is not kept, rather than kept in the clear.
+	if s.sealer != nil {
+		sealed, err := s.sealer.SealWithAAD(bridge.Password, bridgeAAD(attachment.CustomerID, attachment.E164))
+		if err != nil {
+			return Attached{}, stack.Wrap(err)
+		}
+		record.BridgeURI, record.BridgeUsername = bridge.URI, bridge.Username
+		record.BridgePasswordSealed, record.BridgePasswordKEKVersion = sealed, s.sealer.CurrentVersion()
+	}
 
 	err = provider.ConfigureInbound(ctx, Inbound{E164: attachment.E164, Bridge: bridge})
 	if err != nil {
@@ -473,9 +486,7 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	// The vendor has already been told to send calls to trunkID. There is no primitive to
 	// un-configure a provider's inbound routing, so a failure here leaves the vendor
 	// pointing at a trunk the defer above is about to delete.
-	if err := s.store.AttachNumber(ctx, attachment.CustomerID, attachment.E164, store.NumberAttachment{
-		TrunkID: trunkID, RouteID: routeID, StreamAppPK: pin, CallType: defaultCallType,
-	}); err != nil {
+	if err := s.store.AttachNumber(ctx, attachment.CustomerID, attachment.E164, record); err != nil {
 		return Attached{}, stack.Wrap(err)
 	}
 
@@ -486,6 +497,26 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		s.unwire(ctx, attachment.CustomerID, held.StreamAppPK, held.StreamRouteID, held.StreamTrunkID, "re-attached a number")
 	}
 	return Attached{TrunkID: trunkID, RouteID: routeID, Bridge: bridge}, nil
+}
+
+// InboundBridge is the Stream trunk calls to an attached number of the vendor go to, with
+// its password opened.
+func (s *Service) InboundBridge(ctx context.Context, vendor, e164 string) (Bridge, error) {
+	if s.store == nil {
+		return Bridge{}, stack.Wrap(errors.New("phone: finding where a number's calls go needs a database"))
+	}
+	if s.sealer == nil {
+		return Bridge{}, stack.Wrap(errors.New("phone: a number's trunk password needs a sealer to open it, and none is configured"))
+	}
+	stored, err := s.store.AttachedBridge(ctx, vendor, e164)
+	if err != nil {
+		return Bridge{}, err
+	}
+	password, err := s.sealer.OpenWithAADVersion(stored.PasswordSealed, bridgeAAD(stored.CustomerID, e164), stored.KEKVersion)
+	if err != nil {
+		return Bridge{}, stack.Wrap(fmt.Errorf("phone: open the trunk password of %s: %w", e164, err))
+	}
+	return Bridge{URI: stored.URI, Username: stored.Username, Password: password}, nil
 }
 
 // CallRequest is a call to place from one of the customer's numbers.
