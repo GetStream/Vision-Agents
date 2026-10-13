@@ -39,6 +39,16 @@ const (
 // errorBodyLimit caps how much of a failed response is read into an error message.
 const errorBodyLimit = 2048
 
+// The account's call list is asked at most twice for a call just placed, because it is
+// eventually consistent and the caller is waiting.
+const (
+	lookupAttempts     = 2
+	defaultLookupPause = time.Second
+	lookupDeadline     = 5 * time.Second
+	// clockSlack is how far Telnyx's clock may be behind this host's.
+	clockSlack = 30 * time.Second
+)
+
 // microsPerDollar converts Telnyx's dollar strings into the micros used everywhere else.
 const microsPerDollar = 1_000_000
 
@@ -70,6 +80,7 @@ type Provider struct {
 	baseURL      string
 	client       *http.Client
 	logger       *slog.Logger
+	lookupPause  time.Duration
 }
 
 // New validates the options and returns a Provider.
@@ -106,6 +117,7 @@ func New(options Options) (*Provider, error) {
 		baseURL:      strings.TrimSuffix(options.BaseURL, "/"),
 		client:       options.HTTPClient,
 		logger:       options.Logger,
+		lookupPause:  defaultLookupPause,
 	}, nil
 }
 
@@ -297,19 +309,57 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	}
 
 	var placed texmlCallPlaced
-	path := "/v2/texml/Accounts/" + url.PathEscape(p.accountSID) + "/Calls"
-	if err := p.do(ctx, http.MethodPost, path, nil, request, &placed); err != nil {
+	placedAt := time.Now()
+	if err := p.do(ctx, http.MethodPost, p.callsPath(), nil, request, &placed); err != nil {
 		return phone.Dialed{}, err
 	}
 	if placed.CallSID == "" {
-		// Telnyx's reference lists no id on this answer. The call is ringing all the same,
-		// so failing here would report a call that is happening as one that is not.
+		// Telnyx's reference lists no id on this answer, so the call is found in the account's
+		// list instead.
+		placed.CallSID = p.findCall(ctx, outbound.From, outbound.To, placedAt)
+	}
+	if placed.CallSID == "" {
+		// The call is ringing all the same, so failing here would report a call that is
+		// happening as one that is not.
 		p.logger.Warn("telnyx placed a call but the vendor call id is unknown, so keypad " +
 			"presses and vendor_call_id answers will not work for it")
 	}
 	// Queued is Telnyx's documented first status, and an empty one would break the README's
 	// promise that every placed call has one.
 	return phone.Dialed{VendorCallID: placed.CallSID, Status: cmp.Or(placed.Status, "queued")}, nil
+}
+
+// findCall is the newest live call from one number to another that started since a call was
+// placed, or empty. A number never has two calls in flight here, so that one is the call.
+func (p *Provider) findCall(ctx context.Context, from, to string, placedAt time.Time) string {
+	// Telnyx's time filters take only a date, so the time is checked here.
+	query := url.Values{"From": {from}, "To": {to}}
+	ctx, cancel := context.WithTimeout(ctx, lookupDeadline)
+	defer cancel()
+	since := placedAt.Add(-clockSlack)
+	for attempt := range lookupAttempts {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ""
+			case <-time.After(p.lookupPause):
+			}
+		}
+		var listed listedCalls
+		if err := p.do(ctx, http.MethodGet, p.callsPath(), query, nil, &listed); err != nil {
+			// The error names the account in its path, so only that it failed is logged.
+			p.logger.Warn("telnyx could not list calls to find a placed call's id")
+			return ""
+		}
+		if sid := listed.newestSince(since); sid != "" {
+			return sid
+		}
+	}
+	return ""
+}
+
+func (p *Provider) callsPath() string {
+	return "/v2/texml/Accounts/" + url.PathEscape(p.accountSID) + "/Calls"
 }
 
 // SendDigits presses digits on a leg Telnyx is holding, which is how an agent gets past a
@@ -561,9 +611,48 @@ type texmlCall struct {
 // texmlCallPlaced is Telnyx's answer to a TeXML call, which has no "data" envelope. Telnyx's
 // reference shows only from, to and status for the account's call, so the id may be empty.
 type texmlCallPlaced struct {
-	// CallSID is the call control id, which is what pressing digits acts on.
+	// CallSID is the call control id, which is what pressing digits acts on. Telnyx's
+	// reference does not show it on this answer, so it is usually found by findCall.
 	CallSID string `json:"call_sid"`
 	Status  string `json:"status"`
+}
+
+// listedCalls is Telnyx's page of the account's TeXML calls, which has no "data" envelope.
+type listedCalls struct {
+	Calls []listedCall `json:"calls"`
+}
+
+type listedCall struct {
+	// SID is the call control id, the same id SendDigits acts on.
+	SID         string `json:"sid"`
+	Status      string `json:"status"`
+	StartTime   string `json:"start_time"`
+	DateCreated string `json:"date_created"`
+}
+
+// newestSince is the sid of the newest call still going that started at or after since.
+func (l listedCalls) newestSince(since time.Time) string {
+	var newest string
+	var newestAt time.Time
+	for _, call := range l.Calls {
+		if call.SID == "" || call.ended() {
+			continue
+		}
+		at, err := time.Parse(time.RFC1123Z, cmp.Or(call.StartTime, call.DateCreated))
+		if err != nil || at.Before(since) || (newest != "" && !at.After(newestAt)) {
+			continue
+		}
+		newest, newestAt = call.SID, at
+	}
+	return newest
+}
+
+func (c listedCall) ended() bool {
+	switch c.Status {
+	case "completed", "canceled", "failed", "busy", "no-answer":
+		return true
+	}
+	return false
 }
 
 type sendDigits struct {

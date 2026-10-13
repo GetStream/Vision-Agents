@@ -71,6 +71,7 @@ func (s *TelnyxSuite) SetupTest() {
 		BaseURL:      s.server.URL,
 	})
 	s.Require().NoError(err)
+	provider.lookupPause = time.Millisecond
 	s.provider = provider
 }
 
@@ -276,36 +277,88 @@ func (s *TelnyxSuite) TestTheRingTimeoutIsCarriedOnTheCall() {
 	s.Empty(s.texml().Dial.Timeout, "the person's ring timeout is not the trunk's")
 }
 
-func (s *TelnyxSuite) TestACallWhoseIDTelnyxDoesNotSayIsStillPlaced() {
-	var logged bytes.Buffer
-	provider, err := New(Options{
-		APIKey:       "KEY123",
-		AccountSID:   "acct-1",
-		ConnectionID: "conn-1",
-		BaseURL:      s.server.URL,
-		Logger:       slog.New(slog.NewTextHandler(&logged, nil)),
-	})
-	s.Require().NoError(err)
-	s.answer(`{"from":"+15125550100","to":"+15125550123","status":"queued"}`)
+// Telnyx's answer to the account's TeXML call names no call, so the call is looked up in
+// the account's call list right after it is placed.
+func (s *TelnyxSuite) TestACallWhoseIDTelnyxDoesNotSayIsLookedUp() {
+	before := time.Now().Add(-time.Hour).UTC().Format(time.RFC1123Z)
+	now := time.Now().UTC().Format(time.RFC1123Z)
+	var listed request
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"from":"+15125550100","to":"+15125550123","status":"queued"}`))
+			return
+		}
+		listed = s.seen
+		_, _ = w.Write([]byte(`{"calls":[
+			{"sid":"v3:old","status":"completed","start_time":"` + before + `","date_created":"` + before + `"},
+			{"sid":"v3:new","status":"ringing","start_time":"` + now + `","date_created":"` + now + `"}]}`))
+	}
 
-	placed, err := provider.Dial(s.ctx, phone.Outbound{
-		From: "+15125550100",
-		To:   "+15125550123",
-		Bridge: phone.Bridge{
-			URI:      "sip:+15125550100@app.sip.example.com",
-			Username: "u",
-			Password: "secret-p",
-		},
-	})
+	placed, err := s.provider.Dial(s.ctx, s.outbound())
+	s.Require().NoError(err)
+
+	s.Equal(http.MethodGet, listed.method)
+	s.Equal("/v2/texml/Accounts/acct-1/Calls", listed.path)
+	s.Equal("+15125550123", listed.query.Get("To"))
+	s.Equal("+15125550100", listed.query.Get("From"))
+	s.Equal("v3:new", placed.VendorCallID)
+	s.Equal("queued", placed.Status)
+}
+
+func (s *TelnyxSuite) TestACallStillMissingFromTheListIsPlacedWithoutAnID() {
+	logged := s.logged()
+	lists := 0
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"from":"+15125550100","to":"+15125550123","status":"queued"}`))
+			return
+		}
+		lists++
+		_, _ = w.Write([]byte(`{"calls":[],"page":0,"page_size":20}`))
+	}
+
+	placed, err := s.provider.Dial(s.ctx, s.outbound())
+	s.Require().NoError(err)
+
+	s.Equal(2, lists, "the list is eventually consistent, so it is asked once more")
+	s.Empty(placed.VendorCallID)
+	s.Equal("queued", placed.Status)
+	s.unknownIDWarned(logged)
+}
+
+func (s *TelnyxSuite) TestACallTheListOnlyShowsBeforeThisOneIsNotTaken() {
+	before := time.Now().Add(-time.Hour).UTC().Format(time.RFC1123Z)
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"status":"queued"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"calls":[{"sid":"v3:old","status":"in-progress","start_time":"` + before + `"}]}`))
+	}
+
+	placed, err := s.provider.Dial(s.ctx, s.outbound())
+	s.Require().NoError(err)
+
+	s.Empty(placed.VendorCallID)
+}
+
+func (s *TelnyxSuite) TestACallWhoseLookupFailsIsStillPlaced() {
+	logged := s.logged()
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"from":"+15125550100","to":"+15125550123","status":"queued"}`))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"errors":[{"detail":"boom"}]}`))
+	}
+
+	placed, err := s.provider.Dial(s.ctx, s.outbound())
 	s.Require().NoError(err)
 
 	s.Empty(placed.VendorCallID)
 	s.Equal("queued", placed.Status)
-	s.Contains(logged.String(), "level=WARN")
-	s.Contains(logged.String(), "vendor call id is unknown")
-	s.NotContains(logged.String(), "5550100")
-	s.NotContains(logged.String(), "5550123")
-	s.NotContains(logged.String(), "secret-p")
+	s.unknownIDWarned(logged)
 }
 
 // The README promises a status for every vendor's call, and Telnyx's reference does not
@@ -564,6 +617,35 @@ func (s *TelnyxSuite) texml() parsedTexml {
 	var parsed parsedTexml
 	s.Require().NoError(xml.Unmarshal([]byte(raw), &parsed))
 	return parsed
+}
+
+func (s *TelnyxSuite) outbound() phone.Outbound {
+	return phone.Outbound{
+		From: "+15125550100",
+		To:   "+15125550123",
+		Bridge: phone.Bridge{
+			URI:      "sip:+15125550100@app.sip.example.com",
+			Username: "u",
+			Password: "secret-p",
+		},
+	}
+}
+
+// logged sends the provider's log to a buffer the test reads.
+func (s *TelnyxSuite) logged() *bytes.Buffer {
+	var logged bytes.Buffer
+	s.provider.logger = slog.New(slog.NewTextHandler(&logged, nil))
+	return &logged
+}
+
+func (s *TelnyxSuite) unknownIDWarned(logged *bytes.Buffer) {
+	s.Contains(logged.String(), "level=WARN")
+	s.Contains(logged.String(), "vendor call id is unknown")
+	s.NotContains(logged.String(), "5550100")
+	s.NotContains(logged.String(), "5550123")
+	s.NotContains(logged.String(), "secret-p")
+	s.NotContains(logged.String(), "acct-1")
+	s.NotContains(logged.String(), "KEY123")
 }
 
 func (s *TelnyxSuite) answer(body string) {
