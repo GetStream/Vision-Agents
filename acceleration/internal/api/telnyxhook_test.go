@@ -109,6 +109,23 @@ func (s *TelnyxHookSuite) TestACallOnAnotherTeXMLApplicationIsHungUp() {
 	s.True(s.loggedLine("another TeXML application", "9999999999"))
 }
 
+// With no application configured, a signed call that names none must not match "".
+func (s *TelnyxHookSuite) TestWithoutAConfiguredTeXMLApplicationNoCallIsAnswered() {
+	s.attach(s.e164, "sip:"+s.e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
+	configured := s.router.telnyxConnectionID
+	s.router.telnyxConnectionID = ""
+	defer func() { s.router.telnyxConnectionID = configured }()
+	form := s.call(s.e164)
+	form.Del("ConnectionId")
+
+	status, _, body := s.deliver(form, true)
+
+	s.Equal(http.StatusOK, status)
+	s.Contains(body, "<Response><Hangup/></Response>")
+	s.NotContains(body, "trunk-password")
+	s.True(s.loggedLine("TELNYX_CONNECTION_ID is not set"))
+}
+
 func (s *TelnyxHookSuite) TestWithoutAKeyringACallSaysWhatToSet() {
 	s.attach(s.e164, "sip:"+s.e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
 	sealed := s.router.phone

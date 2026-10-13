@@ -62,6 +62,11 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 		hangUp(w, logger, "hung up a telnyx call that is not inbound", "direction", direction)
 		return
 	}
+	if s.telnyxConnectionID == "" {
+		// Otherwise a signed call that names no application would match.
+		hangUp(w, logger, "hung up a telnyx call: TELNYX_CONNECTION_ID is not set")
+		return
+	}
 	// Dev and hosted routers share one Telnyx account, so a call for the other router's
 	// application is signed with the same key. Its numbers are not in this database, but the
 	// check keeps that from being the only thing that stops it.

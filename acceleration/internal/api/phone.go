@@ -453,6 +453,8 @@ func sipTrunk(trunk store.SIPTrunk) SipTrunk {
 var (
 	errNumberNeedsAddress = APIError{Type: ErrorTypeInvalidRequest, Code: codePhoneNumberNeedsAddress,
 		Message: "This number needs a verified address, which is not supported. Choose a number in the US or Canada, or contact support."}
+	errNoKeyring = notConfigured("Numbers from this vendor cannot be attached on this deployment: " +
+		"it has no key encryption key to seal their trunk passwords with.")
 	errPhoneVendorFailed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
 		Message: "The phone vendor could not complete the request. Try again, or contact support if it keeps failing."}
 	errCallNotConfirmed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
@@ -466,6 +468,11 @@ func phoneFailure(logger *slog.Logger, err error) error {
 	if errors.Is(err, phone.ErrAddressRequired) {
 		logger.Info("a phone number needs an address", "error", err)
 		return errNumberNeedsAddress
+	}
+	if errors.Is(err, phone.ErrNoSealer) {
+		// The setting to fix it is the operator's, so it stays in the log.
+		logger.Warn("a phone number cannot be attached without a keyring", "error", err)
+		return errNoKeyring
 	}
 	if refused, ok := errors.AsType[*phone.VendorError](err); ok {
 		logger.Error("a phone vendor failed", "vendor", refused.Vendor, "path", refused.Path,

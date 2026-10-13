@@ -1011,6 +1011,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 			logger.Warn("telnyx numbers cannot be attached and calls to them will not be answered until "+
 				authKEKEnvVar+" is set", "setting", authKEKEnvVar)
 		}
+		if os.Getenv("TELNYX_CONNECTION_ID") == "" {
+			logger.Warn("telnyx numbers cannot be attached and calls to or from them will not work until "+
+				"TELNYX_CONNECTION_ID is set", "setting", "TELNYX_CONNECTION_ID")
+		}
 		if os.Getenv("TELNYX_ACCOUNT_SID") == "" {
 			logger.Warn("outbound telnyx calls will be refused until TELNYX_ACCOUNT_SID is set",
 				"setting", "TELNYX_ACCOUNT_SID")
