@@ -134,18 +134,29 @@ func init() {
 // withoutRefusedValues is errs as an answer or the request log may repeat them. A detail names
 // the value it refused. The value of a secret is the secret, and for a field missing or
 // unexpected the value is the whole object around it, whatever else it carries. Only a single
-// value at a field that is not a secret is repeated back.
+// value at a field that is not a secret, and short enough to read, is repeated back.
 func withoutRefusedValues(errs []error) []error {
 	kept := make([]error, 0, len(errs))
 	for _, err := range errs {
 		var detail *huma.ErrorDetail
-		if errors.As(err, &detail) && (strings.Contains(strings.ToLower(detail.Location), "secret") || !scalar(detail.Value)) {
+		if errors.As(err, &detail) && (strings.Contains(strings.ToLower(detail.Location), "secret") || !scalar(detail.Value) || long(detail.Value)) {
 			kept = append(kept, errors.New(detail.Message+" ("+detail.Location+")"))
 			continue
 		}
 		kept = append(kept, err)
 	}
 	return kept
+}
+
+// refusedValueLimit is the longest refused value an error repeats. A body that is not JSON
+// at all is refused as one string, and an upload's is megabytes of a customer's document
+// that would go back in the answer and into the request log.
+const refusedValueLimit = 200
+
+// long reports whether a refused value is text too long to repeat.
+func long(value any) bool {
+	text, ok := value.(string)
+	return ok && len(text) > refusedValueLimit
 }
 
 // scalar reports whether a value is one thing rather than an object or a list of them.

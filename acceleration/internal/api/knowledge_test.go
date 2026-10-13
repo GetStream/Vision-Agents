@@ -4,6 +4,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -103,6 +104,26 @@ func (s *KnowledgeSuite) TestAnotherAppsDocumentIsNeitherReadNorDeleted() {
 	s.assertHiddenFromOtherApps(func(as *testClient) int {
 		return as.do(http.MethodDelete, "/v1/agents/knowledge/documents/"+listed[0].Id, nil, nil)
 	})
+}
+
+func (s *KnowledgeSuite) TestAFiveMegabyteDocumentIsIngested() {
+	// Five times what an operation reads by default.
+	line := "A penny for every word of the price list.\n\n"
+	s.post(strings.Repeat(line, 5<<20/len(line)))
+
+	listed := s.documents()
+	s.Require().Len(listed, 1)
+	s.Equal(s.source, listed[0].Source)
+}
+
+func (s *KnowledgeSuite) TestABodyThatIsNotJSONIsRefusedWithoutRepeatingTheDocument() {
+	// Cut short mid-document: refused as one string, which is the customer's text.
+	text := strings.Repeat("A penny for every word of the price list. ", 100) + s.utils.uuid()
+	status, answer := s.serverClient.call(http.MethodPost, "/v1/agents/knowledge",
+		`{"namespace": "`+s.namespace+`", "documents": [{"source": "`+s.source+`", "text": "`+text)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.NotContains(string(answer), text[len(text)-36:])
 }
 
 func (s *KnowledgeSuite) TestOnlyTheAppsOwnBackendMayPostADocument() {

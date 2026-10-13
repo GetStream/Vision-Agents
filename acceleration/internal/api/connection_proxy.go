@@ -36,8 +36,8 @@ const proxyBase = "api_base"
 
 // maxProxyBody is the largest request body the proxy forwards. It is read whole so the request
 // can be sent once more after a 401 (core.Transports needs GetBody for that). The cap is Huma's
-// default MaxBodyBytes (ensureMaxBodyBytes in huma.go, v2.39.1), the one every other operation
-// of this API reads a body with. A choice, not a provider limit.
+// default MaxBodyBytes (ensureMaxBodyBytes in huma.go, v2.39.1), the one an operation of this
+// API reads a body with unless it raises its own. A choice, not a provider limit.
 const maxProxyBody = 1 << 20
 
 // routerHeaders are what the router reads to authenticate and name the caller (internal/auth).
