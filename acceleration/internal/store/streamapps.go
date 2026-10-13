@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -11,73 +10,6 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/driver/pgdriver"
 )
-
-// StreamAppState is whether the router acts in a registered app.
-type StreamAppState string
-
-const (
-	// StreamAppConnected is an app the router acts in with its keys.
-	StreamAppConnected StreamAppState = "connected"
-	// StreamAppDisconnected is an app its customer took back: no keys are held, and the
-	// customer's work is written nowhere rather than into the deployment's app.
-	StreamAppDisconnected StreamAppState = "disconnected"
-	// StreamAppBlocked is an app Stream suspended, or one that stopped checking the
-	// tokens the router mints, so nothing is written there until it is registered again.
-	StreamAppBlocked StreamAppState = "blocked"
-)
-
-// StreamAppKeyStatus is whether Stream still accepts a key.
-type StreamAppKeyStatus string
-
-const (
-	StreamAppKeyActive   StreamAppKeyStatus = "active"
-	StreamAppKeyRejected StreamAppKeyStatus = "rejected"
-)
-
-// StreamApp is the Stream app a customer registered as its own, from before customers' apps
-// were acted in with the gateway's tokens. Nothing reads or writes it any more.
-type StreamApp struct {
-	bun.BaseModel `bun:"table:stream_apps,alias:sa"`
-
-	CustomerID     string         `bun:"customer_id,pk"`
-	StreamAppPK    int64          `bun:"stream_app_pk,notnull"`
-	OrganizationID string         `bun:"organization_id,notnull"`
-	State          StreamAppState `bun:"state,notnull"`
-	StateReason    string         `bun:"state_reason,notnull"`
-	// PrimaryKey is the key tokens are minted with, empty once disconnected.
-	PrimaryKey  string          `bun:"primary_key,nullzero"`
-	Revision    int64           `bun:"revision,notnull"`
-	AllowGuests bool            `bun:"allow_guests,notnull"`
-	Checks      json.RawMessage `bun:"checks,type:jsonb,nullzero"`
-	CheckedAt   *time.Time      `bun:"checked_at"`
-	CreatedAt   time.Time       `bun:"created_at,notnull"`
-	UpdatedAt   time.Time       `bun:"updated_at,notnull"`
-	UpdatedBy   string          `bun:"updated_by,notnull"`
-
-	// Keys are the app's keys, oldest first.
-	Keys []StreamAppKey `bun:"-"`
-}
-
-// StreamAppKey is one key of a registered app, its secret sealed under the deployment's
-// keyring and bound to this row.
-type StreamAppKey struct {
-	bun.BaseModel `bun:"table:stream_app_keys,alias:sak"`
-
-	APIKey     string `bun:"api_key,pk"`
-	CustomerID string `bun:"customer_id,notnull"`
-	Sealed     []byte `bun:"secret_sealed,notnull"`
-	// KEKVersion names which key encryption key sealed this row.
-	KEKVersion int    `bun:"kek_version,notnull"`
-	Last4      string `bun:"secret_last4,notnull"`
-	// KeyCreatedAt is when Stream says the key was made, which orders keys by age.
-	KeyCreatedAt   *time.Time         `bun:"key_created_at"`
-	Status         StreamAppKeyStatus `bun:"status,notnull"`
-	RejectedAt     *time.Time         `bun:"rejected_at"`
-	RejectedReason string             `bun:"rejected_reason,notnull"`
-	VerifiedAt     *time.Time         `bun:"verified_at"`
-	LastWebhookAt  *time.Time         `bun:"last_webhook_at"`
-	CreatedAt      time.Time          `bun:"created_at,notnull"`
-}
 
 // constraint is the name of the unique constraint an error violated, empty for anything
 // else.
