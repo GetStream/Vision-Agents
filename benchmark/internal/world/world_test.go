@@ -510,3 +510,30 @@ func TestACallToAToolThatDoesNotExistIsKept(t *testing.T) {
 		t.Fatalf("unknown tools = %v", got)
 	}
 }
+
+func TestVerifyAccountReadsAnAddressWithoutItsPunctuation(t *testing.T) {
+	srv := New(nil)
+	if err := srv.ListenAndServe("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	time.Sleep(20 * time.Millisecond)
+	srv.Seed(scenario.Scenario{
+		ID: "t", Pack: "telecom",
+		Seed: map[string]any{
+			"accounts": []any{map[string]any{"id": "acc1", "pin": "4471", "last4": "9821", "address": "14 Cedar Lane unit B"}},
+		},
+	})
+	resp := postToolRaw(t, srv.Addr, "verify_account", map[string]any{
+		"pin": "4471", "last4": "9821", "address": "14 Cedar Lane, unit b",
+	})
+	if resp["ok"] != true {
+		t.Fatalf("verify_account = %v, want ok", resp)
+	}
+	resp = postToolRaw(t, srv.Addr, "verify_account", map[string]any{
+		"pin": "4471", "last4": "9821", "address": "41 Cedar Lane",
+	})
+	if resp["ok"] != false {
+		t.Fatalf("verify_account with a wrong house number = %v, want not ok", resp)
+	}
+}
