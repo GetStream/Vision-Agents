@@ -707,6 +707,47 @@ func (s *DataMoveSuite) TestAMovedSIPTrunkArrivesWithoutItsPassword() {
 	s.Equal("trunk.example.com", moved.Host)
 }
 
+func (s *DataMoveSuite) TestAMovedNumberLeavesItsBridgePasswordBehind() {
+	s.capture("acme")
+	s.Require().NoError(s.source.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000110", Vendor: "telnyx", Country: "US", CustomerID: "acme",
+	}))
+	s.Require().NoError(s.source.AttachNumber(s.ctx, "acme", "+15550000110", NumberAttachment{
+		TrunkID: "trunk-1", CallType: "default", CallID: "call-1",
+		BridgeURI: "sip:trunk.example.com", BridgeUsername: "agent",
+		BridgePasswordSealed: []byte("sealed bridge"), BridgePasswordKEKVersion: 1,
+	}))
+
+	numbers := s.export("acme").of("phone_numbers")
+	s.Require().Len(numbers, 1)
+	s.NotContains(numbers[0], "bridge_password_sealed", "a sealed password is not part of a customer's data")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", 0, 100)
+	s.Require().NoError(err)
+	recorded := 0
+	for _, change := range changes {
+		if change.Table != "phone_numbers" {
+			continue
+		}
+		recorded++
+		s.NotContains(string(change.Payload), "bridge_password_sealed")
+	}
+	s.Equal(2, recorded, "the insert and the attach")
+
+	s.move("acme", "acme")
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
+
+	var sealed []byte
+	var version sql.NullInt64
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT bridge_password_sealed, bridge_password_kek_version FROM phone_numbers WHERE e164 = ?",
+		"+15550000110").Scan(&sealed, &version))
+	s.Empty(sealed)
+	s.False(version.Valid, "the source password's key version does not come along")
+	_, err = s.destination.AttachedBridge(s.ctx, "telnyx", "+15550000110")
+	s.ErrorIs(err, ErrNoNumber, "it arrives needing to be attached again")
+}
+
 func (s *DataMoveSuite) TestAnImportedNumberCannotPointAtAnotherCustomersTrunk() {
 	trunk := &SIPTrunk{
 		ID: newID(), CustomerID: "other", Name: "main", Host: "trunk.example.com", Port: 5060,

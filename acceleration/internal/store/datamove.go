@@ -115,7 +115,7 @@ var dataTables = []dataTable{
 // their data would be a way to walk off with a customer's users' accounts. Both are left
 // out on the way out and left alone on the way in, so a connection arrives needing to be
 // authorized again rather than arriving broken.
-var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed", "password_sealed"}
+var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed", "password_sealed", "bridge_password_sealed"}
 
 // DataChange is one thing that happened to one row.
 type DataChange struct {
@@ -373,6 +373,11 @@ func (t dataTable) identity() string {
 	// holds (20261007050000_sip_trunks.sql).
 	if t.name == "sip_trunks" {
 		return "jsonb_build_object('customer_id', ?::text, 'password_kek_version', 0)"
+	}
+	// An attached number arrives without its bridge password for the same reason, so its key
+	// version stays behind too rather than describing a password that is not there.
+	if t.name == "phone_numbers" {
+		return "jsonb_build_object('customer_id', ?::text, 'bridge_password_kek_version', NULL)"
 	}
 	return fmt.Sprintf("jsonb_build_object('%s', ?::text)", t.customer)
 }
