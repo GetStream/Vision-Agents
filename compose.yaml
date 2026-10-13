@@ -27,7 +27,7 @@ services:
   router:
     build:
       context: ./acceleration
-    # Provider credentials come from the repo-root .env; the three below are the
+    # Provider credentials come from the repo-root .env; the two below are the
     # ones that differ inside the network and so are set here instead.
     env_file:
       - path: .env
@@ -35,7 +35,6 @@ services:
     environment:
       ROUTER_POSTGRES_DSN: postgres://postgres:postgres@postgres:5432/model_router?sslmode=disable
       ROUTER_REDIS_ADDR: redis:6379
-      ROUTER_CORS_ORIGINS: http://localhost:3000
     ports:
       - "8080:8080"
     depends_on:

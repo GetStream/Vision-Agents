@@ -53,8 +53,7 @@ type Config struct {
 	PublicURL string `koanf:"public_url"`
 	LogLevel  string `koanf:"log_level"`
 	// DashboardURL is where a finished plugin login sends the browser.
-	DashboardURL string   `koanf:"dashboard_url"`
-	CORSOrigins  []string `koanf:"cors_origins"`
+	DashboardURL string `koanf:"dashboard_url"`
 	// TrustedProxies are the CIDR ranges this deployment's own proxies sit in, and they
 	// decide how much of X-Forwarded-For is believed. Empty means none of it is.
 	TrustedProxies []string `koanf:"trusted_proxies"`
@@ -266,7 +265,6 @@ var variables = map[string]string{
 	"public_url":          "ROUTER_PUBLIC_URL",
 	"log_level":           "ROUTER_LOG_LEVEL",
 	"dashboard_url":       "DASHBOARD_BASE_URL",
-	"cors_origins":        "ROUTER_CORS_ORIGINS",
 	"trusted_proxies":     "ROUTER_TRUSTED_PROXIES",
 	"routing_config":      "ROUTER_CONFIG",
 	"phone_config":        "ROUTER_PHONE_CONFIG",
@@ -315,7 +313,7 @@ var variables = map[string]string{
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
-var lists = map[string]bool{"cors_origins": true, "trusted_proxies": true, "stream.deny_registration": true}
+var lists = map[string]bool{"trusted_proxies": true, "stream.deny_registration": true}
 
 // Defaults are what a deployment gets for saying nothing at all.
 func Defaults() Config {
@@ -512,7 +510,6 @@ func (c Config) export() error {
 		"public_url":                    c.PublicURL,
 		"log_level":                     c.LogLevel,
 		"dashboard_url":                 c.DashboardURL,
-		"cors_origins":                  strings.Join(c.CORSOrigins, ","),
 		"trusted_proxies":               strings.Join(c.TrustedProxies, ","),
 		"routing_config":                c.RoutingConfig,
 		"phone_config":                  c.PhoneConfig,

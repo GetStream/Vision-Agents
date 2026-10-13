@@ -489,6 +489,12 @@ func (s *OpenAICompatSuite) TestAToolCallWrittenInAnotherSyntaxIsMadeNotSpoken()
 			name:      "check_availability",
 			arguments: `{"party_size":4,"patio":true,"time":"7:30"}`,
 		},
+		"python call with single quotes": {
+			frames:    []string{"call:create_reservation(name='O\\'Br", "ien (party)', allergen='C:\\temp')"},
+			spoken:    "",
+			name:      "create_reservation",
+			arguments: `{"name":"O'Brien (party)","allergen":"C:\\temp"}`,
+		},
 		"python call ending on a bare value": {
 			frames:    []string{"call:check_availability(time=\"7:30\", party_size=4)"},
 			spoken:    "",

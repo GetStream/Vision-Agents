@@ -489,7 +489,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		slackApps:          options.SlackApps,
 		operatorApps:       options.OperatorProviderApps,
 		trusted:            options.TrustedProxies,
-		upgrader:           newUpgrader(options.CORSOrigins),
+		upgrader:           newUpgrader(authMode),
 		oauth: &plugins.Auth{
 			HTTP:         options.PluginHTTP,
 			PublicURL:    options.PublicURL,
@@ -610,7 +610,7 @@ func (s *Server) Handler() http.Handler {
 	// WaitForDelivery is false because most of what is served here is a long-
 	// lived socket; blocking the handler's return on event delivery would hold
 	// the connection open past its use. The flush in cmd/router covers shutdown.
-	served := withSentry(withRequestID(withTrace(withTiming(withCORS(s.corsOrigins,
+	served := withSentry(withRequestID(withTrace(withTiming(withCORS(s.authMode,
 		s.onOwningNode(s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))))))
 	if s.directory == nil {
 		return served
@@ -1076,25 +1076,16 @@ const corsRequestHeaders = "Authorization, " + auth.AuthTypeHeader + ", " + auth
 // instructions are replaced with one; PATCH does not, because the spec serves none.
 const corsMethods = "GET, POST, PUT, DELETE, OPTIONS"
 
-// withCORS lets a browser at the API from the origins the deployment named.
+// withCORS lets a browser at the API from the origins originAllowed accepts.
 //
-// It exists for a browser app that talks to the router directly rather than through a
-// server of its own: an extra hop would only be there to move a header, and the router is
-// already the thing that decides who may read a call.
-func withCORS(allowed []string, next http.Handler) http.Handler {
-	if len(allowed) == 0 {
-		return next
-	}
-	permitted := make(map[string]struct{}, len(allowed))
-	for _, origin := range allowed {
-		permitted[strings.TrimSpace(origin)] = struct{}{}
-	}
-	_, anywhere := permitted["*"]
-
+// It exists for a customer's website that talks to the router directly with its API key
+// and a user token, rather than through a server of its own: an extra hop would only be
+// there to move a header, and the router is already the thing that decides who may read a
+// call.
+func withCORS(mode auth.Mode, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		_, named := permitted[origin]
-		if origin != "" && (named || anywhere) {
+		if origin != "" && originAllowed(mode, origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", corsRequestHeaders)
@@ -1104,8 +1095,8 @@ func withCORS(allowed []string, next http.Handler) http.Handler {
 		}
 		// A preflight asks whether the real request would be allowed and carries nothing
 		// worth routing, so it is answered here rather than by a handler that would only
-		// report that nothing serves OPTIONS.
-		if r.Method == http.MethodOptions {
+		// report that nothing serves OPTIONS. Any other OPTIONS is routed like a request.
+		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

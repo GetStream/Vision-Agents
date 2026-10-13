@@ -44,8 +44,9 @@ type Options struct {
 	// BaseURL overrides the endpoint, for a gateway or a test server.
 	BaseURL string
 	// ReasoningEffort is how long the model may think before answering. Empty leaves the
-	// model's own floor, because thinking spends the latency budget before the first word
-	// and a live conversation has none to spend.
+	// default its family declares, which on the Flash models is their floor, because
+	// thinking spends the latency budget before the first word and a live conversation has
+	// none to spend.
 	//
 	// It cannot be turned off altogether: unlike the 2.5 series, every Gemini 3 model
 	// thinks, and the floor is as low as the setting goes.
@@ -64,10 +65,19 @@ const lowEffort = "low"
 // 3.8 Flash made thinking a level rather than a budget and dropped minimal with it, so low
 // is as far down as it goes. Asking for minimal there is a 400 halfway through a call
 // rather than a slower turn, which is why the floor is a table and not one constant.
+//
+// Gemini 4 Argon takes the same three levels but defaults to high. It is routed only in
+// the quality tier, where nobody is waiting on the first word, and high is the level
+// Artificial Analysis score it at.
 var modelCapabilities = map[string]llm.Capabilities{
 	"gemini-3.8": {
 		ReasoningEfforts: []string{lowEffort, "medium", "high"},
 		DefaultEffort:    lowEffort,
+		StreamsReasoning: false,
+	},
+	"gemini-4": {
+		ReasoningEfforts: []string{lowEffort, "medium", "high"},
+		DefaultEffort:    "high",
 		StreamsReasoning: false,
 	},
 }

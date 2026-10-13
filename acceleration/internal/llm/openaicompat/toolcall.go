@@ -39,8 +39,11 @@ type toolCallSplitter struct {
 	inCall bool
 	body   strings.Builder
 	depth  int
-	// quote is the mark that opened the string being read, `<|"|>` or `"`, or empty outside one.
+	// quote is the mark that opened the string being read, `<|"|>`, `"` or `'`, or empty
+	// outside one.
 	quote string
+	// parens is set for a call written `NAME(key=value)`, where `'` marks a string too.
+	parens bool
 	// closing is set after a call, while its closing marker may still follow.
 	closing bool
 }
@@ -91,7 +94,7 @@ func (c *toolCallSplitter) Write(delta string) (text string, calls []string) {
 				c.opened = true
 				continue
 			}
-			c.inCall, c.depth, c.quote = true, 0, ""
+			c.inCall, c.depth, c.quote, c.parens = true, 0, "", false
 		}
 	}
 }
@@ -200,7 +203,7 @@ func (c *toolCallSplitter) readCall() bool {
 	i := 0
 	for i < len(c.pending) {
 		rest := c.pending[i:]
-		if c.quote != `"` {
+		if c.quote == "" || c.quote == gemmaQuote {
 			if strings.HasPrefix(rest, gemmaQuote) {
 				c.quote = toggle(c.quote, gemmaQuote)
 				c.body.WriteString(gemmaQuote)
@@ -212,7 +215,7 @@ func (c *toolCallSplitter) readCall() bool {
 			}
 		}
 		ch := c.pending[i]
-		if c.quote == `"` && ch == '\\' {
+		if (c.quote == `"` || c.quote == "'") && ch == '\\' {
 			if i+1 == len(c.pending) {
 				break
 			}
@@ -222,8 +225,9 @@ func (c *toolCallSplitter) readCall() bool {
 		}
 		c.body.WriteByte(ch)
 		i++
-		if ch == '"' && c.quote != gemmaQuote {
-			c.quote = toggle(c.quote, `"`)
+		mark := ch == '"' || ch == '\'' && c.parens
+		if mark && (c.quote == "" || c.quote == string(ch)) {
+			c.quote = toggle(c.quote, string(ch))
 			continue
 		}
 		if c.quote != "" {
@@ -231,6 +235,7 @@ func (c *toolCallSplitter) readCall() bool {
 		}
 		switch ch {
 		case '{', '[', '(':
+			c.parens = c.parens || c.depth == 0 && ch == '('
 			c.depth++
 		case '}', ']', ')':
 			c.depth--
@@ -268,11 +273,11 @@ func parseGemmaCall(text string) (name, arguments string, ok bool) {
 	if brace <= 0 || !isName(text[:brace]) {
 		return "", "", false
 	}
-	p := gemmaParser{text: text[brace:], ends: ",}]"}
+	p := gemmaParser{text: text[brace:]}
 	var value any
 	if text[brace] == '(' {
 		p.pos++
-		p.ends += ")"
+		p.parens = true
 		value, ok = p.fields(')', '=')
 	} else {
 		value, ok = p.value()
@@ -296,8 +301,9 @@ func parseGemmaCall(text string) (name, arguments string, ok bool) {
 type gemmaParser struct {
 	text string
 	pos  int
-	// ends are what end a bare value: a parenthesis as well, in `NAME(key=value)` arguments.
-	ends string
+	// parens is set for `NAME(key=value)` arguments, where a parenthesis ends a bare value
+	// and single quotes mark a string as well.
+	parens bool
 }
 
 func (p *gemmaParser) space() {
@@ -316,14 +322,20 @@ func (p *gemmaParser) value() (any, bool) {
 		return p.quoted()
 	case p.text[p.pos] == '"':
 		return p.jsonString()
+	case p.text[p.pos] == '\'' && p.parens:
+		return p.singleQuoted()
 	case p.text[p.pos] == '{':
 		p.pos++
 		return p.fields('}', ':')
 	case p.text[p.pos] == '[':
 		return p.list()
 	}
+	ends := ",}]"
+	if p.parens {
+		ends += ")"
+	}
 	start := p.pos
-	for p.pos < len(p.text) && !strings.ContainsRune(p.ends, rune(p.text[p.pos])) {
+	for p.pos < len(p.text) && !strings.ContainsRune(ends, rune(p.text[p.pos])) {
 		p.pos++
 	}
 	token := strings.TrimSpace(p.text[start:p.pos])
@@ -372,6 +384,29 @@ func (p *gemmaParser) jsonString() (string, bool) {
 	}
 	p.pos = end + 1
 	return value, true
+}
+
+// singleQuoted reads a string between single quotes, as Python writes one. Only an escaped
+// quote or backslash loses its backslash.
+func (p *gemmaParser) singleQuoted() (string, bool) {
+	var value strings.Builder
+	for end := p.pos + 1; end < len(p.text); end++ {
+		switch p.text[end] {
+		case '\\':
+			end++
+			if end == len(p.text) {
+				return "", false
+			}
+			if p.text[end] != '\'' && p.text[end] != '\\' {
+				value.WriteByte('\\')
+			}
+		case '\'':
+			p.pos = end + 1
+			return value.String(), true
+		}
+		value.WriteByte(p.text[end])
+	}
+	return "", false
 }
 
 // fields reads keys and values up to closing, each key followed by assign, once the opening

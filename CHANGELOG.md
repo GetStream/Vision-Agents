@@ -612,6 +612,13 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A customer's website can call the router directly
+
+A browser page on any site may call the API and open a session socket with an API key and a
+user token, so client-side auth needs no list of allowed sites. `ROUTER_CORS_ORIGINS` and
+`cors_origins` are gone and ignored if set. A router in `noauth` mode, where a caller names its
+own tenant, answers pages on `localhost` and loopback addresses only.
+
 ### Connector bindings can name tools by pattern
 
 A connector binding may set `tool_patterns` instead of `tools`: tool names or `path.Match`
@@ -1365,6 +1372,13 @@ voices as Flash and is still a whole sentence per request, but it reaches first 
 about half a second, so it sits in the low-latency tier and is reachable through `tts-fast`
 and the low-latency shortcuts. It covers 101 languages to Flash's 130.
 
+### Google's flagship reasoning model: Gemini 4 Argon
+
+The router now answers with `gemini/gemini-4-argon`, 53 on the Artificial Analysis
+Intelligence Index. It reads images and thinks at `high` unless a request names `low` or
+`medium`; `minimal` is refused. It sits in the high-quality tier, so `llm-smart` and
+`llm-thinking` fall over to it, and nothing prefers it. It reuses `GOOGLE_API_KEY`.
+
 ### A recorded call, for a Go program with nobody at a microphone
 
 `stream.RecordedCall` reads a 16 kHz mono PCM16 WAV and hands it over the way a call
@@ -1893,6 +1907,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A request with a data policy can be answered by Gemini 3.8 Flash, the model `llm-fast` prefers. It declared no data policy, so any request that asked for no training passed it over.
 - The router starts on a database that already applied the migrations shipped before customer-hosted models. That migration was numbered earlier than one already applied, and goose refuses to start when it finds an unapplied migration below the database version. It now runs after that version. A database that already created `custom_models` under the old number keeps the table.
 - A text agent takes answers from its skills before its knowledge base, and from its
   knowledge base before the web. Its skills ran on a subagent that called no tool, so a

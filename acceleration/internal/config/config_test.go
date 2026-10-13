@@ -84,7 +84,6 @@ redis:
 auth:
   mode: api_key
   kek: a-passphrase
-cors_origins: [https://agents.example.com]
 data_move:
   retention: 48h
 `), 0o600))
@@ -97,7 +96,6 @@ data_move:
 	s.Equal("postgres://db/self_hosted", config.Postgres.DSN)
 	s.Equal("redis:6379", config.Redis.Addr)
 	s.Equal("api_key", config.Auth.Mode)
-	s.Equal([]string{"https://agents.example.com"}, config.CORSOrigins)
 	s.Equal(48*time.Hour, config.DataMove.Retention)
 	s.EqualValues(200, config.RateLimit.MessagesPerDay, "a file that says nothing keeps the default")
 }
