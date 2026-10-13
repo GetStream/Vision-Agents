@@ -82,6 +82,10 @@ func (s *AppModeSessionsSuite) TestAVoiceSessionIntoAnAppWithoutTheCallTypeIsRef
 	s.Equal(http.StatusBadRequest, status)
 	s.Equal(codeNotConfigured, failure.Code)
 	s.Contains(failure.Message, `getstream api CreateCallType --request '{"name":"agent"}'`)
+	// The check fires before anything is written to the customer's app: no orphan channel.
+	for _, r := range own.Requests("own-key") {
+		s.False(r.Writes(), "a refused voice create must not write to the customer's app (got %s %s)", r.Method, r.Path)
+	}
 }
 
 func (s *AppModeSessionsSuite) TestStartingVoiceInAnAppWithoutTheCallTypeIsRefused() {
@@ -138,6 +142,42 @@ func (s *AppModeSessionsSuite) TestAResumedLegacyConversationAsksForAFork() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "can only be read there: fork it")
+}
+
+func (s *AppModeSessionsSuite) TestAVoiceSessionForAnUnregisteredAppNeedsNoAgentCallType() {
+	// MC: the callable check is skipped when the identity is not Registered (deployment
+	// mode acting in a customer's own app key without a forwarded registration), so the
+	// session is not refused even if the app has no agent call type.
+	own := chattest.NewServer(s.T())
+	own.SetApp(chattest.App{ID: 4242, ChannelTypes: map[string]map[string][]string{"agent": {}}})
+	s.setApps(s.customerID(), func(apps *suiteApps) {
+		apps.own[s.customerID()] = streamapp.Identity{
+			CustomerID: s.customerID(), StreamApp: 4242, APIKey: "own-key",
+			Secret: streamapp.NewSecret("own-key-secret"), BaseURL: own.URL,
+			Registered: false,
+		}
+	})
+	incognito := CreateSessionRequest{StartVoice: pointerTo(true), Incognito: pointerTo(true)}
+
+	opened := s.serverClient.createSession(incognito)
+
+	s.Equal(opened.Id, opened.CallId)
+}
+
+func (s *AppModeSessionsSuite) TestASocketVoiceSessionNeedsNoAgentCallType() {
+	// ME: socket sessions carry their own edge (spec.Edge != nil), so callable is skipped
+	// even when the customer's Registered app has no agent call type.
+	own := s.giveApp(s.customerID(), 4242, "own-key")
+	own.SetApp(chattest.App{ID: 4242, ChannelTypes: map[string]map[string][]string{"agent": {}}})
+
+	connection := s.serverClient.opens("/v1/agents/socket")
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "start", "sample_rate": 24_000,
+		"session": map[string]any{"incognito": true},
+	}))
+	answered := s.await(connection, "session")
+
+	s.NotEmpty(answered["session"].(map[string]any)["id"])
 }
 
 // errorOf makes a request and returns the failure it was answered with.
