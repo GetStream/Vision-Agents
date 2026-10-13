@@ -65,7 +65,9 @@ func (s *STSSuite) TestATurnMeasuresTheWaitFromWhenTheCallerStopped() {
 
 func (s *STSSuite) TestAReplyNobodyWaitedForReportsNoWait() {
 	turn := NewTurn("", 1, time.Time{})
-	s.Equal("r-1", turn.ID, "a vendor without response ids gets one made up from the generation")
+	another := NewTurn("", 1, time.Time{})
+	s.NotEmpty(turn.ID, "a vendor without response ids gets a generated ID")
+	s.NotEqual(turn.ID, another.ID, "a fresh session cannot reuse an earlier generation's id")
 
 	turn.Chunk(audio.PcmData{Samples: make([]int16, 240), SampleRate: 24_000, Channels: 1})
 	complete := turn.Complete("gemini", "live", true, Usage{})

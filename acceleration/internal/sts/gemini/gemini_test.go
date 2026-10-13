@@ -108,7 +108,7 @@ func (s *GeminiSuite) TestTheCallerIsTakenToHaveStoppedAtTheLastWordHeard() {
 
 	begun, ok := events[5].(sts.ResponseStarted)
 	s.Require().True(ok)
-	s.Equal("r-1", begun.ResponseID, "this API has no response ids, so the reply is numbered")
+	s.NotEmpty(begun.ResponseID, "this API has no response ids, so the reply gets a generated ID")
 	chunk, ok := events[6].(sts.AudioChunk)
 	s.Require().True(ok)
 	s.Equal(OutputSampleRate, chunk.Audio.SampleRate)
@@ -116,6 +116,7 @@ func (s *GeminiSuite) TestTheCallerIsTakenToHaveStoppedAtTheLastWordHeard() {
 
 	complete, ok := events[7].(sts.ResponseComplete)
 	s.Require().True(ok)
+	s.Equal(begun.ResponseID, complete.ResponseID)
 	s.False(complete.Interrupted)
 	s.GreaterOrEqual(complete.TimeToFirstByteMs, 20.0, "the wait is timed from the last word heard")
 	s.InDelta(100, complete.AudioDurationMs, 0.001)
@@ -182,13 +183,13 @@ func (s *GeminiSuite) TestWhatTheModelSaidIsForwardedAsDeltas() {
 
 	events := s.drain(provider)
 	s.Require().Len(events, 3, "a reply is opened by the first thing the model says about it")
-	_, ok := events[0].(sts.ResponseStarted)
-	s.True(ok)
+	started, ok := events[0].(sts.ResponseStarted)
+	s.Require().True(ok)
 	said, ok := events[1].(sts.OutputTranscript)
 	s.Require().True(ok)
 	s.Equal(stt.ModeDelta, said.Mode)
 	s.Equal("Hello ", said.Text)
-	s.Equal("r-1", said.ResponseID)
+	s.Equal(started.ResponseID, said.ResponseID)
 }
 
 func (s *GeminiSuite) TestAToolCallRemembersTheNameItsAnswerNeeds() {

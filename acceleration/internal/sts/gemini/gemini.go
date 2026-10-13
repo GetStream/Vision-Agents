@@ -9,7 +9,7 @@
 // a resume loop that the other must not have.
 //
 // The Live API has no response ids and no event for the caller falling silent. A reply is
-// whatever the model says between one turnComplete and the next, numbered here, except that
+// whatever the model says between one turnComplete and the next, assigned an ID here, except that
 // a turnComplete sent while the interaction is still in progress does not end it; the caller
 // is taken to have stopped at the last piece of transcript before the model began.
 package gemini
@@ -419,6 +419,8 @@ func (s *STS) connect(ctx context.Context, handle string) (*websocket.Conn, erro
 		}
 		return nil, stack.Wrap(fmt.Errorf("gemini: dial: %w", err))
 	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	if err := s.handshake(conn, handle); err != nil {
 		conn.Close()
 		return nil, err
