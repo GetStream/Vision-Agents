@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/transport"
 )
 
 const (

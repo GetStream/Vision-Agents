@@ -9,9 +9,9 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/caller"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/livekitrtc"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/streamrtc"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/target"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/streamrtc"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/transport"
 )
 
 const agentReadyTimeout = 45 * time.Second

@@ -5,7 +5,7 @@ package streamrtc
 import (
 	"context"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/transport"
 )
 
 func join(ctx context.Context, options Options) (transport.Media, error) {

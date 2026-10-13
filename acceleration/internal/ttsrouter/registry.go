@@ -9,6 +9,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/gemini"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/s2pro"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/speechify"
 )
@@ -91,6 +92,15 @@ func DefaultRegistry() *Registry {
 	})
 
 	return registry
+}
+
+// RegisterMock adds the load-test voice, which reaches no vendor and says nothing. A
+// deployment that has not asked for mocks never calls this, so mock/mock-tts is a target
+// nothing can be built for.
+func RegisterMock(registry *Registry) {
+	registry.Register(mock.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		return mock.New(mock.Options{Model: spec.Model, Voice: spec.Voice, Logger: spec.Logger})
+	})
 }
 
 // elevenlabsSettings is what a caller can reach at ElevenLabs through overwrites.

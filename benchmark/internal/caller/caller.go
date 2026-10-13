@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/transport"
 )
 
 // DefaultTurnHangoverMS is how long the agent must be silent before the next caller turn.

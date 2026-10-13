@@ -35,6 +35,8 @@ type turnTracker struct {
 	open map[string]*openTurn
 	// finished receives each turn once, when nothing more can be learned about it.
 	finished func(Turn)
+	// owner is who the turn belongs to, which is what its span is labelled with.
+	owner routing.Owner
 	// grace is how long a turn waits for the track to take its queued speech.
 	grace time.Duration
 }
@@ -90,8 +92,8 @@ type turnMarks struct {
 func (m *turnMarks) FirstFrameQueued(at time.Time)   { m.tracker.queued(m.turn, m.id, at) }
 func (m *turnMarks) FirstAudiblePulled(at time.Time) { m.tracker.pulled(m.turn, m.id, at) }
 
-func newTurnTracker(finished func(Turn)) *turnTracker {
-	return &turnTracker{open: map[string]*openTurn{}, finished: finished, grace: playoutGrace}
+func newTurnTracker(owner routing.Owner, finished func(Turn)) *turnTracker {
+	return &turnTracker{open: map[string]*openTurn{}, finished: finished, owner: owner, grace: playoutGrace}
 }
 
 // begin opens a turn. The speech-to-text latency is the provider's own decode time for
@@ -199,7 +201,7 @@ func (t *turnTracker) release(current *openTurn, turnID string) {
 	finished := t.settleLocked(turnID, current)
 	t.mu.Unlock()
 
-	t.report(finished)
+	t.report(turnID, current, finished)
 }
 
 // dropped records speech that was synthesised but never reached the participant. A turn
@@ -234,7 +236,7 @@ func (t *turnTracker) spoke(turnID string, timeToFirstByteMs, audioDurationMs fl
 	finished := t.settleLocked(turnID, current)
 	t.mu.Unlock()
 
-	t.report(finished)
+	t.report(turnID, current, finished)
 }
 
 // completed records that the model finished, along with how many syntheses the turn will
@@ -253,7 +255,7 @@ func (t *turnTracker) completed(turnID string, timeToFirstTokenMs float64, synth
 	finished := t.settleLocked(turnID, current)
 	t.mu.Unlock()
 
-	t.report(finished)
+	t.report(turnID, current, finished)
 }
 
 // interrupt closes a turn a participant talked over. Whatever was measured before the
@@ -273,7 +275,7 @@ func (t *turnTracker) interrupt(turnID string) {
 	finished := measure(turnID, current)
 	t.mu.Unlock()
 
-	t.report(&finished)
+	t.report(turnID, current, &finished)
 }
 
 // settleLocked closes the turn if nothing more can be learned about it.
@@ -295,8 +297,12 @@ func (t *turnTracker) settleLocked(turnID string, current *openTurn) *Turn {
 	return &finished
 }
 
-func (t *turnTracker) report(finished *Turn) {
-	if finished != nil && t.finished != nil {
+func (t *turnTracker) report(turnID string, current *openTurn, finished *Turn) {
+	if finished == nil {
+		return
+	}
+	traceTurn(t.owner, turnID, current)
+	if t.finished != nil {
 		t.finished(*finished)
 	}
 }

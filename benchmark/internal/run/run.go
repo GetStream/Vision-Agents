@@ -14,13 +14,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/report"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/synth"
 	benchtarget "github.com/GetStream/Vision-Agents/benchmark/internal/target"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/world"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 // Transports Voicebench can run the scripted caller over.

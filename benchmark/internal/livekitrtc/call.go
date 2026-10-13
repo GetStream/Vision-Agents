@@ -13,9 +13,9 @@ import (
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/pion/webrtc/v4"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/rtcaudio"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/rtcaudio"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/transport"
 )
 
 type rtcRoom struct {

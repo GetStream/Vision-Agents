@@ -3,7 +3,7 @@ package transport
 import (
 	"testing"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 func TestChunk(t *testing.T) {
