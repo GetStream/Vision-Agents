@@ -98,6 +98,9 @@ runs is not a result, and staging has other traffic. Say how many runs a claim r
 For a change meant to cut allocations, a `go test -bench` micro-benchmark on the hot function
 is the evidence that it allocates less; this benchmark is the evidence that it mattered.
 
+`performance_benchmark/findings.md` is what the runs so far found, what was fixed and what is
+still slow. Read it before chasing a ceiling, and add to it after a run worth remembering.
+
 ## 5. Per-turn stages
 
 The router emits a span per turn (`agent.turn`) with a child per stage — `turn.stt`,
