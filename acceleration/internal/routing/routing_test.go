@@ -327,6 +327,11 @@ func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {
 
 	for modality, section := range config {
 		for _, provider := range section.Providers {
+			if provider.Provider == "mock" {
+				// The load benchmark's stand-ins reach no vendor, so nothing is what they
+				// cost and nothing is what they should report.
+				continue
+			}
 			s.NotZerof(provider.Price, "%s/%s has no price, so its cost would report as zero",
 				modality, provider.Name())
 		}

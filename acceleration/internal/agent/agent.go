@@ -538,7 +538,7 @@ func New(options Options) (*Agent, error) {
 		record = agent.decisionStore.Record
 	}
 	agent.converse = newConverse(settling, listening, emitter, record, 0, logger)
-	agent.turns = newTurnTracker(agent.finishTurn)
+	agent.turns = newTurnTracker(owner, agent.finishTurn)
 	agent.nativeMode.Store(native)
 
 	if options.Memory != nil {

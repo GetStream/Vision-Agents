@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strconv"
+	"time"
 )
 
 // Identity is one customer's Stream app and the credential the router acts in it with.
@@ -32,6 +33,12 @@ type Identity struct {
 	APIKey string
 	// Secret signs server-side requests, tokens and hook checks. It never prints.
 	Secret Secret
+	// Token is a server token the gateway minted for the app, which the router acts with
+	// when it holds no Secret. Whatever a token cannot sign, the gateway's mint endpoint
+	// signs instead. It never prints.
+	Token Secret
+	// TokenExpires is when Token stops being accepted.
+	TokenExpires time.Time
 	// UserToken is the deployment's raw STREAM_USER_TOKEN, which a voice edge prefers to
 	// minting its own. Only the deployment identity carries one.
 	UserToken string
@@ -50,7 +57,7 @@ func (i Identity) MintsGuests() bool { return !i.Registered || i.AllowGuests }
 
 // Fingerprint names the credential without revealing it, for caches and logs.
 func (i Identity) Fingerprint() string {
-	sum := sha256.Sum256([]byte(i.APIKey + "\x00" + i.Secret.Reveal() + "\x00" + i.BaseURL))
+	sum := sha256.Sum256([]byte(i.APIKey + "\x00" + i.Secret.Reveal() + "\x00" + i.Token.Reveal() + "\x00" + i.BaseURL))
 	return hex.EncodeToString(sum[:8])
 }
 

@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/caller"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/world"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 func TestPercentileAndPassK(t *testing.T) {

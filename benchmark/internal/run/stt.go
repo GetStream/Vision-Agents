@@ -18,11 +18,11 @@ import (
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/report"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/synth"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 // sttRate is the rate the router's transcription socket takes by default.

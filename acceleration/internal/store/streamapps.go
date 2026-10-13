@@ -455,6 +455,59 @@ func (s *Store) StreamFallbackUses(ctx context.Context, since time.Time) ([]Stre
 	return uses, nil
 }
 
+// StreamAppToken is the newest server token the gateway minted for a Stream app, sealed
+// under the deployment's keyring and bound to this row.
+type StreamAppToken struct {
+	bun.BaseModel `bun:"table:stream_app_tokens,alias:sat"`
+
+	StreamAppPK int64  `bun:"stream_app_pk,pk"`
+	CustomerID  string `bun:"customer_id,notnull"`
+	APIKey      string `bun:"api_key,notnull"`
+	Sealed      []byte `bun:"token_sealed,notnull"`
+	// KEKVersion names which key encryption key sealed this row.
+	KEKVersion int       `bun:"kek_version,notnull"`
+	ExpiresAt  time.Time `bun:"expires_at,notnull"`
+	UpdatedAt  time.Time `bun:"updated_at,notnull"`
+}
+
+// ErrNoStreamAppToken is an app the gateway has minted no token for here.
+var ErrNoStreamAppToken = errors.New("store: no token is held for this stream app")
+
+// KeepStreamAppToken holds a token for its app, unless the one already held outlasts it,
+// and reports whether it was kept.
+func (s *Store) KeepStreamAppToken(ctx context.Context, token StreamAppToken) (bool, error) {
+	token.ExpiresAt = token.ExpiresAt.UTC()
+	token.UpdatedAt = time.Now().UTC()
+	result, err := s.db.NewInsert().Model(&token).
+		On("CONFLICT (stream_app_pk) DO UPDATE").
+		Set("customer_id = EXCLUDED.customer_id").
+		Set("api_key = EXCLUDED.api_key").
+		Set("token_sealed = EXCLUDED.token_sealed").
+		Set("kek_version = EXCLUDED.kek_version").
+		Set("expires_at = EXCLUDED.expires_at").
+		Set("updated_at = EXCLUDED.updated_at").
+		Where("sat.expires_at < EXCLUDED.expires_at").
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("store: keep stream app token: %w", err)
+	}
+	written, _ := result.RowsAffected()
+	return written > 0, nil
+}
+
+// StreamAppToken is the token held for an app.
+func (s *Store) StreamAppToken(ctx context.Context, app int64) (StreamAppToken, error) {
+	var token StreamAppToken
+	err := s.db.NewSelect().Model(&token).Where("stream_app_pk = ?", app).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return StreamAppToken{}, ErrNoStreamAppToken
+	}
+	if err != nil {
+		return StreamAppToken{}, fmt.Errorf("store: read stream app token: %w", err)
+	}
+	return token, nil
+}
+
 // StreamApps are every registered app, with its keys, or with connected only those the
 // router acts in with their own keys.
 func (s *Store) StreamApps(ctx context.Context, connected bool) ([]StreamApp, error) {

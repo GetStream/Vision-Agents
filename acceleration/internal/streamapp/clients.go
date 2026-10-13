@@ -3,6 +3,8 @@ package streamapp
 import (
 	"container/list"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"sync"
@@ -205,6 +207,30 @@ func (c *Clients) WithKey(ctx context.Context, bound Bound, apiKey string) (Boun
 	return c.bind(identity)
 }
 
+// Forwarded is the source of the gateway's tokens, false when customers' apps are not
+// acted in with them.
+func (c *Clients) Forwarded() (*Forwarded, bool) {
+	stored, ok := c.Stored()
+	if !ok || stored.forwarded == nil {
+		return nil, false
+	}
+	return stored.forwarded, true
+}
+
+// KeepToken holds a server token the gateway forwarded for a customer's own app, so the
+// customer is acted in with it from then on.
+func (c *Clients) KeepToken(ctx context.Context, customer, apiKey, token string) error {
+	forwarded, ok := c.Forwarded()
+	if !ok {
+		return nil
+	}
+	kept, err := forwarded.Keep(ctx, customer, apiKey, token)
+	if kept {
+		c.Invalidate(customer)
+	}
+	return err
+}
+
 // PerApp reports whether customers act in apps of their own, which is app mode.
 func (c *Clients) PerApp() bool {
 	perApp, ok := c.source.(interface{ PerApp() bool })
@@ -327,5 +353,14 @@ func newStreamClient(identity Identity, httpClient *http.Client) (*getstream.Str
 	if httpClient != nil {
 		options = append(options, getstream.WithHTTPClient(httpClient))
 	}
-	return getstream.NewClient(identity.APIKey, identity.Secret.Reveal(), options...)
+	secret := identity.Secret.Reveal()
+	if secret == "" && !identity.Token.Empty() {
+		// The SDK refuses to be built without a secret. A random one signs nothing Stream
+		// accepts, so a token minted on this client by mistake fails rather than passes.
+		placeholder := make([]byte, 32)
+		_, _ = rand.Read(placeholder)
+		secret = hex.EncodeToString(placeholder)
+		options = append(options, getstream.WithAuthToken(identity.Token.Reveal()))
+	}
+	return getstream.NewClient(identity.APIKey, secret, options...)
 }

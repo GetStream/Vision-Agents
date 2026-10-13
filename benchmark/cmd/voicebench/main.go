@@ -15,13 +15,13 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/report"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/run"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/slack"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/synth"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 func main() {

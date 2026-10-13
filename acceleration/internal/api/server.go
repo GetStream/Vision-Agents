@@ -1020,9 +1020,26 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			r = r.WithContext(ctx)
 			s.policies.Join(principal.AppID, principal.OrganizationID)
 			s.recordUser(ctx, principal)
+			s.keepServerToken(ctx, r, principal.AppID)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// keepServerToken holds the server token the proxy forwarded for the caller's app. Only a
+// proxy that declares kinds is believed to write it, rather than pass on a caller's own.
+// A failure is logged: the request is served with whatever token was held before.
+func (s *Server) keepServerToken(ctx context.Context, r *http.Request, customer string) {
+	if s.stream == nil || s.authMode != auth.Proxy || !s.proxyDeclaresKind {
+		return
+	}
+	token := strings.TrimSpace(r.Header.Get(auth.ServerTokenHeader))
+	if token == "" {
+		return
+	}
+	if err := s.stream.KeepToken(ctx, customer, strings.TrimSpace(r.Header.Get(auth.ServerTokenKeyHeader)), token); err != nil {
+		s.logger.Warn("stream: could not keep the server token the proxy forwarded", "customer_id", customer, "error", err)
+	}
 }
 
 // recordUser writes down the end user a request is for, so an app can ask who its users

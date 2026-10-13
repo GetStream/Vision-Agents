@@ -14,7 +14,7 @@ import (
 	protoLogger "github.com/livekit/protocol/logger"
 	webrtcmedia "github.com/pion/webrtc/v4/pkg/media"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 const (

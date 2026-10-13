@@ -63,6 +63,14 @@ const (
 	// the caller is and a header would only be a way around it.
 	OrganizationHeader = "X-Stream-Organization-Id"
 	AppHeader          = "X-Stream-App-Id"
+	// ServerTokenHeader is a server token the proxy minted for the app it named, and
+	// ServerTokenKeyHeader the app's key it goes with. The router acts in the app with it
+	// when it holds none of the app's secrets.
+	ServerTokenHeader    = "X-Stream-Server-Token"
+	ServerTokenKeyHeader = "X-Stream-Server-Token-Key"
+	// HookAppHeader is the app a Stream webhook came from, written by the proxy only once
+	// it checked the webhook's signature with that app's secret.
+	HookAppHeader = "X-Stream-Hook-App"
 	// APIKeyHeader carries the public half of the credential.
 	APIKeyHeader = "X-Api-Key"
 	// AuthTypeHeader names which kind of credential the caller believes it is presenting.

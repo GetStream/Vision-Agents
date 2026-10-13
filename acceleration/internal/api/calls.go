@@ -275,7 +275,7 @@ func (s *Server) createCallToken(ctx context.Context, request *createCallTokenRe
 	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
-	token, err := bound.Client.CreateToken(userID, getstream.WithExpiration(listenerTokenValidity))
+	token, err := s.stream.MintUserToken(ctx, bound, userID, listenerTokenValidity)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -363,7 +363,7 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
-	token, err := client.CreateToken(userID, getstream.WithExpiration(listenerTokenValidity))
+	token, err := s.stream.MintUserToken(ctx, bound, userID, listenerTokenValidity)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}

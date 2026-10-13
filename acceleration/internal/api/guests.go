@@ -117,7 +117,7 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 	}
 
 	expiresAt := time.Now().UTC().Add(guestTokenValidity)
-	token, err := client.CreateToken(userID, getstream.WithExpiration(guestTokenValidity))
+	token, err := s.stream.MintUserToken(ctx, bound, userID, guestTokenValidity)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}

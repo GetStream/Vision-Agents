@@ -615,9 +615,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	streams := &api.Streams{}
 
 	if section, ok := capabilities[routing.STT]; ok {
+		transcribers := sttrouter.DefaultRegistry()
+		if settings.MockProviders {
+			sttrouter.RegisterMock(transcribers)
+		}
 		speech, err := sttrouter.New(sttrouter.Options{
 			Config:   section,
-			Registry: sttrouter.DefaultRegistry(),
+			Registry: transcribers,
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
@@ -649,9 +653,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 
 	if section, ok := capabilities[routing.TTS]; ok {
+		speakers := ttsrouter.DefaultRegistry()
+		if settings.MockProviders {
+			ttsrouter.RegisterMock(speakers)
+		}
 		voice, err := ttsrouter.New(ttsrouter.Options{
 			Config:   section,
-			Registry: ttsrouter.DefaultRegistry(),
+			Registry: speakers,
 			Store:    pgStore,
 			Live:     liveClient,
 			Voices:   resolver,
@@ -712,9 +720,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 		if configs != nil {
 			models = llmrouter.NewCustomModels(configs, secrets, settings.Models.PrivateEndpoints)
 		}
+		thinkers := llmrouter.DefaultRegistry()
+		if settings.MockProviders {
+			llmrouter.RegisterMock(thinkers)
+		}
 		chat, err := llmrouter.New(llmrouter.Options{
 			Config:     section,
-			Registry:   llmrouter.DefaultRegistry(),
+			Registry:   thinkers,
 			Store:      pgStore,
 			Live:       liveClient,
 			Quota:      limiter,

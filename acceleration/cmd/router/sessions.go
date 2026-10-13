@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
@@ -17,14 +18,28 @@ import (
 // to do it in.
 var errNoStreamApp = errors.New("router: no Stream app is configured for this customer")
 
+// agentTokenValidity is how long the token an agent joins a call with lasts when the
+// gateway signs it: longer than any call, and within the day the gateway allows.
+const agentTokenValidity = 12 * time.Hour
+
 // edgeFor joins a session's call in the Stream app the session is pinned to, with that
 // app's own credential. Nothing is read from the environment: the identity is the whole
 // answer, so a customer's call is never joined in whichever app the deployment names.
 func edgeFor(clients *streamapp.Clients) session.EdgeFactory {
-	return func(_ context.Context, spec session.Spec, stream streamapp.Bound, logger *slog.Logger) (agent.Edge, error) {
+	return func(ctx context.Context, spec session.Spec, stream streamapp.Bound, logger *slog.Logger) (agent.Edge, error) {
 		identity := stream.Identity
 		if identity.APIKey == "" {
 			return nil, errNoStreamApp
+		}
+		userToken := identity.UserToken
+		if identity.Secret.Empty() && userToken == "" {
+			// An app acted in with a forwarded token: the agent joins with a user token
+			// the gateway signs, since the router holds no secret to sign one with.
+			minted, err := clients.MintUserToken(ctx, stream, spec.UserID, agentTokenValidity)
+			if err != nil {
+				return nil, err
+			}
+			userToken = minted
 		}
 		return streamedge.New(streamedge.Options{
 			CallID:     spec.CallID,
@@ -32,7 +47,7 @@ func edgeFor(clients *streamapp.Clients) session.EdgeFactory {
 			User:       streamedge.User{ID: spec.UserID, Name: spec.UserName},
 			APIKey:     identity.APIKey,
 			APISecret:  identity.Secret.Reveal(),
-			UserToken:  identity.UserToken,
+			UserToken:  userToken,
 			BaseURL:    identity.BaseURL,
 			HTTPClient: clients.HTTPClient(),
 			Logger:     logger,

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/report"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/synth"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 func TestScoreClipTimesFromTheSpeechNotTheFile(t *testing.T) {
