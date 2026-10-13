@@ -592,6 +592,95 @@ describe("Agent", () => {
       });
     });
 
+    describe("mcp_servers and channels", () => {
+      const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" };
+
+      beforeEach(() => {
+        router.serve("POST", "/v1/agents/sync", { body: { unchanged: false, config: stored } });
+      });
+
+      async function synced(declaration: string): Promise<Record<string, unknown>> {
+        const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
+        await mkdir(root);
+        await writeFile(join(root, "agent.yaml"), declaration);
+        await writeFile(join(root, "instructions.md"), "Be brief.\n");
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+        return router.requestsTo("POST", "/v1/agents/sync").at(-1)?.body as Record<string, unknown>;
+      }
+
+      it("sends them the way the Go SDK does", async () => {
+        const body = await synced(
+          [
+            "name: jean",
+            "mcp_servers:",
+            "  - name: crm",
+            "    url: https://crm.example.com/mcp",
+            "    tools: [list_*, get_deal]",
+            "    scopes:",
+            "      - read",
+            "    user: true",
+            "  - name: notes",
+            "    url: https://notes.example.com/mcp",
+            "    tools: []",
+            "    user: false",
+            "channels:",
+            "  whatsapp:",
+            '    number: "+15551234567"',
+            "  sms:",
+            "    number: +15557654321",
+            "  imessage:",
+            "  identity: link",
+            "",
+          ].join("\n"),
+        );
+
+        assert.deepEqual(body["mcp_servers"], [
+          {
+            name: "crm",
+            url: "https://crm.example.com/mcp",
+            tools: ["list_*", "get_deal"],
+            scopes: ["read"],
+            user: true,
+          },
+          { name: "notes", url: "https://notes.example.com/mcp" },
+        ]);
+        assert.deepEqual(body["channels"], {
+          whatsapp: { number: "+15551234567" },
+          sms: { number: "+15557654321" },
+          identity: "link",
+        });
+      });
+
+      it("sends no mcp_servers for an empty list, and empty channels for an empty mapping", async () => {
+        const body = await synced("name: jean\nmcp_servers: []\nchannels: {}\n");
+
+        assert.equal("mcp_servers" in body, false);
+        assert.deepEqual(body["channels"], {});
+      });
+
+      it("fingerprints a change to either", async () => {
+        const one = await synced("name: jean\nchannels:\n  sms:\n    number: +15550000001\n");
+        const other = await synced("name: jean\nchannels:\n  sms:\n    number: +15550000002\n");
+        const servers = await synced("name: jean\nmcp_servers:\n  - name: a\n    url: https://a.example.com\n");
+
+        assert.notEqual(one["hash"], other["hash"]);
+        assert.notEqual(one["hash"], servers["hash"]);
+      });
+
+      it("sends the same body as before for an agent.yaml that names neither", async () => {
+        const body = await synced("name: jean\nllm: llm-fast\nplugins:\n  - weather\n");
+
+        assert.deepEqual(body, {
+          name: "jean",
+          instructions: "Be brief.",
+          llm: "llm-fast",
+          plugins: ["weather"],
+          // Probed on the base, before agent.yaml could declare either.
+          hash: "693edb6e1c1bf06d590d73d9b06ec2b7defcb319627b098b9a0c1f56e2b38561",
+        });
+      });
+    });
+
     it("only reads back a directory nothing has touched since .agent_sync was written", async () => {
       const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" };
       router.serve("POST", "/v1/agents/sync", { body: { unchanged: false, config: stored } });
