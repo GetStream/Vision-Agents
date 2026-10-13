@@ -187,6 +187,11 @@ class FunctionRegistry:
         if isinstance(func_def, _ExplicitSchemaFunction):
             return await func_def.function(**arguments)
 
+        # Drop arguments the function does not take: a model sometimes adds one it saw on
+        # another tool, like a search tool's `query` on a tool that takes nothing.
+        names = {param.name for param in func_def.parameters}
+        arguments = {k: v for k, v in arguments.items() if k in names}
+
         # Validate required parameters for introspected functions
         for param in func_def.parameters:
             if param.required and param.name not in arguments:
