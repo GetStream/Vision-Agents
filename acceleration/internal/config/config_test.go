@@ -390,3 +390,28 @@ func (s *ConfigSuite) TestChatTimingsAreOffUnlessTurnedOn() {
 	s.True(config.Agent.ChatTimings)
 	s.Equal("true", os.Getenv("ROUTER_CHAT_TIMINGS"), "what is exported says the same")
 }
+
+func (s *ConfigSuite) TestTelnyxSettingsAreReadFromTheEnvironment() {
+	s.T().Setenv("TELNYX_API_KEY", "KEY123")
+	s.T().Setenv("TELNYX_CONNECTION_ID", "conn-1")
+	s.T().Setenv("TELNYX_PUBLIC_KEY", "cHVibGlj")
+
+	config, _, err := Load("")
+	s.Require().NoError(err)
+
+	s.Equal(Telnyx{APIKey: "KEY123", ConnectionID: "conn-1", PublicKey: "cHVibGlj"}, config.Telnyx)
+}
+
+// The Telnyx provider reads its own variables, so settings from a file have to reach them.
+func (s *ConfigSuite) TestTelnyxSettingsInAFileReachTheEnvironment() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte(
+		"telnyx:\n  api_key: KEY123\n  connection_id: conn-1\n  public_key: cHVibGlj\n"), 0o600))
+
+	_, _, err := Load(path)
+	s.Require().NoError(err)
+
+	s.Equal("KEY123", os.Getenv("TELNYX_API_KEY"))
+	s.Equal("conn-1", os.Getenv("TELNYX_CONNECTION_ID"))
+	s.Equal("cHVibGlj", os.Getenv("TELNYX_PUBLIC_KEY"))
+}

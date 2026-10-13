@@ -994,14 +994,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 
 	var telnyxPublicKey ed25519.PublicKey
-	if encoded := os.Getenv(telnyxsig.PublicKeyEnvVar); encoded != "" {
-		telnyxPublicKey, err = telnyxsig.ParsePublicKey(encoded)
+	if settings.Telnyx.PublicKey != "" {
+		telnyxPublicKey, err = telnyxsig.ParsePublicKey(settings.Telnyx.PublicKey)
 		if err != nil {
 			logger.Error("calls to telnyx numbers will not be answered", "error", err)
 		}
 	}
 	// Both gaps are silent otherwise: Telnyx just gets rejected responses.
-	if os.Getenv("TELNYX_API_KEY") != "" {
+	if settings.Telnyx.APIKey != "" {
 		if telnyxPublicKey == nil {
 			logger.Warn("calls to telnyx numbers will not be answered until "+
 				telnyxsig.PublicKeyEnvVar+" is set to a valid key", "setting", telnyxsig.PublicKeyEnvVar)
@@ -1011,7 +1011,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			logger.Warn("telnyx numbers cannot be attached and calls to them will not be answered until "+
 				authKEKEnvVar+" is set", "setting", authKEKEnvVar)
 		}
-		if os.Getenv("TELNYX_CONNECTION_ID") == "" {
+		if settings.Telnyx.ConnectionID == "" {
 			logger.Warn("telnyx numbers cannot be attached and calls to or from them will not work until "+
 				"TELNYX_CONNECTION_ID is set", "setting", "TELNYX_CONNECTION_ID")
 		}
@@ -1037,7 +1037,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		DenyRegistration:      settings.Stream.DenyRegistration,
 		HookSecret:            settings.Stream.APISecret,
 		TelnyxPublicKey:       telnyxPublicKey,
-		TelnyxConnectionID:    os.Getenv("TELNYX_CONNECTION_ID"),
+		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
 		Campaigns:             campaigns,
 		Simulations:           simulations,
 		PluginEvents:          events,
