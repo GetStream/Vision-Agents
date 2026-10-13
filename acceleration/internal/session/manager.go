@@ -275,6 +275,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if err := m.keepable(ctx, spec, stream); err != nil {
 		return nil, err
 	}
+	if err := m.callable(ctx, spec, stream); err != nil {
+		return nil, stack.Wrap(err)
+	}
 	// In app mode a session with no Stream app at all is pinned to none, rather than left
 	// unpinned, which reads as the deployment's own app and would let that app's hooks and
 	// backfill claim it.
@@ -541,6 +544,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		case spec.Edge != nil:
 			edge = spec.Edge
 		default:
+			if err := m.callable(ctx, spec, stream); err != nil {
+				return nil, stack.Wrap(err)
+			}
 			opened, err := m.options.Edge(ctx, spec, stream, m.logger)
 			if err != nil {
 				return nil, stack.Wrap(err)
@@ -1471,6 +1477,32 @@ func (m *Manager) keepable(ctx context.Context, spec Spec, stream streamapp.Boun
 	case streamapp.TypeUnsafe:
 		return fmt.Errorf("session: this app's Stream app lets clients make, change or join %s channels, "+
 			"so a conversation kept there could be rewritten by anybody: restrict the channel type's grants", streamapp.AgentChannelType)
+	}
+	return nil
+}
+
+// ErrNoAgentCallType is a session that would join an agent call in a Stream app of the
+// customer's own that has no agent call type, which Stream refuses the call for.
+var ErrNoAgentCallType = fmt.Errorf("session: this app's Stream app has no %s call type to make the agent's call in: "+
+	`create it with getstream api CreateCallType --request '{"name":"%s"}'`, streamapp.AgentCallType, streamapp.AgentCallType)
+
+// callable refuses a session that would join a Stream call of the agent call type in an
+// app of the customer's own that Stream says has none. Only a definite answer refuses: an
+// app that could not be asked is left to the call, as before.
+func (m *Manager) callable(ctx context.Context, spec Spec, stream streamapp.Bound) error {
+	if spec.Text || spec.Edge != nil || spec.CallType != streamapp.AgentCallType {
+		return nil
+	}
+	if m.options.Stream == nil || stream.Client == nil || !stream.Identity.Registered {
+		return nil
+	}
+	readiness, err := m.options.Stream.Readiness(ctx, stream)
+	if err != nil {
+		m.logger.Warn("could not check the Stream app a call is made in", "customer_id", spec.CustomerID, "error", err)
+		return nil
+	}
+	if readiness.CallType == streamapp.TypeMissing {
+		return ErrNoAgentCallType
 	}
 	return nil
 }

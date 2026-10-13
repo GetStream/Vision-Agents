@@ -3,10 +3,13 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // AppModeSessionsSuite opens sessions with the suite's apps answering as app mode does,
@@ -69,6 +72,57 @@ func (s *AppModeSessionsSuite) TestAPersistedTextSessionIntoAnAppWithoutTheChann
 	s.Contains(failure, "no agent channel type")
 }
 
+func (s *AppModeSessionsSuite) TestAVoiceSessionIntoAnAppWithoutTheCallTypeIsRefused() {
+	// Stream used to refuse the call itself, saying only that the call type does not exist.
+	own := s.giveApp(s.customerID(), 4242, "own-key")
+	own.SetApp(chattest.App{ID: 4242, ChannelTypes: map[string]map[string][]string{"agent": {}}})
+
+	status, failure := s.errorOf(http.MethodPost, "/v1/agents/sessions", CreateSessionRequest{StartVoice: pointerTo(true)})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeNotConfigured, failure.Code)
+	s.Contains(failure.Message, `getstream api CreateCallType --request '{"name":"agent"}'`)
+}
+
+func (s *AppModeSessionsSuite) TestStartingVoiceInAnAppWithoutTheCallTypeIsRefused() {
+	own := s.giveApp(s.customerID(), 4242, "own-key")
+	own.SetApp(chattest.App{ID: 4242, ChannelTypes: map[string]map[string][]string{"agent": {}}})
+	opened := s.serverClient.createSession(textSession(nil))
+
+	status, failure := s.errorOf(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/voice", nil)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeNotConfigured, failure.Code)
+	s.Contains(failure.Message, `getstream api CreateCallType --request '{"name":"agent"}'`)
+	s.Empty(s.serverClient.getSession(opened.Id).CallId, "the conversation carries on in writing")
+}
+
+func (s *AppModeSessionsSuite) TestAVoiceSessionIntoAnAppWithTheCallTypeJoinsIt() {
+	s.giveApp(s.customerID(), 4242, "own-key")
+
+	opened := s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true)})
+
+	s.Equal(opened.Id, opened.CallId)
+}
+
+func (s *AppModeSessionsSuite) TestAVoiceSessionIntoAnAppNobodyCouldAskIsNotRefusedForTheCallType() {
+	// Only Stream saying the call type is missing refuses: an app that could not be read is
+	// left to the call, as it was before the check.
+	closed := httptest.NewServer(nil)
+	closed.Close()
+	s.setApps(s.customerID(), func(apps *suiteApps) {
+		apps.own[s.customerID()] = streamapp.Identity{
+			CustomerID: s.customerID(), StreamApp: 4242, APIKey: "own-key",
+			Secret: streamapp.NewSecret("own-key-secret"), BaseURL: closed.URL, Registered: true,
+		}
+	})
+	incognito := CreateSessionRequest{StartVoice: pointerTo(true), Incognito: pointerTo(true)}
+
+	opened := s.serverClient.createSession(incognito)
+
+	s.Equal(opened.Id, opened.CallId)
+}
+
 func (s *AppModeSessionsSuite) TestAResumedLegacyConversationAsksForAFork() {
 	// Begun in the shared app before the customer registered its own; once the fallback
 	// is off it is read there and not added to.
@@ -86,3 +140,10 @@ func (s *AppModeSessionsSuite) TestAResumedLegacyConversationAsksForAFork() {
 	s.Contains(failure, "can only be read there: fork it")
 }
 
+// errorOf makes a request and returns the failure it was answered with.
+func (s *AppModeSessionsSuite) errorOf(method, path string, body any) (int, ErrorDetail) {
+	status, payload := s.serverClient.call(method, path, body)
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
+	return status, answered.Error
+}
