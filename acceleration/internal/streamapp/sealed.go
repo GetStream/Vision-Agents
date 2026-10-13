@@ -17,8 +17,13 @@ const keyPurpose = "accelerate:stream-app-key:v1"
 // key. A sealed secret moved to any other row does not open there. Each part is prefixed
 // with its length, so no two different rows can run together into the same bytes.
 func keyAAD(customer string, app int64, apiKey string) []byte {
+	return boundTo(keyPurpose, customer, app, apiKey)
+}
+
+// boundTo is what something sealed for an app's key is bound to, named by its purpose.
+func boundTo(purpose, customer string, app int64, apiKey string) []byte {
 	var aad []byte
-	for _, part := range []string{keyPurpose, customer, strconv.FormatInt(app, 10), apiKey} {
+	for _, part := range []string{purpose, customer, strconv.FormatInt(app, 10), apiKey} {
 		aad = binary.BigEndian.AppendUint32(aad, uint32(len(part)))
 		aad = append(aad, part...)
 	}

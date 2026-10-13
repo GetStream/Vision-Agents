@@ -295,6 +295,55 @@ func (s *ConfigSuite) TestAppModeStartsBehindAProxyThatDeclaresKinds() {
 	s.Equal(TenancyApp, config.Stream.Tenancy)
 }
 
+func (s *ConfigSuite) TestForwardedCredentialsStartBehindAProxyThatDeclaresKinds() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
+	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "true")
+	s.T().Setenv("ROUTER_STREAM_CREDENTIALS", CredentialsForwarded)
+	s.T().Setenv("ROUTER_STREAM_MINT_URL", "http://gateway-internal:8082")
+	s.T().Setenv("ROUTER_STREAM_MINT_TOKEN", "the-routers-bearer")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.True(config.Stream.Forwarded())
+	s.Equal("http://gateway-internal:8082", config.Stream.MintURL)
+}
+
+func (s *ConfigSuite) TestForwardedCredentialsAreRefusedWithoutAProxyToForwardThem() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+	s.T().Setenv("ROUTER_AUTH_MODE", "api_key")
+	s.T().Setenv("ROUTER_STREAM_CREDENTIALS", CredentialsForwarded)
+	s.T().Setenv("ROUTER_STREAM_MINT_URL", "http://gateway-internal:8082")
+	s.T().Setenv("ROUTER_STREAM_MINT_TOKEN", "the-routers-bearer")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "auth.mode=proxy")
+}
+
+func (s *ConfigSuite) TestForwardedCredentialsAreRefusedWithoutTheMintEndpoint() {
+	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
+	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
+	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "true")
+	s.T().Setenv("ROUTER_STREAM_CREDENTIALS", CredentialsForwarded)
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "stream.mint_url")
+}
+
+func (s *ConfigSuite) TestStreamCredentialsAreRegisteredOrForwarded() {
+	s.T().Setenv("ROUTER_STREAM_CREDENTIALS", "borrowed")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "stream.credentials")
+}
+
 func (s *ConfigSuite) TestStreamFallbackDefaultsToRefuseInAppMode() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

@@ -58,7 +58,7 @@ func (s *StoredSuite) SetupSuite() {
 
 func (s *StoredSuite) SetupTest() {
 	// The database is this suite's own, and an api key is the same key in every test.
-	_, err := s.store.DB().ExecContext(s.ctx, "TRUNCATE stream_apps, stream_fallback_uses CASCADE")
+	_, err := s.store.DB().ExecContext(s.ctx, "TRUNCATE stream_apps, stream_fallback_uses, stream_app_tokens CASCADE")
 	s.Require().NoError(err)
 	s.stream = chattest.NewServer(s.T())
 	s.deployment = NewDeployment(DeploymentOptions{APIKey: "deploy-key", Secret: "deploy-secret", App: 1, Strict: true, BaseURL: s.stream.URL})

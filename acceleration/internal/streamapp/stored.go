@@ -31,7 +31,10 @@ type StoredOptions struct {
 	// FallbackToDeployment writes a customer that registered no app into the deployment's
 	// own, as deployment mode always did. Without it such a customer is written nowhere.
 	FallbackToDeployment bool
-	Logger               *slog.Logger
+	// Forwarded acts in a customer's own app with the token the gateway forwarded for it,
+	// when the customer registered no app. Without it such a customer has only the fallback.
+	Forwarded *Forwarded
+	Logger    *slog.Logger
 	// Now is the clock, for tests.
 	Now func() time.Time
 }
@@ -51,6 +54,7 @@ type Stored struct {
 	sealer     *auth.Sealer
 	deployment *Deployment
 	fallback   bool
+	forwarded  *Forwarded
 	logger     *slog.Logger
 	now        func() time.Time
 
@@ -114,6 +118,7 @@ func NewStored(options StoredOptions) (*Stored, error) {
 		logger:   cmp.Or(options.Logger, slog.Default()),
 		now:      now,
 		warned:   map[string]time.Time{}, fallbacks: map[string]*tally{},
+		forwarded: options.Forwarded,
 	}, nil
 }
 
@@ -145,6 +150,9 @@ func (s *Stored) For(ctx context.Context, customer string) (Identity, error) {
 	if s.waitsFor(customer) {
 		// Until the deployment's own app is known, this may be its customer.
 		return Identity{}, ErrDeploymentAppUnknown
+	}
+	if identity, ok, err := s.inForwardedApp(ctx, customer); ok {
+		return identity, err
 	}
 	if !s.fallsBack(ctx, customer) {
 		return Identity{}, ErrNoIdentity
@@ -190,11 +198,30 @@ func (s *Stored) forApp(ctx context.Context, customer string, app int64) (Identi
 		return identity, false, err
 	case err != nil && !errors.Is(err, store.ErrNoStreamApp):
 		return Identity{}, false, err
-	case s.deployment.pending():
+	case err != nil && customer == CustomerOf(app):
+		if identity, ok, err := s.inForwardedApp(ctx, customer); ok {
+			return identity, false, err
+		}
+	}
+	if s.deployment.pending() {
 		// The pin may be the deployment's own app, which is not known yet.
 		return Identity{}, false, ErrDeploymentAppUnknown
 	}
 	return Identity{}, false, ErrStreamAppMoved
+}
+
+// inForwardedApp is a customer's own app acted in with the token the gateway forwarded for
+// it, and false when there is no such token to act with.
+func (s *Stored) inForwardedApp(ctx context.Context, customer string) (Identity, bool, error) {
+	app, couldBe := ParseAppID(customer)
+	if s.forwarded == nil || !couldBe {
+		return Identity{}, false, nil
+	}
+	identity, err := s.forwarded.identity(ctx, customer, app)
+	if errors.Is(err, ErrNoIdentity) {
+		return Identity{}, false, nil
+	}
+	return identity, true, err
 }
 
 // legacy is work written into the deployment's own app: unpinned, from before apps had

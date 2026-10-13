@@ -35,9 +35,23 @@ func newStreamClients(settings config.Config, pgStore *store.Store, sealer *auth
 	if pgStore == nil {
 		return nil, fmt.Errorf("stream.tenancy=%s keeps every app's keys in Postgres: set postgres.dsn", config.TenancyApp)
 	}
+	var forwarded *streamapp.Forwarded
+	if settings.Stream.Forwarded() {
+		mint, err := streamapp.NewMint(settings.Stream.MintURL, settings.Stream.MintToken)
+		if err != nil {
+			return nil, err
+		}
+		forwarded, err = streamapp.NewForwarded(streamapp.ForwardedOptions{
+			Store: pgStore, Sealer: sealer, Mint: mint, BaseURL: settings.Stream.BaseURL, Logger: logger,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
 	stored, err := streamapp.NewStored(streamapp.StoredOptions{
 		Store: pgStore, Sealer: sealer, Deployment: deployment,
 		FallbackToDeployment: settings.Stream.EffectiveFallback() == config.FallbackDeployment,
+		Forwarded:            forwarded,
 		Logger:               logger,
 	})
 	if err != nil {

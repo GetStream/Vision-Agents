@@ -67,6 +67,9 @@ func (s *Server) verifyHook(w http.ResponseWriter, r *http.Request, payload []by
 	if s.stream == nil || !s.stream.PerApp() {
 		return s.verifyDeploymentHook(w, r, payload, signature, pathApp, what)
 	}
+	if origin, vouched := s.vouchedHook(r, pathApp); vouched {
+		return origin, true
+	}
 
 	verifiers, err := s.stream.Verifiers(r.Context(), strings.TrimSpace(r.Header.Get(auth.APIKeyHeader)), pathApp)
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
@@ -92,6 +95,26 @@ func (s *Server) verifyHook(w http.ResponseWriter, r *http.Request, payload []by
 	s.logger.Warn("rejected a "+what+" with a bad signature", "bytes", len(payload), "app", pathApp)
 	writeError(w, unauthenticated("that is not a "+what+" from Stream"))
 	return hookOrigin{}, false
+}
+
+// vouchedHook is a hook the proxy checked the signature of with its app's secret, which the
+// router acting with forwarded tokens holds none of. The token the proxy forwarded beside it
+// is kept, so the hook's work is done with it. The deployment's own app is still checked
+// here, with the secret the router holds for it.
+func (s *Server) vouchedHook(r *http.Request, pathApp int64) (hookOrigin, bool) {
+	if _, forwarded := s.stream.Forwarded(); !forwarded || s.authMode != auth.Proxy || !s.proxyDeclaresKind {
+		return hookOrigin{}, false
+	}
+	app, ok := streamapp.ParseAppID(strings.TrimSpace(r.Header.Get(auth.HookAppHeader)))
+	if !ok || (pathApp != 0 && pathApp != app) || app == s.stream.DeploymentApp() {
+		return hookOrigin{}, false
+	}
+	customer := streamapp.CustomerOf(app)
+	apiKey := strings.TrimSpace(r.Header.Get(auth.ServerTokenKeyHeader))
+	if err := s.stream.KeepToken(r.Context(), customer, apiKey, strings.TrimSpace(r.Header.Get(auth.ServerTokenHeader))); err != nil {
+		s.logger.Warn("stream: could not keep the server token the proxy forwarded with a hook", "stream_app", app, "error", err)
+	}
+	return hookOrigin{customer: customer, app: app, apiKey: apiKey}, true
 }
 
 // verifyDeploymentHook checks a hook in deployment mode, where every hook is the

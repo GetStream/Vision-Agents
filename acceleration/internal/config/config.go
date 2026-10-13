@@ -172,6 +172,14 @@ type Stream struct {
 	TrustAPIKeyHeader bool `koanf:"trust_api_key_header"`
 	// DenyRegistration are Stream app ids that may never be registered as a customer's own.
 	DenyRegistration []string `koanf:"deny_registration"`
+	// Credentials is what app mode acts in a customer's own app with: registered, the
+	// default, is the secrets the customer registered; forwarded is the server token the
+	// gateway in front minted for the app, for a customer that registered none.
+	Credentials string `koanf:"credentials"`
+	// MintURL is the gateway's internal mint endpoint, which signs the tokens a forwarded
+	// server token cannot, and MintToken the bearer it expects.
+	MintURL   string `koanf:"mint_url"`
+	MintToken string `koanf:"mint_token"`
 }
 
 // What Stream.Tenancy holds.
@@ -179,6 +187,15 @@ const (
 	TenancyDeployment = "deployment"
 	TenancyApp        = "app"
 )
+
+// What Stream.Credentials holds.
+const (
+	CredentialsRegistered = "registered"
+	CredentialsForwarded  = "forwarded"
+)
+
+// Forwarded reports whether customers' own apps are acted in with the gateway's tokens.
+func (s Stream) Forwarded() bool { return s.Credentials == CredentialsForwarded }
 
 // What Stream.Fallback holds.
 const (
@@ -288,6 +305,9 @@ var variables = map[string]string{
 
 	"stream.trust_api_key_header": "ROUTER_STREAM_TRUST_API_KEY_HEADER",
 	"stream.deny_registration":    "ROUTER_STREAM_DENY_REGISTRATION",
+	"stream.credentials":          "ROUTER_STREAM_CREDENTIALS",
+	"stream.mint_url":             "ROUTER_STREAM_MINT_URL",
+	"stream.mint_token":           "ROUTER_STREAM_MINT_TOKEN",
 
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
@@ -453,6 +473,21 @@ func (c Config) validate() error {
 	default:
 		return fmt.Errorf("config: stream.fallback is %s or %s, got %q", FallbackDeployment, FallbackRefuse, c.Stream.Fallback)
 	}
+	switch c.Stream.Credentials {
+	case "", CredentialsRegistered:
+	case CredentialsForwarded:
+		if c.Stream.Tenancy != TenancyApp || strings.TrimSpace(c.Auth.Mode) != "proxy" || !c.Auth.ProxyDeclaresKind {
+			return fmt.Errorf("config: stream.credentials=%s takes its tokens from the gateway in front: set "+
+				"stream.tenancy=%s, auth.mode=proxy and auth.proxy_declares_kind=true", CredentialsForwarded, TenancyApp)
+		}
+		if c.Stream.MintURL == "" || c.Stream.MintToken == "" {
+			return fmt.Errorf("config: stream.credentials=%s signs agents' and guests' tokens at the gateway: "+
+				"set stream.mint_url and stream.mint_token", CredentialsForwarded)
+		}
+	default:
+		return fmt.Errorf("config: stream.credentials is %s or %s, got %q",
+			CredentialsRegistered, CredentialsForwarded, c.Stream.Credentials)
+	}
 	if c.Stream.AppID < 0 {
 		return fmt.Errorf("config: stream.app_id is a Stream app's id, got %d", c.Stream.AppID)
 	}
@@ -532,6 +567,9 @@ func (c Config) export() error {
 		"stream.app_id":                 appID(c.Stream.AppID),
 		"stream.trust_api_key_header":   fmt.Sprint(c.Stream.TrustAPIKeyHeader),
 		"stream.deny_registration":      strings.Join(c.Stream.DenyRegistration, ","),
+		"stream.credentials":            c.Stream.Credentials,
+		"stream.mint_url":               c.Stream.MintURL,
+		"stream.mint_token":             c.Stream.MintToken,
 		"data_move.retention":           c.DataMove.Retention.String(),
 		"rate_limit.messages_per_day":   fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":     fmt.Sprint(c.RateLimit.TokensPerDay),
