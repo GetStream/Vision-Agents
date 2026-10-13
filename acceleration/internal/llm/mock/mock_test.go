@@ -2,6 +2,7 @@ package mock
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -91,6 +92,41 @@ func (s *MockLLMSuite) TestClosingTheStreamAbandonsTheAnswer() {
 	s.Equal(llm.StatusCancelled, stream.Response().Status)
 	s.Less(len(stream.Response().OutputText), len(DefaultAnswer),
 		"barge-in should stop the model mid-sentence")
+}
+
+func (s *MockLLMSuite) TestTheFlowControllerIsToldTheWordsWereMeantForTheAgent() {
+	// The one question whose answer decides whether a turn happens at all. A sentence here
+	// would be unparseable, and an unparseable decision is one the router warns about on
+	// every turn of a run.
+	answer := s.answerTo(llm.ResponseParams{
+		ID: "turn-1", Purpose: "flow", Text: llm.TextParams{Format: llm.FormatJSONObject},
+	})
+
+	var decided struct {
+		Disposition string `json:"disposition"`
+		Floor       string `json:"floor"`
+	}
+	s.Require().NoError(json.Unmarshal([]byte(answer), &decided))
+	s.Equal("respond", decided.Disposition)
+	s.Equal("continue", decided.Floor)
+}
+
+func (s *MockLLMSuite) TestAnythingElseAskedForAnObjectGetsOne() {
+	answer := s.answerTo(llm.ResponseParams{ID: "s1", Text: llm.TextParams{Format: llm.FormatJSONObject}})
+
+	s.JSONEq("{}", answer, "naming a conversation must not fail on a sentence")
+}
+
+// answerTo drains a response and returns what it said.
+func (s *MockLLMSuite) answerTo(params llm.ResponseParams) string {
+	stream, err := s.provider.Create(context.Background(), params)
+	s.Require().NoError(err)
+	defer stream.Close()
+
+	for stream.Next() {
+	}
+	s.Require().NoError(stream.Err())
+	return stream.Response().OutputText
 }
 
 func (s *MockLLMSuite) TestAReasoningEffortIsRefused() {

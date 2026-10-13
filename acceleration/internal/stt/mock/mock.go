@@ -13,6 +13,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -190,19 +191,37 @@ func (s *STT) settle() {
 // turn about to settle, which is the one after the last settled.
 func (s *STT) say(mode stt.Mode, spokenMs float64) {
 	utterance := s.utterance
+	text := s.transcript
 	if mode != stt.ModeFinal {
 		utterance++
+		text = s.heard(spokenMs)
 	}
 	s.emitter.Send(stt.Transcript{
 		Participant:     s.speaker,
 		Mode:            mode,
 		Utterance:       utterance,
-		Text:            s.transcript,
+		Text:            text,
 		Confidence:      1,
 		Provider:        ProviderName,
 		Model:           s.model,
 		AudioDurationMs: spokenMs,
 	})
+}
+
+// heard is the sentence as far as the caller has got: a word for every partialMs of
+// speech, and the whole of it once they have talked that long.
+//
+// What matters is not the pace but that the words keep changing while somebody is
+// talking. The router waits for a transcript to hold still before it decides the turn is
+// over, so a mock whose every partial was the finished sentence would have it answer
+// while the caller was still mid-breath, and the wait it measures would be nobody's.
+func (s *STT) heard(spokenMs float64) string {
+	words := strings.Fields(s.transcript)
+	said := int(spokenMs) / s.partialMs
+	if said >= len(words) {
+		return s.transcript
+	}
+	return strings.Join(words[:said], " ")
 }
 
 // level is the root mean square of a frame, as a fraction of full scale. It is the work

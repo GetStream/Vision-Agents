@@ -160,7 +160,7 @@ func (t *titler) ask(ctx context.Context, spec Spec, id string, said []spoken) (
 		CustomerID: spec.CustomerID,
 		AgentID:    spec.AgentID,
 		Tags:       spec.Tags,
-		Target:     titleTarget,
+		Target:     spec.internalTarget(titleTarget),
 	})
 	if err != nil {
 		return title{}, err

@@ -94,6 +94,23 @@ func (s *MockSTTSuite) TestTheWordsArriveWhileTheCallerIsStillTalking() {
 	}
 }
 
+func (s *MockSTTSuite) TestTheWordsGrowWhileTheCallerKeepsTalking() {
+	// The router decides a turn is over once the words hold still, so partials that were
+	// all the same sentence would have it answer somebody mid-breath.
+	s.speak(1600)
+
+	var said []string
+	for _, transcript := range s.transcripts() {
+		said = append(said, transcript.Text)
+	}
+
+	s.Require().Greater(len(said), 1)
+	for i, text := range said[1:] {
+		s.Greater(len(text), len(said[i]), "each transcript should say more than the one before")
+	}
+	s.NotEqual(DefaultTranscript, said[0], "the first words cannot already be the whole sentence")
+}
+
 func (s *MockSTTSuite) TestAShortNoiseIsNotATurn() {
 	s.speak(100)
 	s.quiet(700)
