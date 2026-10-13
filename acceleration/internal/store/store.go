@@ -965,6 +965,10 @@ func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at t
 	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
 		Set("released_at = ?", at).
 		Set("sip_trunk_id = NULL").
+		Set("bridge_uri = NULL").
+		Set("bridge_username = NULL").
+		Set("bridge_password_sealed = NULL").
+		Set("bridge_password_kek_version = NULL").
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
@@ -1001,6 +1005,10 @@ func (s *Store) AttachNumber(ctx context.Context, customerID, e164 string, attac
 		Set("stream_app_pk = ?", nullablePin(attached.StreamAppPK)).
 		Set("stream_call_id = ?", attached.CallID).
 		Set("stream_call_type = ?", attached.CallType).
+		Set("bridge_uri = ?", nullable(attached.BridgeURI)).
+		Set("bridge_username = ?", nullable(attached.BridgeUsername)).
+		Set("bridge_password_sealed = ?", nullableBytes(attached.BridgePasswordSealed)).
+		Set("bridge_password_kek_version = ?", nullableVersion(attached.BridgePasswordKEKVersion)).
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
@@ -1026,6 +1034,75 @@ type NumberAttachment struct {
 	StreamAppPK int64
 	CallType    string
 	CallID      string
+	// BridgeURI, BridgeUsername and the sealed password are the trunk's address and
+	// credentials. Empty stores nothing, as for a service with no key to seal them under.
+	BridgeURI                string
+	BridgeUsername           string
+	BridgePasswordSealed     []byte
+	BridgePasswordKEKVersion int
+}
+
+// AttachedBridge is the Stream trunk an attached number's calls go to, with its password
+// still sealed.
+type AttachedBridge struct {
+	CustomerID     string
+	URI            string
+	Username       string
+	PasswordSealed []byte
+	KEKVersion     int
+}
+
+// ErrNoStoredBridge is AttachedBridge's error for a number that is attached but whose trunk
+// credentials were not kept: it was attached before they were, or arrived by a data move,
+// which leaves the password behind. Attaching it again keeps them.
+var ErrNoStoredBridge = errors.New("store: the number's trunk credentials were not kept")
+
+// AttachedBridge returns the trunk calls to a number of the vendor go to. It matches
+// ErrNoNumber when nobody holds the number at that vendor or it is not attached, and
+// ErrNoStoredBridge when it was attached without its credentials kept.
+func (s *Store) AttachedBridge(ctx context.Context, vendor, e164 string) (AttachedBridge, error) {
+	if vendor == "" || e164 == "" {
+		return AttachedBridge{}, stack.Wrap(errors.New("store: a vendor and a number are required"))
+	}
+
+	var number PhoneNumber
+	err := s.db.NewSelect().Model(&number).
+		Where("vendor = ?", vendor).
+		Where("e164 = ?", e164).
+		Where("released_at IS NULL").
+		Where("stream_trunk_id IS NOT NULL").
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AttachedBridge{}, stack.Wrap(numberNotHeld{fmt.Sprintf("store: %s is not an attached %s number", e164, vendor)})
+	}
+	if err != nil {
+		return AttachedBridge{}, stack.Wrap(fmt.Errorf("store: attached bridge: %w", err))
+	}
+	if number.BridgeURI == "" || len(number.BridgePasswordSealed) == 0 {
+		return AttachedBridge{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoStoredBridge, e164))
+	}
+	return AttachedBridge{
+		CustomerID:     number.CustomerID,
+		URI:            number.BridgeURI,
+		Username:       number.BridgeUsername,
+		PasswordSealed: number.BridgePasswordSealed,
+		KEKVersion:     number.BridgePasswordKEKVersion,
+	}, nil
+}
+
+func nullableBytes(value []byte) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return value
+}
+
+func nullableVersion(version int) any {
+	if version == 0 {
+		return nil
+	}
+	return version
 }
 
 // nullablePin stores the deployment's own app as NULL, as every pin written before apps

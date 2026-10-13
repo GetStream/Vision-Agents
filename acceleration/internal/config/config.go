@@ -75,6 +75,7 @@ type Config struct {
 	Episodes        Episodes   `koanf:"episodes"`
 	Sandbox         Sandbox    `koanf:"sandbox"`
 	Models          Models     `koanf:"models"`
+	Telnyx          Telnyx     `koanf:"telnyx"`
 }
 
 // Models are the language models a customer serves themselves, named custom/<name>.
@@ -246,6 +247,16 @@ type Sandbox struct {
 	AudioMinutesPerDay int64 `koanf:"audio_minutes_per_day"`
 }
 
+// Telnyx is the account Telnyx numbers are bought on and the TeXML application they answer
+// on. The Telnyx provider still reads its own variables, which export writes back.
+type Telnyx struct {
+	APIKey string `koanf:"api_key"`
+	// ConnectionID is the TeXML application. A call webhook for any other is hung up.
+	ConnectionID string `koanf:"connection_id"`
+	// PublicKey is Telnyx's base64 key, which checks the calls it sends to the webhook.
+	PublicKey string `koanf:"public_key"`
+}
+
 // variables maps each setting to the environment variable that has always carried it.
 // Both directions are read from here: the variable wins over the file on the way in, and
 // the effective value is written back to it on the way out.
@@ -295,6 +306,10 @@ var variables = map[string]string{
 	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
 	"sandbox.messages_per_day":      "ROUTER_SANDBOX_MESSAGES_PER_DAY",
 	"sandbox.audio_minutes_per_day": "ROUTER_SANDBOX_AUDIO_MINUTES_PER_DAY",
+
+	"telnyx.api_key":       "TELNYX_API_KEY",
+	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
+	"telnyx.public_key":    "TELNYX_PUBLIC_KEY",
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
@@ -531,6 +546,10 @@ func (c Config) export() error {
 		"sandbox.audio_minutes_per_day": fmt.Sprint(c.Sandbox.AudioMinutesPerDay),
 
 		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
+
+		"telnyx.api_key":       c.Telnyx.APIKey,
+		"telnyx.connection_id": c.Telnyx.ConnectionID,
+		"telnyx.public_key":    c.Telnyx.PublicKey,
 	}
 	for key, value := range values {
 		if value == "" {

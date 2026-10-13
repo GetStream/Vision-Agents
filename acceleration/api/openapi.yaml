@@ -14317,6 +14317,27 @@ paths:
           $ref: '#/components/responses/InternalError'
       security: []
       summary: Receive a 10DLC registration report
+  /v1/phone/hooks/telnyx:
+    post:
+      description: 'Where Telnyx asks what to do with a call to a number on this router''s TeXML application. Unauthenticated because Telnyx is not a customer: each call is checked against the account''s Ed25519 signature, and the answer dials that number''s own trunk and no other. A deployment with no Telnyx key answers 404, so the path never hands out trunk credentials unsigned.'
+      operationId: receiveTelnyxCall
+      responses:
+        "200":
+          content:
+            application/xml:
+              schema:
+                type: string
+          description: TeXML dialling the number's trunk, or hanging up
+        "401":
+          description: The call is not signed by Telnyx
+        "404":
+          description: Telnyx calls are not configured
+        "413":
+          description: The call is over 64 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Receive a Telnyx call
   /v1/phone/numbers:
     get:
       operationId: listPhoneNumbers

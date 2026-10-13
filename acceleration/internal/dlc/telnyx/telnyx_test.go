@@ -18,6 +18,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/telnyxsig"
 )
 
 // fakeTelnyx is Telnyx's 10DLC API as far as the registrar uses it, answering campaigns in
@@ -88,8 +89,8 @@ func (s *TelnyxSuite) signed(body []byte, at time.Time) http.Header {
 	seconds := strconv.FormatInt(at.Unix(), 10)
 	signature := ed25519.Sign(s.private, append([]byte(seconds+"|"), body...))
 	header := http.Header{}
-	header.Set(timestampHeader, seconds)
-	header.Set(signatureHeader, base64.StdEncoding.EncodeToString(signature))
+	header.Set(telnyxsig.TimestampHeader, seconds)
+	header.Set(telnyxsig.SignatureHeader, base64.StdEncoding.EncodeToString(signature))
 	return header
 }
 

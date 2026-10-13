@@ -2935,6 +2935,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/phone/hooks/telnyx": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a Telnyx call
+         * @description Where Telnyx asks what to do with a call to a number on this router's TeXML application. Unauthenticated because Telnyx is not a customer: each call is checked against the account's Ed25519 signature, and the answer dials that number's own trunk and no other. A deployment with no Telnyx key answers 404, so the path never hands out trunk credentials unsigned.
+         */
+        readonly post: operations["receiveTelnyxCall"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/phone/numbers": {
         readonly parameters: {
             readonly query?: never;
@@ -14098,6 +14118,48 @@ export interface operations {
                 content?: never;
             };
             /** @description The report is over 64 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveTelnyxCall: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description TeXML dialling the number's trunk, or hanging up */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/xml": string;
+                };
+            };
+            /** @description The call is not signed by Telnyx */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Telnyx calls are not configured */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The call is over 64 KiB */
             readonly 413: {
                 headers: {
                     readonly [name: string]: unknown;
