@@ -2,6 +2,10 @@
 
 Read-only investigation. Code at Vision-Agents 599298c6 (`git show 599298c6:...`). Raw artefacts in `migrate/slackbot-drop/`.
 
+## Later (do not treat the hook list below as current)
+
+`message.new` was moved to `https://accelerate.gcp.stream-io-api.com/v1/chat/hooks/stream/1257545` at 2026-10-10 03:28:32Z. Staging slack_bot E2E then passed (`waves/8.md`). Call hooks stayed on ngrok until 2026-10-13 20:23Z, when they were moved and the ngrok URLs dropped. Current list: `e2e-local/hooks-2026-10-13.md`.
+
 ## Verdict
 The router did not drop the message. The bridge took it, wrote it into the thread channel in Stream app 1257545, and opened the episode. Stream then sent the `message.new` hook to the **local router through ngrok**, not to staging. App 1257545's only message hook is `https://carol-elliptic-uncloak.ngrok-free.dev/v1/chat/hooks/stream`. The local router has no config a54fb800, so it logged ERROR and answered nothing. Staging never got a hook request, so it never ran a turn.
 
@@ -57,7 +61,7 @@ staging: 0 requests on /v1/chat/hooks/stream* in the last hour
 Bot not in channel: `unverified` on staging, because the reply was never sent. Locally the bot replied in #kanat-test at 00:11Z, so it is in the channel (e2e-d3 row 6). Redis: `unverified`, not reached.
 
 ## Fix
-1. Data step (Kanat approves; it changes app 1257545's shared hooks, the «Stream Public Demos» org): add a message.new hook to `https://accelerate.gcp.stream-io-api.com/v1/chat/hooks/stream/1257545`. Do it in the Stream dashboard (Webhooks, message.new only), or run `go run ./cmd/phone hooks -url https://accelerate.gcp.stream-io-api.com -app 1257545` from `acceleration/` with app 1257545's keys. That command also adds a staging *call* hook. Keep the ngrok hook only while the local router is still needed: both routers then get every message, and each logs ERROR (messagehooks.go:269) for the other's channels. `-remove` with `-app` appends `/1257545`, so it does not match the ngrok hooks, which have no segment. Stream may refuse the update because of the dead `eec4-24-8-28-137` call hook (AI-990 F22): `unverified`.
+1. Data step — **done.** `message.new` → `https://accelerate.gcp.stream-io-api.com/v1/chat/hooks/stream/1257545` at 2026-10-10 03:28:32Z (`waves/8.md`). Call hooks → `…/v1/phone/hooks/stream/1257545`, and both ngrok call hooks dropped, at 2026-10-13 20:23Z (`e2e-local/hooks-2026-10-13.md`). `-remove` with `-app` still appends `/1257545` and does not match a tunnel URL with no segment. A dead URL left in the list still blocks the PATCH (F22); drop it in the same update.
 2. Code fix (ticket scope): `setConnectorOAuthClient` calls `s.pointMessageHook(ctx, customerID, record.StreamAppPK)` after the put when `ProviderAppID != ""` and the manifest has a channel, the same way the provider-app PUTs do, with a test in the connector_provider_apps style. Also make the app-tenancy gap visible: at the PUT (or on the first bridged write), check `chat.DeliversMessagesTo(public+MessageHookPath+"/"+pin)` and WARN when it is false. `warnWithoutMessageHook` skips app tenancy.
 
 ## Debug -> Info

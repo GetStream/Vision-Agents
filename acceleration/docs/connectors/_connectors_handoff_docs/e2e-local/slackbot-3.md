@@ -8,6 +8,8 @@ Note: `channel_threads` also holds 6 threads from 2026-10-08 (17:40Z to 19:19Z),
 
 ## 1. Stream hooks (fixes F19)
 
+Snapshot of this run only. The live list is `hooks-2026-10-13.md` (ngrok call hooks removed 2026-10-13 20:23Z).
+
 `GET https://chat.stream-io-api.com/app` (app 1257545) at 13:30Z shows 3 enabled `webhook` hooks:
 - `https://carol-elliptic-uncloak.ngrok-free.dev/v1/phone/hooks/stream`, with `call.session_started` and `call.session_ended`;
 - `https://eec4-24-8-28-137.ngrok-free.app/v1/phone/hooks/stream`, the same two types. This is the dead hook that F22 is about, still there;
