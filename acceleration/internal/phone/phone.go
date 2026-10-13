@@ -279,8 +279,8 @@ type Inbound struct {
 
 // CallFeature names one of the terms a call can be placed on.
 //
-// Vendors do not agree on which of these their call APIs can express: Telnyx takes custom
-// SIP headers on a dial, Twilio does not. A provider says which it speaks, so a call asking
+// Vendors do not agree on which of these their call APIs can express: Twilio takes a ring
+// timeout on a dial, Bird does not. A provider says which it speaks, so a call asking
 // for one it does not is refused rather than placed without it. Silently dropping a ring
 // timeout means a call that should have given up in fifteen seconds sits in somebody's
 // voicemail for a minute instead.

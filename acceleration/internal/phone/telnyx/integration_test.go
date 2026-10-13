@@ -137,7 +137,6 @@ func (s *TelnyxIntegrationSuite) TestCallingAHandsetRingsItAndBridgesItToATrunk(
 		To:          to,
 		Bridge:      bridge,
 		RingTimeout: 20 * time.Second,
-		Headers:     map[string]string{"X-Call-Id": callID},
 	})
 	s.Require().NoError(err)
 

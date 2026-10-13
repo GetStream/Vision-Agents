@@ -8,16 +8,15 @@ package telnyx
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -47,7 +46,7 @@ type Options struct {
 	// APIKey defaults to TELNYX_API_KEY.
 	APIKey string
 	// AccountSID defaults to TELNYX_ACCOUNT_SID. Calls are placed under it, since only the
-	// account's TeXML call takes a ring timeout and custom headers.
+	// account's TeXML call takes a ring timeout.
 	AccountSID string
 	// ConnectionID is the TeXML application numbers are assigned to and calls are placed
 	// on, so inbound and outbound both need it.
@@ -58,6 +57,8 @@ type Options struct {
 	Timeout time.Duration
 	// HTTPClient replaces the one built from Timeout.
 	HTTPClient *http.Client
+	// Logger defaults to slog.Default().
+	Logger *slog.Logger
 }
 
 // Provider is Telnyx. It satisfies phone.Provider.
@@ -67,6 +68,7 @@ type Provider struct {
 	connectionID string
 	baseURL      string
 	client       *http.Client
+	logger       *slog.Logger
 }
 
 // New validates the options and returns a Provider.
@@ -92,6 +94,9 @@ func New(options Options) (*Provider, error) {
 	if options.HTTPClient == nil {
 		options.HTTPClient = &http.Client{Timeout: options.Timeout}
 	}
+	if options.Logger == nil {
+		options.Logger = slog.Default()
+	}
 
 	return &Provider{
 		apiKey:       options.APIKey,
@@ -99,6 +104,7 @@ func New(options Options) (*Provider, error) {
 		connectionID: options.ConnectionID,
 		baseURL:      strings.TrimSuffix(options.BaseURL, "/"),
 		client:       options.HTTPClient,
+		logger:       options.Logger,
 	}, nil
 }
 
@@ -162,9 +168,12 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 // the contract's vocabulary is shaped like it.
 func (p *Provider) Supports(phone.Filter) bool { return true }
 
-// Dials every feature: the TeXML call takes a ring timeout and custom SIP headers, and its
-// TeXML plays digits before dialling the trunk.
-func (p *Provider) Dials(phone.CallFeature) bool { return true }
+// Dials a ring timeout, which the TeXML call takes, and digits, which its TeXML plays before
+// dialling the trunk. Telnyx documents the TeXML call's CustomHeaders as HTTP headers, so
+// until a call shows them on the person's SIP leg they are not offered.
+func (p *Provider) Dials(feature phone.CallFeature) bool {
+	return feature != phone.FeatureCustomHeaders
+}
 
 // PlaysDigits is whether TeXML's <Play digits> has every key, which has no W or A to D.
 func (p *Provider) PlaysDigits(digits string) bool {
@@ -263,6 +272,10 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, stack.Wrap(fmt.Errorf("telnyx: telnyx rings for %d to %d seconds, not %d",
 			minRingSeconds, maxRingSeconds, seconds))
 	}
+	if len(outbound.Headers) > 0 {
+		return phone.Dialed{}, stack.Wrap(errors.New(
+			"telnyx: custom SIP headers are not known to reach the person on a TeXML call"))
+	}
 	if !p.PlaysDigits(outbound.InitialDigits) {
 		return phone.Dialed{}, stack.Wrap(fmt.Errorf("telnyx: TeXML plays only %q, not %q",
 			playableDigits, outbound.InitialDigits))
@@ -280,13 +293,18 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		To:             outbound.To,
 		Texml:          string(texml),
 		Timeout:        seconds,
-		CustomHeaders:  headers(outbound.Headers),
 	}
 
 	var placed texmlCallPlaced
 	path := "/v2/texml/Accounts/" + url.PathEscape(p.accountSID) + "/Calls"
 	if err := p.do(ctx, http.MethodPost, path, nil, request, &placed); err != nil {
 		return phone.Dialed{}, err
+	}
+	if placed.CallSID == "" {
+		// Telnyx's reference lists no id on this answer. The call is ringing all the same,
+		// so failing here would report a call that is happening as one that is not.
+		p.logger.Warn("telnyx placed a call but the vendor call id is unknown, so keypad " +
+			"presses and vendor_call_id answers will not work for it")
 	}
 	return phone.Dialed{VendorCallID: placed.CallSID, Status: placed.Status}, nil
 }
@@ -534,30 +552,7 @@ type texmlCall struct {
 	To             string `json:"To"`
 	Texml          string `json:"Texml"`
 	// Timeout is how long the person rings, where <Dial>'s timeout would ring the trunk.
-	Timeout       int            `json:"Timeout,omitempty"`
-	CustomHeaders []customHeader `json:"CustomHeaders,omitempty"`
-}
-
-// customHeader is one SIP header carried to the person's leg.
-type customHeader struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
-// headers renders custom headers in the shape Telnyx takes them, sorted so that the same
-// call twice sends the same request.
-func headers(wanted map[string]string) []customHeader {
-	if len(wanted) == 0 {
-		return nil
-	}
-	rendered := make([]customHeader, 0, len(wanted))
-	for name, value := range wanted {
-		rendered = append(rendered, customHeader{Name: name, Value: value})
-	}
-	slices.SortFunc(rendered, func(a, b customHeader) int {
-		return cmp.Compare(a.Name, b.Name)
-	})
-	return rendered
+	Timeout int `json:"Timeout,omitempty"`
 }
 
 // texmlCallPlaced is Telnyx's answer to a TeXML call, which has no "data" envelope. Telnyx's

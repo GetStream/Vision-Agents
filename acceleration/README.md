@@ -1374,7 +1374,7 @@ minute.
 | --- | --- |
 | `ring_timeout_seconds` | Everyone but Bird and Sinch |
 | `initial_digits` | Twilio, Telnyx, Bandwidth, Sinch |
-| `headers` | Telnyx only |
+| `headers` | Nobody yet: Telnyx's TeXML call is not known to put them on the SIP leg |
 
 Getting past the trunk splits the vendors in two. Twilio, Telnyx and Plivo can name SIP
 digest credentials in their call plans, so the trunk's own password is enough. Vonage, Bird,

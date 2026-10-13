@@ -1,11 +1,13 @@
 package telnyx
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -251,13 +253,15 @@ func (s *TelnyxSuite) TestCredentialsWithXMLSpecialCharactersAreEscaped() {
 	s.Equal(`a&b<"c`, texml.Dial.Sip.Password)
 }
 
-func (s *TelnyxSuite) TestEveryTermOfACallCanBeExpressed() {
+func (s *TelnyxSuite) TestTermsTelnyxIsKnownToCarryAreTheOnesItDials() {
 	s.True(s.provider.Dials(phone.FeatureRingTimeout))
-	s.True(s.provider.Dials(phone.FeatureCustomHeaders))
 	s.True(s.provider.Dials(phone.FeatureInitialDigits))
+	// TeXML's CustomHeaders are documented as HTTP headers, so they may never reach the
+	// person's SIP leg.
+	s.False(s.provider.Dials(phone.FeatureCustomHeaders))
 }
 
-func (s *TelnyxSuite) TestRingTimeoutAndHeadersAreCarriedOnTheCall() {
+func (s *TelnyxSuite) TestTheRingTimeoutIsCarriedOnTheCall() {
 	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
 
 	_, err := s.provider.Dial(s.ctx, phone.Outbound{
@@ -265,16 +269,43 @@ func (s *TelnyxSuite) TestRingTimeoutAndHeadersAreCarriedOnTheCall() {
 		To:          "+15125550123",
 		Bridge:      phone.Bridge{URI: "sip:+15125550100@app.sip.example.com"},
 		RingTimeout: 25 * time.Second,
-		Headers:     map[string]string{"X-Ticket": "42", "X-Agent": "john"},
 	})
 	s.Require().NoError(err)
 
 	s.Equal(float64(25), s.seen.body["Timeout"])
-	s.Equal([]any{
-		map[string]any{"name": "X-Agent", "value": "john"},
-		map[string]any{"name": "X-Ticket", "value": "42"},
-	}, s.seen.body["CustomHeaders"], "headers are sorted so the same call twice is the same request")
 	s.Empty(s.texml().Dial.Timeout, "the person's ring timeout is not the trunk's")
+}
+
+func (s *TelnyxSuite) TestACallWhoseIDTelnyxDoesNotSayIsStillPlaced() {
+	var logged bytes.Buffer
+	provider, err := New(Options{
+		APIKey:       "KEY123",
+		AccountSID:   "acct-1",
+		ConnectionID: "conn-1",
+		BaseURL:      s.server.URL,
+		Logger:       slog.New(slog.NewTextHandler(&logged, nil)),
+	})
+	s.Require().NoError(err)
+	s.answer(`{"from":"+15125550100","to":"+15125550123","status":"queued"}`)
+
+	placed, err := provider.Dial(s.ctx, phone.Outbound{
+		From: "+15125550100",
+		To:   "+15125550123",
+		Bridge: phone.Bridge{
+			URI:      "sip:+15125550100@app.sip.example.com",
+			Username: "u",
+			Password: "secret-p",
+		},
+	})
+	s.Require().NoError(err)
+
+	s.Empty(placed.VendorCallID)
+	s.Equal("queued", placed.Status)
+	s.Contains(logged.String(), "level=WARN")
+	s.Contains(logged.String(), "vendor call id is unknown")
+	s.NotContains(logged.String(), "5550100")
+	s.NotContains(logged.String(), "5550123")
+	s.NotContains(logged.String(), "secret-p")
 }
 
 func (s *TelnyxSuite) TestDiallingRefusesTermsItCannotSend() {
@@ -284,6 +315,9 @@ func (s *TelnyxSuite) TestDiallingRefusesTermsItCannotSend() {
 		"telnyx: telnyx rings for 5 to 120 seconds, not 121": {RingTimeout: 121 * time.Second},
 		`telnyx: TeXML plays only "0123456789*#w", not "W1"`: {InitialDigits: "W1"},
 		`telnyx: TeXML plays only "0123456789*#w", not "1A"`: {InitialDigits: "1A"},
+		"telnyx: custom SIP headers are not known to reach the person on a TeXML call": {
+			Headers: map[string]string{"X-Ticket": "42"},
+		},
 	} {
 		outbound.From, outbound.To, outbound.Bridge = "+15125550100", "+15125550123", bridge
 		s.seen = request{}
