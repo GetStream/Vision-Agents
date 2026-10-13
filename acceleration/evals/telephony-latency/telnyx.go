@@ -29,14 +29,16 @@ type TelnyxCaller struct {
 	client *http.Client
 }
 
-// NewTelnyxCaller reads TELNYX_API_KEY and TELNYX_CALL_CONTROL_ID. It does not fall back to
-// TELNYX_CONNECTION_ID: that is the bench's FQDN connection, or the router's TeXML
-// application, and Call Control refuses either.
+// NewTelnyxCaller reads TELNYX_API_KEY and TELNYX_CALL_CONTROL_ID, falling back to
+// TELNYX_CONNECTION_ID for an account whose one connection does both.
 func NewTelnyxCaller(client *http.Client) (*TelnyxCaller, error) {
 	caller := &TelnyxCaller{
 		apiKey: os.Getenv("TELNYX_API_KEY"),
 		app:    os.Getenv("TELNYX_CALL_CONTROL_ID"),
 		client: client,
+	}
+	if caller.app == "" {
+		caller.app = os.Getenv("TELNYX_CONNECTION_ID")
 	}
 	if caller.apiKey == "" || caller.app == "" {
 		return nil, errors.New("telnyx: TELNYX_API_KEY and TELNYX_CALL_CONTROL_ID are required to place calls")
