@@ -118,6 +118,13 @@ export interface Declaration {
    * which leaves the stored bindings; empty when it lists none, which removes them.
    */
   connectors?: ConnectorDeclaration[];
+  /** MCP servers outside the plugin catalog, which the router opens by their url. */
+  mcpServers?: Schemas["McpServer"][];
+  /**
+   * The lines the agent answers on besides its Stream Chat channel, each a number the app
+   * connected on the router.
+   */
+  channels?: Schemas["AgentChannels"];
 }
 
 /** One connector an agent binds, as agent.yaml names it. */
@@ -692,6 +699,8 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.search ? { search: declared.search } : {}),
     ...(declared.greeting ? { greeting: declared.greeting } : {}),
     ...(declared.plugins?.length ? { plugins: declared.plugins } : {}),
+    ...(declared.mcpServers?.length ? { mcp_servers: declared.mcpServers } : {}),
+    ...(declared.channels ? { channels: declared.channels } : {}),
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),
     ...(declared.dispatch ? { dispatch: declared.dispatch } : {}),
