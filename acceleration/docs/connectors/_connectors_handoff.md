@@ -1,4 +1,4 @@
-# Connectors (AI-816) handoff, 2026-10-10
+# Connectors (AI-816) handoff, 2026-10-12
 
 > **Do not commit this file or `_connectors_handoff_docs/`.** The repo is public. They are working notes. Keep GCP project, cluster and secret names out of anything you commit; those details live only in the memory file `staging-migration-order.md`.
 
@@ -43,11 +43,14 @@ Kanat wants the agent to **orchestrate, not code**. Authors write PRs, independe
 - Evidence only: cite `file:line`, a command or a commit for every claim; mark anything you have not checked `unverified`.
 - Volt work follows the repo's Design Standards (memory `volt-design-standards.md`).
 - Router behaviour PRs ship with their first production caller; expand-only migrations, numbered after the newest on base.
+- Before tagging, compare every new migration file with the live goose version. A file numbered below that version must not ship: goose has no out-of-order, and the router crash-loops. Learned 2026-10-12: `c891381c` carried `20261015120000` under staging's `20261016120000`.
 - Token economy: short prompts, report budgets, fresh fixers, delta review by the same reviewer while its context is under ~200k.
 
-## 4. Current state (verified 2026-10-10)
+## 4. Current state (staging verified 2026-10-10; wave 9 sync 2026-10-12)
 
-**Staging router:** `accelerate-v0.6.34` = `e464eeeb`, deployed 05:32Z, goose at `20261016120000`. Health check after deploy: 0 restarts, 0 ERROR, no 5xx, `/health` 200, 150 s recheck clean. `ROUTER_CONNECTORS_ENABLED` is on. `DASHBOARD_BASE_URL` = the Vercel preview URL. Rollback target is v0.6.33; a binary rollback is safe, because v0.6.33 was tested against a DB migrated to 20261016120000. The exact deploy, verify and rollback commands are in memory `staging-migration-order.md`; always run `launch inspect` first.
+**Wave 9 code is merged and not deployed.** All 5 PRs are on `accelerate` (#896 `c891381c`), including `connectors:` and `tool_patterns`. They are not on staging. Staging stays `accelerate-v0.6.34`, goose `20261016120000`. The deploy of `c891381c` stopped before tagging: `accelerate` carries Thierry's `20261015120000_custom_models` (`75214efe`, merged after #874) below that goose version. goose has no out-of-order, so a tag would crash-loop. Fix PR #897 (OPEN, GO at `2a04d8de`) moves it to `20261018120000` with idempotent DDL. Merge, tag (`accelerate-v0.6.35` still free), and deploy wait for Kanat. After that deploy starts, rollback to v0.6.34 is fine. Live cluster not rechecked this sync. Syntax, pins, rulings: `_connectors_handoff_docs/waves/9-current.md`. Ledger: `waves/9.md` (orchestrator owns it; do not edit).
+
+**Staging router:** `accelerate-v0.6.34` = `e464eeeb`, deployed 05:32Z, goose at `20261016120000`. The 2026-10-12 deploy stopped before tagging, so this image and goose version are unchanged. Health check after the 05:32Z deploy: 0 restarts, 0 ERROR, no 5xx, `/health` 200, 150 s recheck clean. `ROUTER_CONNECTORS_ENABLED` is on. `DASHBOARD_BASE_URL` = the Vercel preview URL. Rollback of this image is v0.6.33; a binary rollback is safe, because v0.6.33 was tested against a DB migrated to 20261016120000. After #897 deploys, the rollback target is v0.6.34. The exact deploy, verify and rollback commands are in memory `staging-migration-order.md`; always run `launch inspect` first. Before tagging, compare new migration files with the live goose version (no file below it).
 
 **Staging gateway:** image `v0.1.4`, chat#18368/#18369 (helm rev 19), plus the test-only follow-up chat#18370. It forwards `X-Stream-User-Id` for server tokens (a user token may only name itself, otherwise 403) and allowlists the events and mcp-events routes. The image is built locally; the recipe is in the memory file, because `build-accelerate.yml` is not on the default branch.
 
@@ -63,7 +66,7 @@ Kanat wants the agent to **orchestrate, not code**. Authors write PRs, independe
 - **Stream `message.new` hook** of app 1257545 points to `https://accelerate.gcp.stream-io-api.com/v1/chat/hooks/stream/1257545`. The pre-change copy, with secrets redacted, is `_connectors_handoff_docs/migrate/hooks-before.json`. The diagnosis is in `slackbot-drop.md`. The call hooks still point to ngrok, plus someone else's `eec4-…` hook; do not touch them.
 - **Slack bot app** (`accelerate-bot-test`, provider app A0C7N6LNZMH): the Event Subscriptions Request URL points to staging, and the staging redirect URI was added. The old local ngrok URL was `https://carol-elliptic-uncloak.ngrok-free.dev/v1/connectors/events/slack_bot/A0C7N6LNZMH`. The staging E2E passed end to end: a hand-typed mention in #kanat-test got a reply in the thread at 03:29Z.
 
-**Local stack** (for UI E2E): compose project `vision-agents` (router, postgres, redis) is running. Its router is built from 599298c6 and is stale: rebuild it before testing with `docker compose -f compose.yaml -f ../volt-dashboard/docs/local-agents/compose.volt.yaml up -d --build router`. The dashboard dev server runs on https://local.getstream.io:3000 from worktree `<scratch>/volt/wt-int`, started detached; its PID file is `<scratch>/volt/dev-int.pid`. ngrok needs `NGROK_AUTHTOKEN` from `.env`. The local slack_bot inbound no longer works, because both the Slack events URL and the Stream hook moved to staging (Kanat chose this).
+**Local stack** (for UI E2E): compose project `vision-agents` (router, postgres, redis) is running. Its router is built from 599298c6 and is stale: rebuild it before testing with `docker compose -f compose.yaml -f ../volt-dashboard/docs/local-agents/compose.volt.yaml up -d --build router`. The dashboard dev server runs on https://local.getstream.io:3000 from worktree `<scratch>/volt/wt-int`, started detached; its PID file is `<scratch>/volt/dev-int.pid`. ngrok needs `NGROK_AUTHTOKEN` from `.env`. The local slack_bot inbound no longer works, because both the Slack events URL and the Stream hook moved to staging (Kanat chose this). A local DB that recorded `20261015120000` makes `router plugins migrate` refuse the #897 file: delete that `goose_db_version` row. A branch that still carries `20261015120000` fails on a DB migrated by #897 until it merges `accelerate`.
 
 **Plugins → connectors:** there is no plugin data to move. Staging has 0 plugin clients and 0 plugin connections, and the only plugin entry (config 1731296 `loubot_grader` salesforce) is skipped by the dry run. Kanat decided on a **two-phase removal** (memory `plugins-two-phase-removal.md`):
 - **Phase 1 is done:** #872 is deployed in v0.6.34. It adds OpenAPI `deprecated`, WARN logs `msg="deprecated plugin path used"` with `path=… via=plugins|mcp_servers unbound=<n>`, and a Go SDK warning.
@@ -86,12 +89,14 @@ Waves 3b–7 shipped the connectors core. Their ledgers are in `_connectors_hand
 | #872 | — | plugins deprecated, phase 1 |
 | #876 | — | skills `.claude/skills/connectors` and `add-connector` for other developers |
 
+**Wave 9 (code merged, deploy held, hackathon 2026-10-14).** Merged: #891 AI-1078 (`06b7bce4`), #892 shared-thread tests (`dff5f98e`), #893 `tool_patterns` (`5857314d`), #895 Go SDK (`29a014f0`), #896 Python SDK + example (`c891381c`, head `daed2d08`). Open: #897 migration rename (head `2a04d8de`, GO, merge waits for Kanat), GetStream/cli#47 (ledger GO at `c1e034a9`; held until staging has `tool_patterns`; the beta release needs Kanat). `gh pr view` 896 and 897 on 2026-10-12: #896 MERGED `c891381c`, #897 OPEN, `mergeCommit` null, head `2a04d8de`. Detail: `waves/9-current.md`.
+
 ## 6. Where the internal docs are
 
-- **Durable copy, made for this handoff:** `~/Projects/stream/Vision-Agents/_connectors_handoff_docs/`
-  - `waves/`: wave ledgers and briefs (`8.md` is the latest; `3d-brief.md` + `wave3-common.md` are the common brief every agent reads first; `8-brief.md`).
+- **Durable copy, made for this handoff:** `acceleration/docs/connectors/_connectors_handoff_docs/` (this file sits beside that folder).
+  - `waves/`: ledgers and briefs. `9.md` is the wave 9 ledger; the orchestrator owns it, so a handoff sync links to it and does not edit it. `9-current.md` is the handoff detail (yaml syntax, `tool_patterns`, PR SHAs, the #897 migration hold). `9-brief.md` is the agent brief. `3d-brief.md` + `wave3-common.md` are the common brief every agent reads first. `8.md` is the previous wave.
   - `volt/`: `plan.md`, `brief.md` (volt agent rules, design standards), `phase-h.md`, phase findings, local E2E reports `e2e-d*.md` (findings F47–F74).
-  - `migrate/`: `plugin-removal-inventory.md`, `e2e-staging.md` (staging E2E, F80–F89), `slackbot-drop.md` (the hook incident).
+  - `migrate/`: `plugin-removal-inventory.md`, `e2e-staging.md` (staging E2E, F80–F89), `slackbot-drop.md` (the hook incident), `operator-clients.md` (vendor OAuth client prep for the hackathon pass; no secret values).
   - `wave8-findings/`: per-PR findings lists of wave 8.
   - `e2e-local/`: the earlier local connector E2E reports and findings.
 - **Original scratchpad, ephemeral, may be gone:** `/private/tmp/claude-504/-Users-kanat-Projects-stream-Vision-Agents/a0abf0a3-74bd-4641-9e95-9b4aed318e30/scratchpad/`. It holds the scripts too: `w3c/testdb.sh`, `w8/baseline.sh`, deploy and verify scripts in `deploy-v0.6.34/` and `cors-fix/`, `canary/psql-pod.yaml` (a read-only psql pod). If it is gone, recreate `testdb.sh` from the description in the run-wave mechanic template and in memory `parallel-agents-test-db-isolation.md`.
@@ -103,25 +108,27 @@ Waves 3b–7 shipped the connectors core. Their ledgers are in `_connectors_hand
 - **Plan doc:** `acceleration/docs/connectors/subtasks.md` on `origin/connectors/planning`.
 - **Developer-facing:** the `connectors` and `add-connector` skills in the repo.
 
-## 7. What to do next (proposed to Kanat, not yet approved)
+## 7. What to do next
 
-Kanat was asked «Запускать фазу J и планировать волну 9?» and has not answered yet. Wait for his answer.
+Wave 9 code is merged (plan approved 2026-10-12). Deploy is blocked on #897. Do not edit `waves/9.md`. Tickets to file at wave exit are listed there; do not file them early.
 
-1. **Volt phase J** (one PR off `origin/ai-team/agent-dashboard`). Kanat's design lead said «Feel free to change the UX/UI or section position the way which you think fits the best». Scope:
+1. **#897, then staging.** #891, #892, #893, #895 and #896 (`c891381c`) are merged. Do not tag `c891381c`. Kanat merges #897 (GO at `2a04d8de`), then tag `accelerate-v0.6.35` (still free) and deploy. Before tagging, compare new migration files with the live goose version: no file below it. `launch inspect` first. Commands: memory `staging-migration-order.md`. Staging is still v0.6.34, goose `20261016120000`. After the new router starts, rollback to v0.6.34 is fine. A pattern binding rolled back to v0.6.34 grants nothing (fail closed). Deferred off this wave: AI-1051, F55, AI-1050, AI-1067, AI-1079-AI-1081.
+2. **Volt phase J** (plan track D, not started; one PR off `origin/ai-team/agent-dashboard`). Kanat's design lead said «Feel free to change the UX/UI or section position the way which you think fits the best». Scope:
    - move Connectors to the top of the agent's Tools tab;
    - read `Connection.last_validation` from the API (the dashboard keeps «Last check» only in cache today);
    - use `Connector.channel` in the agent delete dialog (AI-1069);
    - make Duplicate and Save as new drop or swap a slack_bot binding, which now hits 409 (AI-1083, Medium);
-   - AI-1057 (0 tools, comma-separated names), AI-1058 (silent consent failure), AI-1062 (raw id flash).
+   - AI-1057 (0 tools, comma-separated names), AI-1058 (silent consent failure), AI-1062 (raw id flash);
+   - keep `tool_patterns` on a binding (`9.md` tickets: a dashboard save that sends `tools: []` would wipe a pattern binding).
    Process as before: author, independent review, browser check on :3000 against a **rebuilt** local router, merge, then `gh workflow run deploy-vercel.yml --ref ai-team/agent-dashboard`.
-2. **Router wave 9.** First **AI-1078 (High, security)**: `POST …/validate` still returns the provider's error text with the credential; apply `storedError` stripping to the answer. Then AI-1051 (bindings left after a forced connector delete), F55 (Linear DCR registers a new client per consent), AI-1050 (shared Slack tokens; verify first). Optional: AI-1067, AI-1079–AI-1081. Plan with `plan-waves`: newest migration on base is now `20261016120000`.
 3. **Gates waiting for Kanat:**
-   - F87: a Stream operator Slack client on staging (a secret in the staging secrets plus a chart change);
-   - AI-946: a sandbox Stream app with an SQS hook, to verify the hook round-trip live (outward-facing);
-   - AI-1076: a per-connection share of the proxy cap, which Kanat will think about next week;
-   - AI-1082 (MCP-Protocol-Version 400) and AI-1084 (a test-copy field): Questions;
-   - plugins phase 2 (~2026-10-24).
-4. **Known base failures** (do not diagnose): CI js, mypy and python-unit have been red since colleague commit 9f629685. Order-dependent or flaky integration suites: TestSIPTrunksSuite, TestTurnRecordingSuite, TestDataMoveSuite, TestKnowledgeUrlsSuite, TestConnectionEventsSuite, TestSessionUpdateSuite/TestAUserRenamesASessionThatEnded, TestQuotaSuite, TestServerSuite/TestProvidersReportLiveHealth, TestSTSRouterSuite/TestInterruptMutesTheReplyBeforeTheProviderHearsOfIt. gofmt flags `streams_test.go:382`. The full list is in `waves/8.md`.
+   - Merge #897, then tag `accelerate-v0.6.35` and deploy. Staging is still v0.6.34.
+   - CLI beta release. GetStream/cli#47 is GO at `c1e034a9` (ledger), held until staging has `tool_patterns`. Publishing the beta release needs Kanat.
+   - Docs publish (plan track C: quickstart and creating-an-agent).
+   - Vendor consents / operator OAuth clients (plan B1). Prep: `migrate/operator-clients.md`. Slack on staging is still F87.
+   - Gong and Instacart: unverified (no account check this sync).
+   - Carried from 2026-10-10, not rechecked: AI-946 (sandbox Stream app with an SQS hook), AI-1076 (per-connection proxy cap), AI-1082, AI-1084, plugins phase 2 (~2026-10-24).
+4. **Known base failures** (do not diagnose): the list in `waves/9.md`, except the 3 ca8bcd5d session tests. #892 fixed those (`TestASharedConversationUsesTheAppsConnectionsOnly`, `TestNoSelectionImpliesNothingForAnUnverifiedCallerOrASharedConversation`, `TestOnlyAnOptionalBindingOfTheCallersOwnWaitsForALogin`). `9.md` still names them in its baseline snapshot; ignore that. gofmt parse error is `streams_test.go:417` (the wave 8 note said `:382`). CI js, mypy and python-unit red since 9f629685, not rechecked.
 
 ## 8. Open Linear tickets created in this session (all under AI-816)
 
