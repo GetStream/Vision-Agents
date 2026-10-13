@@ -1782,11 +1782,25 @@ func (s *SessionSuite) TestRequestedMemoryRequiresAConfiguredProvider() {
 	s.Require().ErrorContains(err, "memory is unavailable")
 }
 
-func (s *SessionSuite) TestTextSessionThinksOnItsOwnModel() {
+func (s *SessionSuite) TestTextSessionHasNoSubagent() {
 	s.thinks = true
 	s.manages()
 	created := s.writes(Spec{SubagentTarget: defaultSubagentTarget})
-	s.Equal(created.Spec().LLMTarget, created.Spec().SubagentTarget)
-	s.NotEqual(defaultSubagentTarget, row(created).Subagent)
-	s.Equal(created.Spec().LLMTarget, row(created).Subagent)
+	s.Empty(created.Spec().SubagentTarget)
+	s.Empty(row(created).Subagent)
+}
+
+func (s *SessionSuite) TestTextSessionLoadsTheSkillsItsConfigNames() {
+	s.manages()
+	created := s.writes(Spec{SkillNames: []string{"think"}})
+
+	s.Contains(created.Tools(), harness.LoadSkillTool)
+}
+
+func (s *SessionSuite) TestTextSessionWithoutSkillsOfItsOwnLoadsNone() {
+	// The built-in skills are prompts for a subagent, so a text session is not offered them.
+	s.manages()
+	created := s.writes(Spec{})
+
+	s.NotContains(created.Tools(), harness.LoadSkillTool)
 }

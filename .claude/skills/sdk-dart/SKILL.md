@@ -1,6 +1,6 @@
 ---
 name: sdk-dart
-description: How to build and extend the Dart and Flutter SDKs in sdks/dart. Read this before changing vision_agents_core, vision_agents_ui or vision_agents_rtc, or before adding a Dart client for a new endpoint.
+description: How to build and extend the Dart and Flutter SDKs in sdks/dart. Read this before changing vision_agents_core, vision_agents_chat, vision_agents_ui or vision_agents_rtc, or before adding a Dart client for a new endpoint.
 ---
 
 # Dart SDK conventions
@@ -17,17 +17,19 @@ because Stream Chat 10.4 is.
 
 ```
 core  vision_agents_core  pure Dart: generated client, socket, conversation state
+chat  vision_agents_chat  pure Dart: the conversation's Stream Chat channel   -> core
 ui    vision_agents_ui    Flutter widgets, Stream Chat transcript             -> core
 rtc   vision_agents_rtc   joining the call over Stream Video                  -> core
 ```
 
-**Three standalone packages, not a pub workspace.** A workspace resolves every member as one
+**Four standalone packages, not a pub workspace.** A workspace resolves every member as one
 graph, so once `ui` or `rtc` (Flutter) is a member, `core` cannot be resolved or tested with the
 plain Dart SDK — and a pure-Dart core testable in `dart:stable` is the point of having one. The
-price is three lockfiles and a local link: `ui` and `rtc` declare `vision_agents_core: ^x.y.z`
-as a hosted dependency, and a committed `pubspec_overrides.yaml` points it at `../core`. Pub
-never publishes that file and consumers never see it. Before releasing, publish `core` first
-and check `ui`/`rtc` resolve against the hosted version with the override removed.
+price is four lockfiles and a local link: `chat`, `ui` and `rtc` declare
+`vision_agents_core: ^x.y.z` as a hosted dependency, and a committed `pubspec_overrides.yaml`
+points it at `../core`. Pub never publishes that file and consumers never see it. Before
+releasing, publish `core` first and check the others resolve against the hosted version with the
+override removed.
 
 - `core` has no Flutter import and no Stream dependency. `dart:io` stays out of `lib/` too, so
   it runs on the web: `package:http` and `package:web_socket` pick the platform themselves.
@@ -35,13 +37,31 @@ and check `ui`/`rtc` resolve against the hosted version with the override remove
   exposes, because rendering video needs it.
 - `ui` depends on `stream_chat_flutter_core`, not `stream_chat_flutter`: the transcript is drawn
   with our own turns, and the full kit brings media pickers and their platform setup for nothing.
+- `chat` depends on `stream_chat`, which is pure Dart, so it is tested in `dart:stable` like
+  `core`. Import it with a prefix (`as stream`): it exports a `TokenProvider` of its own.
 - Stream's packages are pinned to exact versions (`stream_video_flutter: 1.6.0`,
-  `stream_chat_flutter_core: 10.4.0`). Bumping them is a deliberate change: read the changelog,
+  `stream_chat: 10.4.0`, `stream_chat_flutter_core: 10.4.0`). Bumping them is a deliberate change: read the changelog,
   rerun the rtc/ui tests, and check the APIs used (listed below) in the new source.
 - `pubspec.lock` is gitignored: a library leaves resolving to the app.
 
 Stream Video's singleton: use `StreamVideo.create`, never the `StreamVideo(...)` factory, which
 installs a process-wide instance and collides with a host that has its own.
+
+## Stream is set up once
+
+The key, `userId` and token are the one identity for the router, Stream Chat and Stream Video.
+`Backend.shared(kind, open:, disconnect:)` holds one client per `kind:apiKey:userId`: sessions
+asking at once share one opening, one that failed to open is opened again, and `withUser` keeps
+the registry so another user gets their own. `Backend.give` holds the app's own client, which
+`VisionAgents.disconnect()` never touches; it closes only what `shared` built. Beside a
+`customerId` the key is Stream's alone and the router is reached by customer id.
+
+- `vision_agents_chat`: `agents.useChat(client)` and `session.chat()`, which answers the
+  conversation's `Channel`, unwatched. A session with no conversation is a `StateError`.
+- `vision_agents_rtc`: `agents.useVideo(client)` and `VoiceSession.join()`, which joins the
+  session's `callType:callId`. Leaving disposes nothing.
+- Dart has no overloading, hence `useChat` and `useVideo` rather than Kotlin's `use`. A
+  client for another user, or a missing key, user or token, is an `ArgumentError`.
 
 ## State
 
@@ -151,8 +171,8 @@ speakerDefaultOn: true))` (which creates the call too), `setMicrophoneEnabled`,
 `call.state.valueStream`, `StreamVideoRenderer`. Results are `Result<T>`; a `Failure` becomes
 `VoiceState.failure`.
 
-- A token provider, not a token: `tokenLoader` asks the host's backend again when the call token
-  expires an hour in.
+- A token provider, not a token: `tokenLoader` asks the agents' token function again when the
+  token expires an hour in.
 - The camera starts on the back lens as a join setting, so no front-facing frame is published.
 - Permissions are the host app's: `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, `CAMERA`,
   `BLUETOOTH_CONNECT`, `INTERNET`, `ACCESS_NETWORK_STATE`; `NSMicrophoneUsageDescription`,
@@ -168,8 +188,17 @@ never on a call happening.
    in core; rtc has its own small one), recording what arrived.
 3. **Live tests**, tagged `live` and skipped unless `VISION_AGENTS_URL` is set: real sessions, a
    real model answer, a real tool call, rewind and fork, guests, search.
+4. **The posture**: `posture_test.dart` drives every public operation against the loopback
+   router and checks each request against `x-client-accessible` in the spec;
+   `keyed_router_posture_test.dart` (tagged `live`, skipped without `INTEGRATION_ROUTER_KEY`)
+   checks a real `api_key` router answers a device 403 `server_side_only`.
+   `stream_clients_test.dart` covers the shared clients.
 
 Wait on a condition with a deadline (`_until`), never a fixed sleep.
+
+CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on any change under
+`sdks/dart` or to the spec: core's and chat's checks and tests, as below. `ui` and `rtc` are not
+in it, so run them yourself when you change them.
 
 Docker only, pub's cache in the named volume `va-dart-pub`:
 
@@ -178,6 +207,7 @@ Docker only, pub's cache in the named volume `va-dart-pub`:
 docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
   -w /repo/sdks/dart/core dart:stable \
   sh -c 'dart pub get && dart format --set-exit-if-changed . && dart analyze && dart run tool/generate.dart --check && dart test'
+# chat: the same, from sdks/dart/chat, without the generator check
 # ui, rtc
 docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
   -w /repo/sdks/dart/ui ghcr.io/cirruslabs/flutter:3.44.0 \

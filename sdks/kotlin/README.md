@@ -41,6 +41,10 @@ running locally with nothing in front of it is reached by customer id instead:
 `VisionAgents(url = "http://localhost:8080", customerId = "acme")`. Pass `apiKey` beside it and
 the key is Stream's alone, so chat and video connect on a local router too.
 
+An app targeting SDK 37 reaches a router on the local network (the emulator's `10.0.2.2`, or a
+Mac on the same Wi-Fi) only with `android.permission.ACCESS_LOCAL_NETWORK`, declared in the
+manifest and asked for at runtime. Without it the connection times out rather than failing.
+
 Stream is set up once. The key, and the user and token `setUser` is given, are what the router,
 Stream Chat and Stream Video all connect with. Nothing connects when the user is set: the first
 session to ask for `chat()` or `join()` builds the client, and every session after it shares
@@ -149,7 +153,9 @@ agents.setUser(guest)
 ```
 
 The stored guest is reused on the next launch rather than minting a second one with an empty
-history. Against a router with an api key, `setUser(user, TokenProvider)` is asked for a token
+history. With no user set the guest is asked for anonymously; a router that admits no anonymous
+callers, Stream's hosted one for now, throws `AgentsException.Configuration`, and your backend
+mints the guest instead. Against a router with an api key, `setUser(user, TokenProvider)` is asked for a token
 when one is needed and again after a 401, never on every request.
 
 ## What is deliberately not here

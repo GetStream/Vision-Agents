@@ -104,6 +104,16 @@ api.CreateSessionRequest createRequestOf(
               parameters: tool.parameters,
               displayTitle: _set(tool.displayTitle),
               executor: tool.executor?.name,
+              approval: switch (tool.approval) {
+                null => null,
+                final approval => api.SessionToolApproval(
+                  title: approval.title,
+                  message: approval.message,
+                  reasonArgument: approval.reasonArgument,
+                  allowTitle: approval.allowTitle,
+                  declineTitle: approval.declineTitle,
+                ),
+              },
             ),
         ],
   tags: options.tags.isEmpty ? null : options.tags,

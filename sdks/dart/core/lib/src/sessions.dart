@@ -148,14 +148,29 @@ final class Responses {
   /// is a handle: [items] with its id reads what has been written down so far, and the
   /// session's events are what watch it arrive. A text question carries a fresh request id,
   /// so a retry of the same request starts no second turn.
-  Future<AgentResponse> create(String text, {List<AgentImage> images = const []}) async {
+  ///
+  /// [maxOutputTokens] caps this answer, reasoning included, and [reasoningEffort] is how long
+  /// the model may think first, one of the efforts the session's model accepts. Both cover the
+  /// replies that finish it after its tools; left null, the session's own apply.
+  Future<AgentResponse> create(
+    String text, {
+    List<AgentImage> images = const [],
+    int? maxOutputTokens,
+    String? reasoningEffort,
+  }) async {
     // The router refuses a request id on a question with images.
     final requestId = images.isEmpty ? _requestId() : null;
     _asking?.call(text);
     return responseOf(
       await _operations.createResponse(
         id: sessionId,
-        body: api.CreateResponseRequest(text: text, images: imagesOf(images), requestId: requestId),
+        body: api.CreateResponseRequest(
+          text: text,
+          images: imagesOf(images),
+          maxOutputTokens: maxOutputTokens,
+          reasoningEffort: reasoningEffort,
+          requestId: requestId,
+        ),
       ),
     );
   }

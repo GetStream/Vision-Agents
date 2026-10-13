@@ -161,6 +161,10 @@ JUnit 5 through `kotlin-test`. Never mock; assert on state and outputs, never on
    `INTEGRATION_ROUTER_KEY` and checks a device token's 403s against a router in `api_key` mode.
 5. **Builds.** `ui`, `rtc` and `chat` are assembled in `cimg/android`, not tested.
 
+CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on any change under
+`sdks/kotlin` or to the spec: `:core:test`, then `generate.py` again, failing if the generated
+models differ from what is committed, then the three Android modules assembled.
+
 Wait on a condition with a deadline (`until { ... }`), never a fixed delay. A collector that
 must see an event has to be subscribed before the frame is sent: start it with
 `CoroutineStart.UNDISPATCHED`, or it races the socket.

@@ -91,6 +91,11 @@ public struct Backend: Sendable {
         setUser(user, token: { token })
     }
 
+    /// Acts as a guest from here on.
+    public func setUser(_ guest: Guest) {
+        setUser(User(id: guest.id, name: guest.name), token: guest.token)
+    }
+
     /// Forgets the user, which is what signing out is.
     public func clearUser() {
         identity.clear()
@@ -169,6 +174,10 @@ public struct Backend: Sendable {
         }
         return headers
     }
+
+    /// Whether this device holds the app's key and nobody to act for yet, which is how a guest
+    /// is asked for before there is one: `Stream-Auth-Type: anonymous` and no token.
+    var anonymous: Bool { customerID.isEmpty && !apiKey.isEmpty && identity.user == nil }
 
     /// Drops the token held, so the next request asks the provider again. Reports whether
     /// there is a provider to ask, which is whether a retry could go any differently.
@@ -333,14 +342,22 @@ struct CredentialMiddleware: ClientMiddleware {
         operationID: String,
         next: (HTTPRequest, HTTPBody?, URL) async throws -> (HTTPResponse, HTTPBody?)
     ) async throws -> (HTTPResponse, HTTPBody?) {
-        let answer = try await next(try await credentialed(request), body, baseURL)
+        if operationID == "createGuestUser", backend.anonymous {
+            let answer = try await next(
+                credentialed(request, ["Stream-Auth-Type": "anonymous"]), body, baseURL)
+            guard answer.0.status != .unauthorized else {
+                throw AgentsError.configuration(anonymousGuestRefused)
+            }
+            return answer
+        }
+        let answer = try await next(credentialed(request, try await backend.headers()), body, baseURL)
         guard answer.0.status == .unauthorized, backend.expireToken() else { return answer }
-        return try await next(try await credentialed(request), body, baseURL)
+        return try await next(credentialed(request, try await backend.headers()), body, baseURL)
     }
 
-    private func credentialed(_ request: HTTPRequest) async throws -> HTTPRequest {
+    private func credentialed(_ request: HTTPRequest, _ headers: [String: String]) -> HTTPRequest {
         var request = request
-        for (name, value) in try await backend.headers() {
+        for (name, value) in headers {
             request.headerFields[HTTPField.Name(name)!] = value
         }
         var components = URLComponents(string: request.path ?? "/") ?? URLComponents()

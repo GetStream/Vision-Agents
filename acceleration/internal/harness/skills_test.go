@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,6 +109,47 @@ func (s *SkillsSuite) TestASubagentThatNeedsSomethingIsRecognised() {
 	text, question = answer("  It is 12.63.  ")
 	s.Equal("It is 12.63.", text)
 	s.Empty(question)
+}
+
+func (s *SkillsSuite) TestASkillsInstructionsAreReadByName() {
+	instructions, err := testSkills().Instructions(context.Background(), "recall")
+	s.Require().NoError(err)
+	s.Equal("read the transcript", instructions)
+
+	_, err = testSkills().Instructions(context.Background(), "teleport")
+	s.ErrorContains(err, `no skill called "teleport"`)
+	s.ErrorContains(err, "think, recall", "the model is told which names it may use")
+}
+
+func (s *SkillsSuite) TestAStoredSkillIsReadWhenItIsLoaded() {
+	// A stored skill is held by name and description; its instructions are read when used,
+	// so one edited mid-conversation is loaded as it now is.
+	read := 0
+	skills := Skills{
+		Skills: []Skill{{Name: "sales-moderation", Description: "moderation pricing"}},
+		Load: func(_ context.Context, name string) (string, error) {
+			read++
+			return "instructions for " + name, nil
+		},
+	}
+
+	instructions, err := skills.Instructions(context.Background(), "sales-moderation")
+	s.Require().NoError(err)
+	s.Equal("instructions for sales-moderation", instructions)
+	s.Equal(1, read)
+}
+
+func (s *SkillsSuite) TestLoadToolOffersEachSkillByNameAndDescription() {
+	skills := Skills{Skills: []Skill{{Name: "sales-chat", Description: "Chat pricing"}, {Name: "sales-video", Description: "Video pricing"}}}
+	tool := skills.LoadTool()
+
+	s.Equal(LoadSkillTool, tool.Name)
+	s.Contains(tool.Description, "- sales-chat: Chat pricing")
+	s.Contains(tool.Description, "- sales-video: Video pricing")
+	s.Contains(tool.Description, "before any other tool")
+	s.Equal([]string{"sales-chat", "sales-video"},
+		tool.Parameters["properties"].(map[string]any)["name"].(map[string]any)["enum"])
+	s.NoError(Tools{Tools: []Tool{tool}}.Validate())
 }
 
 func (s *SkillsSuite) TestTextSkillsAcceptCompleteWrittenRequests() {

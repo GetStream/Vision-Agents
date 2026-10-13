@@ -21,10 +21,10 @@ func TestSTSSuite(t *testing.T) {
 func (s *STSSuite) TestCapabilitiesExpressOnlyWhatTheyDeclare() {
 	all := Capabilities{
 		Text: true, Tools: true, InputTranscript: true, OutputTranscript: true,
-		SemanticTurns: true, ManualTurns: true, Endpointing: true,
+		SemanticTurns: true, ManualTurns: true, Endpointing: true, FullDuplex: true,
 	}
 	for _, term := range []options.Term{
-		options.SemanticTurns, options.ManualTurns, options.Endpointing, options.Tools,
+		options.SemanticTurns, options.FullDuplex, options.ManualTurns, options.Endpointing, options.Tools,
 		options.TextInput, options.InputTranscript, options.OutputTranscript,
 	} {
 		s.True(all.Expresses(term), "%s should be expressible when declared", term)
@@ -65,7 +65,9 @@ func (s *STSSuite) TestATurnMeasuresTheWaitFromWhenTheCallerStopped() {
 
 func (s *STSSuite) TestAReplyNobodyWaitedForReportsNoWait() {
 	turn := NewTurn("", 1, time.Time{})
-	s.Equal("r-1", turn.ID, "a vendor without response ids gets one made up from the generation")
+	another := NewTurn("", 1, time.Time{})
+	s.NotEmpty(turn.ID, "a vendor without response ids gets a generated ID")
+	s.NotEqual(turn.ID, another.ID, "a fresh session cannot reuse an earlier generation's id")
 
 	turn.Chunk(audio.PcmData{Samples: make([]int16, 240), SampleRate: 24_000, Channels: 1})
 	complete := turn.Complete("gemini", "live", true, Usage{})

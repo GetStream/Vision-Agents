@@ -12,6 +12,7 @@ import {
   USER_KEY,
   daytona,
   userIdOf,
+  type ConnectorDeclaration,
   type Folder,
   type Schemas,
 } from "../src/index.js";
@@ -487,6 +488,108 @@ describe("Agent", () => {
 
       assert.equal(hashes[0], hashes[1]);
       assert.notEqual(hashes[1], hashes[2]);
+    });
+
+    describe("connectors", () => {
+      const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" };
+      const folder = (connectors: ConnectorDeclaration[] | undefined): Folder => ({
+        path: "/agents/jean",
+        name: "jean",
+        settings: connectors ? { connectors } : {},
+        instructions: "Be brief.",
+        guardrail: "",
+        skills: [],
+        knowledge: [],
+        knowledgeURLs: [],
+      });
+      const connection = (id: string, label: string): Schemas["Connection"] =>
+        ({ id, label }) as Schemas["Connection"];
+
+      beforeEach(() => {
+        router.serve("POST", "/v1/agents/sync", { body: { unchanged: false, config: stored } });
+      });
+
+      async function synced(connectors: ConnectorDeclaration[] | undefined): Promise<Record<string, unknown>> {
+        await new Agent({ folder: folder(connectors), client: api }).sync();
+        return router.requestsTo("POST", "/v1/agents/sync").at(-1)?.body as Record<string, unknown>;
+      }
+
+      it("sends a connector named alone as a session binding of every tool, and lists no connections", async () => {
+        const body = await synced([{ name: "linear" }, { name: "github", tools: ["list_*"], required: false }]);
+
+        assert.deepEqual(body["connectors"], [
+          { name: "linear", connector_id: "linear", tools: [], tool_patterns: ["*"], connection: { type: "session" } },
+          {
+            name: "github",
+            connector_id: "github",
+            tools: [],
+            tool_patterns: ["list_*"],
+            required: false,
+            connection: { type: "session" },
+          },
+        ]);
+        assert.equal(router.requestsTo("GET", "/v1/agents/connections").length, 0);
+      });
+
+      it("sends no connectors when agent.yaml has none, and an empty list when it lists none", async () => {
+        const without = await synced(undefined);
+        const emptied = await synced([]);
+
+        assert.equal("connectors" in without, false, "the stored bindings would be removed");
+        assert.deepEqual(emptied["connectors"], [], "the stored bindings would never be removed");
+        assert.notEqual(without["hash"], emptied["hash"]);
+      });
+
+      it("fixes a connection by its id before its label, reading every page", async () => {
+        router.serve("GET", "/v1/agents/connections", (request) => ({
+          body: request.query.get("cursor")
+            ? { items: [connection("acct", "other")], has_more: false }
+            : { items: [connection("wrong", "acct")], has_more: true, next_cursor: "2" },
+        }));
+
+        const body = await synced([{ name: "issues", connector: "linear", connection: "acct" }]);
+
+        const listed = router.requestsTo("GET", "/v1/agents/connections");
+        assert.equal(listed.length, 2);
+        assert.equal(listed[0]?.query.get("owner_type"), "app");
+        assert.equal(listed[0]?.query.get("connector_id"), "linear");
+        assert.deepEqual((body["connectors"] as Schemas["AgentConnectorBinding"][])[0]?.connection, {
+          type: "fixed",
+          connection_id: "acct",
+        });
+      });
+
+      it("fixes the one connection with that label, and stops at a cursor it has read", async () => {
+        router.serve("GET", "/v1/agents/connections", (request) => ({
+          body: request.query.get("cursor")
+            ? { items: [connection("the-one", "work")], has_more: true, next_cursor: "again" }
+            : { items: [connection("other", "nope")], has_more: true, next_cursor: "again" },
+        }));
+
+        const body = await synced([{ name: "issues", connection: "work" }]);
+
+        assert.equal(router.requestsTo("GET", "/v1/agents/connections").length, 2);
+        assert.deepEqual((body["connectors"] as Schemas["AgentConnectorBinding"][])[0]?.connection, {
+          type: "fixed",
+          connection_id: "the-one",
+        });
+      });
+
+      it("refuses a connection nobody has, or a label two share, and sends nothing", async () => {
+        router.serve("GET", "/v1/agents/connections", {
+          body: { items: [connection("a", "work"), connection("b", "work")], has_more: false },
+        });
+
+        await assert.rejects(
+          () => new Agent({ folder: folder([{ name: "issues", connection: "missing" }]), client: api }).sync(),
+          /connector "issues": no app connection with id or label "missing"/,
+        );
+        await assert.rejects(
+          () => new Agent({ folder: folder([{ name: "issues", connection: "work" }]), client: api }).sync(),
+          /connector "issues": "work" matches 2 app connections/,
+        );
+        assert.equal(router.requestsTo("POST", "/v1/agents/sync").length, 0);
+      });
     });
 
     it("only reads back a directory nothing has touched since .agent_sync was written", async () => {

@@ -65,6 +65,8 @@ type Capabilities struct {
 	SemanticTurns bool
 	ManualTurns   bool
 	Endpointing   bool
+	// FullDuplex reports whether the model can listen while producing audio.
+	FullDuplex bool
 	// InstructionsMidSession and ToolsMidSession report whether either can change once
 	// the session is open. Where they cannot, the matching method returns an error.
 	InstructionsMidSession bool
@@ -93,6 +95,8 @@ func (c Capabilities) Expresses(term options.Term) bool {
 	switch term {
 	case options.SemanticTurns:
 		return c.SemanticTurns
+	case options.FullDuplex:
+		return c.FullDuplex
 	case options.ManualTurns:
 		return c.ManualTurns
 	case options.Endpointing:

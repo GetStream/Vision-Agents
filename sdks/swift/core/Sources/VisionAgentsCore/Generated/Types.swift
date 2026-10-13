@@ -11,6 +11,14 @@ import struct Foundation.Date
 #endif
 /// A type that performs HTTP operations defined by the OpenAPI document.
 internal protocol APIProtocol: Sendable {
+    /// Mint a guest so somebody can talk to an agent before signing up
+    ///
+    /// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+    /// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
+    ///
+    /// - Remark: HTTP `POST /v1/agents/guests`.
+    /// - Remark: Generated from `#/paths//v1/agents/guests/post(createGuestUser)`.
+    func createGuestUser(_ input: Operations.CreateGuestUser.Input) async throws -> Operations.CreateGuestUser.Output
     /// Join a call as a voice agent
     ///
     /// The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.
@@ -140,6 +148,22 @@ internal protocol APIProtocol: Sendable {
 
 /// Convenience overloads for operation inputs.
 extension APIProtocol {
+    /// Mint a guest so somebody can talk to an agent before signing up
+    ///
+    /// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+    /// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
+    ///
+    /// - Remark: HTTP `POST /v1/agents/guests`.
+    /// - Remark: Generated from `#/paths//v1/agents/guests/post(createGuestUser)`.
+    internal func createGuestUser(
+        headers: Operations.CreateGuestUser.Input.Headers = .init(),
+        body: Operations.CreateGuestUser.Input.Body? = nil
+    ) async throws -> Operations.CreateGuestUser.Output {
+        try await createGuestUser(Operations.CreateGuestUser.Input(
+            headers: headers,
+            body: body
+        ))
+    }
     /// Join a call as a voice agent
     ///
     /// The whole conversation runs here: the agent joins the call, transcribes what it hears, answers it and speaks back, all through the routers. The caller keeps the session id and watches the conversation over the events socket.

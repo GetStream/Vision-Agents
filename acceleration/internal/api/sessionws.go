@@ -224,7 +224,10 @@ type watcherCommand struct {
 	// ToolCallID names the call a tool_result answers.
 	ToolCallID string `json:"tool_call_id"`
 	CommandID  string `json:"request_id"`
-	TurnID     string `json:"turn_id"`
+	// LegacyCommandID is request_id under its name before v0.6.35, which clients built
+	// against an older SDK (the getstream.io Ask panel among them) still send.
+	LegacyCommandID string `json:"command_id"`
+	TurnID          string `json:"turn_id"`
 	// Output is a string or a parts array, which is what a tool that returns an
 	// image sends.
 	Output json.RawMessage `json:"output"`
@@ -274,6 +277,9 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 // from the other direction: the frame came off a socket on another node and was carried
 // here on the bus, and a watcher on either node must be able to do the same things.
 func (s *Server) applyCommand(found *session.Session, owner session.Owner, command watcherCommand) bool {
+	if command.CommandID == "" {
+		command.CommandID = command.LegacyCommandID
+	}
 	switch command.Type {
 	case "tool_result":
 		parts, err := parseToolOutput(command.Output)

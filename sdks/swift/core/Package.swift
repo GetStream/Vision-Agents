@@ -21,7 +21,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-openapi-urlsession", from: "1.3.1"),
         .package(url: "https://github.com/apple/swift-http-types", from: "1.4.0"),
         .package(url: "https://github.com/GetStream/stream-chat-swift", from: "5.13.0"),
-        .package(url: "https://github.com/GetStream/stream-video-swift", from: "1.51.0"),
+        .package(url: "https://github.com/GetStream/stream-video-swift", from: "1.54.0"),
     ],
     targets: [
         .target(

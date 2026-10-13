@@ -25,6 +25,7 @@ final class AgentTool {
     this.parameters,
     this.displayTitle,
     this.executor,
+    this.approval,
   });
 
   /// What the model calls it. Must be unique within a session.
@@ -44,6 +45,10 @@ final class AgentTool {
   /// Who runs it. Null leaves it to the router, which is [ToolExecutor.server].
   final ToolExecutor? executor;
 
+  /// What a person is asked before each call runs, or null to run every call straight away.
+  /// A call that asks waits in `AgentSession.approvals` until `AgentSession.decide` answers it.
+  final ToolApproval? approval;
+
   /// A JSON Schema object for a tool whose arguments are all strings.
   ///
   /// A convenience for the common shape; for anything else, write the object yourself.
@@ -60,4 +65,36 @@ final class AgentTool {
     },
     'required': required,
   };
+}
+
+/// A tool's question to the person whose message a call answers.
+///
+/// In a conversation kept in Stream Chat the call's step carries it as `awaiting_approval`,
+/// and every channel member can read it: keep anything private out of it. A client tool is
+/// asked about only once the router knows the install to address it to; until then, declare
+/// it with [ToolExecutor.server].
+final class ToolApproval {
+  const ToolApproval({
+    required this.title,
+    this.message,
+    this.reasonArgument,
+    this.allowTitle,
+    this.declineTitle,
+  });
+
+  /// The question, such as "Share your location?". At most 80 characters.
+  final String title;
+
+  /// What allowing it shares or does, such as "Only your city is shared."
+  final String? message;
+
+  /// The string argument in which the model says why it wants the call, shown beside the
+  /// question. Declare it in `parameters` so the model fills it in.
+  final String? reasonArgument;
+
+  /// The label of the button that allows the call.
+  final String? allowTitle;
+
+  /// The label of the button that declines it.
+  final String? declineTitle;
 }

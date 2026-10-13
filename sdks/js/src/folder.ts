@@ -1,7 +1,7 @@
 import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, extname, join, posix, relative, sep } from "node:path";
 
-import type { Declaration, Folder, Skill, SyncStamp } from "./agent.js";
+import type { ConnectorDeclaration, Declaration, Folder, Skill, SyncStamp } from "./agent.js";
 import type { Schemas } from "./client.js";
 import { ConfigurationError } from "./errors.js";
 
@@ -539,10 +539,11 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
     const inline = (entry[2] ?? "").replace(/\s+#.*$/, "").trim();
 
     // What is indented under a key with nothing after it is its list or its mapping.
-    const nested: string[] = [];
+    const indented: string[] = [];
     while (index + 1 < lines.length && /^\s+\S/.test(lines[index + 1] as string)) {
-      nested.push((lines[++index] as string).trim());
+      indented.push(lines[++index] as string);
     }
+    const nested = indented.map((one) => one.trim());
 
     if (SCALARS.has(key)) {
       if (nested.length > 0 || inline.startsWith("[")) {
@@ -566,11 +567,158 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       declared.dispatch = dispatch(mapping(nested, inline, key, where), where);
     } else if (key === "greeting") {
       declared.greeting = greeting(mapping(nested, inline, key, where), where);
+    } else if (key === "connectors") {
+      declared.connectors = connectors(indented, inline, where);
     } else {
       throw new ConfigurationError(
         `${where} declares ${JSON.stringify(key)}, which is not something an agent has`,
       );
     }
+  }
+  // The model is offered both as <name>__<tool>, so one name would be two tools.
+  for (const connector of declared.connectors ?? []) {
+    if (declared.plugins?.includes(connector.name)) {
+      throw new ConfigurationError(
+        `${where}: ${JSON.stringify(connector.name)} is named under both connectors and plugins`,
+      );
+    }
+  }
+  return declared;
+}
+
+const CONNECTOR_KEYS = new Set(["name", "connector", "tools", "connection", "required"]);
+
+/**
+ * Reads `connectors:`, each the alias alone or a mapping:
+ *
+ * ```yaml
+ * connectors:
+ *   - linear
+ *   - name: issues
+ *     connector: linear
+ *     tools: [list_*, get_issue]
+ *     connection: work
+ *     required: true
+ * ```
+ */
+function connectors(lines: string[], inline: string, where: string): ConnectorDeclaration[] {
+  if (inline) {
+    if (/^\[\s*\]$/.test(inline)) {
+      return [];
+    }
+    return flowList(inline, "connectors", where).map((name) => connectorOf(new Map(), name, where));
+  }
+
+  const items: { alias?: string; keys: Map<string, { inline: string; nested: string[] }> }[] = [];
+  let itemColumn = -1;
+  let keyColumn = -1;
+  let value: { inline: string; nested: string[] } | undefined;
+  for (const line of lines) {
+    const trimmed = line.replace(/\s+#.*$/, "").trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const column = line.length - line.trimStart().length;
+    let body = trimmed;
+    let at = column;
+    if (itemColumn < 0 || column <= itemColumn) {
+      if (trimmed !== "-" && !trimmed.startsWith("- ")) {
+        throw new ConfigurationError(`${where}: connectors should be a list`);
+      }
+      itemColumn = column;
+      body = trimmed.slice(1).trim();
+      items.push({ keys: new Map() });
+      value = undefined;
+      keyColumn = -1;
+      if (!body) {
+        continue;
+      }
+      if (!/^[A-Za-z_][\w-]*:(\s|$)/.test(body)) {
+        (items.at(-1) as { alias?: string }).alias = body;
+        continue;
+      }
+      at = column + trimmed.length - body.length;
+    }
+
+    const item = items.at(-1) as (typeof items)[number];
+    if (keyColumn < 0) {
+      keyColumn = at;
+    }
+    if (at > keyColumn && value && item.alias === undefined) {
+      value.nested.push(body);
+      continue;
+    }
+    const entry = /^([A-Za-z_][\w-]*):(?:\s+(.*))?$/.exec(body);
+    if (at !== keyColumn || !entry || item.alias !== undefined) {
+      throw new ConfigurationError(`${where}: ${JSON.stringify(trimmed)} belongs to no connector`);
+    }
+    value = { inline: (entry[2] ?? "").trim(), nested: [] };
+    item.keys.set(entry[1] as string, value);
+  }
+  return items.map((item) => connectorOf(item.keys, item.alias, where));
+}
+
+function connectorOf(
+  keys: Map<string, { inline: string; nested: string[] }>,
+  alias: string | undefined,
+  where: string,
+): ConnectorDeclaration {
+  for (const key of keys.keys()) {
+    if (!CONNECTOR_KEYS.has(key)) {
+      throw new ConfigurationError(
+        `${where}: ${JSON.stringify(key)} is not something a connector says; name, connector, tools, connection and required are`,
+      );
+    }
+  }
+  const one = (key: string): string | undefined => {
+    const written = keys.get(key);
+    if (written?.nested.length) {
+      throw new ConfigurationError(`${where}: a connector's ${key} is one value, not a list`);
+    }
+    return written ? scalar(written.inline) : undefined;
+  };
+
+  const name = alias === undefined ? one("name") : scalar(alias);
+  if (!name) {
+    throw new ConfigurationError(`${where}: a connector needs a name`);
+  }
+  const declared: ConnectorDeclaration = { name };
+  const connector = one("connector");
+  if (connector) {
+    declared.connector = connector;
+  }
+
+  const tools = keys.get("tools");
+  if (tools && (tools.nested.length > 0 || scalar(tools.inline) !== undefined)) {
+    const listed = tools.nested.length
+      ? tools.nested.map((item) => listItem(item, "tools", where))
+      : flowList(tools.inline, "tools", where);
+    declared.tools = listed.filter((item) => item);
+    if (declared.tools.length === 0) {
+      throw new ConfigurationError(
+        `${where}: connector ${JSON.stringify(name)}: tools: [] grants nothing; leave tools out for every tool`,
+      );
+    }
+  }
+
+  const connection = one("connection");
+  if (connection !== undefined) {
+    if (!connection) {
+      throw new ConfigurationError(
+        `${where}: connector ${JSON.stringify(name)}: connection must be a connection id or label`,
+      );
+    }
+    declared.connection = connection;
+  }
+
+  const required = one("required");
+  if (required !== undefined) {
+    if (required !== "true" && required !== "false") {
+      throw new ConfigurationError(
+        `${where}: connector ${JSON.stringify(name)}: required must be true or false`,
+      );
+    }
+    declared.required = required === "true";
   }
   return declared;
 }

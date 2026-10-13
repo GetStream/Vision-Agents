@@ -464,15 +464,53 @@ chat template, since that is the wrong trade for a live conversation; `Options.T
 turns it back on and the reasoning then arrives as `ReasoningDelta` events, separate from
 the answer.
 
-Speech to speech has two shortcuts of its own. `sts-fast` is the model quickest to answer,
-pinned to `gemini/gemini-3.8-live`, and `sts-vision` is a conversation the
-model can watch as well as hear, pinned to `openai/gpt-realtime-2` the way `vlm` is. A
-speech-to-speech model is the transcriber, the turn detector and the voice at once, so a
-session asks for one target rather than three, and the terms it can be asked for are its
-own: `semantic_turns` for a turn detector that reads the words, which only OpenAI has;
+Speech to speech has three shortcuts of its own. `sts-fast` is the model quickest to answer,
+pinned to `gemini/gemini-3.8-live`; `sts-vision` is a conversation the model can watch as
+well as hear, pinned to `openai/gpt-realtime-2`; and `sts-duplex` requires a model that can
+listen while producing audio. Realtime transport, barge-in or asynchronous tools alone do
+not establish full duplex. A native speech model owns transcription, turn-taking and speech,
+so it takes the place of the separate STT, conversation LLM and TTS pipeline. A session asks
+for one target rather than three, and the terms it can be asked for are its own:
+`semantic_turns` for a turn detector that reads the words, which only OpenAI has;
 `tools` and `text`, which Qwen lacks; `endpointing` for a silence timer whose length can be
 set; and the two transcripts. Frames are an input modality, gated by `input_modalities`,
 not a term. Which models the shortcuts reach, and what each is billed at:
+
+Set a managed voice agent's speech target and optional skills subagent in `agent.yaml`:
+
+```yaml
+sts: sts-duplex
+subagent: gemini/gemini-3.8-flash
+```
+
+The subagent is an independent LLM router target for delegated reasoning and skills; it can
+name another configured provider/model or alias. It does not choose the speech provider's
+own reasoning backend. GPT-Live uses OpenAI's Responses backend, which defaults to
+`gpt-5.6-terra`.
+
+A named STS router config sets defaults for direct router clients. For example, `routers/duplex.yaml`:
+
+```yaml
+name: duplex
+sts:
+  target: sts-duplex
+  overwrites:
+    openai:
+      backend_model: gpt-5.6-terra
+```
+
+Sync the directory first with `client.SyncRouters(ctx, "routers")`, then open that config with
+`client.Router("duplex").STS().Realtime(ctx, nil, nil)`.
+This named router config does not configure a managed agent; its `agent.yaml` independently
+chooses `sts` and the optional `subagent`. For a direct `/v1/sts/stream` start frame, pass
+provider-specific settings in `sts.overwrites`:
+
+```json
+{"target":"openai/gpt-live-1","sts":{"overwrites":{"openai":{"backend_model":"gpt-5.6-sol"}}}}
+```
+
+`backend_model` is an OpenAI model ID for the Responses backend, not a provider/model routing
+target. The agent's `llm` field and its optional `subagent` do not select that backend.
 
 | Model                                     | Tier         | Billed by                                   |
 | ----------------------------------------- | ------------ | ------------------------------------------- |
@@ -1007,14 +1045,18 @@ curl -s localhost:8080/v1/agents/sessions -H 'X-Customer-Id: acme' \
 ```
 
 Everything between hearing a question and answering it is unchanged, which is the point. A
-text session has the same instructions, the same skills handed to the same slower model and
-the same knowledge base as a call would have had, so an agent can be built and argued with
-in writing before anybody rings it, and a documentation agent or a support chat is the voice
-agent with the voice left off.
+text session has the same instructions, the same skills and the same knowledge base as a call
+would have had, so an agent can be built and argued with in writing before anybody rings it,
+and a documentation agent or a support chat is the voice agent with the voice left off. The
+one difference is who runs a skill: nobody is waiting on a voice, so the model holding the
+conversation loads the skills its config names itself, with `load_skill`, and keeps every
+tool while it follows one. It takes answers from a matching skill first, then the knowledge
+base (`lookup`), then the web (`search`). A text agent with a sandbox still hands its skills
+to a subagent, since only a subagent runs code.
 
 It is driven over the session's own socket: `respond` goes in, `response_delta` and
-`responded` come back, along with `looked_up`, `delegated` and `task_settled` as the agent
-works. `say` and `interrupt` do nothing useful here, since there is nothing being spoken to
+`responded` come back, along with `looked_up`, `tool_ran`, `delegated` and `task_settled` as
+the agent works. `say` and `interrupt` do nothing useful here, since there is nothing being spoken to
 interrupt.
 
 ### Conversations held over a socket
@@ -1531,9 +1573,15 @@ go test ./...
 
 # Integration tests hit real providers, Postgres and Redis
 go test -tags integration ./...
+
+# Manual live full-duplex proof for GPT-Live (requires OPENAI_API_KEY and ffmpeg)
+go test -tags integration -count=1 -v -run '^TestOpenAILiveIntegrationSuite/TestTheModelHearsAndAnswersWhileTheCallerIsStillSpeaking$' ./internal/sts/openailive
 ```
 
 Integration tests skip themselves when the credentials or services they need are absent.
+CI checks caller-audio forwarding against a fake Live socket and compiles the shared STS
+integration suite without calling providers. The full-duplex proof is manual; providers that
+do not declare `FullDuplex` or the needed transcript capabilities skip it.
 
 `internal/agent/conversation_test.go` is the conversation-quality suite: a synthesised caller
 is played into a real agent at the rate a real call delivers audio, in silence, in a noisy

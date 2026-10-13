@@ -128,8 +128,8 @@ type Options struct {
 	// the same router as LLMTarget. Empty falls back to LLMTarget, so a caller who names no
 	// controller shares the conversation's model.
 	ControllerTarget string
-	// Skills are what the voice model may hand over. They mean nothing without a
-	// subagent to run them.
+	// Skills are what the voice model may hand over to the subagent. A written
+	// conversation with no subagent loads them itself, with load_skill.
 	Skills harness.Skills
 	// Telephony is what the agent may do to the call itself. Without it the agent can
 	// only talk, which is what a call that is not on a phone network can do.
@@ -463,7 +463,9 @@ type Agent struct {
 	heardText       string
 	nativeListening bool
 	nativeAwaiting  bool
-	nativeCalls     map[string]struct{}
+	nativeCalls     map[string]llm.ToolCall
+	// nativeRetries counts replacements across the call; swapping protects it.
+	nativeRetries int
 	// cadence turns evolving transcript revisions into stable candidates without relying
 	// on provider turn boundaries.
 	cadence *cadence
@@ -1232,15 +1234,15 @@ func (a *Agent) close() error {
 		a.interruptDone = nil
 	}
 	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	// A swap waiting for its turn boundary gives up once closed is set, and one already
 	// changing the pipeline finishes first, so the pipeline released below is whole.
 	a.swapping.Lock()
 	defer a.swapping.Unlock()
 
 	a.cadence.Close()
-	if cancel != nil {
-		cancel()
-	}
 	a.cancelPreviews()
 
 	// The edge leaves first: it is the source of the audio that keeps the rest busy.

@@ -210,6 +210,20 @@ func (s *SessionVerbsSuite) TestAChatWhoseSessionEndedIsCarriedOnUnderTheSameId(
 	s.True(opened.CreatedAt.Equal(reopened.CreatedAt), "it is the same session, opened when it first was")
 }
 
+func (s *SessionVerbsSuite) TestAnOlderSDKCarriesAChatOnByItsChannel() {
+	opened := s.client.createSession(textSession(nil))
+	s.client.stopSession(opened.Id)
+	s.Require().Eventually(func() bool { return s.closed(opened.Id) },
+		settleFor, 10*time.Millisecond, "the session ended")
+
+	resume := textSession(nil)
+	resume.LegacyConversationId = opened.ConversationId
+	resumed := s.client.createSession(resume)
+
+	s.Require().NotNil(opened.ConversationId)
+	s.Equal(*opened.ConversationId, value(resumed.ConversationId))
+}
+
 func (s *SessionVerbsSuite) TestAReopenedChatIsSummarisedWhole() {
 	// A stopped session is reopened from its row, so the model has to come from a config.
 	config := store.AgentConfig{CustomerID: s.customerID(), Name: "summarising", Mode: "text", LLM: "summarising/summarising-model"}

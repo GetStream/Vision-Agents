@@ -194,11 +194,27 @@ cannot be rewound, since its transcript would bring the turns back; fork it at t
 instead. An open `AgentSession` keeps the transcript it
 already showed, so reload it from `responses` after a rewind.
 
+### Guests
+
+Somebody can talk to an agent before they sign up. Keep the guest in a store, so the next
+launch is the same guest with the same history rather than a second one with none:
+
+```swift
+let store = FileGuestStore(url: URL.applicationSupportDirectory.appending(path: "guest.json"))
+let guest = try await agents.guestUser(GuestOptions(name: "Ada"), store: store)
+agents.setUser(guest)
+```
+
+A remembered guest whose token has expired is minted a fresh one under the same id.
+`GuestOptions(fresh: true)` is a "not me" button, and `forgetGuest(store:)` is signing out.
+With no user set the guest is asked for anonymously; a router that admits no anonymous callers,
+Stream's hosted one for now, throws `.configuration`, and your backend mints the guest instead.
+
 ## What is deliberately not here
 
 The router is server-side only by default: a handful of operations are marked
 `x-client-accessible` in the spec and everything else answers a device 403. This SDK uses
-twelve of them, and `generate.py` fails if the filter names anything the spec does not open —
+fifteen of them, and `generate.py` fails if the filter names anything the spec does not open —
 which is what stops it growing a method that only ever fails.
 
 What that leaves out, and where it went instead:
@@ -207,6 +223,7 @@ What that leaves out, and where it went instead:
 | --- | --- |
 | Writing a config, defining skills, ingesting knowledge | The agent id, which is all the app needs |
 | A Stream user token | The token `setUser` is handed, which also joins calls and opens chat |
+| Moving a guest's history onto the account they signed up with | Nothing: the backend that authenticated them does it |
 | What was said on an earlier call, the call records | Whatever of it the app should see |
 | Transcription, a voice, a model on their own | Nothing: a pipeline of your own is a backend |
 

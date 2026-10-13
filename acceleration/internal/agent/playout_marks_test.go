@@ -113,7 +113,7 @@ func (s *AgentSuite) TestANativeTurnIsMeasuredToWhenTheTrackTookTheFirstFrame() 
 	agent.pipe = newPipeline(agent.ctx, true)
 	agent.pipe.running.Add(2)
 	go agent.receiveSTS(agent.pipe, source, ordered)
-	go agent.consumeSTS(agent.pipe, ordered)
+	go agent.consumeSTS(agent.pipe, nil, ordered)
 	s.T().Cleanup(func() { close(source) })
 	// Somebody stopped talking just now, so the reply that follows answers their silence.
 	agent.mu.Lock()
