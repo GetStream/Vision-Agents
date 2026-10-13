@@ -840,7 +840,7 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 		return stack.Wrap(ErrCardedToNative)
 	}
 	if next.ControllerTarget == "" && !next.Native() {
-		next.ControllerTarget = defaultControllerTarget
+		next.ControllerTarget = next.internalTarget(defaultControllerTarget)
 	}
 
 	if err := s.current().SetSettings(ctx, agent.Settings{
@@ -1509,12 +1509,13 @@ func (m *Manager) think(ctx context.Context, spec *Spec) {
 	if spec.Text || spec.SubagentTarget != "" {
 		return
 	}
-	if _, err := m.options.LLM.Resolve(ctx, defaultSubagentTarget, spec.LanguageHints); err != nil {
+	target := spec.internalTarget(defaultSubagentTarget)
+	if _, err := m.options.LLM.Resolve(ctx, target, spec.LanguageHints); err != nil {
 		m.logger.Debug("this agent has nothing to hand the hard parts to",
-			"target", defaultSubagentTarget, "error", err)
+			"target", target, "error", err)
 		return
 	}
-	spec.SubagentTarget = defaultSubagentTarget
+	spec.SubagentTarget = target
 }
 
 // skills are what the voice model may hand over, which is nothing without a subagent to

@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 const deepgramModel = "nova-3"

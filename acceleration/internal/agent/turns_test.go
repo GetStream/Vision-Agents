@@ -73,7 +73,7 @@ func (s *TurnRecorderSuite) TestTurnsRecordedWhileClosingAreLetGo() {
 func (s *TurnRecorderSuite) TestTurnTimingStartsAtLastTranscriptRevision() {
 	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
 	var finished Turn
-	tracker := newTurnTracker(func(turn Turn) { finished = turn })
+	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, func(turn Turn) { finished = turn })
 	tracker.begin("turn-1", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
 	tracker.modelStarted("turn-1", base.Add(400*time.Millisecond))
 	tracker.firstText("turn-1", base.Add(700*time.Millisecond))
@@ -127,7 +127,7 @@ func (s *TurnRecorderSuite) TestTurnTimingCarriesWhenTheEdgeQueuedAndPlayedTheFi
 	// later than both moments the edge reports.
 	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
 	var done reported
-	tracker := newTurnTracker(done.add)
+	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, done.add)
 	tracker.begin("turn-1", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
 	marks := tracker.marksFor("turn-1")
 	s.Require().NotNil(marks)
@@ -151,7 +151,7 @@ func (s *TurnRecorderSuite) TestTurnTimingCarriesWhenTheEdgeQueuedAndPlayedTheFi
 func (s *TurnRecorderSuite) TestAnEdgeThatReportsNothingLeavesTheNewMomentsEmpty() {
 	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
 	var done reported
-	tracker := newTurnTracker(done.add)
+	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, done.add)
 
 	spokenTurn(tracker, base, 900*time.Millisecond)
 
@@ -168,7 +168,7 @@ func (s *TurnRecorderSuite) TestATurnWaitsForTheTrackToTakeItsQueuedSpeech() {
 	// about to arrive.
 	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
 	var done reported
-	tracker := newTurnTracker(done.add)
+	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, done.add)
 	tracker.begin("turn-1", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
 	marks := tracker.marksFor("turn-1")
 	marks.FirstFrameQueued(base.Add(900 * time.Millisecond))
@@ -192,7 +192,7 @@ func (s *TurnRecorderSuite) TestTheTrackNeverWaitsOnWhoeverConsumesTheTurn() {
 	var once sync.Once
 	s.T().Cleanup(func() { once.Do(func() { close(release) }) })
 	var done reported
-	tracker := newTurnTracker(func(turn Turn) {
+	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, func(turn Turn) {
 		<-release
 		done.add(turn)
 	})
@@ -220,7 +220,7 @@ func (s *TurnRecorderSuite) TestTheTrackNeverWaitsOnWhoeverConsumesTheTurn() {
 func (s *TurnRecorderSuite) TestATurnIsReportedWithoutAMomentTheTrackNeverReached() {
 	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
 	var done reported
-	tracker := newTurnTracker(done.add)
+	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, done.add)
 	tracker.grace = 20 * time.Millisecond
 	tracker.begin("turn-1", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
 	tracker.marksFor("turn-1").FirstFrameQueued(base.Add(900 * time.Millisecond))
@@ -238,7 +238,7 @@ func (s *TurnRecorderSuite) TestATurnIsReportedWithoutAMomentTheTrackNeverReache
 func (s *TurnRecorderSuite) TestAnInterruptionClosesATurnWaitingOnTheTrack() {
 	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
 	var done reported
-	tracker := newTurnTracker(done.add)
+	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, done.add)
 	tracker.begin("turn-1", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
 	marks := tracker.marksFor("turn-1")
 	marks.FirstFrameQueued(base.Add(900 * time.Millisecond))
@@ -260,7 +260,7 @@ func (s *TurnRecorderSuite) TestAReportThatOutlivesItsTurnIsDropped() {
 	// for a closed turn cannot stamp the one that followed.
 	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
 	var done reported
-	tracker := newTurnTracker(done.add)
+	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, done.add)
 	tracker.begin("turn-1", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
 	stale := tracker.marksFor("turn-1")
 	tracker.interrupt("turn-1")
@@ -279,7 +279,7 @@ func (s *TurnRecorderSuite) TestAReportThatOutlivesItsTurnIsDropped() {
 
 func (s *TurnRecorderSuite) TestMarksAreOnlyHandedOutWhileTheTurnStillWantsThem() {
 	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
-	tracker := newTurnTracker(func(Turn) {})
+	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, func(Turn) {})
 	s.Nil(tracker.marksFor("nobody"), "an unmeasured turn has nothing to report to")
 	tracker.begin("turn-1", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
 	marks := tracker.marksFor("turn-1")

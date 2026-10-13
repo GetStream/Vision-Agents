@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 // Loopback is an in-process duplex pipe used in tests.

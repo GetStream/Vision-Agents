@@ -316,6 +316,26 @@ func (s *SpecSuite) TestModelOverwritesBeatTheConfigsRoutes() {
 	s.Equal("stt-fast", spec.STTTarget, "a route nobody overwrote is still the config's")
 }
 
+func (s *SpecSuite) TestAConversationOnAMockDecidesOnTheMockToo() {
+	// What a load test measures is the router. A real flow controller would spend money
+	// and add a provider's wait to every turn of it.
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", LLM: "mock/mock-llm"})
+	spec.CallID = "call-1"
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal("mock/mock-llm", spec.ControllerTarget)
+}
+
+func (s *SpecSuite) TestAConversationOnARealModelDecidesOnTheFlowModel() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", LLM: "llm-fast"})
+	spec.CallID = "call-1"
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal(defaultControllerTarget, spec.ControllerTarget)
+}
+
 func (s *SpecSuite) TestThinkingBecomesTheReasoningEffort() {
 	spec := s.spec(nil)
 	spec.ModelOverwrites = store.ModelOverwrites{Thinking: "high"}

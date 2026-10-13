@@ -165,10 +165,14 @@ type Service struct {
 	chats  Chats
 	pins   Pins
 	all    map[known]*Conversation
-	logger *slog.Logger
+	// opening is the gate a conversation is opened behind, one per conversation being
+	// opened. Opening it asks Stream Chat three times and mu is not held across that, so
+	// the gate is what keeps two opens of one conversation apart, while opens of different
+	// conversations do not wait on each other at all.
+	opening map[known]*gate
+	logger  *slog.Logger
 	// finished is told of every reply finished in a thread channel (OnFinishedReply). It is
-	// apart from mu, which OpenInApp holds across Stream Chat calls of up to its 20 s budget,
-	// so a finished reply in one conversation never waits on another opening.
+	// apart from mu so a finished reply in one conversation never waits on another opening.
 	finished atomic.Pointer[func(FinishedReply)]
 }
 
@@ -359,7 +363,42 @@ func NewForChat(client *getstream.Stream) *Service {
 	return newService(oneChat{client: client})
 }
 func newService(chats Chats) *Service {
-	return &Service{chats: chats, all: map[known]*Conversation{}, logger: slog.Default()}
+	return &Service{
+		chats: chats, all: map[known]*Conversation{},
+		opening: map[known]*gate{}, logger: slog.Default(),
+	}
+}
+
+// gate is one conversation's turn to be opened, with a count of who is waiting for it so
+// the last one out takes it away rather than leaving a gate per conversation ever opened.
+type gate struct {
+	mu      sync.Mutex
+	waiting int
+}
+
+// opens waits for the conversation's turn and gives back the way to end it. The service
+// lock and a gate are never held at the same time, in either direction, so taking one can
+// never wait on the other.
+func (s *Service) opens(key known) func() {
+	s.mu.Lock()
+	g := s.opening[key]
+	if g == nil {
+		g = &gate{}
+		s.opening[key] = g
+	}
+	g.waiting++
+	s.mu.Unlock()
+
+	g.mu.Lock()
+	return func() {
+		g.mu.Unlock()
+		s.mu.Lock()
+		g.waiting--
+		if g.waiting == 0 {
+			delete(s.opening, key)
+		}
+		s.mu.Unlock()
+	}
 }
 func (s *Service) make(d ledger) *Conversation {
 	c := &Conversation{service: s, data: d, turns: map[string]string{}, created: map[string]bool{}, stopped: make(chan struct{}), done: make(chan struct{})}
@@ -440,11 +479,6 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, nil, false, stack.Wrap(errors.New("conversation service is closed"))
-	}
 	var scope memory.Scope
 	if len(scopes) > 0 {
 		scope = scopes[0]
@@ -453,27 +487,49 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	if !Openable(cid) {
 		return nil, nil, false, stack.Wrap(errors.New("invalid conversation channel"))
 	}
-	if c := s.all[known{customer, cid}]; c != nil {
+	// Everything from here is this conversation's turn: what it holds is read, Stream is
+	// asked, and what came back is written, with nothing else opening it in between. The
+	// service lock is taken only for the map, never across a request to Stream.
+	key := known{customer, cid}
+	opened := s.opens(key)
+	defer opened()
+
+	s.mu.Lock()
+	closed, held := s.closed, s.all[key]
+	s.mu.Unlock()
+	if closed {
+		return nil, nil, false, stack.Wrap(errors.New("conversation service is closed"))
+	}
+	if c := held; c != nil {
 		c.mu.Lock()
-		defer c.mu.Unlock()
 		if c.data.Customer != customer || (agentID != "" && c.data.Agent != agentID) || c.data.Owner == "" && caller != "" {
+			c.mu.Unlock()
 			return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another customer or agent"))
 		}
 		agentID = c.data.Agent
 		if c.active {
+			c.mu.Unlock()
 			return nil, nil, false, stack.Wrap(errors.New("conversation is already open"))
 		}
-		client, err := s.chats.ForApp(ctx, customer, c.data.StreamApp)
+		// What the history is read against, copied so the conversation is free to be
+		// written while Stream answers.
+		in, unwritten := c.data.StreamApp, append([]operation(nil), c.data.Pending...)
+		c.mu.Unlock()
+
+		client, err := s.chats.ForApp(ctx, customer, in)
 		if err != nil {
 			return nil, nil, false, stack.Wrap(err)
 		}
-		page, err := s.historyIn(ctx, client, customer, agentID, cid, "", caller, c.data.Pending, voiceAgent)
+		page, err := s.historyIn(ctx, client, customer, agentID, cid, "", caller, unwritten, voiceAgent)
 		if err != nil {
 			return nil, nil, false, stack.Wrap(err)
 		}
 		if !sameMemoryScope(page.memoryScope, scope) {
 			return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another memory scope; reopen with its original organization"))
 		}
+
+		c.mu.Lock()
+		defer c.mu.Unlock()
 		if c.data.Owner != caller && !page.shared {
 			return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another user"))
 		}
@@ -523,12 +579,20 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	if agentID == "" {
 		agentID = page.agent
 	}
+	// Closing may have begun while Stream was being asked, and a conversation written into
+	// the map after Close read it would never be stopped.
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, nil, false, stack.Wrap(errors.New("conversation service is closed"))
+	}
 	c := s.make(ledger{CID: cid, Customer: customer, Agent: agentID, Owner: caller, Commands: commandsIn(page.Messages), StreamApp: pin})
-	c.shared, c.thread = page.shared, page.thread
-	c.active = true
+	s.mu.Unlock()
 	// Nobody here holds the conversation, so a reply Stream still shows as running was
 	// left by a process that stopped.
 	c.mu.Lock()
+	c.shared, c.thread = page.shared, page.thread
+	c.active = true
 	for _, m := range page.Messages {
 		if m.Role == "assistant" && m.FinishedAt == nil {
 			c.data.Current = &m

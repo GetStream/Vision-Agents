@@ -109,6 +109,8 @@ plugins/*/example/uv.lock
 /benchmark/cache/
 /benchmark/baselines/
 
+/performance_benchmark/out/
+
 /acceleration/internal/harness/testdata/flowbench-out/
 /acceleration/internal/harness/testdata/replybench-out/
 

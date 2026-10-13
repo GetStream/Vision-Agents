@@ -10,8 +10,8 @@ import (
 	lkmedia "github.com/livekit/server-sdk-go/v2/pkg/media"
 	"github.com/pion/webrtc/v4"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/transport"
 )
 
 // Inbound decodes remote opus tracks into 20 ms PCM frames the caller can read. Both the

@@ -14,6 +14,7 @@ import (
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -444,7 +445,7 @@ func (s *Spec) Normalize() error {
 		s.heldSubagent, s.SubagentTarget = s.SubagentTarget, s.writtenSubagent()
 	}
 	if s.ControllerTarget == "" && !s.Native() {
-		s.ControllerTarget = defaultControllerTarget
+		s.ControllerTarget = s.internalTarget(defaultControllerTarget)
 	}
 	if s.SearchTarget == "" {
 		s.SearchTarget = defaultSearchTarget
@@ -563,6 +564,26 @@ func (s Spec) Written() Spec {
 	}
 	s.heldSubagent, s.SubagentTarget = s.SubagentTarget, s.writtenSubagent()
 	return s
+}
+
+// internalTarget is the model one of the router's own questions runs on: the one asked
+// for, unless this conversation is on a mock, in which case it is that mock.
+//
+// The mock models exist for load tests (performance_benchmark/), and a load test that
+// reached a real vendor to decide who holds the floor, or to name the conversation, would
+// spend money and wait on a provider on every turn. What a mock conversation is worth
+// measuring is the router, so everything the router asks on the way to a reply is asked
+// of the mock too.
+func (s Spec) internalTarget(asked string) string {
+	if mocked(s.LLMTarget) {
+		return s.LLMTarget
+	}
+	return asked
+}
+
+// mocked reports whether a target names one of the load-test models.
+func mocked(target string) bool {
+	return strings.HasPrefix(target, mock.ProviderName+"/")
 }
 
 // writtenSubagent is the subagent a session held in writing runs its skills on: none, since

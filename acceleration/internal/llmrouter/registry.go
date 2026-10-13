@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/inceptron"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/ionet"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/meta"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/nextbit"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/novita"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openai"
@@ -137,4 +138,13 @@ func DefaultRegistry() *Registry {
 		})
 	}
 	return registry
+}
+
+// RegisterMock adds the load-test model, which reaches no vendor and spends no tokens. A
+// deployment that has not asked for mocks never calls this, so mock/mock-llm is a target
+// nothing can be built for.
+func RegisterMock(registry *Registry) {
+	registry.Register(mock.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(mock.New(mock.Options{Model: spec.Model, Logger: spec.Logger}))
+	})
 }

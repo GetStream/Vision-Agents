@@ -801,6 +801,21 @@ stt:
       price:
         per_audio_hour: 0.258
 
+    # The load benchmark's stand-in, built only where mock_providers is on. Everything
+    # about this entry is chosen to keep it out of the way of real traffic: zxx is the ISO
+    # code for "no linguistic content", so no shortcut asking for a language reaches it,
+    # and realtime: false keeps it out of the live shortcuts, which is every one of the
+    # rest. It is reached by naming mock/mock-stt outright, and a deployment that has not
+    # turned mocks on fails to build it rather than routing somewhere else.
+    - provider: mock
+      model: mock-stt
+      description: "Reports turns from the energy of the audio and transcribes a fixed sentence. For load tests."
+      languages: [zxx]
+      realtime: false
+      data_policy:
+        trains_on_data: "no"
+        retention: none
+
   aliases:
     # The two groups Vision Agents maintains so that a config does not have to, and the
     # only ones offered as a choice. A customer who wants the models we would pick for a
@@ -1777,6 +1792,21 @@ tts:
       price:
         per_million_chars: 110.0
 
+    # The load benchmark's stand-in, built only where mock_providers is on. Everything
+    # about this entry is chosen to keep it out of the way of real traffic: zxx is the ISO
+    # code for "no linguistic content", so no shortcut asking for a language reaches it,
+    # and realtime: false keeps it out of the live shortcuts, which is every one of the
+    # rest. It is reached by naming mock/mock-tts outright, and a deployment that has not
+    # turned mocks on fails to build it rather than routing somewhere else.
+    - provider: mock
+      model: mock-tts
+      description: "Says nothing, at the length and pace real speech would take. For load tests."
+      languages: [zxx]
+      realtime: false
+      data_policy:
+        trains_on_data: "no"
+        retention: none
+
   aliases:
     # Fast: the whole live tier, with Sonic pinned because it is the quickest of them to
     # first audio. Health orders the rest behind it.
@@ -2738,8 +2768,25 @@ llm:
         per_million_cached_input_tokens: 0.10
         per_million_output_tokens: 10.00
 
+    # The load benchmark's stand-in, built only where mock_providers is on. Everything
+    # about this entry is chosen to keep it out of the way of real traffic: zxx is the ISO
+    # code for "no linguistic content", so no shortcut asking for a language reaches it,
+    # and realtime: false keeps it out of the live shortcuts, which is every one of the
+    # rest. It is reached by naming mock/mock-llm outright, and a deployment that has not
+    # turned mocks on fails to build it rather than routing somewhere else.
+    - provider: mock
+      model: mock-llm
+      description: "Answers one fixed sentence, a word at a time, and bills nothing. For load tests."
+      context_window: 128000
+      languages: [zxx]
+      realtime: false
+      data_policy:
+        trains_on_data: "no"
+        retention: none
+
   # A title offers a shortcut to someone picking a model, in the order written here, so
   # the one a conversation gets by default comes first.
+
   aliases:
     # Small talk, as cheaply and quickly as it can be had: the smallest models here, for
     # an agent whose turns are short and whose instructions are simple. Gemma 4 26B, with

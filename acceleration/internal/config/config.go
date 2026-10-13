@@ -62,20 +62,26 @@ type Config struct {
 	RoutingConfig string `koanf:"routing_config"`
 	PhoneConfig   string `koanf:"phone_config"`
 	// VoicesBucketURL is where the recordings behind a customer's own voice are kept.
-	VoicesBucketURL string     `koanf:"voices_bucket_url"`
-	Postgres        Postgres   `koanf:"postgres"`
-	Redis           Redis      `koanf:"redis"`
-	Node            Node       `koanf:"node"`
-	Auth            Auth       `koanf:"auth"`
-	RateLimit       RateLimit  `koanf:"rate_limit"`
-	DataMove        DataMove   `koanf:"data_move"`
-	Stream          Stream     `koanf:"stream"`
-	Agent           Agent      `koanf:"agent"`
-	Connectors      Connectors `koanf:"connectors"`
-	Episodes        Episodes   `koanf:"episodes"`
-	Sandbox         Sandbox    `koanf:"sandbox"`
-	Models          Models     `koanf:"models"`
-	Telnyx          Telnyx     `koanf:"telnyx"`
+	VoicesBucketURL string `koanf:"voices_bucket_url"`
+	// MockProviders builds the mock/* speech, voice and language models the load
+	// benchmark runs against. They reach no vendor, recognise nothing and say nothing, so
+	// a thousand conversations cost what one does. Off by default: with it off the
+	// catalogue still declares them and nothing can be built for them, which is what a
+	// deployment carrying real traffic wants.
+	MockProviders bool       `koanf:"mock_providers"`
+	Postgres      Postgres   `koanf:"postgres"`
+	Redis         Redis      `koanf:"redis"`
+	Node          Node       `koanf:"node"`
+	Auth          Auth       `koanf:"auth"`
+	RateLimit     RateLimit  `koanf:"rate_limit"`
+	DataMove      DataMove   `koanf:"data_move"`
+	Stream        Stream     `koanf:"stream"`
+	Agent         Agent      `koanf:"agent"`
+	Connectors    Connectors `koanf:"connectors"`
+	Episodes      Episodes   `koanf:"episodes"`
+	Sandbox       Sandbox    `koanf:"sandbox"`
+	Models        Models     `koanf:"models"`
+	Telnyx        Telnyx     `koanf:"telnyx"`
 }
 
 // Models are the language models a customer serves themselves, named custom/<name>.
@@ -286,6 +292,7 @@ var variables = map[string]string{
 	"routing_config":      "ROUTER_CONFIG",
 	"phone_config":        "ROUTER_PHONE_CONFIG",
 	"voices_bucket_url":   "ROUTER_VOICES_BUCKET_URL",
+	"mock_providers":      "ROUTER_MOCK_PROVIDERS",
 	"postgres.dsn":        "ROUTER_POSTGRES_DSN",
 	"redis.addr":          "ROUTER_REDIS_ADDR",
 	"redis.username":      "ROUTER_REDIS_USERNAME",
@@ -549,6 +556,7 @@ func (c Config) export() error {
 		"routing_config":                c.RoutingConfig,
 		"phone_config":                  c.PhoneConfig,
 		"voices_bucket_url":             c.VoicesBucketURL,
+		"mock_providers":                fmt.Sprint(c.MockProviders),
 		"postgres.dsn":                  c.Postgres.DSN,
 		"redis.addr":                    c.Redis.Addr,
 		"redis.username":                c.Redis.Username,

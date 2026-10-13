@@ -6,6 +6,7 @@ use (
 	./examples/routers/stt_realtime_example
 	./examples/voice_agents/swift_demo/backend
 	./examples/voice_agents/swift_demo/configure
+	./performance_benchmark
 	./sdks/go
 	./tui
 )
