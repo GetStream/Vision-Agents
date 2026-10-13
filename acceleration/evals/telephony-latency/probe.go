@@ -198,14 +198,24 @@ func (p *Prober) dialLinked(ctx context.Context, result *Result, bridge string, 
 	}
 	callee, err := wait(ctx, calleeArrived, p.Patience, "the callee's leg")
 	if err != nil {
+		p.abandon(toCallee)
 		return caller, nil, err
 	}
 	result.RingMs = millis(callee.Answered.Sub(dialed))
 	if err := p.Telnyx.Bridge(ctx, toBench, toCallee); err != nil {
+		p.abandon(toCallee)
 		return caller, callee, fmt.Errorf("bridge: %w", err)
 	}
 	result.BridgeMs = millis(time.Since(callee.Answered))
 	return caller, callee, nil
+}
+
+// abandon hangs up a Telnyx call the bench stopped waiting for, so it does not ring on
+// into the next probe of the same number.
+func (p *Prober) abandon(callControlID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = p.Telnyx.Hangup(ctx, callControlID)
 }
 
 // uri is the bench's address for a leg, the one a vendor dials to bridge its call here.

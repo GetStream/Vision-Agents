@@ -245,8 +245,22 @@ func (c *loopbackCarrier) callerMedia() string {
 	return c.callerConn.LocalAddr().String()
 }
 
-// relay copies what the bench sends on one leg to the bench's other leg, late by delay.
+// relay copies what the bench sends on one leg to the bench's other leg, late by delay and
+// in the order it was sent.
 func relay(from, to *net.UDPConn, bench netip.AddrPort, delay time.Duration, rewrite func([]byte) []byte) {
+	type delayed struct {
+		due    time.Time
+		packet []byte
+	}
+	queue := make(chan delayed, 1024)
+	defer close(queue)
+	go func() {
+		for item := range queue {
+			time.Sleep(time.Until(item.due))
+			_, _ = to.WriteToUDPAddrPort(item.packet, bench)
+		}
+	}()
+
 	buffer := make([]byte, 1500)
 	for {
 		n, err := from.Read(buffer)
@@ -259,7 +273,7 @@ func relay(from, to *net.UDPConn, bench netip.AddrPort, delay time.Duration, rew
 				continue
 			}
 		}
-		time.AfterFunc(delay, func() { _, _ = to.WriteToUDPAddrPort(packet, bench) })
+		queue <- delayed{due: time.Now().Add(delay), packet: packet}
 	}
 }
 

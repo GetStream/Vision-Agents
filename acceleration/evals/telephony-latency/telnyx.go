@@ -75,6 +75,11 @@ func (c *TelnyxCaller) Bridge(ctx context.Context, callControlID, other string) 
 	return c.post(ctx, path, map[string]any{"call_control_id": other}, nil)
 }
 
+// Hangup ends a call, for one the bench gave up on before it was bridged.
+func (c *TelnyxCaller) Hangup(ctx context.Context, callControlID string) error {
+	return c.post(ctx, "/v2/calls/"+url.PathEscape(callControlID)+"/actions/hangup", map[string]any{}, nil)
+}
+
 func (c *TelnyxCaller) post(ctx context.Context, path string, body, into any) error {
 	encoded, err := json.Marshal(body)
 	if err != nil {

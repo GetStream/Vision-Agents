@@ -34,7 +34,18 @@ type Endpoint struct {
 	dialogs *sipgo.DialogServerCache
 
 	mu       sync.Mutex
-	expected map[string]chan *Leg
+	expected map[string]*reservation
+}
+
+// reservation is a leg the bench is waiting for.
+type reservation struct {
+	arrived chan *Leg
+	// claimed is set when the leg's INVITE arrives, so a second call to the same address
+	// is turned away rather than taken for it.
+	claimed bool
+	// abandoned is set when the prober stops waiting, so a leg answered in that moment is
+	// hung up here rather than handed to nobody.
+	abandoned bool
 }
 
 // Leg is one carrier's side of a call, answered by the bench.
@@ -88,7 +99,7 @@ func NewEndpoint(listen string, host netip.Addr, rtpPorts *ports, log *slog.Logg
 		ua:       ua,
 		server:   server,
 		dialogs:  sipgo.NewDialogServerCache(client, contact),
-		expected: map[string]chan *Leg{},
+		expected: map[string]*reservation{},
 	}
 	server.OnInvite(e.onInvite)
 	server.OnAck(func(req *sip.Request, tx sip.ServerTransaction) {
@@ -124,18 +135,21 @@ func NewEndpoint(listen string, host netip.Addr, rtpPorts *ports, log *slog.Logg
 // over. It must be called before the call is placed, so a carrier that answers quickly
 // does not find nobody waiting.
 func (e *Endpoint) Expect(user string) <-chan *Leg {
-	arrived := make(chan *Leg, 1)
+	r := &reservation{arrived: make(chan *Leg, 1)}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.expected[legKey(user)] = arrived
-	return arrived
+	e.expected[legKey(user)] = r
+	return r.arrived
 }
 
-// Forget drops a reservation that was never claimed.
+// Forget drops a reservation. A leg still being answered for it is hung up once it is.
 func (e *Endpoint) Forget(user string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	delete(e.expected, legKey(user))
+	if r, ok := e.expected[legKey(user)]; ok {
+		r.abandoned = true
+		delete(e.expected, legKey(user))
+	}
 }
 
 // Close stops answering.
@@ -146,8 +160,13 @@ func (e *Endpoint) Close() error {
 func (e *Endpoint) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	key := legKey(req.Recipient.User)
 	e.mu.Lock()
-	arrived, ok := e.expected[key]
-	delete(e.expected, key)
+	reserved, ok := e.expected[key]
+	if ok && reserved.claimed {
+		ok = false
+	}
+	if ok {
+		reserved.claimed = true
+	}
 	e.mu.Unlock()
 	if !ok {
 		e.log.Warn("telephony-latency: a call nobody is waiting for", "user", req.Recipient.User, "from", req.Source())
@@ -206,7 +225,19 @@ func (e *Endpoint) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 		_ = leg.Media.Close()
 		dialog.Close()
 	}()
-	arrived <- leg
+	// Checked and handed over under the lock Forget takes, so the leg either reaches the
+	// prober before it stops waiting or is hung up here, never neither.
+	e.mu.Lock()
+	abandoned := reserved.abandoned
+	if !abandoned {
+		reserved.arrived <- leg
+	}
+	e.mu.Unlock()
+	if abandoned {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = leg.Hangup(ctx)
+	}
 }
 
 func (e *Endpoint) respond(req *sip.Request, tx sip.ServerTransaction, status int, reason string) {
