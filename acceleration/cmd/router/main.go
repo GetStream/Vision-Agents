@@ -1025,7 +1025,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		AuthMode:              authMode,
 		DataRetention:         settings.DataMove.Retention,
 		PrivateModelEndpoints: settings.Models.PrivateEndpoints,
-		CORSOrigins:           settings.CORSOrigins,
 		PublicURL:             settings.PublicURL,
 		DashboardURL:          settings.DashboardURL,
 		Auth:                  authenticator,

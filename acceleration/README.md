@@ -81,7 +81,7 @@ Everything that is not a provider credential is one YAML file, read by `internal
 go run ./cmd/router --config /etc/router.yaml
 ```
 
-Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`, `cors_origins`,
+Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`,
 `trusted_proxies`, `routing_config`, `phone_config`, `voices_bucket_url`, and the nested
 `postgres.dsn`, `redis.{addr,username,password}`, `node.advertise`, `auth.{mode,kek}`,
 `rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled` and
@@ -103,7 +103,6 @@ the other commands that read them there.
 | `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
-| `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless a browser app calls this deployment. The same list decides which origins may open a socket. A deployment reached through Stream's proxy needs the proxy to let a preflight through as well, since a browser cannot authenticate one |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |

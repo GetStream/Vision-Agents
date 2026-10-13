@@ -612,6 +612,13 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A customer's website can call the router directly
+
+A browser page on any site may call the API and open a session socket with an API key and a
+user token, so client-side auth needs no list of allowed sites. `ROUTER_CORS_ORIGINS` and
+`cors_origins` are gone and ignored if set. A router in `noauth` mode, where a caller names its
+own tenant, answers pages on `localhost` and loopback addresses only.
+
 ### Connector bindings can name tools by pattern
 
 A connector binding may set `tool_patterns` instead of `tools`: tool names or `path.Match`
