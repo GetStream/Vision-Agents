@@ -40,8 +40,9 @@ import (
 // ProviderName is the stable name used in routing config and stats.
 const ProviderName = "gemini"
 
-// DefaultModel is Google's highest-quality native audio model.
-const DefaultModel = "gemini-3.1-flash-live-preview"
+// DefaultModel is Gemini 3.8 Live, the model Google now point a voice agent at. It took
+// over from 3.1 Flash Live, a legacy preview Google may shut down from 17 November 2026.
+const DefaultModel = "gemini-3.8-live"
 
 // DefaultURL is the Live API socket. The key goes on the query string, which is the only
 // authentication this endpoint takes.
