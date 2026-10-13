@@ -64,6 +64,7 @@ func (s *TelnyxSuite) SetupTest() {
 
 	provider, err := New(Options{
 		APIKey:       "KEY123",
+		AccountSID:   "acct-1",
 		ConnectionID: "conn-1",
 		BaseURL:      s.server.URL,
 	})
@@ -213,10 +214,13 @@ func (s *TelnyxSuite) TestDiallingOutStartsATeXMLCallThatDialsTheTrunk() {
 	s.Require().NoError(err)
 
 	s.Equal(http.MethodPost, s.seen.method)
-	s.Equal("/v2/texml/calls/conn-1", s.seen.path)
+	s.Equal("/v2/texml/Accounts/acct-1/Calls", s.seen.path)
+	s.Equal("conn-1", s.seen.body["ApplicationSid"])
 	s.Equal("+15125550100", s.seen.body["From"])
 	s.Equal("+15125550123", s.seen.body["To"])
 	s.NotContains(s.seen.body, "link_to")
+	s.NotContains(s.seen.body, "Timeout", "no timeout leaves Telnyx's own default")
+	s.NotContains(s.seen.body, "CustomHeaders")
 
 	texml := s.texml()
 	s.Equal("sip:+15125550100@app.sip.example.com", texml.Dial.Sip.URI)
@@ -247,30 +251,57 @@ func (s *TelnyxSuite) TestCredentialsWithXMLSpecialCharactersAreEscaped() {
 	s.Equal(`a&b<"c`, texml.Dial.Sip.Password)
 }
 
-func (s *TelnyxSuite) TestFeaturesTeXMLCannotExpressAreRefused() {
-	// The connection-scoped TeXML call has no timeout or custom header field, and <Dial>'s
-	// timeout rings the trunk, not the person.
-	s.False(s.provider.Dials(phone.FeatureRingTimeout))
-	s.False(s.provider.Dials(phone.FeatureCustomHeaders))
+func (s *TelnyxSuite) TestEveryTermOfACallCanBeExpressed() {
+	s.True(s.provider.Dials(phone.FeatureRingTimeout))
+	s.True(s.provider.Dials(phone.FeatureCustomHeaders))
 	s.True(s.provider.Dials(phone.FeatureInitialDigits))
+}
+
+func (s *TelnyxSuite) TestRingTimeoutAndHeadersAreCarriedOnTheCall() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:        "+15125550100",
+		To:          "+15125550123",
+		Bridge:      phone.Bridge{URI: "sip:+15125550100@app.sip.example.com"},
+		RingTimeout: 25 * time.Second,
+		Headers:     map[string]string{"X-Ticket": "42", "X-Agent": "john"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal(float64(25), s.seen.body["Timeout"])
+	s.Equal([]any{
+		map[string]any{"name": "X-Agent", "value": "john"},
+		map[string]any{"name": "X-Ticket", "value": "42"},
+	}, s.seen.body["CustomHeaders"], "headers are sorted so the same call twice is the same request")
+	s.Empty(s.texml().Dial.Timeout, "the person's ring timeout is not the trunk's")
 }
 
 func (s *TelnyxSuite) TestDiallingRefusesTermsItCannotSend() {
 	bridge := phone.Bridge{URI: "sip:+15125550100@app.sip.example.com"}
-	for name, outbound := range map[string]phone.Outbound{
-		"ring timeout": {RingTimeout: 25 * time.Second},
-		"headers":      {Headers: map[string]string{"X-Ticket": "42"}},
-		"long pause":   {InitialDigits: "W1"},
-		"fourth row":   {InitialDigits: "1A"},
+	for refusal, outbound := range map[string]phone.Outbound{
+		"telnyx: telnyx rings for 5 to 120 seconds, not 3":   {RingTimeout: 3 * time.Second},
+		"telnyx: telnyx rings for 5 to 120 seconds, not 121": {RingTimeout: 121 * time.Second},
+		`telnyx: TeXML plays only "0123456789*#w", not "W1"`: {InitialDigits: "W1"},
+		`telnyx: TeXML plays only "0123456789*#w", not "1A"`: {InitialDigits: "1A"},
 	} {
 		outbound.From, outbound.To, outbound.Bridge = "+15125550100", "+15125550123", bridge
 		s.seen = request{}
 
 		_, err := s.provider.Dial(s.ctx, outbound)
 
-		s.Error(err, name)
-		s.Empty(s.seen.path, name+" is refused before anything is sent")
+		s.EqualError(err, refusal)
+		s.Empty(s.seen.path, refusal+" is refused before anything is sent")
 	}
+}
+
+func (s *TelnyxSuite) TestDigitsTeXMLCannotPlayAreRefusedBeforeTheCallIsSetUp() {
+	// Unsupported is what the service checks before it creates a Stream trunk.
+	s.Equal([]phone.CallFeature{phone.FeatureInitialDigits},
+		phone.Outbound{InitialDigits: "W1"}.Unsupported(s.provider))
+	s.Equal([]phone.CallFeature{phone.FeatureInitialDigits},
+		phone.Outbound{InitialDigits: "1D"}.Unsupported(s.provider))
+	s.Empty(phone.Outbound{InitialDigits: "ww1234#*"}.Unsupported(s.provider))
 }
 
 func (s *TelnyxSuite) TestInitialDigitsArePlayedBeforeTheTrunkIsDialled() {
@@ -318,8 +349,39 @@ func (s *TelnyxSuite) TestDiallingWithoutAConnectionIDIsRefused() {
 		Bridge: phone.Bridge{URI: "sip:+15125550100@app.sip.example.com"},
 	})
 
-	s.ErrorContains(err, "connection id is required")
+	s.EqualError(err, "telnyx: a connection id is required to place a call")
 	s.Empty(s.seen.path)
+}
+
+func (s *TelnyxSuite) TestDiallingWithoutAnAccountSIDIsRefused() {
+	s.T().Setenv("TELNYX_ACCOUNT_SID", "")
+	provider, err := New(Options{APIKey: "KEY123", ConnectionID: "conn-1", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	_, err = provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125550100",
+		To:     "+15125550123",
+		Bridge: phone.Bridge{URI: "sip:+15125550100@app.sip.example.com"},
+	})
+
+	s.EqualError(err, "telnyx: TELNYX_ACCOUNT_SID is required to place a call")
+	s.Empty(s.seen.path)
+}
+
+func (s *TelnyxSuite) TestTheAccountSIDFallsBackToTheEnvironment() {
+	s.T().Setenv("TELNYX_ACCOUNT_SID", "acct-env")
+	provider, err := New(Options{APIKey: "KEY123", ConnectionID: "conn-1", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+
+	_, err = provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125550100",
+		To:     "+15125550123",
+		Bridge: phone.Bridge{URI: "sip:+15125550100@app.sip.example.com"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("/v2/texml/Accounts/acct-env/Calls", s.seen.path)
 }
 
 func (s *TelnyxSuite) TestTheTrunkRingsForAsLongAsAsked() {

@@ -30,7 +30,7 @@ import (
 )
 
 // maxInitialDigits is how many keys can be pressed when a call is answered. Twilio takes
-// 32 and Telnyx 64, so 32 is what can be promised everywhere.
+// 32, so 32 is what can be promised everywhere.
 const maxInitialDigits = 32
 
 // ErrNotImplemented is what a vendor returns when this service knows it exists but cannot
@@ -279,8 +279,8 @@ type Inbound struct {
 
 // CallFeature names one of the terms a call can be placed on.
 //
-// Vendors do not agree on which of these their call APIs can express: Twilio takes a ring
-// timeout on a dial, Telnyx's TeXML call does not. A provider says which it speaks, so a call asking
+// Vendors do not agree on which of these their call APIs can express: Telnyx takes custom
+// SIP headers on a dial, Twilio does not. A provider says which it speaks, so a call asking
 // for one it does not is refused rather than placed without it. Silently dropping a ring
 // timeout means a call that should have given up in fifteen seconds sits in somebody's
 // voicemail for a minute instead.
@@ -334,11 +334,21 @@ func (o Outbound) Features() []CallFeature {
 	return used
 }
 
+// DigitsPlayer is a provider that presses digits on answer but not every key a keypad has.
+type DigitsPlayer interface {
+	PlaysDigits(digits string) bool
+}
+
 // Unsupported are the terms this call is placed on that a provider cannot express.
 func (o Outbound) Unsupported(provider Provider) []CallFeature {
 	var missing []CallFeature
 	for _, feature := range o.Features() {
 		if !provider.Dials(feature) {
+			missing = append(missing, feature)
+			continue
+		}
+		if player, ok := provider.(DigitsPlayer); ok && feature == FeatureInitialDigits &&
+			!player.PlaysDigits(o.InitialDigits) {
 			missing = append(missing, feature)
 		}
 	}
