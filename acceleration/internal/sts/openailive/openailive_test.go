@@ -58,7 +58,10 @@ func (s *OpenAILiveSuite) drain(provider *STS) []sts.Event {
 	var events []sts.Event
 	for {
 		select {
-		case event := <-provider.Events():
+		case event, ok := <-provider.Events():
+			if !ok {
+				return events
+			}
 			events = append(events, event)
 		default:
 			return events
@@ -142,7 +145,7 @@ func (s *OpenAILiveSuite) TestTheCallerIsTakenToHaveStoppedAtTheLastWordHeard() 
 
 	begun, ok := events[5].(sts.ResponseStarted)
 	s.Require().True(ok)
-	s.Equal("r-1", begun.ResponseID, "this API has no response ids, so the reply is numbered")
+	s.NotEmpty(begun.ResponseID, "this API has no response ids, so the reply gets a generated ID")
 	chunk, ok := events[6].(sts.AudioChunk)
 	s.Require().True(ok)
 	s.Equal(SampleRate, chunk.Audio.SampleRate)
@@ -150,6 +153,7 @@ func (s *OpenAILiveSuite) TestTheCallerIsTakenToHaveStoppedAtTheLastWordHeard() 
 
 	complete, ok := events[7].(sts.ResponseComplete)
 	s.Require().True(ok, "the quiet after the audio is what ends the reply")
+	s.Equal(begun.ResponseID, complete.ResponseID)
 	s.False(complete.Interrupted)
 	s.GreaterOrEqual(complete.TimeToFirstByteMs, 20.0, "the wait is timed from the last word heard")
 	s.InDelta(100, complete.AudioDurationMs, 0.001)
@@ -165,20 +169,23 @@ func (s *OpenAILiveSuite) TestAudioWithoutAPauseIsOneReply() {
 
 	events := s.settled(provider)
 	var starts, chunks int
+	var responseID string
 	for _, event := range events {
 		switch typed := event.(type) {
 		case sts.ResponseStarted:
 			starts++
+			responseID = typed.ResponseID
 		case sts.AudioChunk:
 			chunks++
 			s.Equal(1, typed.Generation)
 		case sts.OutputTranscript:
 			s.Equal(stt.ModeDelta, typed.Mode)
-			s.Equal("r-1", typed.ResponseID)
+			s.Equal(responseID, typed.ResponseID)
 		}
 	}
 	s.Equal(1, starts)
 	s.Equal(2, chunks)
+	s.NotEmpty(responseID)
 	s.Len(completes(events), 1)
 }
 
@@ -275,7 +282,6 @@ func (s *OpenAILiveSuite) TestTheServerClosingSettlesTheReplyAndSaysWhy() {
 
 	provider.handleMessage(s.frame(spoke(240)))
 	provider.handleMessage(s.frame(`{"type":"session.closed","reason":"expired","usage":{"seconds":128}}`))
-	provider.handleMessage(s.frame(`{"type":"session.closed","reason":"connection_lost"}`))
 
 	events := s.drain(provider)
 	found := completes(events)
@@ -288,10 +294,34 @@ func (s *OpenAILiveSuite) TestTheServerClosingSettlesTheReplyAndSaysWhy() {
 			closes = append(closes, typed)
 		}
 	}
-	s.Require().Len(closes, 2)
+	s.Require().Len(closes, 1)
 	s.Equal("expired", closes[0].Reason)
 	s.True(closes[0].Clean)
-	s.False(closes[1].Clean, "a lost connection is nobody's decision")
+	select {
+	case _, ok := <-provider.Events():
+		s.False(ok, "a terminal session must close its event stream after its events are drained")
+	default:
+		s.Fail("the terminal session left its event stream open")
+	}
+}
+
+func (s *OpenAILiveSuite) TestAConnectionLostSessionEndsUncleanlyAndClosesItsEventStream() {
+	provider := s.newProvider()
+
+	provider.handleMessage(s.frame(`{"type":"session.closed","reason":"connection_lost"}`))
+	events := s.drain(provider)
+
+	s.Require().Len(events, 1)
+	disconnected, ok := events[0].(sts.Disconnected)
+	s.Require().True(ok)
+	s.Equal("connection_lost", disconnected.Reason)
+	s.False(disconnected.Clean, "a lost connection is nobody's decision")
+	select {
+	case _, ok := <-provider.Events():
+		s.False(ok, "a terminal session must close its event stream after its events are drained")
+	default:
+		s.Fail("the terminal session left its event stream open")
+	}
 }
 
 func (s *OpenAILiveSuite) TestCloseSettlesAReplyInFlight() {

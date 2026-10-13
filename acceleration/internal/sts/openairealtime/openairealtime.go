@@ -545,6 +545,8 @@ func (s *STS) Start(ctx context.Context) error {
 		return stack.Wrap(fmt.Errorf("%s: dial: %w", s.options.Vendor.Provider, err))
 	}
 	s.conn = conn
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 
 	if err := s.handshake(); err != nil {
 		conn.Close()

@@ -5,6 +5,7 @@ package store
 import (
 	"errors"
 	"io/fs"
+	"os"
 	"strings"
 	"sync"
 	"testing/fstest"
@@ -135,6 +136,54 @@ func (s *StoreSuite) TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeS
 			s.Equal("user_id read from $.authed_user.id; live Slack sends top-level user_id", reason)
 		}
 	}
+}
+
+// TestShopifyRevisionTwoSeedsOverTheRevisionOneTheBuildBeforeStored: revision 1 sent the
+// browser to log in. The storefront MCP at /api/mcp needs none, so revision 2 says that and
+// marks 1 broken. testdata/shopify-revision-1.yaml is the file a database already holds.
+// The marks are stored with revision 2, and every other built-in stays.
+func (s *StoreSuite) TestShopifyRevisionTwoSeedsOverTheRevisionOneTheBuildBeforeStored() {
+	one, err := os.ReadFile("testdata/shopify-revision-1.yaml")
+	s.Require().NoError(err)
+	before := fstest.MapFS{}
+	files, err := fs.ReadDir(providers.FS, ".")
+	s.Require().NoError(err)
+	for _, file := range files {
+		raw, err := fs.ReadFile(providers.FS, file.Name())
+		s.Require().NoError(err)
+		before[file.Name()] = &fstest.MapFile{Data: raw}
+	}
+	before["shopify.yaml"] = &fstest.MapFile{Data: one}
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, before))
+	latest := func() map[string]int {
+		revisions := map[string]int{}
+		for name := range before {
+			definition, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, strings.TrimSuffix(name, ".yaml"))
+			s.Require().NoError(err)
+			revisions[definition.ID] = definition.Revision
+		}
+		return revisions
+	}
+	was := latest()
+	s.Require().Equal(1, was["shopify"])
+	_, broken, err := s.store.BrokenConnectorRevision(s.ctx, "shopify", 1)
+	s.Require().NoError(err)
+	s.Require().False(broken, "revision 1 marks nothing")
+
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
+
+	now := latest()
+	s.Equal(2, now["shopify"])
+	delete(was, "shopify")
+	delete(now, "shopify")
+	s.Equal(was, now)
+	reason, broken, err := s.store.BrokenConnectorRevision(s.ctx, "shopify", 1)
+	s.Require().NoError(err)
+	s.True(broken)
+	s.Equal("asked for an OAuth login; the storefront MCP at /api/mcp needs none", reason)
+	_, broken, err = s.store.BrokenConnectorRevision(s.ctx, "shopify", 2)
+	s.Require().NoError(err)
+	s.False(broken)
 }
 
 // acmeMarking is acme at revision 3, marking revisions 1 and 2 broken.

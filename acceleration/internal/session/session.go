@@ -814,7 +814,7 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 	}
 	set(&next.LLMTarget, settings.LLM)
 	if next.Text {
-		next.SubagentTarget = next.LLMTarget
+		next.SubagentTarget = next.writtenSubagent()
 	}
 	set(&next.STTTarget, settings.STT)
 	set(&next.TTSTarget, settings.TTS)
@@ -1519,13 +1519,15 @@ func (m *Manager) think(ctx context.Context, spec *Spec) {
 
 // skills are what the voice model may hand over, which is nothing without a subagent to
 // run them. Loading them is skipped rather than failed when the agent is answering
-// everything itself, the same way cmd/agent does it.
+// everything itself, the same way cmd/agent does it. A session held in writing with no
+// subagent loads the skills its config names itself (load_skill).
 //
 // The skills are the ones the agent config names, or the built-in set when it names none,
 // so editing what a skill means changes every agent that uses it. The built-in set leaves
-// out skills that capture video, since those need a subagent that can see.
+// out skills that capture video, since those need a subagent that can see. It is only
+// offered to a subagent: its skills are prompts for one.
 func (m *Manager) skills(ctx context.Context, spec Spec) (harness.Skills, error) {
-	if spec.SubagentTarget == "" {
+	if spec.SubagentTarget == "" && (!spec.Text || len(spec.SkillNames) == 0) {
 		return harness.Skills{}, nil
 	}
 	if len(spec.SkillNames) == 0 {

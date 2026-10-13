@@ -169,6 +169,29 @@ func (s *SessionCommandsSuite) TestTheSocketStopsTheCommandItNames() {
 	}
 }
 
+func (s *SessionCommandsSuite) TestTheSocketReadsTheCommandIDAnOlderSDKSends() {
+	opened, command := s.writing(), s.utils.uuid()
+	watching := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	s.submit(opened.Id, command, "First question")
+
+	s.Require().NoError(watching.WriteJSON(map[string]any{
+		"type": "interrupt", "command_id": command,
+	}))
+
+	s.Require().NoError(watching.SetReadDeadline(time.Now().Add(settleFor)))
+	for {
+		var received map[string]any
+		s.Require().NoError(watching.ReadJSON(&received))
+		if received["type"] != "command_stopped" {
+			continue
+		}
+		receipt, ok := received["command"].(map[string]any)
+		s.Require().True(ok)
+		s.Equal(command, receipt["request_id"])
+		return
+	}
+}
+
 // writing opens a conversation in writing on the model that is a while in the writing, so
 // a command is still being answered when the test asks about it.
 func (s *SessionCommandsSuite) writing() Session {

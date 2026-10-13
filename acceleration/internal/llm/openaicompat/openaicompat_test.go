@@ -463,6 +463,64 @@ func (s *OpenAICompatSuite) TestAMarkedToolCallAfterFillerKeepsTheFiller() {
 	}
 }
 
+func (s *OpenAICompatSuite) TestAToolCallWrittenInAnotherSyntaxIsMadeNotSpoken() {
+	// What Gemma 4 sent in Voicebench and the caller heard read out.
+	cases := map[string]struct {
+		frames    []string
+		spoken    string
+		name      string
+		arguments string
+	}{
+		"call_tool prefix with double quotes": {
+			frames:    []string{"Let me open a ticket... call_tool: create_reservation{name: \"Al", "varez, party of {6}\", allergen: \"say \\\"none\\\"\"}"},
+			spoken:    "Let me open a ticket... ",
+			name:      "create_reservation",
+			arguments: `{"name":"Alvarez, party of {6}","allergen":"say \"none\""}`,
+		},
+		"call tool prefix with no arguments": {
+			frames:    []string{"One moment. call tool", ": check_availability{}"},
+			spoken:    "One moment. ",
+			name:      "check_availability",
+			arguments: `{}`,
+		},
+		"python call in backticks": {
+			frames:    []string{"Checking, `call:check_availability(party_size=4, patio=true, ", `time="7:30")`, "`."},
+			spoken:    "Checking, ``.",
+			name:      "check_availability",
+			arguments: `{"party_size":4,"patio":true,"time":"7:30"}`,
+		},
+		"python call with single quotes": {
+			frames:    []string{"call:create_reservation(name='O\\'Br", "ien (party)', allergen='C:\\temp')"},
+			spoken:    "",
+			name:      "create_reservation",
+			arguments: `{"name":"O'Brien (party)","allergen":"C:\\temp"}`,
+		},
+		"python call ending on a bare value": {
+			frames:    []string{"call:check_availability(time=\"7:30\", party_size=4)"},
+			spoken:    "",
+			name:      "check_availability",
+			arguments: `{"party_size":4,"time":"7:30"}`,
+		},
+	}
+	for name, tc := range cases {
+		s.Run(name, func() {
+			s.frames = nil
+			for _, frame := range tc.frames {
+				s.frames = append(s.frames, textFrame(frame))
+			}
+			s.frames = append(s.frames, usageFrame(20, 0, 30, 0, "stop"))
+			provider := s.provider(Options{ToolCallText: true})
+
+			response, _ := s.ask(provider, withTools())
+
+			s.Equal(tc.spoken, response.OutputText)
+			s.Require().Len(response.ToolCalls, 1)
+			s.Equal(tc.name, response.ToolCalls[0].Name)
+			s.JSONEq(tc.arguments, response.ToolCalls[0].Arguments)
+		})
+	}
+}
+
 func (s *OpenAICompatSuite) TestAReplyThatMerelyLooksLikeAToolCallIsSpokenWhole() {
 	s.frames = []string{
 		textFrame("Please call: me back, or call:"),

@@ -440,10 +440,8 @@ func (s *Spec) Normalize() error {
 	if s.LLMTarget == "" && !s.Native() {
 		s.LLMTarget = defaultLLMTarget
 	}
-	// A text session runs on one model. Nobody is waiting on a voice while it thinks, so
-	// the skills it hands over run on the model holding the conversation.
 	if s.Text {
-		s.heldSubagent, s.SubagentTarget = s.SubagentTarget, s.LLMTarget
+		s.heldSubagent, s.SubagentTarget = s.SubagentTarget, s.writtenSubagent()
 	}
 	if s.ControllerTarget == "" && !s.Native() {
 		s.ControllerTarget = defaultControllerTarget
@@ -563,8 +561,28 @@ func (s Spec) Written() Spec {
 	if s.LLMTarget == "" {
 		s.LLMTarget = defaultLLMTarget
 	}
-	s.heldSubagent, s.SubagentTarget = s.SubagentTarget, s.LLMTarget
+	s.heldSubagent, s.SubagentTarget = s.SubagentTarget, s.writtenSubagent()
 	return s
+}
+
+// writtenSubagent is the subagent a session held in writing runs its skills on: none, since
+// the model holding the conversation loads them itself (load_skill) and keeps every tool a
+// subagent would lack. A sandbox is only given to a subagent, so with one the
+// conversation's model still runs as it.
+func (s Spec) writtenSubagent() string {
+	if s.Sandbox != "" {
+		return s.LLMTarget
+	}
+	return ""
+}
+
+// reviewTarget is the model a finished conversation is reviewed on: the subagent's, or for
+// one held in writing, the model that held it.
+func (s Spec) reviewTarget() string {
+	if s.Text && s.SubagentTarget == "" {
+		return s.LLMTarget
+	}
+	return s.SubagentTarget
 }
 
 // joinedCallID is a call id as the session joins it and is keyed under: without the spaces

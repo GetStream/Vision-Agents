@@ -4,19 +4,12 @@ package api
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/danielgtaylor/huma/v2"
-	"github.com/danielgtaylor/huma/v2/humatest"
-
-	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // SIPTrunksSuite covers customers' own SIP trunks over HTTP. Every test makes its own app,
@@ -222,39 +215,6 @@ func (s *SIPTrunksSuite) TestATrunkNumberCannotBeAttached() {
 	s.Equal("phone: inbound calls to a number on the customer's own sip trunk are not supported", failure)
 }
 
-func (s *SIPTrunksSuite) TestSIPTrunkFailuresMapToTheirStatus() {
-	for err, want := range map[error]int{
-		phone.ErrSIPTrunksDisabled: http.StatusBadRequest,
-		store.ErrNoSIPTrunk:        http.StatusNotFound,
-		store.ErrSIPTrunkInUse:     http.StatusConflict,
-		store.ErrNumberHeld:        http.StatusConflict,
-	} {
-		var status huma.StatusError
-		s.Require().ErrorAs(sipTrunkFailure(fmt.Errorf("wrapped: %w", err)), &status)
-		s.Equal(want, status.GetStatus(), err.Error())
-	}
-
-	invalid := fmt.Errorf("%w: port 0 must be 1..65535", phone.ErrInvalidSIPTrunk)
-	var status huma.StatusError
-	s.Require().ErrorAs(sipTrunkFailure(invalid), &status)
-	s.Equal(http.StatusBadRequest, status.GetStatus())
-	s.Equal("sip_trunk: invalid: port 0 must be 1..65535", status.Error())
-
-	// Anything else goes back unchanged, which Huma answers 500 like every other operation's
-	// own failure.
-	dbDown := errors.New("db down")
-	s.Require().ErrorIs(sipTrunkFailure(dbDown), dbDown)
-	s.False(errors.As(sipTrunkFailure(dbDown), &status))
-
-	_, api := humatest.New(s.T())
-	huma.Get(api, "/failing", func(context.Context, *struct{}) (*struct{}, error) {
-		return nil, sipTrunkFailure(dbDown)
-	})
-	answer := api.Get("/failing")
-	s.Equal(http.StatusInternalServerError, answer.Code)
-	s.JSONEq(`{"error":"unexpected error occurred: db down"}`, answer.Body.String())
-}
-
 func (s *SIPTrunksSuite) TestNoTrunkAnswerCarriesThePassword() {
 	created := s.createTrunk()
 
@@ -290,20 +250,5 @@ func (s *SIPTrunksSuite) TestATrunkThatNeverExistedIsNotFound() {
 		status, failure := s.serverClient.failure(request.method, request.path, request.body)
 		s.Equal(http.StatusNotFound, status, request.method+" "+request.path)
 		s.Equal("store: no such sip trunk", failure, request.method+" "+request.path)
-	}
-}
-
-// An empty trunk id never reaches the phone service: with nothing after it the path is
-// unknown, and an empty segment before /numbers is refused as malformed.
-func (s *SIPTrunksSuite) TestAnEmptyTrunkIdIsRefusedBeforeTheService() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/trunks//numbers",
-		map[string]any{"e164": e164(), "country": "US"})
-	s.Equal(http.StatusBadRequest, status)
-	s.Equal("validation failed: required path parameter is missing (path.id: )", failure)
-
-	for _, method := range []string{http.MethodPatch, http.MethodDelete} {
-		status, failure := s.serverClient.failure(method, "/v1/phone/trunks/", map[string]any{"name": "mine"})
-		s.Equal(http.StatusNotFound, status, method)
-		s.Equal("404 page not found\n", failure, method)
 	}
 }

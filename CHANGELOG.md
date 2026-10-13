@@ -612,6 +612,13 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### A customer's website can call the router directly
+
+A browser page on any site may call the API and open a session socket with an API key and a
+user token, so client-side auth needs no list of allowed sites. `ROUTER_CORS_ORIGINS` and
+`cors_origins` are gone and ignored if set. A router in `noauth` mode, where a caller names its
+own tenant, answers pages on `localhost` and loopback addresses only.
+
 ### Connector bindings can name tools by pattern
 
 A connector binding may set `tool_patterns` instead of `tools`: tool names or `path.Match`
@@ -1365,6 +1372,13 @@ voices as Flash and is still a whole sentence per request, but it reaches first 
 about half a second, so it sits in the low-latency tier and is reachable through `tts-fast`
 and the low-latency shortcuts. It covers 101 languages to Flash's 130.
 
+### Google's flagship reasoning model: Gemini 4 Argon
+
+The router now answers with `gemini/gemini-4-argon`, 53 on the Artificial Analysis
+Intelligence Index. It reads images and thinks at `high` unless a request names `low` or
+`medium`; `minimal` is refused. It sits in the high-quality tier, so `llm-smart` and
+`llm-thinking` fall over to it, and nothing prefers it. It reuses `GOOGLE_API_KEY`.
+
 ### A recorded call, for a Go program with nobody at a microphone
 
 `stream.RecordedCall` reads a 16 kHz mono PCM16 WAV and hands it over the way a call
@@ -1893,7 +1907,22 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A request with a data policy can be answered by Gemini 3.8 Flash, the model `llm-fast` prefers. It declared no data policy, so any request that asked for no training passed it over.
+- The router starts on a database that already applied the migrations shipped before customer-hosted models. That migration was numbered earlier than one already applied, and goose refuses to start when it finds an unapplied migration below the database version. It now runs after that version. A database that already created `custom_models` under the old number keeps the table.
+- A text agent takes answers from its skills before its knowledge base, and from its
+  knowledge base before the web. Its skills ran on a subagent that called no tool, so a
+  skill could never send the agent on to a pricing page or the knowledge base, and nothing
+  told the model a skill outranked `search`: a support agent searched the web for prices its
+  skill and knowledge base already held. A text session now has no subagent; its model loads
+  the skills its config names with the built-in `load_skill` tool, which returns
+  `{"name", "instructions"}` in `tool_ran`, and follows them with every tool it has. Every
+  agent offered more than one of `load_skill`, `lookup` and `search` is told that order, to
+  call them one at a time, and that a later source never contradicts an earlier one. A text
+  agent with a sandbox still hands its skills to a subagent, a text agent naming no skills
+  is offered none (the built-in set is written for a subagent), and a caller's own tool
+  named `load_skill` keeps the name.
 - `POST /v1/agents/connections/{id}/validate` no longer returns a provider error that echoes the credential. The answer's error is the same text GET and list store: every value the credential is sent as is replaced, and the text is cut at 1 KiB. When credentials change during the check, the answer keeps no provider text (AI-1078).
+- Native speech sessions retry recoverable connection failures before leaving the call (#894).
 - A test copy or a duplicate of an agent no longer silences the agent on its Slack bot, Linq, Telnyx or WhatsApp connection. A channel connection belongs to one live agent config: a create, update, patch or sync that newly binds one as `fixed` while another live config binds it is a 409 `channel_connection_taken` naming that config. A config tagged `draft_of` (the dashboard's test copy) is not refused, answers no channel message and subscribes to no MCP event. Configs that already shared a connection keep working: the oldest answers, and the router logs a warning naming the others. An MCP event is subscribed to once per connection, by the oldest live config that declares it, so a copy no longer opens a second conversation for each event (AI-1049, AI-1048).
 - `phone hooks -remove` works when the tunnel it names is gone. Stream refuses an update of
   the app's hooks while any hook in it is at a host that does not resolve, and the command

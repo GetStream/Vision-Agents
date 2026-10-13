@@ -81,7 +81,7 @@ Everything that is not a provider credential is one YAML file, read by `internal
 go run ./cmd/router --config /etc/router.yaml
 ```
 
-Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`, `cors_origins`,
+Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`,
 `trusted_proxies`, `routing_config`, `phone_config`, `voices_bucket_url`, and the nested
 `postgres.dsn`, `redis.{addr,username,password}`, `node.advertise`, `auth.{mode,kek}`,
 `rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled` and
@@ -103,7 +103,6 @@ the other commands that read them there.
 | `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
-| `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless a browser app calls this deployment. The same list decides which origins may open a socket. A deployment reached through Stream's proxy needs the proxy to let a preflight through as well, since a browser cannot authenticate one |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
@@ -450,6 +449,7 @@ Which models those shortcuts reach for LLM, and what each is billed at per milli
 | `openai/gpt-6-sol`                | high-quality | $2.00  | $0.20   | $10.00  |
 | `openai/gpt-6.1-sol`              | high-quality | $2.00  | $0.10   | $10.00  |
 | `openai/gpt-6-astra`              | high-quality | $10.00 | $1.00   | $50.00  |
+| `gemini/gemini-4-argon`          | high-quality | $2.00  | $0.10   | $10.00  |
 
 Gemma is self-hosted, so its rates are an estimate of what the deployment costs rather than
 a published price: Baseten's H100 rate divided by an assumed throughput. Cached prompt tokens
@@ -953,14 +953,18 @@ curl -s localhost:8080/v1/agents/sessions -H 'X-Customer-Id: acme' \
 ```
 
 Everything between hearing a question and answering it is unchanged, which is the point. A
-text session has the same instructions, the same skills handed to the same slower model and
-the same knowledge base as a call would have had, so an agent can be built and argued with
-in writing before anybody rings it, and a documentation agent or a support chat is the voice
-agent with the voice left off.
+text session has the same instructions, the same skills and the same knowledge base as a call
+would have had, so an agent can be built and argued with in writing before anybody rings it,
+and a documentation agent or a support chat is the voice agent with the voice left off. The
+one difference is who runs a skill: nobody is waiting on a voice, so the model holding the
+conversation loads the skills its config names itself, with `load_skill`, and keeps every
+tool while it follows one. It takes answers from a matching skill first, then the knowledge
+base (`lookup`), then the web (`search`). A text agent with a sandbox still hands its skills
+to a subagent, since only a subagent runs code.
 
 It is driven over the session's own socket: `respond` goes in, `response_delta` and
-`responded` come back, along with `looked_up`, `delegated` and `task_settled` as the agent
-works. `say` and `interrupt` do nothing useful here, since there is nothing being spoken to
+`responded` come back, along with `looked_up`, `tool_ran`, `delegated` and `task_settled` as
+the agent works. `say` and `interrupt` do nothing useful here, since there is nothing being spoken to
 interrupt.
 
 ### Conversations held over a socket

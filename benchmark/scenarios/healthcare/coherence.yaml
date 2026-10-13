@@ -3,7 +3,9 @@ pack: healthcare
 category: checklist
 name: Two minute reschedule stays coherent
 persona: A patient who confirms identity and appointment details slowly.
-max_duration_s: 240
+# Nine or ten caller turns: a call the agent gets right took 195-240 s, so 240 failed
+# correct calls as timeouts.
+max_duration_s: 360
 judge:
   coherence: true
   task: After two minutes the listener should still know Maya's Thursday 2pm moved to Tuesday morning and insurance was updated. Do not mix in Leo Chen.

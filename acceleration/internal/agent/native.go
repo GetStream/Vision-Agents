@@ -16,6 +16,13 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
+const (
+	maxNativeRetries        = 3
+	nativeRetrySetupTimeout = 5 * time.Second
+	nativeRetryToolTimeout  = 5 * time.Second
+	nativeRetryBackoff      = 100 * time.Millisecond
+)
+
 // The native agent: one speech-to-speech model in place of a transcriber, a conversation
 // model and a voice.
 //
@@ -100,8 +107,28 @@ func (a *Agent) hear(inbound InboundAudio) {
 		return
 	}
 	if err := session.ProcessAudio(inbound.Audio, inbound.Participant); err != nil {
-		a.fail(err, "sts")
+		if invalid := inbound.Audio.Validate(sts.InputSampleRate); invalid != nil {
+			a.fail(err, "sts")
+			return
+		}
+		if session.Capabilities().Resumable {
+			a.logger.Warn("could not send audio to the speech-to-speech session", "error", err)
+		} else {
+			a.loseNativeWrite(session, err)
+		}
 	}
+}
+
+func (a *Agent) loseNativeWrite(session *stsrouter.Session, err error) {
+	a.logger.Warn("could not send data to the speech-to-speech session", "error", err)
+	a.mu.Lock()
+	if a.sts != session || a.pipe == nil || a.closed {
+		a.mu.Unlock()
+		return
+	}
+	a.pipe.writeFailed.Store(true)
+	a.mu.Unlock()
+	_ = session.Close()
 }
 
 // unbind frees the session for the next speaker when the bound participant leaves.
@@ -123,20 +150,21 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 		case sts.ToolCall:
 			a.mu.Lock()
 			if a.nativeCalls == nil {
-				a.nativeCalls = map[string]struct{}{}
+				a.nativeCalls = map[string]llm.ToolCall{}
 			}
 			_, duplicate := a.nativeCalls[typed.CallID]
 			if a.closed || duplicate {
 				a.mu.Unlock()
 				continue
 			}
-			a.nativeCalls[typed.CallID] = struct{}{}
+			call := llm.ToolCall{ID: typed.CallID, Name: typed.Name, Arguments: typed.Arguments}
+			a.nativeCalls[typed.CallID] = call
 			a.pendingTools++
 			a.running.Add(1)
 			a.mu.Unlock()
 			requested := harness.ToolRequested{
 				TurnID: typed.ResponseID,
-				Call:   llm.ToolCall{ID: typed.CallID, Name: typed.Name, Arguments: typed.Arguments},
+				Call:   call,
 			}
 			ctx, cancel := a.prepareTool(requested)
 			go func() {
@@ -191,8 +219,11 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 
 // consumeSTS keeps transcripts and playback in provider order. Interruption is handled
 // separately by receiveSTS because PublishAudio can block until queued audio plays.
-func (a *Agent) consumeSTS(p *pipeline, events <-chan sts.Event) {
+func (a *Agent) consumeSTS(p *pipeline, speech *stsrouter.Session, events <-chan sts.Event) {
 	defer p.running.Done()
+	retry := false
+	cleanTerminal := false
+	var retryErr error
 
 	for event := range events {
 		switch typed := event.(type) {
@@ -234,35 +265,162 @@ func (a *Agent) consumeSTS(p *pipeline, events <-chan sts.Event) {
 				"time_left", typed.TimeLeft)
 
 		case sts.Disconnected:
-			if typed.Clean {
-				a.logger.Debug("the speech-to-speech session closed",
-					"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
+			if typed.Clean && typed.Reason == "resuming" {
 				continue
 			}
-			a.logger.Warn("the speech-to-speech session dropped",
-				"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
+			if typed.Clean {
+				cleanTerminal = true
+				a.logger.Debug("the speech-to-speech session closed",
+					"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
+			} else {
+				retry = true
+				a.logger.Warn("the speech-to-speech session dropped",
+					"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
+			}
+			if speech != nil {
+				_ = speech.Close()
+			}
 
 		case sts.Error:
-			a.fail(typed.Err, "sts")
+			if typed.Fatal {
+				retry = true
+				retryErr = typed.Err
+				a.logger.Warn("the speech-to-speech session failed", "error", typed.Err)
+				if speech != nil {
+					_ = speech.Close()
+				}
+			} else {
+				a.fail(typed.Err, "sts")
+			}
 		}
 	}
 
-	// The model's session ending is the whole conversation ending: there is nothing
-	// else on this call that can hear or speak. Closing waits for this goroutine, so it is
-	// done from another. A pipeline that was stopped is being replaced, not lost.
-	if p.ctx.Err() != nil {
+	go a.recoverNative(p, retry || (p.writeFailed.Load() && !cleanTerminal), retryErr)
+}
+
+// recoverNative replaces a failed native session while keeping the call and its harness.
+func (a *Agent) recoverNative(p *pipeline, retry bool, failure error) {
+	a.swapping.Lock()
+	leave := false
+	defer func() {
+		if leave {
+			a.mu.Lock()
+			if a.closed {
+				failure = nil
+			}
+			a.closed = true
+			a.mu.Unlock()
+		}
+		a.swapping.Unlock()
+		if leave {
+			if a.ctx.Err() == nil {
+				a.fail(failure, "sts")
+			}
+			if err := a.Close(); err != nil {
+				a.logger.Error("could not leave after the speech-to-speech session ended", "error", err)
+			}
+		}
+	}()
+
+	a.mu.Lock()
+	if a.pipe != p || a.closed || p.ctx.Err() != nil || a.ctx.Err() != nil {
+		a.mu.Unlock()
 		return
 	}
-	a.mu.Lock()
-	closed := a.closed
+	leave = true
+	a.switching.Store(true)
+	if !retry {
+		a.mu.Unlock()
+		return
+	}
+	p.cancel()
 	a.mu.Unlock()
-	if !closed {
-		a.logger.Warn("the speech-to-speech session ended, leaving the call")
-		go func() {
-			if err := a.Close(); err != nil {
-				a.logger.Error("could not leave after the model went", "error", err)
-			}
-		}()
+	a.dropSpeech()
+	p.running.Wait()
+
+	a.mu.Lock()
+	partial := strings.TrimSpace(a.hearing.String())
+	a.hearing.Reset()
+	a.mu.Unlock()
+	if partial != "" {
+		a.heardNative(sts.InputTranscript{Mode: stt.ModeFinal, Text: partial})
+	}
+
+	if !a.waitNativeTools() {
+		failure = errors.New("agent: native tools did not finish before the retry deadline")
+		return
+	}
+
+	a.mu.Lock()
+	a.generating = false
+	a.utterances = 0
+	a.speakingTurn = ""
+	a.saying = ""
+	a.nativeListening = false
+	a.nativeAwaiting = false
+	a.waitingSince = time.Time{}
+	a.spoken.Reset()
+	settings := a.settingsLocked()
+	delegating := a.harness != nil
+	a.mu.Unlock()
+
+	for a.nativeRetries < maxNativeRetries {
+		a.nativeRetries++
+		attempt := a.nativeRetries
+
+		timer := time.NewTimer(time.Duration(attempt) * nativeRetryBackoff)
+		select {
+		case <-timer.C:
+		case <-a.ctx.Done():
+			timer.Stop()
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(a.ctx, nativeRetrySetupTimeout)
+		next, err := a.openSpeech(ctx, settings, delegating)
+		cancel()
+		if err != nil {
+			failure = err
+			a.logger.Warn("could not reopen the speech-to-speech session", "attempt", attempt, "error", err)
+			continue
+		}
+
+		if a.ctx.Err() != nil {
+			_ = next.Close()
+			return
+		}
+		for _, err := range a.stopPipeline(true) {
+			a.logger.Warn("closing the failed speech-to-speech session failed", "error", err)
+		}
+		a.startNative(&prepared{sts: next})
+		a.switching.Store(false)
+		leave = false
+		return
+	}
+	if failure == nil {
+		failure = errors.New("agent: native speech-to-speech session could not be restored")
+	}
+}
+
+func (a *Agent) waitNativeTools() bool {
+	timer := time.NewTimer(nativeRetryToolTimeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		a.mu.Lock()
+		settled := len(a.toolCancels) == 0
+		a.mu.Unlock()
+		if settled {
+			return true
+		}
+		select {
+		case <-ticker.C:
+		case <-timer.C:
+			return false
+		case <-a.ctx.Done():
+			return false
+		}
 	}
 }
 
@@ -531,7 +689,7 @@ func (a *Agent) followNative() error {
 		return nil
 	}
 	a.mu.Lock()
-	if a.closed || a.sts == nil || a.harness == nil || a.generating || a.utterances > 0 || a.pendingTools > 0 || a.nativeAwaiting || a.nativeListening || !a.waitingSince.IsZero() || !a.harness.Pending() {
+	if a.closed || a.switching.Load() || a.sts == nil || a.harness == nil || a.generating || a.utterances > 0 || a.pendingTools > 0 || a.nativeAwaiting || a.nativeListening || !a.waitingSince.IsZero() || !a.harness.Pending() {
 		a.mu.Unlock()
 		return nil
 	}

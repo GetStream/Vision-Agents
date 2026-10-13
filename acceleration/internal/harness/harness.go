@@ -102,6 +102,10 @@ type noted struct {
 	skill  string
 	text   string
 	asking bool
+	// quiet marks a correction of a reply that was itself delivering one. It rides along
+	// with the next turn rather than earning one, or the model answering each correction
+	// with the same mistake talks to itself until the call ends.
+	quiet bool
 	// turn is the reply handed this note, empty while no reply has been.
 	turn string
 }
@@ -159,6 +163,8 @@ type Harness struct {
 	// asking is whether the reply being written carries a colleague's question for the
 	// caller, which is the one turn that has nothing to look up.
 	asking bool
+	// correcting is whether the reply being written was handed a correction of its own.
+	correcting bool
 	// asked is tool calls the model wrote as skill tags. They wait until the reply
 	// finishes, because running one mid-sentence would start a second turn while the
 	// first is still being spoken.
@@ -558,7 +564,13 @@ func (h *Harness) Working() []string {
 func (h *Harness) Pending() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return slices.ContainsFunc(h.notes, func(written noted) bool { return written.turn == "" })
+	return slices.ContainsFunc(h.notes, func(written noted) bool { return written.turn == "" && !written.quiet })
+}
+
+// correct notes something the harness did instead of what the reply asked for. It must be
+// called with the lock held.
+func (h *Harness) correct(text string) {
+	h.notes = append(h.notes, noted{text: text, quiet: h.correcting})
 }
 
 // Events carries what the harness decided. It is closed by Close.
@@ -632,8 +644,8 @@ func (h *Harness) act(turnID string, found directive) {
 	history := append([]llm.Message(nil), h.history...)
 	complete := !h.options.Text && identifiersAlreadyComplete(history)
 	if complete && !skill.CaptureVideo {
-		h.notes = append(h.notes, noted{text: "Those values are already complete. " +
-			"Call the tool yourself this turn; do not wait for a colleague."})
+		h.correct("Those values are already complete. " +
+			"Call the tool yourself this turn; do not wait for a colleague.")
 		h.mu.Unlock()
 		h.logger.Debug("not delegating, the caller already gave complete identifiers",
 			"skill", skill.Name)
@@ -708,9 +720,9 @@ func (h *Harness) actUnknown(found directive) {
 
 	h.logger.Debug("the model asked for a skill that does not exist", "skill", found.skill)
 	h.mu.Lock()
-	h.notes = append(h.notes, noted{text: fmt.Sprintf(
+	h.correct(fmt.Sprintf(
 		"There is no skill named %s, so nothing was done. If the caller asked for something "+
-			"to be done, call its tool now; do not tell them it is done.", found.skill)})
+			"to be done, call its tool now; do not tell them it is done.", found.skill))
 	h.mu.Unlock()
 }
 
@@ -721,9 +733,9 @@ func (h *Harness) actCall(found directive) {
 	if !offered {
 		h.logger.Debug("the model called a tool that does not exist", "tool", found.skill)
 		h.mu.Lock()
-		h.notes = append(h.notes, noted{text: fmt.Sprintf(
+		h.correct(fmt.Sprintf(
 			"There is no tool named %s, so nothing was done. Do not tell the caller it is done.",
-			found.skill)})
+			found.skill))
 		h.mu.Unlock()
 		return
 	}
@@ -825,12 +837,15 @@ func (h *Harness) instructions(turn Turn, working []string) string {
 	// reply written to deliver an answer cannot ask for that answer again.
 	h.reporting = nil
 	h.asking = false
+	h.correcting = false
 	lines := make([]string, 0, len(h.notes))
 	for i, written := range h.notes {
 		h.notes[i].turn = turn.ID
 		lines = append(lines, written.text)
 		if written.skill != "" {
 			h.reporting = append(h.reporting, written.skill)
+		} else {
+			h.correcting = true
 		}
 		h.asking = h.asking || written.asking
 	}
@@ -856,6 +871,9 @@ func (h *Harness) instructions(turn Turn, working []string) string {
 	}
 	if !h.asking && use != "" {
 		parts = append(parts, use)
+		if order := h.options.Tools.SourceOrder(); order != "" {
+			parts = append(parts, order)
+		}
 	}
 	// Said on every turn rather than only those handing something over, so the
 	// instructions stay the same from one turn to the next and a provider that keeps its

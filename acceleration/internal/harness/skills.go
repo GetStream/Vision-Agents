@@ -161,6 +161,53 @@ func parseSkills(raw []byte) (Skills, error) {
 	return skills, nil
 }
 
+// LoadSkillTool is the tool a written conversation loads a skill with. A text session runs
+// on one model with every tool, so a skill there is instructions that model reads and then
+// acts on, rather than work handed to a colleague who can call nothing.
+const LoadSkillTool = "load_skill"
+
+// Instructions returns what a skill says to do, reading a stored skill at the moment it is
+// asked for, so one edited mid-conversation is used as it now is.
+func (s Skills) Instructions(ctx context.Context, name string) (string, error) {
+	skill, found := s.Lookup(name)
+	if !found {
+		names := make([]string, 0, len(s.Skills))
+		for _, known := range s.Skills {
+			names = append(names, known.Name)
+		}
+		return "", fmt.Errorf("harness: there is no skill called %q; use one of: %s", name, strings.Join(names, ", "))
+	}
+	if skill.Instructions != "" || s.Load == nil {
+		return skill.Instructions, nil
+	}
+	return s.Load(ctx, name)
+}
+
+// LoadTool is load_skill as the model is offered it: each skill by name and by the
+// description that is the only thing it can choose one by.
+func (s Skills) LoadTool() Tool {
+	names := make([]string, 0, len(s.Skills))
+	var description strings.Builder
+	description.WriteString("Load a skill's instructions and follow them yourself. When a request " +
+		"matches a skill's description, load it before any other tool: it says how to answer " +
+		"and which sources to use. When no description matches, load none. Skills:")
+	for _, skill := range s.Skills {
+		names = append(names, skill.Name)
+		fmt.Fprintf(&description, "\n- %s: %s", skill.Name, skill.Description)
+	}
+	return Tool{
+		Name:        LoadSkillTool,
+		Description: description.String(),
+		Parameters: map[string]any{
+			"type":     "object",
+			"required": []string{"name"},
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "enum": names},
+			},
+		},
+	}
+}
+
 // TextPrompt offers native skills for matching written requests, including complete questions.
 func (s Skills) TextPrompt() string {
 	if len(s.Skills) == 0 {

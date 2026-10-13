@@ -1085,6 +1085,26 @@ func (s *HarnessSuite) TestAWrittenReplyCarryingAColleaguesQuestionIsToldNothing
 	s.NotContains(s.fast.requests()[1].Instructions, usePolicy)
 }
 
+func (s *HarnessSuite) TestAWrittenConversationLoadingItsSkillsIsToldTheSourceOrder() {
+	// With no subagent there is no colleague to hand to, so the skills arrive as load_skill
+	// and the model is told to take a skill before the knowledge base and the web.
+	built, err := DefaultTools()
+	s.Require().NoError(err)
+	lookup, _ := built.Lookup("lookup")
+	search, _ := built.Lookup("search")
+	s.skills = Skills{Skills: []Skill{{Name: "sales", Description: "pricing", Instructions: "quote"}}}
+	s.tools = Tools{Tools: []Tool{lookup, search, s.skills.LoadTool()}}
+	s.build(false)
+	s.harness.options.Text = true
+
+	s.respond("turn-1", "how much does moderation cost")
+
+	s.Require().Len(s.fast.requests(), 1)
+	instructions := s.fast.requests()[0].Instructions
+	s.Contains(instructions, s.tools.SourceOrder())
+	s.NotContains(instructions, `<ask skill=`, "a skill is loaded, not handed to a colleague")
+}
+
 func (s *HarnessSuite) TestSomebodyListeningIsToldToFillThePauseBeforeACall() {
 	s.tools = testTools()
 	s.build(true)
@@ -1232,6 +1252,24 @@ func (s *HarnessSuite) TestASkillTheModelInventedIsIgnored() {
 	s.Contains(follow.Instructions, "no skill named teleport, so nothing was done")
 	last := follow.Input[len(follow.Input)-1]
 	s.NotContains(last.Content, "come back", "a turn after nothing ran is not told that work came back")
+}
+
+func (s *HarnessSuite) TestAMistakeRepeatedInTheFollowUpDoesNotEarnAnother() {
+	// Voicebench: Gemma answered each correction with the same skill tag, and every answer
+	// earned another turn, so the agent talked to itself for two minutes to a silent caller.
+	s.build(true)
+	s.respond("turn-1", "hello")
+	s.reply("turn-1", `One moment. <ask skill="teleport">do the thing</ask>`)
+	s.Require().True(s.harness.Pending())
+
+	s.respond("turn-2", "")
+	s.reply("turn-2", `Still on it. <ask skill="teleport">do the thing</ask>`)
+
+	s.False(s.harness.Pending(), "the follow-up already told the caller, so the repeat earns no turn")
+	s.respond("turn-3", "are you there")
+	s.Require().Len(s.fast.requests(), 3)
+	s.Contains(s.fast.requests()[2].Instructions, "no skill named teleport",
+		"the correction still reaches the next turn the caller asks for")
 }
 
 func (s *HarnessSuite) TestASkillThatNamesAToolIsAskedAsOne() {
