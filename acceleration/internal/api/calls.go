@@ -270,9 +270,6 @@ func (s *Server) createCallToken(ctx context.Context, request *createCallTokenRe
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
-	if bound, err = s.minting(ctx, bound); err != nil {
-		return nil, err
-	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
 	token, err := s.stream.MintUserToken(ctx, bound, userID, listenerTokenValidity)
@@ -330,9 +327,6 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 	}
 	if err != nil {
 		return nil, stack.Wrap(err)
-	}
-	if bound, err = s.minting(ctx, bound); err != nil {
-		return nil, err
 	}
 	client := bound.Client
 	if err := conversation.CreateMissingUsers(ctx, client, map[string]getstream.UserRequest{

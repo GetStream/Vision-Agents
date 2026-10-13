@@ -21,7 +21,6 @@ import (
 	"net/netip"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -142,14 +141,9 @@ type Options struct {
 	// has no Stream app at all, in which case those paths say so.
 	Stream *streamapp.Clients
 	// ProxyDeclaresKind is auth.proxy_declares_kind: the proxy in front says which kind of
-	// caller it verified. Registering a Stream app behind a proxy needs it, since without
-	// it every caller passes as a backend.
+	// caller it verified. The server tokens it forwards are trusted only with it, since
+	// without it every caller passes as a backend.
 	ProxyDeclaresKind bool
-	// TrustAPIKeyHeader lets X-Stream-Api-Key choose which of the calling app's registered
-	// keys mints its tokens.
-	TrustAPIKeyHeader bool
-	// DenyRegistration are Stream app ids that may never be registered.
-	DenyRegistration []string
 	// Campaigns rings lists of people. Absent without telephony or sessions, in which
 	// case a campaign can be written down but not run.
 	Campaigns *campaign.Runner
@@ -300,23 +294,19 @@ type Options struct {
 
 // Server serves the router's HTTP API.
 type Server struct {
-	routers   map[routing.Modality]routing.Inspector
-	store     *store.Store
-	configs   *appconfig.Store
-	users     *users.Recorder
-	live      *live.Client
-	phone     *phone.Service
-	sessions  *session.Manager
-	relayed   *relayed
-	directory *node.Directory
-	forwarder *node.Forwarder
-	streams   *Streams
-	stream    *streamapp.Clients
-	// touched is when each key was last recorded as signing a hook.
-	touched            sync.Map
+	routers            map[routing.Modality]routing.Inspector
+	store              *store.Store
+	configs            *appconfig.Store
+	users              *users.Recorder
+	live               *live.Client
+	phone              *phone.Service
+	sessions           *session.Manager
+	relayed            *relayed
+	directory          *node.Directory
+	forwarder          *node.Forwarder
+	streams            *Streams
+	stream             *streamapp.Clients
 	proxyDeclaresKind  bool
-	trustAPIKeyHeader  bool
-	denyRegistration   []string
 	hookSecret         string
 	telnyxPublicKey    ed25519.PublicKey
 	telnyxConnectionID string
@@ -457,8 +447,6 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		streams:            options.Streams,
 		stream:             options.Stream,
 		proxyDeclaresKind:  options.ProxyDeclaresKind,
-		trustAPIKeyHeader:  options.TrustAPIKeyHeader,
-		denyRegistration:   options.DenyRegistration,
 		hookSecret:         options.HookSecret,
 		telnyxPublicKey:    options.TelnyxPublicKey,
 		telnyxConnectionID: options.TelnyxConnectionID,
@@ -620,21 +608,12 @@ func (s *Server) Handler() http.Handler {
 	return node.Serve(served)
 }
 
-// withSentry reports what goes wrong serving a request to Sentry, except a request
-// carrying an app's Stream secrets: Sentry copies the body it is handed, and a secret in an
-// error report is a secret leaked.
+// withSentry reports what goes wrong serving a request to Sentry.
 func withSentry(handler http.Handler) http.Handler {
-	instrumented := sentryhttp.New(sentryhttp.Options{
+	return sentryhttp.New(sentryhttp.Options{
 		Repanic:         false,
 		WaitForDelivery: false,
 	}).Handle(handler)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, streamCredentialsPath) {
-			handler.ServeHTTP(w, r)
-			return
-		}
-		instrumented.ServeHTTP(w, r)
-	})
 }
 
 // withTiming reports how long the server itself spent, so a caller timing a call can tell
@@ -1009,9 +988,6 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
 			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
-			if s.trustAPIKeyHeader {
-				ctx = context.WithValue(ctx, mintingKeyContextKey{}, strings.TrimSpace(r.Header.Get(mintingKeyHeader)))
-			}
 			ctx = context.WithValue(ctx, callerContextKey{}, routing.Caller{
 				UserID: principal.UserID,
 				IP:     clientIP(r, s.trusted),

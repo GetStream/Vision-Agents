@@ -1,12 +1,9 @@
 package api
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 	"time"
-
-	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // streamRetryAfter is how long a caller is told to wait while the router does not yet know
@@ -33,20 +30,4 @@ func (streamWaitingError) GetHeaders() http.Header {
 // streamWaiting is the same answer from an operation declared in Go.
 func streamWaiting() error {
 	return streamWaitingError{errStreamUnknown}
-}
-
-// mintingKeyHeader names which of the calling app's registered keys a gateway that writes
-// it itself wants the app's tokens minted with.
-const mintingKeyHeader = "X-Stream-Api-Key"
-
-type mintingKeyContextKey struct{}
-
-// minting is the bound identity a token is minted with: the key the gateway named, when the
-// deployment trusts it to and the key is one the app holds; otherwise as it was resolved.
-func (s *Server) minting(ctx context.Context, bound streamapp.Bound) (streamapp.Bound, error) {
-	named, _ := ctx.Value(mintingKeyContextKey{}).(string)
-	if named == "" || s.stream == nil {
-		return bound, nil
-	}
-	return s.stream.WithKey(ctx, bound, named)
 }

@@ -1174,30 +1174,6 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	return true, found.Close()
 }
 
-// EndPinned ends every session acting in one of a customer's Stream apps, which is what
-// the router does once it stops acting there: the app disconnected, blocked, or the key it
-// was opened with dropped. Each closes its call, transcript and guardrail with it. It
-// reports how many it ended.
-func (m *Manager) EndPinned(customer string, app int64) int {
-	m.mu.Lock()
-	var pinned []*Session
-	for id, found := range m.sessions {
-		if spec := found.Spec(); spec.CustomerID == customer && spec.StreamApp == app {
-			pinned = append(pinned, found)
-			delete(m.sessions, id)
-		}
-	}
-	m.mu.Unlock()
-
-	for _, found := range pinned {
-		if err := found.Close(); err != nil {
-			m.logger.Warn("a session pinned to a Stream app the router stopped acting in did not close cleanly",
-				"session", found.ID(), "customer_id", customer, "error", err)
-		}
-	}
-	return len(pinned)
-}
-
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a
 // claim that is not taken back expires on its own.
 const releaseTimeout = 2 * time.Second
@@ -1456,7 +1432,7 @@ func (m *Manager) hookPin(spec Spec) (int64, bool) {
 // ErrNoStreamApp is a conversation in writing asked to be kept by an app that has no Stream
 // app to keep it in.
 var ErrNoStreamApp = errors.New("session: this app has no Stream app to keep the conversation in: " +
-	"register this app's Stream keys, or open an incognito session")
+	"call through the gateway with this app's own Stream keys, or open an incognito session")
 
 // ErrConversationReadOnly is a conversation kept in the router's shared Stream app, which its
 // customer may read and no longer add to.
@@ -1469,8 +1445,8 @@ var ErrConversationElsewhere = errors.New("session: this conversation is kept in
 	"than this call is made in: fork it to carry on")
 
 // keepable refuses a conversation that has nowhere safe to be kept. In app mode
-// an app that registered no Stream app has nowhere at all, which used to mean a
-// conversation quietly not kept; and a registered app whose agent channel type lets a
+// an app the router holds no token for has nowhere at all, which used to mean a
+// conversation quietly not kept; and an app of its own whose agent channel type lets a
 // client make, change or join a conversation's channel would keep it where anybody could
 // rewrite whose it is.
 func (m *Manager) keepable(ctx context.Context, spec Spec, stream streamapp.Bound) error {

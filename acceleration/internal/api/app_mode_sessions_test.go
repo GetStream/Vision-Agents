@@ -32,7 +32,7 @@ func (s *AppModeSessionsSuite) TestAPersistedTextSessionWithoutAnIdentityIsRefus
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "register this app's Stream keys")
+	s.Contains(failure, "call through the gateway with this app's own Stream keys")
 }
 
 func (s *AppModeSessionsSuite) TestAnIncognitoSessionNeedsNoStreamApp() {
@@ -86,14 +86,3 @@ func (s *AppModeSessionsSuite) TestAResumedLegacyConversationAsksForAFork() {
 	s.Contains(failure, "can only be read there: fork it")
 }
 
-func (s *AppModeSessionsSuite) TestDisconnectingEndsSessionsPinnedToTheApp() {
-	// What the router no longer acts in, nothing it holds goes on acting in.
-	s.giveApp(s.customerID(), 4242, "own-key")
-	s.serverClient.createSession(textSession(nil))
-	s.setApps(s.customerID(), func(apps *suiteApps) { delete(apps.own, s.customerID()) })
-	s.serverClient.createSession(textSession(nil))
-
-	s.Equal(1, s.manager.EndPinned(s.customerID(), 4242))
-	s.Zero(s.manager.EndPinned(s.customerID(), 4242), "it ended already")
-	s.Equal(1, s.manager.EndPinned(s.customerID(), 0), "the session in the deployment's app was left running")
-}

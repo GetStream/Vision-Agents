@@ -268,23 +268,6 @@ func (s *StreamAppsSuite) TestATranscriptOfACallBeforeRegistrationIsReadFromTheD
 	s.Equal("said before the app had its own", read[0].Text)
 }
 
-func (s *StreamAppsSuite) TestARegisteredAppMintsNoGuestsUntilItOptsIn() {
-	s.setApps(s.customerID(), func(apps *suiteApps) {
-		identity := apps.own[s.customerID()]
-		identity.AllowGuests = false
-		apps.own[s.customerID()] = identity
-	})
-
-	s.Equal(http.StatusForbidden, s.anonymousClient.do(http.MethodPost, "/v1/agents/guests", nil, nil))
-
-	s.setApps(s.customerID(), func(apps *suiteApps) {
-		identity := apps.own[s.customerID()]
-		identity.AllowGuests = true
-		apps.own[s.customerID()] = identity
-	})
-	s.Equal(http.StatusCreated, s.anonymousClient.do(http.MethodPost, "/v1/agents/guests", nil, nil))
-}
-
 func (s *StreamAppsSuite) TestWorkWaitingOnTheDeploymentsAppIsAskedToRetry() {
 	s.setApps(s.customerID(), func(apps *suiteApps) { apps.waiting[s.customerID()] = true })
 	defer s.setApps(s.customerID(), func(apps *suiteApps) { delete(apps.waiting, s.customerID()) })

@@ -3458,50 +3458,6 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/v1/settings/app/stream/check": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Check the calling app's own Stream app
-         * @description Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
-         *
-         *     Server-side only.
-         */
-        readonly post: operations["checkAppStreamCredentials"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/settings/app/stream/credentials": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        /**
-         * Register the calling app's own Stream app
-         * @description The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
-         *
-         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
-         */
-        readonly put: operations["updateAppStreamCredentials"];
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/v1/stats/activity": {
         readonly parameters: {
             readonly query?: never;
@@ -7313,72 +7269,8 @@ export type components = {
              */
             readonly updated_at: string;
         };
-        /**
-         * @description Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
-         * @enum {string}
-         */
-        readonly StreamAppState: "connected" | "disconnected" | "blocked";
-        readonly StreamCheck: {
-            readonly reattach: readonly string[] | null;
-            readonly settings: components["schemas"]["AppSettings"];
-        };
-        /** @description The keys the router acts in the calling app's own Stream app with. Secrets are written and never read back: no answer carries one. */
-        readonly StreamCredentials: {
-            /** @description Whether guests may be made in the app. Left out keeps what was set, which starts off false. */
-            readonly allow_guests?: boolean;
-            /**
-             * Format: int64
-             * @description The revision last read, 0 for an app never registered. A write made against an older one is a 409.
-             */
-            readonly expected_revision: number;
-            /** @description Every key the router may act in the app with, which replaces those it held. Each is checked with Stream. Empty disconnects the app, which needs a proof. */
-            readonly keys: readonly components["schemas"]["StreamKeyInput"][] | null;
-            /** @description The key tokens are minted with. Left out is the first. */
-            readonly primary_key?: string;
-            /** @description A key and secret of the app, which disconnecting needs. It is checked with Stream and kept nowhere. */
-            readonly proof?: components["schemas"]["StreamKeyInput"];
-        };
-        readonly StreamKeyInput: {
-            readonly api_key: string;
-            /** @description The key's secret. It is sealed and never read back. */
-            readonly api_secret: string;
-            /**
-             * Format: date-time
-             * @description When Stream made the key, which says which key is the oldest and so signs the app's webhooks.
-             */
-            readonly created_at?: string;
-        };
-        readonly StreamKeyState: {
-            readonly api_key: string;
-            /**
-             * Format: date-time
-             * @description When Stream made the key.
-             */
-            readonly created_at?: string;
-            /**
-             * Format: date-time
-             * @description When Stream last signed a hook with this key.
-             */
-            readonly last_webhook_at?: string;
-            /** @description The end of the secret, enough to tell two apart. */
-            readonly secret_last4?: string;
-            /**
-             * @description Whether Stream signs the app's hooks with this key, which is its oldest. yes is one a hook arrived signed with.
-             * @enum {string}
-             */
-            readonly signs_webhooks: "yes" | "no" | "unknown";
-            /**
-             * @description rejected is a key Stream stopped accepting, which the router no longer uses.
-             * @enum {string}
-             */
-            readonly status: "active" | "rejected";
-            /** Format: date-time */
-            readonly verified_at?: string;
-        };
         /** @description Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need. */
         readonly StreamSettings: {
-            /** @description Whether guests may be made in the registered app. */
-            readonly allow_guests?: boolean;
             /** @description Whether the Stream app holds the agent call type calls are made with. Stream reports no grants for it here, so it is present or missing. */
             readonly call_type: components["schemas"]["StreamTypeState"];
             /** @description Whether the Stream app holds the agent channel type conversations are kept in. unsafe is one whose grants let somebody other than the app's backend make, change or join a conversation's channel, or read one they are not in. */
@@ -7388,22 +7280,9 @@ export type components = {
              * @description When Stream was asked. Absent when it could not be, and the types are then unknown. Answers are reused for a minute.
              */
             readonly checked_at?: string;
-            /** @description The registered app's keys, oldest first. No secret is ever read back. */
-            readonly keys?: readonly components["schemas"]["StreamKeyState"][] | null;
-            /** @description The key tokens are minted with. */
-            readonly primary_key?: string;
             /**
              * Format: int64
-             * @description The registration's revision, 0 for an app that registered none. A write names the one it read.
-             */
-            readonly revision?: number;
-            /** @description Whether the router acts in the registered app. Absent for an app that registered none. */
-            readonly state?: components["schemas"]["StreamAppState"];
-            /** @description Why the router stopped acting in the app, for one that is blocked. */
-            readonly state_reason?: string;
-            /**
-             * Format: int64
-             * @description The registered app's own id.
+             * @description The calling app's own Stream app id, in app mode, when its work is written there.
              */
             readonly stream_app_id?: number;
             readonly tenancy: components["schemas"]["StreamTenancy"];
@@ -15238,94 +15117,6 @@ export interface operations {
             };
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
-            readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    readonly checkAppStreamCredentials: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description What the check found */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["StreamCheck"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 403: components["responses"]["Forbidden"];
-            /** @description Conflict */
-            readonly 409: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            readonly 500: components["responses"]["InternalError"];
-            /** @description Service Unavailable */
-            readonly 503: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    readonly updateAppStreamCredentials: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["StreamCredentials"];
-            };
-        };
-        readonly responses: {
-            /** @description The app's settings as they now are */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AppSettings"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 403: components["responses"]["Forbidden"];
-            /** @description Conflict */
-            readonly 409: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
             readonly 500: components["responses"]["InternalError"];
             /** @description Service Unavailable */
             readonly 503: {

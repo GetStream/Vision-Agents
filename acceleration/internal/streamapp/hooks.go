@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // maxHookAsks bounds how many answers about hooks are kept.
@@ -13,10 +11,7 @@ const maxHookAsks = 1024
 
 // Verifier is a secret a hook may be signed with, and the app a hook it verifies is from.
 type Verifier struct {
-	// CustomerID is the registered app's customer, empty for the deployment's own secret.
-	CustomerID string
-	// StreamApp is the app's id: the registered app's, or the deployment's, zero while
-	// that is not known in deployment mode.
+	// StreamApp is the deployment app's id, zero while that is not known in deployment mode.
 	StreamApp int64
 	APIKey    string
 	Secret    Secret
@@ -24,15 +19,13 @@ type Verifier struct {
 	Deployment bool
 }
 
-// Verifiers are the secrets a hook may be checked against, in app mode. A hook naming an
-// app is checked only against that app's keys, and the deployment's secret only when the
-// app is the deployment's own. A hook naming no app is checked against the key it says it
-// was signed with, when an app holds that key, and the deployment's secret otherwise. An
-// api key never widens what a hook is checked against, and the deployment's secret is
-// tried only for work in the deployment's app.
+// Verifiers are the secrets a hook may be checked against, in app mode: only ever the
+// deployment's own, for a hook about work in the deployment's app. A customer's own app
+// signs its hooks with a secret the router does not hold, so those are vouched for by the
+// gateway in front instead. A hook naming the deployment's app is checked only against the
+// key it names, when it names one.
 //
-// What is found is kept as an identity is, and forgotten whenever an app is written, so a
-// busy app's hooks do not each read its keys and open them again.
+// What is found is kept as an identity is, so a busy app's hooks do not each ask again.
 func (c *Clients) Verifiers(ctx context.Context, apiKey string, pathApp int64) ([]Verifier, error) {
 	asked := hookAsk{apiKey: apiKey, pathApp: pathApp}
 	c.mu.Lock()
@@ -89,64 +82,15 @@ func (c *Clients) verifiers(ctx context.Context, apiKey string, pathApp int64) (
 		return []Verifier{{StreamApp: own, APIKey: deployment.identity.APIKey, Secret: deployment.identity.Secret, Deployment: true}}
 	}
 
-	if pathApp != 0 {
-		var verifiers []Verifier
-		app, err := stored.store.StreamAppByPK(ctx, pathApp)
-		switch {
-		case err == nil:
-			verifiers = stored.keysOf(app, apiKey, own)
-		case !errors.Is(err, store.ErrNoStreamApp):
-			return nil, err
-		}
-		if len(verifiers) == 0 && deployment.pending() {
-			// The app named may be the deployment's own, which is not known yet.
-			return nil, ErrDeploymentAppUnknown
-		}
-		if pathApp == own {
-			verifiers = append(verifiers, ours(apiKey)...)
-		}
-		return verifiers, nil
-	}
-
-	if apiKey != "" {
-		app, err := stored.store.StreamAppByAPIKey(ctx, apiKey)
-		switch {
-		case err == nil:
-			return stored.keysOf(app, apiKey, own), nil
-		case !errors.Is(err, store.ErrNoStreamApp):
-			return nil, err
-		}
-	}
 	if deployment.pending() {
+		// The app named may be the deployment's own, which is not known yet.
 		return nil, ErrDeploymentAppUnknown
 	}
-	return ours(""), nil
-}
-
-// keysOf are a connected app's keys Stream still accepts, as verifiers, narrowed to the
-// one named when a key is named. The deployment's own app, registered by its own customer,
-// is still the deployment's: its hooks are about everything written there, which is more
-// than that customer's.
-func (s *Stored) keysOf(app store.StreamApp, apiKey string, own int64) []Verifier {
-	if app.State != store.StreamAppConnected {
-		return nil
+	switch pathApp {
+	case 0:
+		return ours(""), nil
+	case own:
+		return ours(apiKey), nil
 	}
-	var verifiers []Verifier
-	for _, key := range app.Keys {
-		if key.Status != store.StreamAppKeyActive || (apiKey != "" && key.APIKey != apiKey) {
-			continue
-		}
-		secret, _, err := OpenKey(s.sealer, app, key)
-		if err != nil {
-			s.logger.Warn("stream: could not open a key to check a hook with", "customer_id", app.CustomerID,
-				"api_key", key.APIKey, "error", err)
-			continue
-		}
-		verifier := Verifier{CustomerID: app.CustomerID, StreamApp: app.StreamAppPK, APIKey: key.APIKey, Secret: secret}
-		if own != 0 && app.StreamAppPK == own {
-			verifier.CustomerID, verifier.Deployment = "", true
-		}
-		verifiers = append(verifiers, verifier)
-	}
-	return verifiers
+	return nil, nil
 }

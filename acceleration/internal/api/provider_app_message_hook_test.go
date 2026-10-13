@@ -81,12 +81,12 @@ func (s *messageHookHarness) start(connectorsOn bool, publicURL string) {
 	s.staff = &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {suiteOpsKey}}, kind: noCredential}
 }
 
-// SetupTest makes a customer whose id is its Stream app's, and registers that app's key.
+// SetupTest makes a customer whose id is its Stream app's, with a server token for that app.
 func (s *messageHookHarness) SetupTest() {
 	s.useApp(s.numberedApp(streamAppID()))
 	s.apiKey, s.secret = "own-key-"+s.utils.uuid(), "own-secret-"+s.utils.uuid()
 	s.answering(false)
-	s.registered(0, key(s.apiKey, s.secret))
+	s.forwarded(s.apiKey)
 	if s.slack != nil {
 		s.slack.Use(fakeprovider.SlackChannel)
 	}

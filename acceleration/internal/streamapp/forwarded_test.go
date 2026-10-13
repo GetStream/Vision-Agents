@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 const (
@@ -89,7 +91,7 @@ func (s *StoredSuite) forwarded(mint *gateway) *Forwarded {
 
 func (s *StoredSuite) forwardedSource(forwarded *Forwarded) *Stored {
 	source, err := NewStored(StoredOptions{
-		Store: s.store, Sealer: s.sealer, Deployment: s.deployment, Forwarded: forwarded, Now: s.clock.Now,
+		Store: s.store, Deployment: s.deployment, Forwarded: forwarded, Now: s.clock.Now,
 	})
 	s.Require().NoError(err)
 	return source
@@ -175,17 +177,39 @@ func (s *StoredSuite) TestAnAppNoTokenWasForwardedForActsNowhere() {
 	s.ErrorIs(err, ErrNoIdentity)
 }
 
-func (s *StoredSuite) TestARegisteredAppIsStillActedInWithItsOwnKeys() {
-	s.register("own-key")
-	forwarded := s.forwarded(nil)
-	_, err := forwarded.Keep(s.ctx, s.customer, forwardedKey, s.serverToken(24*time.Hour))
+// placeholder is the row the migration seeds for an app that had registered its keys: no
+// token, already expired, naming the key to mint with.
+func (s *StoredSuite) placeholder() {
+	_, err := s.store.KeepStreamAppToken(s.ctx, store.StreamAppToken{
+		StreamAppPK: s.app, CustomerID: s.customer, APIKey: forwardedKey, Sealed: []byte{}, ExpiresAt: time.Unix(0, 0),
+	})
 	s.Require().NoError(err)
+}
 
-	identity, err := s.forwardedSource(forwarded).For(s.ctx, s.customer)
+func (s *StoredSuite) TestASeededPlaceholderIsRefreshedAtTheGateway() {
+	s.placeholder()
+	mint := s.gateway()
+
+	identity, err := s.forwardedSource(s.forwarded(mint)).For(s.ctx, s.customer)
 
 	s.Require().NoError(err)
-	s.Equal("own-key", identity.APIKey)
-	s.Equal("own-key-secret-value", identity.Secret.Reveal())
+	s.Equal(forwardedKey, identity.APIKey)
+	s.Equal(s.clock.Now().Add(24*time.Hour).Unix(), identity.TokenExpires.Unix())
+	asked := mint.requests()
+	s.Require().Len(asked, 1)
+	s.Equal("/internal/v1/apps/"+s.customer+"/server-token", asked[0]["path"])
+	s.Equal(forwardedKey, asked[0]["api_key"])
+	reread, err := s.forwardedSource(s.forwarded(nil)).For(s.ctx, s.customer)
+	s.Require().NoError(err)
+	s.Equal(identity.Token.Reveal(), reread.Token.Reveal(), "the minted token replaced the placeholder")
+}
+
+func (s *StoredSuite) TestASeededPlaceholderWithNoGatewayActsNowhere() {
+	s.placeholder()
+
+	_, err := s.forwardedSource(s.forwarded(nil)).For(s.ctx, s.customer)
+
+	s.ErrorIs(err, ErrNoIdentity)
 }
 
 func (s *StoredSuite) TestWorkPinnedToAnAppIsFinishedWithItsForwardedToken() {

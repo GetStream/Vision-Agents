@@ -147,6 +147,7 @@ func (s *MessageHookWarningSuite) TestWithoutAPublicURLStreamIsNotAsked() {
 // neither asked nor warned about.
 func (s *MessageHookWarningSuite) TestInAppModeStreamIsNotAskedAndNothingIsLogged() {
 	s.settings.Stream.Tenancy, s.settings.Stream.AppID = config.TenancyApp, 99
+	s.settings.Stream.MintURL, s.settings.Stream.MintToken = "http://gateway-internal:8082", "the-routers-bearer"
 
 	s.Empty(s.check())
 	s.Empty(s.stream.Requests(hookKey))

@@ -15,14 +15,13 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// AppHooksSuite delivers Stream's hooks to a router in app mode, where each registered app
-// signs its own and what a hook names is acted on only within the app it came from.
+// AppHooksSuite delivers Stream's hooks to a router in app mode, where the gateway vouches
+// for each app's own and what a hook names is acted on only within the app it came from.
 type AppHooksSuite struct {
 	RouterSuite
 
 	channelID string
 	apiKey    string
-	secret    string
 }
 
 func TestAppHooksSuite(t *testing.T) {
@@ -36,9 +35,9 @@ func (s *AppHooksSuite) SetupSuite() {
 
 func (s *AppHooksSuite) SetupTest() {
 	s.useApp(s.numberedApp(streamAppID()))
-	s.answerAs(s.appID())
-	s.apiKey, s.secret = "own-key-"+s.utils.uuid(), "own-secret-"+s.utils.uuid()
-	s.registered(0, key(s.apiKey, s.secret))
+	s.apiKey = "own-key-" + s.utils.uuid()
+	s.answerAs(s.apiKey, s.appID())
+	s.forwarded(s.apiKey)
 	s.channelID = "chat-" + s.utils.uuid()
 }
 
@@ -52,6 +51,17 @@ func (s *AppHooksSuite) hook(path, body, secret, apiKey string) int {
 	if apiKey != "" {
 		request.Header.Set(auth.APIKeyHeader, apiKey)
 	}
+	response, err := s.server.Client().Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	return response.StatusCode
+}
+
+// fromApp delivers a body from the customer's own app, as the gateway does once it checked
+// the signature with the app's secret.
+func (s *AppHooksSuite) fromApp(path, body string) int {
+	request := s.request(path, body, sign(body, ownAppSecret))
+	vouched(request, s.appID(), s.apiKey)
 	response, err := s.server.Client().Do(request)
 	s.Require().NoError(err)
 	s.Require().NoError(response.Body.Close())
@@ -85,28 +95,16 @@ func (s *AppHooksSuite) reaches(messages <-chan dispatch.Message) bool {
 	}
 }
 
-func (s *AppHooksSuite) TestAMessageHookIsVerifiedWithTheSendingAppsSecret() {
+func (s *AppHooksSuite) TestAMessageHookTheGatewayVouchedForIsDispatched() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
-	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/chat/hooks/stream"), s.message(s.config(s.customerID())), s.secret, s.apiKey))
-
-	s.True(s.reaches(worker.Messages()))
-	app, err := s.store.StreamApp(context.Background(), s.customerID())
-	s.Require().NoError(err)
-	s.NotNil(app.Keys[0].LastWebhookAt, "the key is known to sign the app's hooks")
-}
-
-func (s *AppHooksSuite) TestAHookWithAnAppSegmentAndNoKeyTriesThatAppsKeys() {
-	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
-	defer release()
-
-	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/chat/hooks/stream"), s.message(s.config(s.customerID())), s.secret, ""))
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), s.message(s.config(s.customerID()))))
 
 	s.True(s.reaches(worker.Messages()))
 }
 
-func (s *AppHooksSuite) TestAHookIsVerifiedOnlyWithItsAppsKeys() {
+func (s *AppHooksSuite) TestAnAppsHookIsNeverCheckedWithTheDeploymentSecret() {
 	// The deployment's secret signs only the deployment app's hooks.
 	s.Equal(http.StatusUnauthorized, s.hook(s.appPath("/v1/chat/hooks/stream"),
 		s.message(s.config(s.customerID())), suiteStreamSecret, ""))
@@ -117,32 +115,9 @@ func (s *AppHooksSuite) TestAnUnknownKeyWithAnAppSegmentNeverUsesTheDeploymentSe
 		s.message(s.config(s.customerID())), suiteStreamSecret, "nobody's-key"))
 }
 
-func (s *AppHooksSuite) TestANamedKeyNeverWidensTheKeysTried() {
-	second, secondSecret := "second-key-"+s.utils.uuid(), "second-secret-"+s.utils.uuid()
-	s.registered(1, key(s.apiKey, s.secret), key(second, secondSecret))
-
-	s.Equal(http.StatusUnauthorized, s.hook(s.appPath("/v1/chat/hooks/stream"),
-		s.message(s.config(s.customerID())), s.secret, second), "signed with one key and naming the other")
-}
-
-func (s *AppHooksSuite) TestAHookSignedWithASecondaryKeyIsAccepted() {
-	second, secondSecret := "second-key-"+s.utils.uuid(), "second-secret-"+s.utils.uuid()
-	s.registered(1, key(s.apiKey, s.secret), key(second, secondSecret))
-	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
-	defer release()
-
-	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/chat/hooks/stream"), s.message(s.config(s.customerID())), secondSecret, second))
-
-	s.True(s.reaches(worker.Messages()))
-}
-
 func (s *AppHooksSuite) TestAHookSignedByAnUnregisteredKeyUsesTheDeploymentSecret() {
-	// A hook to the old path naming a key no app holds is the deployment app's.
+	// A hook to the old path is the deployment app's, whatever key it names.
 	s.Equal(http.StatusOK, s.hook("/v1/chat/hooks/stream", s.message(s.config(s.customerID())), suiteStreamSecret, "nobody's-key"))
-}
-
-func (s *AppHooksSuite) TestAKnownKeyOnTheOldPathIsCheckedOnlyWithItsSecret() {
-	s.Equal(http.StatusUnauthorized, s.hook("/v1/chat/hooks/stream", s.message(s.config(s.customerID())), suiteStreamSecret, s.apiKey))
 }
 
 func (s *AppHooksSuite) TestAChannelConfigIsHonouredOnlyForTheHooksApp() {
@@ -151,7 +126,7 @@ func (s *AppHooksSuite) TestAChannelConfigIsHonouredOnlyForTheHooksApp() {
 	somebodyElse, release := s.dispatch.Register(other, dispatch.Registration{Capacity: 1})
 	defer release()
 
-	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/chat/hooks/stream"), s.message(s.config(other)), s.secret, s.apiKey))
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), s.message(s.config(other))))
 
 	s.False(s.reaches(somebodyElse.Messages()))
 }
@@ -172,8 +147,8 @@ func (s *AppHooksSuite) TestAReplayedMessageIsAnsweredOnce() {
 	defer release()
 	body := s.message(s.config(s.customerID()))
 
-	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/chat/hooks/stream"), body, s.secret, s.apiKey))
-	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/chat/hooks/stream"), body, s.secret, s.apiKey))
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), body))
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), body))
 
 	s.True(s.reaches(worker.Messages()))
 	s.False(s.reaches(worker.Messages()), "the second delivery is the same message")
@@ -186,8 +161,7 @@ func (s *AppHooksSuite) TestAStaleCallEventIsIgnored() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
-	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/phone/hooks/stream"),
-		s.ringing(call, time.Now().Add(-time.Hour)), s.secret, s.apiKey))
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/phone/hooks/stream"), s.ringing(call, time.Now().Add(-time.Hour))))
 
 	select {
 	case <-worker.Calls():
@@ -210,7 +184,7 @@ func (s *AppHooksSuite) TestAnArrivingCallIsDispatchedToTheNumbersOwnerInThatApp
 	case <-time.After(dropped):
 	}
 
-	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/phone/hooks/stream"), s.ringing(call, time.Now()), s.secret, s.apiKey))
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/phone/hooks/stream"), s.ringing(call, time.Now())))
 	select {
 	case arrived := <-worker.Calls():
 		s.Equal(call, arrived.CallID)
@@ -254,7 +228,7 @@ func (s *AppHooksSuite) TestACallOfTheSameNameInAnotherAppDoesNotHideThisOne() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
-	s.Equal(http.StatusOK, s.hook(s.appPath("/v1/phone/hooks/stream"), s.ringing(line, time.Now()), s.secret, s.apiKey))
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/phone/hooks/stream"), s.ringing(line, time.Now())))
 
 	select {
 	case arrived := <-worker.Calls():

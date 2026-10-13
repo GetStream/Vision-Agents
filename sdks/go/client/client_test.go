@@ -84,13 +84,6 @@ func newRouter(t *testing.T) *router {
 		}})
 	})
 
-	mux.HandleFunc("PUT /v1/settings/app/stream/credentials", func(w http.ResponseWriter, r *http.Request) {
-		backend.record(r)
-		answer(w, http.StatusOK, acceleration.AppSettings{Stream: acceleration.StreamSettings{
-			Tenancy: "app", WritesInto: "this_app", ChannelType: "present", CallType: "present",
-		}})
-	})
-
 	mux.HandleFunc("POST /v1/agents/sessions", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		created := acceleration.Session{
@@ -1293,32 +1286,3 @@ func TestTheAppsSettingsSayWhereItsWorkIsWritten(t *testing.T) {
 	}
 }
 
-func TestRegisteringAStreamAppSendsEveryKeyAgainstTheRevisionRead(t *testing.T) {
-	backend := newRouter(t)
-
-	settings, err := backend.client(t).Settings().RegisterStream(t.Context(), StreamCredentials{
-		Keys:     []StreamKey{{APIKey: "first", APISecret: "first secret"}, {APIKey: "second", APISecret: "second secret"}},
-		Revision: 3,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if settings.Stream.WritesInto != "this_app" {
-		t.Errorf("the settings came back as %+v", settings.Stream)
-	}
-	sent := backend.bodies["PUT /v1/settings/app/stream/credentials"]
-	if sent["expected_revision"] != float64(3) || len(sent["keys"].([]any)) != 2 {
-		t.Errorf("the router was sent %v", sent)
-	}
-}
-
-func TestDisconnectingAStreamAppWithoutAProofIsRefusedBeforeTheRouter(t *testing.T) {
-	backend := newRouter(t)
-
-	if _, err := backend.client(t).Settings().DisconnectStream(t.Context(), 1, StreamKey{APIKey: "first"}); err == nil {
-		t.Fatal("a disconnect without a secret was sent")
-	}
-	if len(backend.asked) != 0 {
-		t.Errorf("the router was asked %v", backend.asked)
-	}
-}
