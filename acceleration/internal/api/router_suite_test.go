@@ -5,6 +5,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"database/sql"
 	"encoding/json"
@@ -109,6 +110,9 @@ func runSuite(t *testing.T, s suite.TestingSuite) {
 // suiteKEK seals the secrets of the keys the suite makes. It is the same for every suite,
 // so a fixture one suite loaded opens in another.
 const suiteKEK = "router suite"
+
+// suiteTrunkKEK seals the trunk passwords of the numbers the phone service attaches.
+const suiteTrunkKEK = "router suite sip trunks"
 
 // The Stream app the suite mints call tokens for. Minting signs a token rather than
 // fetching one, so a made-up app is enough to exercise the join paths.
@@ -239,6 +243,12 @@ type RouterSuite struct {
 	// logs, set by a suite before it starts the harness, is where the router logs, as text at
 	// debug and up, for a suite about what it warns of. Nil discards them.
 	logs io.Writer
+	// telnyxPublicKey, set by a suite about Telnyx's call webhook before it starts the
+	// harness, is the key Telnyx's requests are checked against. Nil leaves it unconfigured.
+	telnyxPublicKey ed25519.PublicKey
+	// telnyxConnectionID is the TeXML application the router's Telnyx numbers are on, for the
+	// same suite to set. Empty is a router with none, which answers no Telnyx call.
+	telnyxConnectionID string
 	// episodes is the router's closer, for a suite to sweep the idle thread episodes with.
 	episodes *omnichannel.Closer
 	// transcripts, set by a suite before it starts the harness, opens each voice session's
@@ -488,17 +498,19 @@ func (s *RouterSuite) SetupSuite() {
 		Policies:      policies,
 		Connectors:    s.connectors,
 		// Connector consents and credentials seal under the suite's key.
-		ConnectorSecrets:  connectorSecrets,
-		PublicURL:         s.publicURL,
-		DashboardURL:      s.dashboardURL,
-		Quota:             limiter,
-		DataRetention:     time.Hour,
-		PluginHTTP:        s.mcpTransport(),
-		Stream:            s.stream,
-		HookSecret:        suiteStreamSecret,
-		TrustAPIKeyHeader: s.trustAPIKeyHeader,
-		DenyRegistration:  s.denied,
-		Logger:            logger,
+		ConnectorSecrets:   connectorSecrets,
+		PublicURL:          s.publicURL,
+		DashboardURL:       s.dashboardURL,
+		Quota:              limiter,
+		DataRetention:      time.Hour,
+		PluginHTTP:         s.mcpTransport(),
+		Stream:             s.stream,
+		HookSecret:         suiteStreamSecret,
+		TelnyxPublicKey:    s.telnyxPublicKey,
+		TelnyxConnectionID: s.telnyxConnectionID,
+		TrustAPIKeyHeader:  s.trustAPIKeyHeader,
+		DenyRegistration:   s.denied,
+		Logger:             logger,
 		// The connector events endpoint revokes through the suite's resolver.
 		ConnectorResolver:     s.resolver,
 		ConnectorTransports:   serverTransports,
@@ -825,13 +837,18 @@ func (s *RouterSuite) authenticator() auth.Authenticator {
 // telephony serves the phone paths against the real vendor registry with no credentials
 // behind it, which is what a deployment that has bought no numbers yet looks like.
 func (s *RouterSuite) telephony(logger *slog.Logger) *phone.Service {
+	sealer, err := auth.NewSealer(suiteTrunkKEK)
+	s.Require().NoError(err)
+	return s.telephonySealedBy(sealer, logger)
+}
+
+// telephonySealedBy is telephony with trunk passwords sealed under sealer; nil is a
+// deployment with no keyring.
+func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger) *phone.Service {
 	// Every vendor the router knows is declared, and none of them has credentials: what a
 	// vendor does with a real number is its own package's suite, and what is under test
 	// here is the HTTP surface in front of them.
 	config, err := phone.DefaultConfig()
-	s.Require().NoError(err)
-
-	sealer, err := auth.NewSealer("router suite sip trunks")
 	s.Require().NoError(err)
 
 	service, err := phone.NewService(phone.ServiceOptions{

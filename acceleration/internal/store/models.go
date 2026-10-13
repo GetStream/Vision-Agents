@@ -288,6 +288,13 @@ type PhoneNumber struct {
 	// SIPTrunkID is the customer's own trunk a number with vendor sip_trunk is dialled
 	// through. Empty for a bought number, and cleared when the number is released.
 	SIPTrunkID string `bun:"sip_trunk_id,nullzero"`
+	// BridgeURI, BridgeUsername and the sealed password are the Stream trunk this number's
+	// calls go to, kept because Stream returns the password only when the trunk is made.
+	// Empty until attached, and cleared when the number is released.
+	BridgeURI                string `bun:"bridge_uri,nullzero"`
+	BridgeUsername           string `bun:"bridge_username,nullzero"`
+	BridgePasswordSealed     []byte `bun:"bridge_password_sealed,nullzero"`
+	BridgePasswordKEKVersion int    `bun:"bridge_password_kek_version,nullzero"`
 	// UseCaseID is the 10DLC use case the number sends as. Empty sends as the app's default.
 	UseCaseID   string     `bun:"dlc_use_case_id,nullzero"`
 	PurchasedAt time.Time  `bun:"purchased_at,notnull"`

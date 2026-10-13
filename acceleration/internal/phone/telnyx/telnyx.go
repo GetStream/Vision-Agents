@@ -1,8 +1,8 @@
 // Package telnyx buys and operates phone numbers at Telnyx.
 //
 // Telnyx's v2 API is JSON with a bearer key, and everything is wrapped in a "data"
-// envelope. A number reaches an agent by being assigned to a SIP connection that points at
-// the Stream trunk, and an outbound call is created against that same connection, because
+// envelope. Numbers are assigned to a TeXML application, and an outbound call is a TeXML
+// call on that application, whose TeXML dials the Stream trunk, because
 // Stream cannot dial out itself.
 package telnyx
 
@@ -14,10 +14,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -43,9 +43,8 @@ const microsPerDollar = 1_000_000
 type Options struct {
 	// APIKey defaults to TELNYX_API_KEY.
 	APIKey string
-	// ConnectionID is the SIP connection numbers are assigned to and calls are placed on.
-	// It is what carries the bridge configuration on Telnyx's side, so inbound and
-	// outbound both need it.
+	// ConnectionID is the TeXML application numbers are assigned to and calls are placed
+	// on, so inbound and outbound both need it.
 	ConnectionID string
 	// BaseURL defaults to Telnyx's API host.
 	BaseURL string
@@ -53,6 +52,8 @@ type Options struct {
 	Timeout time.Duration
 	// HTTPClient replaces the one built from Timeout.
 	HTTPClient *http.Client
+	// Logger defaults to slog.Default().
+	Logger *slog.Logger
 }
 
 // Provider is Telnyx. It satisfies phone.Provider.
@@ -61,6 +62,7 @@ type Provider struct {
 	connectionID string
 	baseURL      string
 	client       *http.Client
+	logger       *slog.Logger
 }
 
 // New validates the options and returns a Provider.
@@ -83,12 +85,16 @@ func New(options Options) (*Provider, error) {
 	if options.HTTPClient == nil {
 		options.HTTPClient = &http.Client{Timeout: options.Timeout}
 	}
+	if options.Logger == nil {
+		options.Logger = slog.Default()
+	}
 
 	return &Provider{
 		apiKey:       options.APIKey,
 		connectionID: options.ConnectionID,
 		baseURL:      strings.TrimSuffix(options.BaseURL, "/"),
 		client:       options.HTTPClient,
+		logger:       options.Logger,
 	}, nil
 }
 
@@ -152,9 +158,19 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 // the contract's vocabulary is shaped like it.
 func (p *Provider) Supports(phone.Filter) bool { return true }
 
-// Dials every feature: Telnyx's call takes a ring timeout, digits to press on answer and
-// custom SIP headers, all as parameters on the one request.
-func (p *Provider) Dials(phone.CallFeature) bool { return true }
+// Dials a ring timeout, which the TeXML call takes, and digits, which its TeXML plays before
+// dialling the trunk. Telnyx documents the TeXML call's CustomHeaders as HTTP headers, so
+// until a call shows them on the person's SIP leg they are not offered.
+func (p *Provider) Dials(feature phone.CallFeature) bool {
+	return feature != phone.FeatureCustomHeaders
+}
+
+// PlaysDigits is whether TeXML's <Play digits> has every key, which has no W or A to D.
+func (p *Provider) PlaysDigits(digits string) bool {
+	return !strings.ContainsFunc(digits, func(key rune) bool {
+		return !strings.ContainsRune(playableDigits, key)
+	})
+}
 
 // BuyNumber orders a number. Telnyx fulfils orders asynchronously, so this returns as soon
 // as the order is accepted rather than when the number is usable. Telnyx orders by number,
@@ -207,8 +223,8 @@ func (p *Provider) ReleaseNumber(ctx context.Context, e164 string) error {
 	return p.do(ctx, http.MethodDelete, "/v2/phone_numbers/"+id, nil, nil, nil)
 }
 
-// ConfigureInbound assigns the number to the SIP connection that points at the Stream
-// trunk, which is how Telnyx knows where to send a call to it.
+// ConfigureInbound assigns the number to the TeXML application. A call to it then asks the
+// router's Telnyx webhook where to go, and is sent to this number's Stream trunk.
 func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) error {
 	if err := inbound.Bridge.Validate(); err != nil {
 		return err
@@ -235,31 +251,49 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, stack.Wrap(errors.New("telnyx: a connection id is required to place a call"))
 	}
 
-	// The person is called from one of this service's numbers and the answered leg is
-	// joined to the trunk, so the agent and the person are on the same call.
-	request := dialRequest{
-		ConnectionID:       p.connectionID,
-		From:               outbound.From,
-		To:                 outbound.To,
-		SIPAuthUsername:    outbound.Bridge.Username,
-		SIPAuthPassword:    outbound.Bridge.Password,
-		LinkTo:             outbound.Bridge.URI,
-		TimeoutSecs:        int(outbound.RingTimeout.Seconds()),
-		SendDigitsOnAnswer: outbound.InitialDigits,
-		CustomHeaders:      headers(outbound.Headers),
+	// Unsupported is not consulted on every path here, so a term Telnyx would drop is
+	// refused.
+	seconds := int(outbound.RingTimeout.Seconds())
+	if outbound.RingTimeout > 0 && (seconds < minRingSeconds || seconds > maxRingSeconds) {
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf("telnyx: telnyx rings for %d to %d seconds, not %d",
+			minRingSeconds, maxRingSeconds, seconds))
+	}
+	if len(outbound.Headers) > 0 {
+		return phone.Dialed{}, stack.Wrap(errors.New(
+			"telnyx: custom SIP headers are not known to reach the person on a TeXML call"))
+	}
+	if !p.PlaysDigits(outbound.InitialDigits) {
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf("telnyx: TeXML plays only %q, not %q",
+			playableDigits, outbound.InitialDigits))
 	}
 
-	var response envelope[dialedCall]
-	if err := p.do(ctx, http.MethodPost, "/v2/calls", nil, request, &response); err != nil {
+	// The person is called from one of this service's numbers, and once they answer the
+	// TeXML dials the trunk, so the agent and the person are on the same call.
+	texml, err := renderTexml(outbound.Bridge, 0, outbound.InitialDigits)
+	if err != nil {
 		return phone.Dialed{}, err
 	}
-	// Telnyx reports whether the call is up rather than naming a state, so this says what
-	// that means in the same words the other vendors use.
-	status := "ended"
-	if response.Data.IsAlive {
-		status = "dialing"
+	request := texmlCall{
+		From:    outbound.From,
+		To:      outbound.To,
+		Texml:   string(texml),
+		Timeout: seconds,
 	}
-	return phone.Dialed{VendorCallID: response.Data.CallControlID, Status: status}, nil
+
+	var placed texmlCallPlaced
+	path := "/v2/texml/calls/" + url.PathEscape(p.connectionID)
+	if err := p.do(ctx, http.MethodPost, path, nil, request, &placed); err != nil {
+		return phone.Dialed{}, err
+	}
+	if placed.CallSID == "" {
+		// The call is ringing all the same, so failing here would report a call that is
+		// happening as one that is not.
+		p.logger.Warn("telnyx placed a call but the vendor call id is unknown, so keypad " +
+			"presses and vendor_call_id answers will not work for it")
+	}
+	// Queued is Telnyx's documented first status, and an empty one would break the README's
+	// promise that every placed call has one.
+	return phone.Dialed{VendorCallID: placed.CallSID, Status: cmp.Or(placed.Status, "queued")}, nil
 }
 
 // SendDigits presses digits on a leg Telnyx is holding, which is how an agent gets past a
@@ -495,48 +529,25 @@ type numberUpdate struct {
 	ConnectionID string `json:"connection_id"`
 }
 
-type dialRequest struct {
-	ConnectionID    string `json:"connection_id"`
-	From            string `json:"from"`
-	To              string `json:"to"`
-	SIPAuthUsername string `json:"sip_auth_username,omitempty"`
-	SIPAuthPassword string `json:"sip_auth_password,omitempty"`
-	// LinkTo is the SIP address the answered call is joined to, which is the trunk the
-	// agent is on.
-	LinkTo string `json:"link_to,omitempty"`
-	// TimeoutSecs is how long to ring before giving up.
-	TimeoutSecs int `json:"timeout_secs,omitempty"`
-	// SendDigitsOnAnswer are pressed once the person picks up.
-	SendDigitsOnAnswer string `json:"send_digits_on_answer,omitempty"`
-	// CustomHeaders travel on the INVITE to the person.
-	CustomHeaders []customHeader `json:"custom_headers,omitempty"`
+// playableDigits are the keys TeXML's <Play digits> takes, w being half a second's pause.
+const playableDigits = "0123456789*#w"
+
+// texmlCall is a TeXML call on one application. Telnyx's names here are case-sensitive.
+type texmlCall struct {
+	From  string `json:"From"`
+	To    string `json:"To"`
+	Texml string `json:"Texml"`
+	// Timeout is how long the person rings, where <Dial>'s timeout would ring the trunk.
+	// Telnyx does not document it for this call, but accepts it: checked on a live call
+	// 2026-10-13, which stopped ringing after the time sent.
+	Timeout int `json:"Timeout,omitempty"`
 }
 
-// customHeader is one SIP header carried to the person's leg.
-type customHeader struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
-// headers renders custom headers in the shape Telnyx takes them, sorted so that the same
-// call twice sends the same request.
-func headers(wanted map[string]string) []customHeader {
-	if len(wanted) == 0 {
-		return nil
-	}
-	rendered := make([]customHeader, 0, len(wanted))
-	for name, value := range wanted {
-		rendered = append(rendered, customHeader{Name: name, Value: value})
-	}
-	slices.SortFunc(rendered, func(a, b customHeader) int {
-		return cmp.Compare(a.Name, b.Name)
-	})
-	return rendered
-}
-
-type dialedCall struct {
-	CallControlID string `json:"call_control_id"`
-	IsAlive       bool   `json:"is_alive"`
+// texmlCallPlaced is Telnyx's answer to a TeXML call, which has no "data" envelope.
+type texmlCallPlaced struct {
+	// CallSID is the call control id, which is what pressing digits acts on.
+	CallSID string `json:"call_sid"`
+	Status  string `json:"status"`
 }
 
 type sendDigits struct {

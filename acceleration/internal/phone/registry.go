@@ -71,6 +71,10 @@ type Vendor struct {
 	// vendors issue them per account rather than publishing them, which is why this is
 	// declared rather than compiled in.
 	Signalling []string `yaml:"signalling"`
+	// AsksForTrunk means the vendor asks the router on every inbound call where to send it,
+	// and is answered with the trunk kept at attach. Its numbers need the trunk's password
+	// sealed, so they cannot be attached on a deployment with no keyring.
+	AsksForTrunk bool `yaml:"asks_for_trunk"`
 }
 
 // Authenticates reports how this vendor gets past a trunk, defaulting to a password.

@@ -10,7 +10,6 @@ import (
 	"cmp"
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,11 +24,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/telnyxsig"
 )
 
 const (
 	apiKeyEnvVar    = "TELNYX_API_KEY"
-	publicKeyEnvVar = "TELNYX_PUBLIC_KEY"
+	publicKeyEnvVar = telnyxsig.PublicKeyEnvVar
 )
 
 const (
@@ -39,15 +39,6 @@ const (
 
 // errorBodyLimit caps how much of a failed response is read into an error message.
 const errorBodyLimit = 2048
-
-// hookTolerance is how old a signed report may be and still be acted on.
-const hookTolerance = 5 * time.Minute
-
-// Telnyx signs a report with Ed25519 over its timestamp and its body.
-const (
-	signatureHeader = "Telnyx-Signature-Ed25519"
-	timestampHeader = "Telnyx-Timestamp"
-)
 
 // Options configures a Registrar. The keys fall back to the environment.
 type Options struct {
@@ -82,9 +73,9 @@ func New(options Options) (*Registrar, error) {
 	}
 	var publicKey ed25519.PublicKey
 	if options.PublicKey != "" {
-		key, err := base64.StdEncoding.DecodeString(options.PublicKey)
-		if err != nil || len(key) != ed25519.PublicKeySize {
-			return nil, errors.New("telnyx: " + publicKeyEnvVar + " is not a base64 Ed25519 public key")
+		key, err := telnyxsig.ParsePublicKey(options.PublicKey)
+		if err != nil {
+			return nil, err
 		}
 		publicKey = key
 	}
@@ -246,20 +237,9 @@ func (r *Registrar) VerifyHook(header http.Header, body []byte, now time.Time) e
 	if r.publicKey == nil {
 		return fmt.Errorf("%w: %s is not set, so no report can be believed", dlc.ErrRefused, publicKeyEnvVar)
 	}
-	seconds, err := strconv.ParseInt(header.Get(timestampHeader), 10, 64)
+	err := telnyxsig.Verify(r.publicKey, header.Get(telnyxsig.TimestampHeader), header.Get(telnyxsig.SignatureHeader), body, now)
 	if err != nil {
-		return fmt.Errorf("%w: the report carries no timestamp", dlc.ErrRefused)
-	}
-	if age := now.Sub(time.Unix(seconds, 0)); age > hookTolerance || age < -hookTolerance {
-		return fmt.Errorf("%w: the report is too old to act on", dlc.ErrRefused)
-	}
-	signature, err := base64.StdEncoding.DecodeString(header.Get(signatureHeader))
-	if err != nil {
-		return fmt.Errorf("%w: the report is not signed", dlc.ErrRefused)
-	}
-	signed := append([]byte(strconv.FormatInt(seconds, 10)+"|"), body...)
-	if !ed25519.Verify(r.publicKey, signed, signature) {
-		return fmt.Errorf("%w: the report is not signed by Telnyx", dlc.ErrRefused)
+		return fmt.Errorf("%w: %w", dlc.ErrRefused, err)
 	}
 	return nil
 }

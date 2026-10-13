@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -332,6 +333,56 @@ func (s *AppsSuite) TestAPlacedCallLandsInTheCallOfTheSessionItWasPlacedFor() {
 
 	s.Equal(id, placed.SessionID)
 	s.Equal(id, placed.CallID)
+}
+
+func (s *AppsSuite) TestAnAttachedNumbersTrunkCredentialsAreKeptForItsCalls() {
+	sealer, err := auth.NewSealer("apps suite")
+	s.Require().NoError(err)
+	s.service.sealer = sealer
+
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	bridge, err := s.service.InboundBridge(s.ctx, "twilio", s.e164)
+	s.Require().NoError(err)
+	s.Equal("sip:"+s.e164+"@sip.example.test", bridge.URI, "the address names the number")
+	s.Equal(attached.TrunkID, bridge.Username)
+	s.Equal("secret", bridge.Password, "the password Stream returned at attach")
+	s.NotContains(string(s.number().BridgePasswordSealed), "secret", "the password is stored sealed")
+}
+
+func (s *AppsSuite) TestWithoutASealerANumberStillAttachesButKeepsNoCredentials() {
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	_, err = s.service.InboundBridge(s.ctx, "twilio", s.e164)
+
+	s.ErrorIs(err, ErrNoSealer)
+	s.Empty(s.number().BridgeURI)
+}
+
+// Telnyx asks per call where to send a caller, and the answer is the stored trunk, so a
+// Telnyx number attached with nowhere to keep the trunk's password could never be answered.
+func (s *AppsSuite) TestWithoutASealerATelnyxNumberIsNotAttached() {
+	telnyx := &stub{vendor: "telnyx"}
+	registry := NewRegistry(s.config())
+	registry.Register(telnyx.vendor, func() (Provider, error) { return telnyx, nil })
+	for _, name := range s.credentials(telnyx.vendor) {
+		s.T().Setenv(name, "set")
+	}
+	service, err := NewService(ServiceOptions{Registry: registry, Store: s.store, Apps: s.apps})
+	s.Require().NoError(err)
+	e164 := "+1512" + uuid.NewString()[:7]
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
+		E164: e164, Vendor: telnyx.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
+	}))
+
+	_, err = service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: e164})
+
+	s.ErrorIs(err, ErrNoSealer)
+	s.ErrorContains(err, "ROUTER_AUTH_KEK", "the error names what to set")
+	s.Empty(s.deployment.Trunks(), "nothing is made in Stream")
+	s.Empty(telnyx.inbound.E164, "telnyx is not told to send calls anywhere")
 }
 
 func (s *AppsSuite) TestReattachingANumberMovesItToTheNewCallName() {

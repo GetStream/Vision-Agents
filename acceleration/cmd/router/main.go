@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -75,6 +76,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/telnyxsig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
@@ -991,6 +993,30 @@ func run(settings config.Config, logger *slog.Logger) error {
 			"setting", "redis.addr")
 	}
 
+	var telnyxPublicKey ed25519.PublicKey
+	if settings.Telnyx.PublicKey != "" {
+		telnyxPublicKey, err = telnyxsig.ParsePublicKey(settings.Telnyx.PublicKey)
+		if err != nil {
+			logger.Error("calls to telnyx numbers will not be answered", "error", err)
+		}
+	}
+	// Both gaps are silent otherwise: Telnyx just gets rejected responses.
+	if settings.Telnyx.APIKey != "" {
+		if telnyxPublicKey == nil {
+			logger.Warn("calls to telnyx numbers will not be answered until "+
+				telnyxsig.PublicKeyEnvVar+" is set to a valid key", "setting", telnyxsig.PublicKeyEnvVar)
+		}
+		// Attach refuses Telnyx numbers then, which an operator only finds out on attach.
+		if secrets == nil {
+			logger.Warn("telnyx numbers cannot be attached and calls to them will not be answered until "+
+				authKEKEnvVar+" is set", "setting", authKEKEnvVar)
+		}
+		if settings.Telnyx.ConnectionID == "" {
+			logger.Warn("telnyx numbers cannot be attached and calls to or from them will not work until "+
+				"TELNYX_CONNECTION_ID is set", "setting", "TELNYX_CONNECTION_ID")
+		}
+	}
+
 	options := api.Options{
 		Routers:               routers,
 		Voices:                voiceService,
@@ -1010,6 +1036,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 		TrustAPIKeyHeader:     settings.Stream.TrustAPIKeyHeader,
 		DenyRegistration:      settings.Stream.DenyRegistration,
 		HookSecret:            settings.Stream.APISecret,
+		TelnyxPublicKey:       telnyxPublicKey,
+		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
 		Campaigns:             campaigns,
 		Simulations:           simulations,
 		PluginEvents:          events,
