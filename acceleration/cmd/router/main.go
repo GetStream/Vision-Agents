@@ -1006,6 +1006,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 			logger.Warn("calls to telnyx numbers will not be answered until "+
 				telnyxsig.PublicKeyEnvVar+" is set to a valid key", "setting", telnyxsig.PublicKeyEnvVar)
 		}
+		// Attach refuses Telnyx numbers then, which an operator only finds out on attach.
+		if secrets == nil {
+			logger.Warn("telnyx numbers cannot be attached and calls to them will not be answered until "+
+				authKEKEnvVar+" is set", "setting", authKEKEnvVar)
+		}
 		if os.Getenv("TELNYX_ACCOUNT_SID") == "" {
 			logger.Warn("outbound telnyx calls will be refused until TELNYX_ACCOUNT_SID is set",
 				"setting", "TELNYX_ACCOUNT_SID")
@@ -1032,6 +1037,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		DenyRegistration:      settings.Stream.DenyRegistration,
 		HookSecret:            settings.Stream.APISecret,
 		TelnyxPublicKey:       telnyxPublicKey,
+		TelnyxConnectionID:    os.Getenv("TELNYX_CONNECTION_ID"),
 		Campaigns:             campaigns,
 		Simulations:           simulations,
 		PluginEvents:          events,

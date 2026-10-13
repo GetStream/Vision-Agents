@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/xml"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -38,6 +39,7 @@ func (s *TelnyxHookSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.private = private
 	s.telnyxPublicKey = public
+	s.telnyxConnectionID = "1234567890"
 	s.logged = &lockedLog{}
 	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
@@ -82,11 +84,43 @@ func (s *TelnyxHookSuite) TestAnUnsignedCallIsRefused() {
 }
 
 func (s *TelnyxHookSuite) TestACallToANumberNobodyHoldsIsHungUp() {
-	status, contentType, body := s.deliver(s.call(s.utils.number()), true)
+	number := s.utils.number()
+	status, contentType, body := s.deliver(s.call(number), true)
 
 	s.Equal(http.StatusOK, status)
 	s.Equal("application/xml", contentType)
 	s.Contains(body, "<Response><Hangup/></Response>")
+	s.True(s.loggedLine(number, "unknown, released or not attached"))
+	s.False(s.loggedLine(number, "attach the number again"), "there is nothing to attach again")
+}
+
+// Dev and hosted routers share one Telnyx account and so one signing key: a call for the
+// other router's TeXML application is signed as well as one for this router's.
+func (s *TelnyxHookSuite) TestACallOnAnotherTeXMLApplicationIsHungUp() {
+	s.attach(s.e164, "sip:"+s.e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
+	form := s.call(s.e164)
+	form.Set("ConnectionId", "9999999999")
+
+	status, _, body := s.deliver(form, true)
+
+	s.Equal(http.StatusOK, status)
+	s.Contains(body, "<Response><Hangup/></Response>")
+	s.NotContains(body, "trunk-password")
+	s.True(s.loggedLine("another TeXML application", "9999999999"))
+}
+
+func (s *TelnyxHookSuite) TestWithoutAKeyringACallSaysWhatToSet() {
+	s.attach(s.e164, "sip:"+s.e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
+	sealed := s.router.phone
+	s.router.phone = s.telephonySealedBy(nil, slog.New(slog.NewTextHandler(s.logged, nil)))
+	defer func() { s.router.phone = sealed }()
+
+	status, _, body := s.deliver(s.call(s.e164), true)
+
+	s.Equal(http.StatusOK, status)
+	s.Contains(body, "<Response><Hangup/></Response>")
+	s.True(s.loggedLine(s.e164, "no key to open trunk passwords", "ROUTER_AUTH_KEK"))
+	s.False(s.loggedLine(s.e164, "attached before its trunk was kept"), "the key is what is missing")
 }
 
 func (s *TelnyxHookSuite) TestANumberAttachedBeforeItsTrunkWasKeptIsHungUpAndSaysWhatToDo() {

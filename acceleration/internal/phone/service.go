@@ -393,6 +393,9 @@ const inboundCallTemplate = "{{uuid}}"
 // how the call that arrives is traced back to the number: its name is the session's.
 const NumberKey = "phone_number"
 
+// ErrNoSealer says this deployment has no keyring to seal or open a number's trunk password.
+var ErrNoSealer = errors.New("phone: no key to seal a number's trunk password: set ROUTER_AUTH_KEK")
+
 // Attach creates the Stream trunk and routing rule for a number and tells the vendor to
 // send calls there. This is what turns a bought number into one that reaches an agent.
 func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, error) {
@@ -419,6 +422,11 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		return Attached{}, stack.Wrap(err)
 	}
 	declared, _ := s.registry.Lookup(held.Vendor)
+	// Refused before anything is made: attached, the number would look fine and never answer.
+	if declared.AsksForTrunk && s.sealer == nil {
+		return Attached{}, stack.Wrap(fmt.Errorf("phone: %s numbers are answered with their stored trunk: %w",
+			held.Vendor, ErrNoSealer))
+	}
 
 	allowedIPs, err := trunkAllowlist(declared)
 	if err != nil {
@@ -506,7 +514,7 @@ func (s *Service) InboundBridge(ctx context.Context, vendor, e164 string) (Bridg
 		return Bridge{}, stack.Wrap(errors.New("phone: finding where a number's calls go needs a database"))
 	}
 	if s.sealer == nil {
-		return Bridge{}, stack.Wrap(errors.New("phone: a number's trunk password needs a sealer to open it, and none is configured"))
+		return Bridge{}, stack.Wrap(ErrNoSealer)
 	}
 	stored, err := s.store.AttachedBridge(ctx, vendor, e164)
 	if err != nil {

@@ -357,8 +357,32 @@ func (s *AppsSuite) TestWithoutASealerANumberStillAttachesButKeepsNoCredentials(
 
 	_, err = s.service.InboundBridge(s.ctx, "twilio", s.e164)
 
-	s.ErrorContains(err, "sealer")
+	s.ErrorIs(err, ErrNoSealer)
 	s.Empty(s.number().BridgeURI)
+}
+
+// Telnyx asks per call where to send a caller, and the answer is the stored trunk, so a
+// Telnyx number attached with nowhere to keep the trunk's password could never be answered.
+func (s *AppsSuite) TestWithoutASealerATelnyxNumberIsNotAttached() {
+	telnyx := &stub{vendor: "telnyx"}
+	registry := NewRegistry(s.config())
+	registry.Register(telnyx.vendor, func() (Provider, error) { return telnyx, nil })
+	for _, name := range s.credentials(telnyx.vendor) {
+		s.T().Setenv(name, "set")
+	}
+	service, err := NewService(ServiceOptions{Registry: registry, Store: s.store, Apps: s.apps})
+	s.Require().NoError(err)
+	e164 := "+1512" + uuid.NewString()[:7]
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
+		E164: e164, Vendor: telnyx.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
+	}))
+
+	_, err = service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: e164})
+
+	s.ErrorIs(err, ErrNoSealer)
+	s.ErrorContains(err, "ROUTER_AUTH_KEK", "the error names what to set")
+	s.Empty(s.deployment.Trunks(), "nothing is made in Stream")
+	s.Empty(telnyx.inbound.E164, "telnyx is not told to send calls anywhere")
 }
 
 func (s *AppsSuite) TestReattachingANumberMovesItToTheNewCallName() {

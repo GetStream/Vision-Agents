@@ -801,6 +801,17 @@ func (s *StoreSuite) TestANumberAttachedWithoutCredentialsHasNoTrunkCredentials(
 
 	_, err := s.store.AttachedBridge(s.ctx, "telnyx", "+15125551234")
 
+	s.ErrorIs(err, ErrNoStoredBridge, "attaching it again keeps them")
+	s.NotErrorIs(err, ErrNoNumber, "it is held and attached, so it is not an unknown number")
+}
+
+func (s *StoreSuite) TestANumberThatIsHeldButNotAttachedHasNoTrunkCredentials() {
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15125551234", Vendor: "telnyx", Country: "US", CustomerID: "acme", PurchasedAt: s.base,
+	}))
+
+	_, err := s.store.AttachedBridge(s.ctx, "telnyx", "+15125551234")
+
 	s.ErrorIs(err, ErrNoNumber)
 }
 

@@ -200,6 +200,9 @@ type Options struct {
 	// Without it the Telnyx call webhook answers nothing, since anyone could ask it for a
 	// number's trunk credentials.
 	TelnyxPublicKey ed25519.PublicKey
+	// TelnyxConnectionID is the TeXML application this router's Telnyx numbers are on
+	// (TELNYX_CONNECTION_ID). A call webhook for any other is hung up.
+	TelnyxConnectionID string
 	// CORSOrigins are the browser origins allowed to call this API directly, which is
 	// what a dashboard talking to the router without a proxy in between needs. Empty
 	// means no browser may, which is right for a deployment only servers reach.
@@ -310,36 +313,37 @@ type Server struct {
 	streams   *Streams
 	stream    *streamapp.Clients
 	// touched is when each key was last recorded as signing a hook.
-	touched           sync.Map
-	proxyDeclaresKind bool
-	trustAPIKeyHeader bool
-	denyRegistration  []string
-	hookSecret        string
-	telnyxPublicKey   ed25519.PublicKey
-	campaigns         *campaign.Runner
-	simulations       *simulation.Runner
-	knowledge         knowledge.Writer
-	pages             *urls.Service
-	voices            *voices.Service
-	library           *voices.Catalogue
-	dispatch          *dispatch.Pool
-	secrets           *auth.Sealer
-	privateModels     bool
-	corsOrigins       []string
-	publicURL         string
-	dashboardURL      string
-	oauth             *plugins.Auth
-	pluginEvents      *pluginevents.Service
-	channels          *channels.Service
-	dlc               *dlc.Service
-	gate              *dlc.Gate
-	opsKey            string
-	authenticator     auth.Authenticator
-	authMode          auth.Mode
-	dataRetention     time.Duration
-	quota             *quota.Limiter
-	policies          *policy.Enforcer
-	connectors        core.Registry
+	touched            sync.Map
+	proxyDeclaresKind  bool
+	trustAPIKeyHeader  bool
+	denyRegistration   []string
+	hookSecret         string
+	telnyxPublicKey    ed25519.PublicKey
+	telnyxConnectionID string
+	campaigns          *campaign.Runner
+	simulations        *simulation.Runner
+	knowledge          knowledge.Writer
+	pages              *urls.Service
+	voices             *voices.Service
+	library            *voices.Catalogue
+	dispatch           *dispatch.Pool
+	secrets            *auth.Sealer
+	privateModels      bool
+	corsOrigins        []string
+	publicURL          string
+	dashboardURL       string
+	oauth              *plugins.Auth
+	pluginEvents       *pluginevents.Service
+	channels           *channels.Service
+	dlc                *dlc.Service
+	gate               *dlc.Gate
+	opsKey             string
+	authenticator      auth.Authenticator
+	authMode           auth.Mode
+	dataRetention      time.Duration
+	quota              *quota.Limiter
+	policies           *policy.Enforcer
+	connectors         core.Registry
 	// connectorSecrets seals consent attempts; credentials stores what a consent got. Both
 	// are nil when connectors are off.
 	connectorSecrets *auth.Sealer
@@ -442,49 +446,50 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		}
 	}
 	server := &Server{
-		routers:           options.Routers,
-		store:             options.Store,
-		configs:           configs,
-		users:             recorder,
-		live:              options.Live,
-		phone:             options.Phone,
-		sessions:          options.Sessions,
-		directory:         options.Directory,
-		streams:           options.Streams,
-		stream:            options.Stream,
-		proxyDeclaresKind: options.ProxyDeclaresKind,
-		trustAPIKeyHeader: options.TrustAPIKeyHeader,
-		denyRegistration:  options.DenyRegistration,
-		hookSecret:        options.HookSecret,
-		telnyxPublicKey:   options.TelnyxPublicKey,
-		campaigns:         options.Campaigns,
-		simulations:       options.Simulations,
-		knowledge:         options.Knowledge,
-		pages:             options.KnowledgeURLs,
-		voices:            options.Voices,
-		library:           options.VoiceLibrary,
-		dispatch:          options.Dispatch,
-		secrets:           options.Secrets,
-		privateModels:     options.PrivateModelEndpoints,
-		corsOrigins:       options.CORSOrigins,
-		publicURL:         options.PublicURL,
-		dashboardURL:      options.DashboardURL,
-		authenticator:     authenticator,
-		authMode:          authMode,
-		dataRetention:     retention,
-		quota:             options.Quota,
-		policies:          options.Policies,
-		connectors:        options.Connectors,
-		connectorResolver: options.ConnectorResolver,
-		eventSecrets:      options.ConnectorEventSecrets,
-		channelBridge:     options.ChannelBridge,
-		eventForwarder:    options.EventForwarder,
-		mcpEvents:         options.MCPEvents,
-		episodes:          options.Episodes,
-		slackApps:         options.SlackApps,
-		operatorApps:      options.OperatorProviderApps,
-		trusted:           options.TrustedProxies,
-		upgrader:          newUpgrader(options.CORSOrigins),
+		routers:            options.Routers,
+		store:              options.Store,
+		configs:            configs,
+		users:              recorder,
+		live:               options.Live,
+		phone:              options.Phone,
+		sessions:           options.Sessions,
+		directory:          options.Directory,
+		streams:            options.Streams,
+		stream:             options.Stream,
+		proxyDeclaresKind:  options.ProxyDeclaresKind,
+		trustAPIKeyHeader:  options.TrustAPIKeyHeader,
+		denyRegistration:   options.DenyRegistration,
+		hookSecret:         options.HookSecret,
+		telnyxPublicKey:    options.TelnyxPublicKey,
+		telnyxConnectionID: options.TelnyxConnectionID,
+		campaigns:          options.Campaigns,
+		simulations:        options.Simulations,
+		knowledge:          options.Knowledge,
+		pages:              options.KnowledgeURLs,
+		voices:             options.Voices,
+		library:            options.VoiceLibrary,
+		dispatch:           options.Dispatch,
+		secrets:            options.Secrets,
+		privateModels:      options.PrivateModelEndpoints,
+		corsOrigins:        options.CORSOrigins,
+		publicURL:          options.PublicURL,
+		dashboardURL:       options.DashboardURL,
+		authenticator:      authenticator,
+		authMode:           authMode,
+		dataRetention:      retention,
+		quota:              options.Quota,
+		policies:           options.Policies,
+		connectors:         options.Connectors,
+		connectorResolver:  options.ConnectorResolver,
+		eventSecrets:       options.ConnectorEventSecrets,
+		channelBridge:      options.ChannelBridge,
+		eventForwarder:     options.EventForwarder,
+		mcpEvents:          options.MCPEvents,
+		episodes:           options.Episodes,
+		slackApps:          options.SlackApps,
+		operatorApps:       options.OperatorProviderApps,
+		trusted:            options.TrustedProxies,
+		upgrader:           newUpgrader(options.CORSOrigins),
 		oauth: &plugins.Auth{
 			HTTP:         options.PluginHTTP,
 			PublicURL:    options.PublicURL,

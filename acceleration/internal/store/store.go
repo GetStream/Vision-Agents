@@ -1052,9 +1052,14 @@ type AttachedBridge struct {
 	KEKVersion     int
 }
 
+// ErrNoStoredBridge is AttachedBridge's error for a number that is attached but whose trunk
+// credentials were not kept: it was attached before they were, or arrived by a data move,
+// which leaves the password behind. Attaching it again keeps them.
+var ErrNoStoredBridge = errors.New("store: the number's trunk credentials were not kept")
+
 // AttachedBridge returns the trunk calls to a number of the vendor go to. It matches
-// ErrNoNumber when nobody holds the number at that vendor, it is not attached, or it was
-// attached without its credentials kept.
+// ErrNoNumber when nobody holds the number at that vendor or it is not attached, and
+// ErrNoStoredBridge when it was attached without its credentials kept.
 func (s *Store) AttachedBridge(ctx context.Context, vendor, e164 string) (AttachedBridge, error) {
 	if vendor == "" || e164 == "" {
 		return AttachedBridge{}, stack.Wrap(errors.New("store: a vendor and a number are required"))
@@ -1066,8 +1071,6 @@ func (s *Store) AttachedBridge(ctx context.Context, vendor, e164 string) (Attach
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
 		Where("stream_trunk_id IS NOT NULL").
-		Where("bridge_uri IS NOT NULL").
-		Where("bridge_password_sealed IS NOT NULL").
 		Limit(1).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1075,6 +1078,9 @@ func (s *Store) AttachedBridge(ctx context.Context, vendor, e164 string) (Attach
 	}
 	if err != nil {
 		return AttachedBridge{}, stack.Wrap(fmt.Errorf("store: attached bridge: %w", err))
+	}
+	if number.BridgeURI == "" || len(number.BridgePasswordSealed) == 0 {
+		return AttachedBridge{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoStoredBridge, e164))
 	}
 	return AttachedBridge{
 		CustomerID:     number.CustomerID,

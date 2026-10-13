@@ -745,7 +745,7 @@ func (s *DataMoveSuite) TestAMovedNumberLeavesItsBridgePasswordBehind() {
 	s.Empty(sealed)
 	s.False(version.Valid, "the source password's key version does not come along")
 	_, err = s.destination.AttachedBridge(s.ctx, "telnyx", "+15550000110")
-	s.ErrorIs(err, ErrNoNumber, "it arrives needing to be attached again")
+	s.ErrorIs(err, ErrNoStoredBridge, "it arrives needing to be attached again")
 }
 
 func (s *DataMoveSuite) TestAnImportedNumberCannotPointAtAnotherCustomersTrunk() {

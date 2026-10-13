@@ -62,6 +62,14 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 		hangUp(w, logger, "hung up a telnyx call that is not inbound", "direction", direction)
 		return
 	}
+	// Dev and hosted routers share one Telnyx account, so a call for the other router's
+	// application is signed with the same key. Its numbers are not in this database, but the
+	// check keeps that from being the only thing that stops it.
+	if connection := form.Get("ConnectionId"); connection != s.telnyxConnectionID {
+		hangUp(w, logger, "hung up a telnyx call on another TeXML application than TELNYX_CONNECTION_ID",
+			"connection_id", connection)
+		return
+	}
 	to := form.Get("To")
 	if to == "" {
 		hangUp(w, logger, "hung up a telnyx call that names no number")
@@ -73,10 +81,18 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bridge, err := s.phone.InboundBridge(r.Context(), "telnyx", to)
+	if errors.Is(err, phone.ErrNoSealer) {
+		hangUp(w, logger, "hung up a telnyx call: this router has no key to open trunk passwords: "+
+			"set ROUTER_AUTH_KEK, then attach the number again", "to", to)
+		return
+	}
 	if errors.Is(err, store.ErrNoNumber) {
-		// Numbers attached before trunks were kept look the same as unknown ones here.
-		hangUp(w, logger, "hung up a telnyx call to a number with no stored trunk: "+
-			"if it is attached, attach the number again so its trunk is kept", "to", to)
+		hangUp(w, logger, "hung up a telnyx call to a number that is unknown, released or not attached", "to", to)
+		return
+	}
+	if errors.Is(err, store.ErrNoStoredBridge) {
+		hangUp(w, logger, "hung up a telnyx call to a number attached before its trunk was kept: "+
+			"attach the number again", "to", to)
 		return
 	}
 	if err != nil {
