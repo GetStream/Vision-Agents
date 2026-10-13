@@ -1,12 +1,12 @@
-# Wave 9 current state (handoff detail), 2026-10-12
+# Wave 9 current state (handoff detail), 2026-10-13
 
-Do not commit this file. Wave 9's five PRs are merged. Staging deploy stopped before tagging. The ledger is `9.md` (Decisions, rulings, PR table, Log, Tickets to file, Human gates). The orchestrator owns `9.md`. Do not edit it. This note is the short copy for the handoff. Plan: `~/.cursor/plans/connectors_hackathon_polish_2108a873.plan.md`.
+Do not commit this file. Wave 9 is done, deployed as `accelerate-v0.6.35` (`8160c4cd`). Exit tickets AI-1105..AI-1145 are under AI-816 (detail in Pending). The ledger is `9.md` (Decisions, rulings, PR table, Log, Tickets to file, Human gates). The orchestrator owns `9.md`. Do not edit it. This note is the short copy for the handoff. Plan: `~/.cursor/plans/connectors_hackathon_polish_2108a873.plan.md`.
 
-Checked 2026-10-12 against `9.md` (log after 18:04Z, PR table, Human gates, Tickets) and `gh pr view 896 897 --json state,mergeCommit,headRefOid`. Live staging was not queried.
+Checked 2026-10-13 against `9.md` log 03:06Z (B3 GitHub PAT) and 03:05Z (B1 prep). Deploy facts below are still the 00:42Z log. No fresh `gh pr view` this sync. Live `/openapi` is 404, so the live spec is unverified. Volt phase J is wave 10 (`10-current.md`), not this note.
 
 ## agent.yaml `connectors:`
 
-Go SDK on `29a014f0` (#895), `sdks/go/agents/folder.go` `ConnectorSettings` and `config.go` `connectorBinding`. Python is the same shape, merged in #896 (`c891381c`, head `daed2d08`).
+Go SDK on `29a014f0` (#895), `sdks/go/agents/folder.go` `ConnectorSettings` and `config.go` `connectorBinding`. Python is the same shape, merged in #896 (`c891381c`, head `daed2d08`). JS reads `connectors:` as of colleague #887 #898 #899 (on the v0.6.35 tag). Ruby, PHP, Rust, and .NET refuse it. Docs draft getstream.io#651 (GO at `1b65a4c`) names the readers: CLI, Go, Python, JS.
 
 ```yaml
 connectors:
@@ -47,7 +47,7 @@ On `5857314d` (#893). Field `AgentConnectorBinding.ToolPatterns` (`configs.go` d
 
 At each session open. `patternGrants` calls `Discover` (one `tools/list`), then `source.Open` lists again (`connector_tools.go` comment at `5857314d`: "The list is a separate tools/list from the one Open does"). Not mid-session. The MCP client sets `DisableStandaloneSSE: true` and does not read `notifications/tools/list_changed` (`sources/mcp/source.go` at `5857314d`).
 
-## PRs (gh, 2026-10-12)
+## PRs (ledger, 2026-10-13)
 
 | PR | State | SHA | What |
 |---|---|---|---|
@@ -56,18 +56,21 @@ At each session open. `patternGrants` calls `Discover` (one `tools/list`), then 
 | #893 | MERGED | `5857314d` | AI-1104: `tool_patterns` on bindings |
 | #895 | MERGED | `29a014f0` | AI-1104: Go SDK `connectors:` |
 | #896 | MERGED | `c891381c` | AI-1104: Python SDK + `examples/text_agents/mcp_plugins`. Head `daed2d08`. Ledger 18:12Z. `gh`: MERGED, mergeCommit `c891381c`. |
-| #897 | OPEN | head `2a04d8de` | w9-mig: move `20261015120000_custom_models` (`75214efe`) to `20261018120000`, idempotent DDL. Ledger 19:13Z GO. `gh`: OPEN, mergeCommit null, head `2a04d8de`. Merge waits for Kanat. |
-| GetStream/cli#47 | OPEN | head `c1e034a9` | `agent.yaml`: accept `connectors` and `mcp_servers`. Ledger 17:44Z GO at `c1e034a9`. Held until staging has `tool_patterns`. Beta release needs Kanat. |
+| #897 | MERGED | `8160c4cd` | w9-mig: move `20261015120000_custom_models` (`75214efe`) to `20261018120000`, idempotent DDL. GO was `2a04d8de`. Squash `8160c4cd` is the v0.6.35 tag. Ledger 00:03Z. |
+| GetStream/cli#47 | MERGED | `eab135fa` | Merged into `beta` (squash `eab135fa`; GO was `c1e034a9`). Beta release `v2026-10-13-eab135f` is out (channel=beta; first dispatch failed on channel=stable). Log 01:37Z. |
+| getstream.io#651 | MERGED | `f2211fa4` | Merged into `agents`. GO was `1b65a4c`. Readers: CLI, Go, Python, JS. Ruby/PHP/Rust/.NET refuse. Preview publish run 38332963443. Log 01:37Z. |
 
-SHA prefixes match `gh pr view 896 897 --json state,mergeCommit,headRefOid` (cli#47 GO is the ledger, not a review re-read this sync).
+Router SHAs are from the ledger log 00:42Z and the deploy report. cli#47 and docs#651 are from the 01:37Z log. No fresh `gh pr view` this sync.
 
 ## Staging
 
-Still `accelerate-v0.6.34` (`e464eeeb`, goose `20261016120000`). Ledger 18:18Z: staging-deployer stopped before tagging. Staging unchanged. Live cluster not rechecked.
+`accelerate-v0.6.35` = `8160c4cd`, deployed 2026-10-13T00:12:48Z (router and gateway). Pre-tag goose gate passed (live was `20261016120000`). Goose is now `20261018120000`: 17 index swap (`20261017120000`), 18 custom_models (`20261018120000`). t0 and the 00:32Z recheck: 0 restarts, 0 ERROR, 0 5xx, `/health` 200. No rollback. Rollback target is v0.6.34 (starts on a DB at 18: no migrations to run). Ledger deployer `a690effe`.
 
-`accelerate` at `c891381c` includes Thierry's `20261015120000_custom_models` (`75214efe`, merged after #874), below the live goose version. goose has no out-of-order, so a tag would crash-loop. #897 moves that file to `20261018120000` with idempotent DDL (fresh, staging-shape, and already-applied-old). GO at `2a04d8de`. `accelerate-v0.6.35` is still free. Merge, tag, and deploy wait for Kanat. After the new router starts, rollback to v0.6.34 is fine (ledger 18:50Z: rollback starts, no migrations to run).
+`tool_patterns` is in the spec at `8160c4cd`. The live process does not serve `/openapi` (404), so the live spec is unverified.
 
-Deploy rule: before tagging, compare new migration files with the live goose version. No file below it.
+Ships on the tag: wave 9 (#891 #892 #893 #895 #896), #897, colleague #887 #898 #899 (JS SDK reads `connectors:`), `75214efe` custom models.
+
+Deploy rule still holds for the next tag: compare new migration files with the live goose version. No file below it.
 
 Local: a DB that recorded `20261015120000` makes `router plugins migrate` refuse the renamed file. Delete that `goose_db_version` row. A branch that still carries `20261015120000` fails on a DB migrated by #897 until it merges `accelerate`.
 
@@ -81,17 +84,17 @@ Other known failures stay the `9.md` list (gofmt parse error is `internal/api/st
 
 ## Pending for Kanat
 
-- Merge #897, then tag `accelerate-v0.6.35` and deploy. Do not tag `c891381c`.
-- CLI beta release (cli#47 GO at `c1e034a9`, held until staging has `tool_patterns`).
-- Docs publish (plan track C: quickstart and creating-an-agent).
-- Vendor consents / operator OAuth clients (plan B1). Prep notes: `migrate/operator-clients.md`. Slack on staging is still F87.
-- Gong and Instacart: unverified. No account check this sync. Plan B3 flags Gong (customer or DCR; Stream may have no account) and Instacart (API key).
+CLI beta `v2026-10-13-eab135f` is released. Docs getstream.io#651 is merged (`f2211fa4`). Volt phase J is done: `10-current.md`.
+
+Superseded 2026-10-13 18:20Z. The vendor logins and the staging secrets are done. Do not reopen the 03:05Z list. Continuation is `_connectors_handoff.md` section 7: deploy #905 (`cfd530953d`, not on staging), then Shopify scheme `none` on `stream-agents-e2e.myshopify.com`; B3 tool calls on the 11 Connected rows; Gong and Instacart stay blocked; do not post the Thierry reply.
+
+Wave 9 is done. Exit tickets AI-1105..AI-1145 under AI-816. AI-1129 (#892) and AI-1142 (#897) are Done. AI-1120 is Done in wave 10. AI-1145 is the #897 M8 test gap. AI-1121 (publish docs#651) was the docs merge; ticket state not rechecked.
 
 ## Rulings (do not re-open)
 
 P1-P5 are the block at the top of `9.md`. P6 and P7 were made during the wave (Log):
 
-- P1. No migration for `tool_patterns`. Rollback to v0.6.34 fails closed. Slot `20261018120000` is now #897.
+- P1. No migration for `tool_patterns`. Rollback to v0.6.34 fails closed. Slot `20261018120000` is #897, applied on staging (goose 18).
 - P2. The `mcp_plugins` example ships in the Python PR, not the Go PR.
 - P3. `connection: <x>` is resolved in the SDK at sync. Id wins, else one label. 0 or more than 1 is an error. No router change.
 - P4. Session open discovers, matches, pins unpinned matches, then `Open`. Cap 128.
