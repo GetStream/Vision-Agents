@@ -1339,6 +1339,24 @@ func (s *HarnessSuite) TestASkillTheModelInventedIsIgnored() {
 	s.NotContains(last.Content, "come back", "a turn after nothing ran is not told that work came back")
 }
 
+func (s *HarnessSuite) TestAMistakeRepeatedInTheFollowUpDoesNotEarnAnother() {
+	// Voicebench: Gemma answered each correction with the same skill tag, and every answer
+	// earned another turn, so the agent talked to itself for two minutes to a silent caller.
+	s.build(true)
+	s.respond("turn-1", "hello")
+	s.reply("turn-1", `One moment. <ask skill="teleport">do the thing</ask>`)
+	s.Require().True(s.harness.Pending())
+
+	s.respond("turn-2", "")
+	s.reply("turn-2", `Still on it. <ask skill="teleport">do the thing</ask>`)
+
+	s.False(s.harness.Pending(), "the follow-up already told the caller, so the repeat earns no turn")
+	s.respond("turn-3", "are you there")
+	s.Require().Len(s.fast.requests(), 3)
+	s.Contains(s.fast.requests()[2].Instructions, "no skill named teleport",
+		"the correction still reaches the next turn the caller asks for")
+}
+
 func (s *HarnessSuite) TestASkillThatNamesAToolIsAskedAsOne() {
 	// Voice models write skill tags for tools they were offered, then wait for a
 	// colleague who is not coming. The body of the tag is the argument the tool needs.

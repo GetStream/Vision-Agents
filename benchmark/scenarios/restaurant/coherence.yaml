@@ -3,7 +3,9 @@ pack: restaurant
 category: checklist
 name: Two minute booking conversation stays coherent
 persona: A chatty caller who confirms details slowly and repeats themselves.
-max_duration_s: 240
+# Nine or ten caller turns: a call the agent gets right took 195-240 s, so 240 failed
+# correct calls as timeouts.
+max_duration_s: 360
 judge:
   coherence: true
   task: A listener should still follow the booking after two minutes of back-and-forth. Do not drop the allergen, time, or name.
