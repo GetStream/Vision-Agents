@@ -156,7 +156,7 @@ func (m *Media) send(ctx context.Context) {
 func (m *Media) receive() {
 	defer close(m.heard)
 	buffer := make([]byte, 1500)
-	var next uint32
+	var next, ssrc uint32
 	first := true
 	for {
 		n, from, err := m.conn.ReadFromUDPAddrPort(buffer)
@@ -175,17 +175,22 @@ func (m *Media) receive() {
 		}
 
 		samples := DecodeULaw(packet.Payload)
-		if !first {
-			gap := int32(packet.Timestamp - next)
-			if gap < 0 {
-				// A late packet whose audio was already filled with silence.
-				continue
-			}
-			if gap > 0 && gap <= maxGapSamples {
-				samples = append(make([]int16, gap), samples...)
-			}
+		// A new source or a jump of more than a second is a carrier re-anchoring the media,
+		// e.g. on a bridge, and the timeline starts again from this packet.
+		gap := int32(packet.Timestamp - next)
+		if first || packet.SSRC != ssrc || gap > maxGapSamples || gap < -maxGapSamples {
+			gap = 0
 		}
+		if gap < 0 {
+			// A late packet whose audio was already filled with silence.
+			continue
+		}
+		// Lost audio is filled with silence, so the tones after it stay where they belong;
+		// the first sample of the filled packet was due as long before this one as the gap.
+		samples = append(make([]int16, gap), samples...)
+		at = at.Add(-time.Duration(gap) * time.Second / sampleRate)
 		first = false
+		ssrc = packet.SSRC
 		next = packet.Timestamp + uint32(len(packet.Payload))
 
 		m.mu.Lock()

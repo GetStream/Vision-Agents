@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 )
@@ -89,7 +90,7 @@ func (l Lines) Only(vendors, cities []string) Lines {
 	var kept Lines
 	for _, line := range l {
 		if (len(vendors) == 0 || slices.Contains(vendors, line.Vendor)) &&
-			(len(cities) == 0 || slices.Contains(cities, line.City)) {
+			(len(cities) == 0 || slices.ContainsFunc(cities, func(city string) bool { return strings.EqualFold(city, line.City) })) {
 			kept = append(kept, line)
 		}
 	}

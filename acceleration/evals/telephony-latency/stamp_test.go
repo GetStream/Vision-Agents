@@ -57,7 +57,16 @@ func (s *StampSuite) TestTheLatencyIsWhenThePacketHoldingTheOnsetArrived() {
 	heard, _ := s.listen(s.call(sampleRate*3/2, Stamp(Millis(s.sent))), arrived.Add(-1500*time.Millisecond))
 
 	s.Require().Len(heard, 1)
-	s.Equal(180*time.Millisecond, heard[0].Latency())
+	// The onset is found a few samples into the stamp's fade-in.
+	s.InDelta(180*time.Millisecond, heard[0].Latency(), float64(time.Millisecond))
+}
+
+func (s *StampSuite) TestAnOnsetPartWayIntoAPacketIsDueByItsPlaceInIt() {
+	// The carrier repacketised: the stamp starts 80 samples, 10 ms, into the packet.
+	heard, _ := s.listen(s.call(sampleRate+80, Stamp(Millis(s.sent))), s.sent.Add(-time.Second))
+
+	s.Require().Len(heard, 1)
+	s.InDelta(10*time.Millisecond, heard[0].Latency(), float64(time.Millisecond))
 }
 
 func (s *StampSuite) TestAStampSurvivesMuLawAQuieterLineAndNoise() {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+	"github.com/pion/rtp"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -87,6 +88,35 @@ func (s *EndpointSuite) TestACallMeasuresTheDelayEachWayThroughTheCarrier() {
 	s.Positive(result.RingMs)
 }
 
+func (s *EndpointSuite) TestAStampLostOneWayDoesNotHoldTheCallOpen() {
+	carrier := newLoopbackCarrier(s.T(), s.host, s.port, 50*time.Millisecond, 50*time.Millisecond)
+	carrier.forwardRewrite = dropFirstStamp()
+	caller := Line{Vendor: "loopback", City: "Chicago", E164: "+13125550001"}
+	callee := Line{Vendor: "loopback", City: "Chicago", E164: "+13125550002"}
+
+	started := time.Now()
+	result := s.prober(carrier, 5*time.Second).Probe(s.ctx, caller, callee)
+
+	s.Require().Empty(result.Error)
+	s.Len(result.ForwardMs, 2)
+	s.Len(result.BackwardMs, 3)
+	s.Less(time.Since(started), 15*time.Second)
+}
+
+func (s *EndpointSuite) TestACarrierReanchoringItsMediaMidCallIsStillHeard() {
+	carrier := newLoopbackCarrier(s.T(), s.host, s.port, 50*time.Millisecond, 50*time.Millisecond)
+	// After a second the carrier's RTP comes from a new source whose timestamps start far
+	// behind the old ones, the way a media server joining the call would send it.
+	carrier.backwardRewrite = reanchorAfter(50)
+	caller := Line{Vendor: "loopback", City: "Chicago", E164: "+13125550001"}
+	callee := Line{Vendor: "loopback", City: "Chicago", E164: "+13125550002"}
+
+	result := s.prober(carrier, 5*time.Second).Probe(s.ctx, caller, callee)
+
+	s.Require().Empty(result.Error)
+	s.Len(result.BackwardMs, 3)
+}
+
 func (s *EndpointSuite) TestACallWhoseLegNeverArrivesIsReportedNotLost() {
 	carrier := &loopbackCarrier{silent: true}
 	caller := Line{Vendor: "loopback", City: "Chicago", E164: "+13125550001"}
@@ -130,6 +160,9 @@ type loopbackCarrier struct {
 	forward, backward time.Duration
 	// silent drops every call, as a carrier that never delivers it.
 	silent bool
+	// forwardRewrite and backwardRewrite change or drop (by returning nil) each packet
+	// going that way, when set.
+	forwardRewrite, backwardRewrite func([]byte) []byte
 
 	mu                     sync.Mutex
 	calleeConn, callerConn *net.UDPConn
@@ -168,8 +201,8 @@ func (c *loopbackCarrier) Dial(ctx context.Context, outbound phone.Outbound) (ph
 		c.mu.Lock()
 		c.calleeConn, c.callerConn = calleeConn, callerConn
 		c.mu.Unlock()
-		go relay(callerConn, calleeConn, calleeBench, c.forward)
-		go relay(calleeConn, callerConn, callerBench, c.backward)
+		go relay(callerConn, calleeConn, calleeBench, c.forward, c.forwardRewrite)
+		go relay(calleeConn, callerConn, callerBench, c.backward, c.backwardRewrite)
 	}()
 	return phone.Dialed{VendorCallID: "loopback", Status: "dialing"}, nil
 }
@@ -213,7 +246,7 @@ func (c *loopbackCarrier) callerMedia() string {
 }
 
 // relay copies what the bench sends on one leg to the bench's other leg, late by delay.
-func relay(from, to *net.UDPConn, bench netip.AddrPort, delay time.Duration) {
+func relay(from, to *net.UDPConn, bench netip.AddrPort, delay time.Duration, rewrite func([]byte) []byte) {
 	buffer := make([]byte, 1500)
 	for {
 		n, err := from.Read(buffer)
@@ -221,7 +254,50 @@ func relay(from, to *net.UDPConn, bench netip.AddrPort, delay time.Duration) {
 			return
 		}
 		packet := append([]byte(nil), buffer[:n]...)
+		if rewrite != nil {
+			if packet = rewrite(packet); packet == nil {
+				continue
+			}
+		}
 		time.AfterFunc(delay, func() { _, _ = to.WriteToUDPAddrPort(packet, bench) })
+	}
+}
+
+// dropFirstStamp loses every packet of the first stamp to pass, as a burst of loss would.
+func dropFirstStamp() func([]byte) []byte {
+	dropped := 0
+	return func(raw []byte) []byte {
+		var packet rtp.Packet
+		if dropped >= StampSamples/packetSamples || packet.Unmarshal(raw) != nil {
+			return raw
+		}
+		for _, sample := range DecodeULaw(packet.Payload) {
+			if sample > onsetLevel || sample < -onsetLevel {
+				dropped++
+				return nil
+			}
+		}
+		return raw
+	}
+}
+
+// reanchorAfter sends every packet after the first n from a new source, with timestamps
+// a quarter of the counter behind.
+func reanchorAfter(n int) func([]byte) []byte {
+	seen := 0
+	return func(raw []byte) []byte {
+		seen++
+		var packet rtp.Packet
+		if seen <= n || packet.Unmarshal(raw) != nil {
+			return raw
+		}
+		packet.SSRC ^= 0xFFFF
+		packet.Timestamp -= 1 << 30
+		rewritten, err := packet.Marshal()
+		if err != nil {
+			return raw
+		}
+		return rewritten
 	}
 }
 

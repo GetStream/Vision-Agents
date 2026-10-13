@@ -39,9 +39,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/twilio"
 )
 
-// minGap is the shortest time between stamps on a call: a stamp lasts 360 ms and the
-// detector needs quiet before the next one.
-const minGap = 500 * time.Millisecond
+// minGap is the shortest time between stamps on a call. The two directions go half a gap
+// apart, and each needs room for a 360 ms stamp and the quiet after it.
+const minGap = time.Second
 
 func main() {
 	if len(os.Args) < 2 {
@@ -121,7 +121,7 @@ func run(ctx context.Context, arguments []string, log *slog.Logger) error {
 		return fmt.Errorf("-host must be this machine's public IPv4 address, got %q", *hostFlag)
 	}
 	if *gap < minGap {
-		return fmt.Errorf("-gap must be at least %s, the length of a stamp and the quiet after it", minGap)
+		return fmt.Errorf("-gap must be at least %s, room for a stamp each way and the quiet after them", minGap)
 	}
 	if Scope(*scope) != ScopeCity && Scope(*scope) != ScopeAll {
 		return fmt.Errorf("-scope must be %s or %s", ScopeCity, ScopeAll)

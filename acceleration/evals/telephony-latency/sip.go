@@ -47,15 +47,15 @@ type Leg struct {
 	Answered time.Time
 
 	dialog *sipgo.DialogServerSession
+	// hungUp is closed by Hangup, which ends the leg here even when the BYE goes unanswered
+	// and the dialog never learns it is over.
+	hungUp    chan struct{}
+	hangingUp sync.Once
 }
-
-// Done is closed when the leg ends, from either side.
-func (l *Leg) Done() <-chan struct{} { return l.dialog.Context().Done() }
 
 // Hangup ends the leg. It is safe to call on a leg the carrier already hung up.
 func (l *Leg) Hangup(ctx context.Context) error {
-	defer l.dialog.Close()
-	defer l.Media.Close()
+	defer l.hangingUp.Do(func() { close(l.hungUp) })
 	return l.dialog.Bye(ctx)
 }
 
@@ -196,9 +196,13 @@ func (e *Endpoint) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 		Media:    NewMedia(dialog.Context(), conn, netip.AddrPortFrom(remoteAddr, uint16(offer.Port)), e.log),
 		Answered: time.Now(),
 		dialog:   dialog,
+		hungUp:   make(chan struct{}),
 	}
 	go func() {
-		<-dialog.Context().Done()
+		select {
+		case <-dialog.Context().Done():
+		case <-leg.hungUp:
+		}
 		_ = leg.Media.Close()
 		dialog.Close()
 	}()

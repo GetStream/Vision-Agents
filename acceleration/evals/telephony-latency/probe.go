@@ -26,7 +26,8 @@ type Result struct {
 
 	// RingMs is from asking the caller's vendor to dial to the callee's leg arriving.
 	RingMs float64 `json:"ring_ms,omitempty"`
-	// BridgeMs is from answering the callee's leg to the caller's vendor bridging its own.
+	// BridgeMs is from answering the callee's leg to the caller's side being connected: the
+	// caller's vendor bridging its leg here, or for Telnyx the bridge request returning.
 	BridgeMs float64 `json:"bridge_ms,omitempty"`
 
 	// ForwardMs is each stamp's trip from the caller's side to the callee's.
@@ -84,9 +85,9 @@ func (p *Prober) probe(ctx context.Context, result *Result) error {
 		return err
 	}
 	calleeArrived := p.Endpoint.Expect(result.Callee.E164)
-	defer p.Endpoint.Forget(result.Callee.E164)
+	defer p.forget(result.Callee.E164, calleeArrived)
 	callerArrived := p.Endpoint.Expect(id)
-	defer p.Endpoint.Forget(id)
+	defer p.forget(id, callerArrived)
 
 	place := p.dialBridged
 	if p.Telnyx != nil && result.Caller.Vendor == "telnyx" {
@@ -125,9 +126,10 @@ func (p *Prober) probe(ctx context.Context, result *Result) error {
 	result.Sent = p.Stamps
 
 	// A stamp still missing this long after the last one went out was lost, not delayed.
-	deadline := time.After(lingerAfterStamps)
-	forward := collect(ctx, callee.Media.Heard(), p.Stamps, deadline)
-	backward := collect(ctx, caller.Media.Heard(), p.Stamps, deadline)
+	listening, stop := context.WithTimeout(ctx, lingerAfterStamps)
+	defer stop()
+	forward := collect(listening, callee.Media.Heard(), p.Stamps)
+	backward := collect(listening, caller.Media.Heard(), p.Stamps)
 	for _, heard := range forward {
 		result.ForwardMs = append(result.ForwardMs, millis(heard.Latency()))
 	}
@@ -211,14 +213,26 @@ func (p *Prober) uri(user string) string {
 	return fmt.Sprintf("sip:%s@%s:%d", user, p.Host, p.Port)
 }
 
+// forget drops a reservation, and hangs up a leg that arrived after the probe stopped
+// waiting for it, so it does not hold a number and a port until the carrier gives up.
+func (p *Prober) forget(user string, arrived <-chan *Leg) {
+	p.Endpoint.Forget(user)
+	select {
+	case leg := <-arrived:
+		p.hangup(leg)
+	default:
+	}
+}
+
 func (p *Prober) hangup(leg *Leg) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = leg.Hangup(ctx)
 }
 
-// collect waits for stamps until all of them have arrived or the deadline passes.
-func collect(ctx context.Context, heard <-chan Heard, want int, deadline <-chan time.Time) []Heard {
+// collect waits for stamps until all of them have arrived or the context ends. Stamps
+// already heard are taken before giving up, since a select picks at random among the ready.
+func collect(ctx context.Context, heard <-chan Heard, want int) []Heard {
 	var got []Heard
 	for len(got) < want {
 		select {
@@ -227,8 +241,15 @@ func collect(ctx context.Context, heard <-chan Heard, want int, deadline <-chan 
 				return got
 			}
 			got = append(got, h)
-		case <-deadline:
-			return got
+			continue
+		default:
+		}
+		select {
+		case h, open := <-heard:
+			if !open {
+				return got
+			}
+			got = append(got, h)
 		case <-ctx.Done():
 			return got
 		}

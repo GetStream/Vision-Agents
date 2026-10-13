@@ -244,8 +244,8 @@ func writeShares(out *strings.Builder, results []Result, vendors []string) {
 	out.WriteString("\n")
 }
 
-// identifiable is whether a matrix has the cells to split: with every vendor in both roles
-// and more cells than shares, or a share could be any value at all.
+// identifiable is whether a matrix has the cells to split: every vendor in both roles and
+// at least as many cells as there are shares, or a share could be any value at all.
 func identifiable(cells map[Cell]float64, vendors []string) bool {
 	callers, callees := map[string]bool{}, map[string]bool{}
 	for cell := range cells {
@@ -257,16 +257,20 @@ func identifiable(cells map[Cell]float64, vendors []string) bool {
 
 // writeNetwork lists the addresses each vendor's side of each cell came from.
 func writeNetwork(out *strings.Builder, results []Result, vendors []string, places map[string]Place) {
-	out.WriteString("**Where the media went**\n\n| caller → callee | caller's media | callee's media |\n|---|---|---|\n")
+	out.WriteString("**Where each side was served from**\n\n" +
+		"| caller → callee | caller's media | callee's media | caller's signalling | callee's signalling |\n" +
+		"|---|---|---|---|---|\n")
 	for _, caller := range vendors {
 		for _, callee := range vendors {
 			cell := inCell(results, Cell{caller, callee})
 			if len(cell) == 0 {
 				continue
 			}
-			fmt.Fprintf(out, "| %s → %s | %s | %s |\n", caller, callee,
+			fmt.Fprintf(out, "| %s → %s | %s | %s | %s | %s |\n", caller, callee,
 				describe(cell, func(r Result) string { return r.CallerMedia }, places),
-				describe(cell, func(r Result) string { return r.CalleeMedia }, places))
+				describe(cell, func(r Result) string { return r.CalleeMedia }, places),
+				describe(cell, func(r Result) string { return r.CallerSignal }, places),
+				describe(cell, func(r Result) string { return r.CalleeSignal }, places))
 		}
 	}
 	out.WriteString("\n")

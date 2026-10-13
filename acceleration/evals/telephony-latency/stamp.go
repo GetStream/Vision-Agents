@@ -114,11 +114,13 @@ type Detector struct {
 	garbled int
 }
 
-// Push feeds the detector the samples of one packet and the time it arrived, and returns
-// any stamps the packet completed.
+// Push feeds the detector the samples of one packet and the time its first sample arrived,
+// and returns any stamps the packet completed. A sample further into the packet is due
+// later by its place in it, so a carrier that repacketises off the sender's boundaries does
+// not make a stamp look early by up to a packet.
 func (d *Detector) Push(samples []int16, at time.Time) []Heard {
 	var heard []Heard
-	for _, sample := range samples {
+	for i, sample := range samples {
 		if !d.onsetAt.IsZero() {
 			d.buffered = append(d.buffered, sample)
 			if len(d.buffered) == StampSamples {
@@ -136,7 +138,7 @@ func (d *Detector) Push(samples []int16, at time.Time) []Heard {
 
 		if sample > onsetLevel || sample < -onsetLevel {
 			if d.quiet >= quietBefore {
-				d.onsetAt = at
+				d.onsetAt = at.Add(time.Duration(i) * time.Second / sampleRate)
 				d.buffered = append(d.buffered[:0], sample)
 			}
 			d.quiet = 0
