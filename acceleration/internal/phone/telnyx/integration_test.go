@@ -97,9 +97,9 @@ func (s *TelnyxIntegrationSuite) TestColoradoHDVoiceNumbersAreOfferedAroundADoll
 // holds and somebody willing to answer, so it is skipped unless both are named.
 //
 // It goes as far as an automated test can: the handset rings, and Telnyx accepts every term
-// the call was placed on. TELNYX_CONNECTION_ID has to be a TeXML application and
-// TELNYX_ACCOUNT_SID the account it is in. Whether the person who answers hears an agent
-// depends on one being in the call, which is what the example does.
+// the call was placed on. TELNYX_CONNECTION_ID has to be a TeXML application. Whether the
+// person who answers hears an agent depends on one being in the call, which is what the
+// example does.
 func (s *TelnyxIntegrationSuite) TestCallingAHandsetRingsItAndBridgesItToATrunk() {
 	from, to := os.Getenv(fromEnvVar), os.Getenv(toEnvVar)
 	if from == "" || to == "" {

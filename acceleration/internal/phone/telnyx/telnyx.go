@@ -2,7 +2,7 @@
 //
 // Telnyx's v2 API is JSON with a bearer key, and everything is wrapped in a "data"
 // envelope. Numbers are assigned to a TeXML application, and an outbound call is a TeXML
-// call on that application, under the account, whose TeXML dials the Stream trunk, because
+// call on that application, whose TeXML dials the Stream trunk, because
 // Stream cannot dial out itself.
 package telnyx
 
@@ -26,10 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-const (
-	apiKeyEnvVar     = "TELNYX_API_KEY"
-	accountSIDEnvVar = "TELNYX_ACCOUNT_SID"
-)
+const apiKeyEnvVar = "TELNYX_API_KEY"
 
 const (
 	defaultBaseURL = "https://api.telnyx.com"
@@ -39,16 +36,6 @@ const (
 // errorBodyLimit caps how much of a failed response is read into an error message.
 const errorBodyLimit = 2048
 
-// The account's call list is asked at most twice for a call just placed, because it is
-// eventually consistent and the caller is waiting.
-const (
-	lookupAttempts     = 2
-	defaultLookupPause = time.Second
-	lookupDeadline     = 5 * time.Second
-	// clockSlack is how far Telnyx's clock may be behind this host's.
-	clockSlack = 30 * time.Second
-)
-
 // microsPerDollar converts Telnyx's dollar strings into the micros used everywhere else.
 const microsPerDollar = 1_000_000
 
@@ -56,9 +43,6 @@ const microsPerDollar = 1_000_000
 type Options struct {
 	// APIKey defaults to TELNYX_API_KEY.
 	APIKey string
-	// AccountSID defaults to TELNYX_ACCOUNT_SID. Calls are placed under it, since only the
-	// account's TeXML call takes a ring timeout.
-	AccountSID string
 	// ConnectionID is the TeXML application numbers are assigned to and calls are placed
 	// on, so inbound and outbound both need it.
 	ConnectionID string
@@ -75,12 +59,10 @@ type Options struct {
 // Provider is Telnyx. It satisfies phone.Provider.
 type Provider struct {
 	apiKey       string
-	accountSID   string
 	connectionID string
 	baseURL      string
 	client       *http.Client
 	logger       *slog.Logger
-	lookupPause  time.Duration
 }
 
 // New validates the options and returns a Provider.
@@ -90,9 +72,6 @@ func New(options Options) (*Provider, error) {
 	}
 	if options.APIKey == "" {
 		return nil, stack.Wrap(errors.New("telnyx: " + apiKeyEnvVar + " is required"))
-	}
-	if options.AccountSID == "" {
-		options.AccountSID = os.Getenv(accountSIDEnvVar)
 	}
 	if options.ConnectionID == "" {
 		options.ConnectionID = os.Getenv("TELNYX_CONNECTION_ID")
@@ -112,12 +91,10 @@ func New(options Options) (*Provider, error) {
 
 	return &Provider{
 		apiKey:       options.APIKey,
-		accountSID:   options.AccountSID,
 		connectionID: options.ConnectionID,
 		baseURL:      strings.TrimSuffix(options.BaseURL, "/"),
 		client:       options.HTTPClient,
 		logger:       options.Logger,
-		lookupPause:  defaultLookupPause,
 	}, nil
 }
 
@@ -274,10 +251,6 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, stack.Wrap(errors.New("telnyx: a connection id is required to place a call"))
 	}
 
-	if p.accountSID == "" {
-		return phone.Dialed{}, stack.Wrap(errors.New("telnyx: " + accountSIDEnvVar + " is required to place a call"))
-	}
-
 	// Unsupported is not consulted on every path here, so a term Telnyx would drop is
 	// refused.
 	seconds := int(outbound.RingTimeout.Seconds())
@@ -301,22 +274,16 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, err
 	}
 	request := texmlCall{
-		ApplicationSID: p.connectionID,
-		From:           outbound.From,
-		To:             outbound.To,
-		Texml:          string(texml),
-		Timeout:        seconds,
+		From:    outbound.From,
+		To:      outbound.To,
+		Texml:   string(texml),
+		Timeout: seconds,
 	}
 
 	var placed texmlCallPlaced
-	placedAt := time.Now()
-	if err := p.do(ctx, http.MethodPost, p.callsPath(), nil, request, &placed); err != nil {
+	path := "/v2/texml/calls/" + url.PathEscape(p.connectionID)
+	if err := p.do(ctx, http.MethodPost, path, nil, request, &placed); err != nil {
 		return phone.Dialed{}, err
-	}
-	if placed.CallSID == "" {
-		// Telnyx's reference lists no id on this answer, so the call is found in the account's
-		// list instead.
-		placed.CallSID = p.findCall(ctx, outbound.From, outbound.To, placedAt)
 	}
 	if placed.CallSID == "" {
 		// The call is ringing all the same, so failing here would report a call that is
@@ -327,39 +294,6 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	// Queued is Telnyx's documented first status, and an empty one would break the README's
 	// promise that every placed call has one.
 	return phone.Dialed{VendorCallID: placed.CallSID, Status: cmp.Or(placed.Status, "queued")}, nil
-}
-
-// findCall is the newest live call from one number to another that started since a call was
-// placed, or empty. A number never has two calls in flight here, so that one is the call.
-func (p *Provider) findCall(ctx context.Context, from, to string, placedAt time.Time) string {
-	// Telnyx's time filters take only a date, so the time is checked here.
-	query := url.Values{"From": {from}, "To": {to}}
-	ctx, cancel := context.WithTimeout(ctx, lookupDeadline)
-	defer cancel()
-	since := placedAt.Add(-clockSlack)
-	for attempt := range lookupAttempts {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return ""
-			case <-time.After(p.lookupPause):
-			}
-		}
-		var listed listedCalls
-		if err := p.do(ctx, http.MethodGet, p.callsPath(), query, nil, &listed); err != nil {
-			// The error names the account in its path, so only that it failed is logged.
-			p.logger.Warn("telnyx could not list calls to find a placed call's id")
-			return ""
-		}
-		if sid := listed.newestSince(from, to, since); sid != "" {
-			return sid
-		}
-	}
-	return ""
-}
-
-func (p *Provider) callsPath() string {
-	return "/v2/texml/Accounts/" + url.PathEscape(p.accountSID) + "/Calls"
 }
 
 // SendDigits presses digits on a leg Telnyx is holding, which is how an agent gets past a
@@ -600,69 +534,20 @@ const playableDigits = "0123456789*#w"
 
 // texmlCall is a TeXML call on one application. Telnyx's names here are case-sensitive.
 type texmlCall struct {
-	ApplicationSID string `json:"ApplicationSid"`
-	From           string `json:"From"`
-	To             string `json:"To"`
-	Texml          string `json:"Texml"`
+	From  string `json:"From"`
+	To    string `json:"To"`
+	Texml string `json:"Texml"`
 	// Timeout is how long the person rings, where <Dial>'s timeout would ring the trunk.
+	// Telnyx does not document it for this call, but accepts it: checked on a live call
+	// 2026-10-13, which stopped ringing after the time sent.
 	Timeout int `json:"Timeout,omitempty"`
 }
 
-// texmlCallPlaced is Telnyx's answer to a TeXML call, which has no "data" envelope. Telnyx's
-// reference shows only from, to and status for the account's call, so the id may be empty.
+// texmlCallPlaced is Telnyx's answer to a TeXML call, which has no "data" envelope.
 type texmlCallPlaced struct {
-	// CallSID is the call control id, which is what pressing digits acts on. Telnyx's
-	// reference does not show it on this answer, so it is usually found by findCall.
+	// CallSID is the call control id, which is what pressing digits acts on.
 	CallSID string `json:"call_sid"`
 	Status  string `json:"status"`
-}
-
-// listedCalls is Telnyx's page of the account's TeXML calls, which has no "data" envelope.
-type listedCalls struct {
-	Calls []listedCall `json:"calls"`
-}
-
-type listedCall struct {
-	// SID is the call control id, the same id SendDigits acts on.
-	SID         string `json:"sid"`
-	From        string `json:"from"`
-	To          string `json:"to"`
-	Status      string `json:"status"`
-	StartTime   string `json:"start_time"`
-	DateCreated string `json:"date_created"`
-}
-
-// newestSince is the sid of the newest call still going from one number to another that
-// started at or after since. The numbers are checked here too, because a list filter Telnyx
-// ignored would otherwise hand over another call's id.
-func (l listedCalls) newestSince(from, to string, since time.Time) string {
-	var newest string
-	var newestAt time.Time
-	for _, call := range l.Calls {
-		if call.SID == "" || call.ended() || !sameNumber(call.From, from) || !sameNumber(call.To, to) {
-			continue
-		}
-		at, err := time.Parse(time.RFC1123Z, cmp.Or(call.StartTime, call.DateCreated))
-		if err != nil || at.Before(since) || (newest != "" && !at.After(newestAt)) {
-			continue
-		}
-		newest, newestAt = call.SID, at
-	}
-	return newest
-}
-
-// sameNumber compares two E.164 numbers, allowing one to lack its "+", which is the only
-// difference between a number written two ways that cannot change which number it is.
-func sameNumber(listed, placed string) bool {
-	return listed != "" && strings.TrimPrefix(listed, "+") == strings.TrimPrefix(placed, "+")
-}
-
-func (c listedCall) ended() bool {
-	switch c.Status {
-	case "completed", "canceled", "failed", "busy", "no-answer":
-		return true
-	}
-	return false
 }
 
 type sendDigits struct {
