@@ -270,6 +270,110 @@ func (s *StoreSuite) TestActivityIsOnlyTheCallingCustomers() {
 	s.EqualValues(1, buckets[0].Sessions)
 }
 
+// ranTool records one tool call and its result, the way a session writes them, on a
+// response of its own.
+func (s *StoreSuite) ranTool(session *AgentSession, tool string, at time.Time, took time.Duration, result string, failed bool) {
+	responseID := fmt.Sprintf("%s-%s-%d", session.ID, tool, at.UnixNano())
+	s.Require().NoError(s.store.StartResponse(s.ctx, &AgentResponse{
+		ID: responseID, SessionID: session.ID, CustomerID: session.CustomerID, CreatedAt: at,
+	}))
+	payload := map[string]any{"call_id": "call-1", "arguments": `{"q":"x"}`}
+	if failed {
+		payload["error"] = "it broke"
+	}
+	s.Require().NoError(s.store.AppendResponseItems(s.ctx, []AgentResponseItem{
+		{ResponseID: responseID, Ordinal: 0, SessionID: session.ID, Kind: ItemToolCall,
+			ToolName: tool, Payload: map[string]any{"call_id": "call-1"}, At: at},
+		{ResponseID: responseID, Ordinal: 1, SessionID: session.ID, Kind: ItemToolResult,
+			ToolName: tool, Text: result, Payload: payload, At: at.Add(took)},
+	}))
+}
+
+func (s *StoreSuite) TestThePeakIsTheMostSessionsOpenAtOnce() {
+	s.opened("first", "acme", s.base, nil)
+	s.Require().NoError(s.store.CloseSession(s.ctx, "first", s.base.Add(10*time.Minute)))
+	s.opened("second", "acme", s.base.Add(2*time.Minute), nil)
+	s.Require().NoError(s.store.CloseSession(s.ctx, "second", s.base.Add(5*time.Minute)))
+	s.opened("third", "acme", s.base.Add(3*time.Minute), nil)
+	s.Require().NoError(s.store.CloseSession(s.ctx, "third", s.base.Add(4*time.Minute)))
+	s.opened("later", "acme", s.base.Add(20*time.Minute), nil)
+	s.Require().NoError(s.store.CloseSession(s.ctx, "later", s.base.Add(21*time.Minute)))
+
+	peak, err := s.store.CustomerConcurrencyPeak(s.ctx, "acme", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.EqualValues(3, peak.Sessions)
+	s.Require().NotNil(peak.At)
+	s.True(peak.At.Equal(s.base.Add(3*time.Minute)))
+}
+
+func (s *StoreSuite) TestASessionThatClosedAsAnotherOpenedDidNotOverlapIt() {
+	s.opened("before", "acme", s.base, nil)
+	s.Require().NoError(s.store.CloseSession(s.ctx, "before", s.base.Add(time.Minute)))
+	s.opened("after", "acme", s.base.Add(time.Minute), nil)
+	s.Require().NoError(s.store.CloseSession(s.ctx, "after", s.base.Add(2*time.Minute)))
+
+	peak, err := s.store.CustomerConcurrencyPeak(s.ctx, "acme", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.EqualValues(1, peak.Sessions)
+}
+
+func (s *StoreSuite) TestASessionOpenedBeforeTheWindowStillCountsInIt() {
+	s.opened("overnight", "acme", s.base.Add(-time.Hour), nil)
+	s.opened("morning", "acme", s.base.Add(time.Minute), nil)
+
+	peak, err := s.store.CustomerConcurrencyPeak(s.ctx, "acme", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.EqualValues(2, peak.Sessions, "both still running")
+}
+
+func (s *StoreSuite) TestThereIsNoPeakWhenNothingRan() {
+	s.opened("theirs", "globex", s.base, nil)
+
+	peak, err := s.store.CustomerConcurrencyPeak(s.ctx, "acme", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.Zero(peak.Sessions)
+	s.Nil(peak.At)
+}
+
+func (s *StoreSuite) TestToolUsageIsMostCalledFirstWithHowLongEachTook() {
+	session := s.opened("one", "acme", s.base, nil)
+	s.ranTool(session, "lookup_order", s.base.Add(time.Minute), 100*time.Millisecond, "shipped", false)
+	s.ranTool(session, "lookup_order", s.base.Add(2*time.Minute), 300*time.Millisecond, "shipped", false)
+	s.ranTool(session, "refund", s.base.Add(3*time.Minute), 2*time.Second, "", true)
+
+	overall, tools, err := s.store.CustomerToolUsage(s.ctx, "acme", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.Require().Len(tools, 2)
+
+	s.Equal("lookup_order", tools[0].Tool)
+	s.EqualValues(2, tools[0].Calls)
+	s.Zero(tools[0].Failed)
+	s.Require().NotNil(tools[0].AvgMs)
+	s.InDelta(200, *tools[0].AvgMs, 0.01)
+	// lookup_order, {"q":"x"} and shipped are 12, 9 and 7 bytes: 28, at four a token.
+	s.InDelta(7, tools[0].AvgTokens, 0.01)
+
+	s.Equal("refund", tools[1].Tool)
+	s.EqualValues(1, tools[1].Failed)
+
+	s.Empty(overall.Tool)
+	s.EqualValues(3, overall.Calls)
+	s.EqualValues(1, overall.Failed)
+	s.Require().NotNil(overall.P99Ms)
+	s.Greater(*overall.P99Ms, 1900.0, "the slow call is the tail")
+}
+
+func (s *StoreSuite) TestToolUsageIsOnlyTheCallingCustomers() {
+	theirs := s.opened("theirs", "globex", s.base, nil)
+	s.ranTool(theirs, "lookup_order", s.base.Add(time.Minute), time.Second, "shipped", false)
+
+	overall, tools, err := s.store.CustomerToolUsage(s.ctx, "acme", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.Empty(tools)
+	s.Zero(overall.Calls)
+	s.Nil(overall.AvgMs)
+}
+
 func (s *StoreSuite) TestUsageQueriesRejectBadArguments() {
 	_, err := s.store.CustomerSpend(s.ctx, "", "modality", Daily, s.base, s.base.Add(time.Hour), 6, nil)
 	s.ErrorContains(err, "customer id is required")

@@ -221,6 +221,8 @@ agents/jean/
   instructions.md
   guardrail.md
   skills/think.md
+  skills/pdf/SKILL.md   a skill as a folder: SKILL.md plus the text files it brings
+  skills/pdf/scripts/fill.py
   knowledge/pricing.md
   knowledge/urls.yaml   pages to read, each optionally with refresh_hours
   simulations/lunch.yaml

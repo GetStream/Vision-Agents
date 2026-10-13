@@ -166,6 +166,7 @@ agents/jean/
   instructions.md
   guardrail.md
   skills/think.md
+  skills/pdf/SKILL.md   a skill as a folder; the text files beside SKILL.md are synced with it
   knowledge/pricing.md
   knowledge/urls.yaml   pages, each a url or a mapping with title, description, refresh_hours
   simulations/lunch.yaml

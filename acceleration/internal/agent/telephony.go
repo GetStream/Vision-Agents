@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -406,18 +407,32 @@ func (a *Agent) loadsSkills() bool {
 	return !declared
 }
 
-// loadSkill hands the model a skill's instructions to follow itself.
+// loadSkill hands the model a skill's instructions to follow itself, or with a path one of
+// the files the skill brought, so it reads only the ones it needs.
 func (a *Agent) loadSkill(ctx context.Context, call llm.ToolCall) (string, error) {
 	var arguments struct {
 		Name string `json:"name"`
+		Path string `json:"path"`
 	}
 	if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
 		return "", fmt.Errorf("agent: could not read the load_skill arguments: %w", err)
 	}
 	name := strings.TrimSpace(arguments.Name)
-	instructions, err := a.options.Skills.Instructions(ctx, name)
+	if file := strings.TrimSpace(arguments.Path); file != "" {
+		content, err := a.options.Skills.File(ctx, name, file)
+		if err != nil {
+			return "", err
+		}
+		result, err := json.Marshal(map[string]string{"name": name, "path": file, "content": content})
+		return string(result), err
+	}
+	loaded, err := a.options.Skills.Read(ctx, name)
 	if err != nil {
 		return "", err
+	}
+	instructions := loaded.Instructions
+	if len(loaded.Files) > 0 {
+		instructions += "\n\n" + harness.Listing(name, slices.Sorted(maps.Keys(loaded.Files)), false)
 	}
 	result, err := json.Marshal(map[string]string{"name": name, "instructions": instructions})
 	return string(result), err

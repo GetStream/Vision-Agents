@@ -9,8 +9,9 @@
 // rules on each against what the customer said had to be true.
 //
 // The conversations happen in this process, which is the same place sessions already live,
-// and a run is claimed by the process that started it: a router that goes down mid-run
-// abandons it rather than leaving it for another to pick up.
+// and a run is held by the process that started it for as long as that process renews it: a
+// router that goes down mid-run has its runs written off by the others rather than picked
+// up.
 package simulation
 
 import (
@@ -18,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -44,6 +47,11 @@ const (
 	// writeTimeout bounds the writes a run makes on its way out, which have to happen on a
 	// context that cancelling the run did not cancel.
 	writeTimeout = 10 * time.Second
+	// holdFor is how long a router's claim on a run lasts unrenewed, and renewEvery how often
+	// it renews, which is also how long a cancel asked of another router takes to land. A
+	// router that dies leaves its runs looking held for at most holdFor.
+	holdFor    = time.Minute
+	renewEvery = 10 * time.Second
 )
 
 // How much of this a process does at once. A customer who presses Run on every simulation
@@ -82,9 +90,13 @@ type Runner struct {
 	closed  bool
 
 	working sync.WaitGroup
+	// stopKeeping ends keep, and kept is closed once it has.
+	stopKeeping context.CancelFunc
+	kept        chan struct{}
 }
 
-// New validates the options and returns a Runner. It starts nothing.
+// New validates the options and returns a Runner, which renews the runs it holds until
+// Close.
 func New(options Options) (*Runner, error) {
 	if options.Store == nil {
 		return nil, errors.New("simulation: a database is required")
@@ -99,19 +111,24 @@ func New(options Options) (*Runner, error) {
 		options.Logger = slog.Default()
 	}
 
-	return &Runner{
-		store:    options.Store,
-		sessions: options.Sessions,
-		llm:      options.LLM,
-		tts:      options.TTS,
-		stt:      options.STT,
-		logger:   options.Logger,
-		running:  map[string]context.CancelFunc{},
-	}, nil
+	ctx, stop := context.WithCancel(context.Background())
+	runner := &Runner{
+		store:       options.Store,
+		sessions:    options.Sessions,
+		llm:         options.LLM,
+		tts:         options.TTS,
+		stt:         options.STT,
+		logger:      options.Logger,
+		running:     map[string]context.CancelFunc{},
+		stopKeeping: stop,
+		kept:        make(chan struct{}),
+	}
+	go runner.keep(ctx)
+	return runner, nil
 }
 
-// Abandon writes off the runs an older process left saying they were running. Nothing else
-// will finish them: the conversations were held in that process, and it is gone.
+// Abandon writes off the runs whose router stopped renewing them. Nothing else will finish
+// them: the conversations were held in that router, and it is gone.
 func (r *Runner) Abandon(ctx context.Context) error {
 	return r.store.AbandonSimulationRuns(ctx, time.Now().UTC())
 }
@@ -162,7 +179,7 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) (store.Simula
 	for i, scenario := range scenarios {
 		cases = append(cases, store.SimulationCase{Variation: i, Scenario: scenario})
 	}
-	if err := r.store.StartSimulationRun(ctx, &run, cases); err != nil {
+	if err := r.store.StartSimulationRun(ctx, &run, cases, time.Now().Add(holdFor)); err != nil {
 		return store.SimulationRun{}, err
 	}
 
@@ -188,9 +205,14 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) (store.Simula
 
 // Cancel stops a run. Unlike a paused campaign the conversations in flight are ended too:
 // there is nobody on the other end of them to be hung up on.
+//
+// A run this router is not holding is stopped by the one that is, the next time it renews.
 func (r *Runner) Cancel(ctx context.Context, customerID, id string) (store.SimulationRun, error) {
 	run, err := r.store.SimulationRun(ctx, customerID, id)
 	if err != nil {
+		return store.SimulationRun{}, err
+	}
+	if err := r.store.StopSimulationRun(ctx, customerID, run.ID); err != nil {
 		return store.SimulationRun{}, err
 	}
 
@@ -200,6 +222,9 @@ func (r *Runner) Cancel(ctx context.Context, customerID, id string) (store.Simul
 
 // Close stops every run and waits for the conversations to end.
 func (r *Runner) Close() {
+	r.stopKeeping()
+	<-r.kept
+
 	r.mu.Lock()
 	r.closed = true
 	for id, cancel := range r.running {
@@ -437,6 +462,36 @@ func (r *Runner) settle(ctx context.Context, run store.SimulationRun) {
 
 	if err := r.store.FinishSimulationRun(written, run); err != nil {
 		r.logger.Error("could not record how a run ended", "run", run.ID, "error", err)
+	}
+}
+
+// keep renews the runs this router holds, stops the ones it was asked to stop from
+// elsewhere, and writes off the runs of routers that are gone.
+func (r *Runner) keep(ctx context.Context) {
+	defer close(r.kept)
+	ticker := time.NewTicker(renewEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		r.mu.Lock()
+		held := slices.Collect(maps.Keys(r.running))
+		r.mu.Unlock()
+
+		stop, err := r.store.RenewSimulationRuns(ctx, held, time.Now().Add(holdFor))
+		if err != nil {
+			r.logger.Error("could not renew the simulation runs this router holds", "error", err)
+		}
+		for _, id := range stop {
+			r.forget(id)
+		}
+		if err := r.Abandon(ctx); err != nil {
+			r.logger.Error("could not write off the runs of a router that is gone", "error", err)
+		}
 	}
 }
 

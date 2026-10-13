@@ -47,6 +47,70 @@ class TestFolder < Minitest::Test
     refute_equal folder.fingerprint, VA::Folder.load(@root).fingerprint
   end
 
+  def test_skill_folders_fingerprint_the_way_go_does
+    write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\nsandbox: daytona\n")
+    write("instructions.md", "You are Jean.\n")
+    write("skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
+    write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n")
+    write("skills/pdf/reference/forms.md", "# Forms\n")
+    write("skills/pdf/scripts/fill.py", "print('filled')\n")
+    write("skills/pdf/scripts/lib/fill_lib.py", "def fill():\n    return 1\n")
+    write("skills/pdf/scripts/__pycache__/fill.cpython-313.pyc", "\xcb\x0d\xff".b)
+    write("skills/pdf/.DS_Store", "\x00\xff".b)
+    write("knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+
+    assert_equal "e47f7807b97bbcbdee683c6c481d1d36", VA::Folder.load(@root).fingerprint
+  end
+
+  def test_a_skill_folder_brings_its_nested_text_files_and_leaves_hidden_ones
+    write("agent.yaml", "name: jean\n")
+    write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    write("skills/pdf/reference/forms.md", "# Forms\n")
+    write("skills/pdf/scripts/lib/fill.py", "print('filled')\n")
+    write("skills/pdf/scripts/__pycache__/fill.py", "cached\n")
+    write("skills/pdf/.hidden/notes.md", "hidden\n")
+    write("skills/pdf/.DS_Store", "\x00\xff".b)
+
+    skill = VA::Folder.load(@root).skills[0]
+
+    assert_equal "pdf", skill.name
+    assert_equal "Fill the form.", skill.instructions
+    assert_equal({ "reference/forms.md" => "# Forms\n", "scripts/lib/fill.py" => "print('filled')\n" }, skill.files)
+    assert_equal({ "reference/forms.md" => "# Forms\n", "scripts/lib/fill.py" => "print('filled')\n" },
+                 skill.request[:files])
+  end
+
+  def test_moving_a_skill_into_a_folder_keeps_its_fingerprint_until_it_brings_a_file
+    write("agent.yaml", "name: jean\n")
+    write("skills/pdf.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    single = VA::Folder.load(@root).fingerprint
+
+    FileUtils.mkdir_p(File.join(@root, "skills/pdf"))
+    FileUtils.mv(File.join(@root, "skills/pdf.md"), File.join(@root, "skills/pdf/SKILL.md"))
+    assert_equal single, VA::Folder.load(@root).fingerprint
+    refute VA::Folder.load(@root).skills[0].request.key?(:files)
+
+    write("skills/pdf/forms.md", "# Forms\n")
+    refute_equal single, VA::Folder.load(@root).fingerprint
+  end
+
+  def test_a_skill_folder_that_is_not_a_skill_is_refused
+    write("agent.yaml", "name: jean\n")
+    write("skills/pdf/forms.md", "# Forms\n")
+    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    assert_includes error.message, "has no SKILL.md, so it is not a skill"
+
+    write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    write("skills/pdf.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    assert_equal 'skill "pdf" is both pdf and pdf.md', error.message
+
+    FileUtils.rm(File.join(@root, "skills/pdf.md"))
+    write("skills/pdf/logo.png", "\x89PNG\xff".b)
+    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    assert_includes error.message, "logo.png is not text, and a skill brings only text files"
+  end
+
   def test_refresh_hours_and_simulations_fingerprint_the_way_go_does
     write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\n")
     write("instructions.md", "You are Jean.\n")

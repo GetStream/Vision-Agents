@@ -4,6 +4,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/anthropic"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/moondream"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/atlascloud"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/baidu"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/baseten"
@@ -76,6 +77,10 @@ func DefaultRegistry() *Registry {
 
 	registry.Register(anthropic.ProviderName, func(spec routing.Spec) (Provider, error) {
 		return Started(anthropic.New(anthropic.Options{Model: spec.Model, Logger: spec.Logger}))
+	})
+
+	registry.Register(moondream.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(moondream.New(moondream.Options{Model: spec.Model, Logger: spec.Logger}))
 	})
 
 	registry.Register(xai.ProviderName, func(spec routing.Spec) (Provider, error) {

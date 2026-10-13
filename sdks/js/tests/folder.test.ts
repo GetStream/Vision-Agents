@@ -8,7 +8,7 @@ import { ConfigurationError } from "../src/index.js";
 import { loadFolder, parsePages, parseSimulations, parseSkill } from "../src/node.js";
 
 /** Writes an agent directory, with an agent.yaml unless told otherwise, and hands back its path. */
-async function agentDir(files: Record<string, string>): Promise<string> {
+async function agentDir(files: Record<string, string | Uint8Array>): Promise<string> {
   const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
   await mkdir(root, { recursive: true });
 
@@ -342,6 +342,60 @@ describe("loadFolder", () => {
       folder.skills.map((skill) => skill.name),
       ["explain", "recall"],
     );
+  });
+
+  it("reads a skill written as a folder, with the files it brings at any depth", async () => {
+    const path = await agentDir({
+      "skills/pdf/SKILL.md": "---\ndescription: Fill PDF forms\n---\nFill the form.\n",
+      "skills/pdf/reference/forms.md": "# Forms\n",
+      "skills/pdf/scripts/lib/fill.py": "print('filled')\n",
+    });
+
+    const [skill] = (await loadFolder(path)).skills;
+
+    assert.equal(skill?.name, "pdf");
+    assert.equal(skill?.instructions, "Fill the form.");
+    assert.deepEqual(skill?.files, {
+      "reference/forms.md": "# Forms\n",
+      "scripts/lib/fill.py": "print('filled')\n",
+    });
+  });
+
+  it("leaves hidden files and __pycache__ out of a skill folder", async () => {
+    const path = await agentDir({
+      "skills/pdf/SKILL.md": "---\ndescription: Fill PDF forms\n---\nFill the form.\n",
+      "skills/pdf/.DS_Store": new Uint8Array([0x00, 0xff]),
+      "skills/pdf/.cache/notes.md": "hidden",
+      "skills/pdf/scripts/__pycache__/fill.cpython-313.pyc": new Uint8Array([0xcb, 0x0d, 0xff]),
+    });
+
+    const [skill] = (await loadFolder(path)).skills;
+
+    assert.equal(skill?.files, undefined);
+  });
+
+  it("refuses a folder in skills/ without SKILL.md, since it is not a skill", async () => {
+    const path = await agentDir({ "skills/pdf/fill.py": "print('filled')\n" });
+
+    await assert.rejects(() => loadFolder(path), /pdf has no SKILL\.md, so it is not a skill/);
+  });
+
+  it("refuses a skill written both as a file and as a folder", async () => {
+    const path = await agentDir({
+      "skills/pdf.md": "---\ndescription: Fill\n---\nFill.\n",
+      "skills/pdf/SKILL.md": "---\ndescription: Fill\n---\nFill.\n",
+    });
+
+    await assert.rejects(() => loadFolder(path), /skill "pdf" is both pdf and pdf\.md/);
+  });
+
+  it("refuses a file in a skill folder that is not text", async () => {
+    const path = await agentDir({
+      "skills/pdf/SKILL.md": "---\ndescription: Fill\n---\nFill.\n",
+      "skills/pdf/form.pdf": new Uint8Array([0x25, 0x50, 0xff, 0xfe]),
+    });
+
+    await assert.rejects(() => loadFolder(path), /form\.pdf is not text/);
   });
 
   it("reads each simulations file as a list, in file order", async () => {

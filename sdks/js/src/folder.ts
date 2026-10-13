@@ -18,6 +18,8 @@ export const INSTRUCTIONS_FILE = "instructions.md";
 export const GUARDRAIL_FILE = "guardrail.md";
 
 export const SKILLS_DIR = "skills";
+/** What a skill written as a folder calls the file its frontmatter and instructions are in. */
+export const SKILL_FILE = "SKILL.md";
 export const KNOWLEDGE_DIR = "knowledge";
 export const SIMULATIONS_DIR = "simulations";
 
@@ -57,6 +59,8 @@ const SIMULATION_COUNTS = new Set(["variations", "max_turns"]);
  *   instructions.md
  *   guardrail.md
  *   skills/think.md
+ *   skills/pdf/SKILL.md
+ *   skills/pdf/scripts/fill.py
  *   knowledge/pricing.md
  *   knowledge/urls.yaml
  *   simulations/lunch.yaml
@@ -137,18 +141,89 @@ async function loadSimulations(
   return simulations;
 }
 
+/**
+ * Reads skills/: a skill is either a markdown file, or a folder holding a SKILL.md and
+ * whatever files it comes with, nested as deep as they are.
+ */
 async function loadSkills(path: string): Promise<Skill[]> {
   const entries = await readdir(path, { withFileTypes: true }).catch(() => []);
   const skills: Skill[] = [];
+  const declared = new Map<string, string>();
 
   for (const entry of entries.sort((one, other) => one.name.localeCompare(other.name))) {
-    if (!entry.isFile() || extname(entry.name) !== ".md") {
+    let name = entry.name;
+    let file = join(path, name);
+    if (entry.isDirectory()) {
+      file = join(file, SKILL_FILE);
+    } else if (entry.isFile() && extname(name) === ".md") {
+      name = name.replace(/\.md$/, "");
+    } else {
       continue;
     }
-    const file = join(path, entry.name);
-    skills.push(parseSkill(entry.name.replace(/\.md$/, ""), await readFile(file, "utf8"), file));
+
+    const content = await readFile(file, "utf8").catch(() => undefined);
+    if (content === undefined) {
+      throw new ConfigurationError(
+        `${join(path, entry.name)} has no ${SKILL_FILE}, so it is not a skill`,
+      );
+    }
+    const first = declared.get(name);
+    if (first) {
+      throw new ConfigurationError(
+        `skill ${JSON.stringify(name)} is both ${first} and ${entry.name}`,
+      );
+    }
+    declared.set(name, entry.name);
+
+    const skill = parseSkill(name, content, file);
+    if (entry.isDirectory()) {
+      const files = await loadSkillFiles(join(path, entry.name));
+      if (Object.keys(files).length > 0) {
+        skill.files = files;
+      }
+    }
+    skills.push(skill);
   }
   return skills;
+}
+
+/** Reads every file in a skill folder but its SKILL.md, by slash path relative to the folder. */
+async function loadSkillFiles(path: string): Promise<Record<string, string>> {
+  const files: Record<string, string> = {};
+  const text = new TextDecoder("utf-8", { fatal: true });
+
+  const walk = async (directory: string): Promise<void> => {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries.sort((one, other) => one.name.localeCompare(other.name))) {
+      const file = join(directory, entry.name);
+      if (skipped(entry.name) || file === join(path, SKILL_FILE)) {
+        continue;
+      }
+      if (entry.isDirectory()) {
+        await walk(file);
+        continue;
+      }
+      const raw = await readFile(file);
+      let content: string;
+      try {
+        content = text.decode(raw);
+      } catch {
+        throw new ConfigurationError(`${file} is not text, and a skill brings only text files`);
+      }
+      files[relative(path, file).split(sep).join(posix.sep)] = content;
+    }
+  };
+
+  await walk(path);
+  return files;
+}
+
+/**
+ * Whether a file or folder in a skill folder is left behind: hidden ones such as .DS_Store,
+ * and the __pycache__ that running a skill's Python scripts locally leaves.
+ */
+function skipped(name: string): boolean {
+  return name.startsWith(".") || name === "__pycache__";
 }
 
 /**

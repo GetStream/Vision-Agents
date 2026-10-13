@@ -23,6 +23,11 @@ class CreateResponseRequest:
     Attributes:
         text (str): What to answer, as though it had been said.
         images (list[ImageSource] | Unset):
+        max_output_tokens (int | Unset): Caps this answer, reasoning included, and the replies that finish it after its
+            tools. Omitted keeps the session's.
+        reasoning_effort (str | Unset): How long the model may think before this answer, and the replies that finish it
+            after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or
+            max; any other is a 400. Omitted keeps the session's.
         request_id (str | Unset): Generated and sent by the SDKs, one per question, so a retry of the same question is
             answered once. Required for personal persistent text conversations, and text only, and ignored by a session not
             kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
@@ -33,6 +38,8 @@ class CreateResponseRequest:
 
     text: str
     images: list[ImageSource] | Unset = UNSET
+    max_output_tokens: int | Unset = UNSET
+    reasoning_effort: str | Unset = UNSET
     request_id: str | Unset = UNSET
     videos: list[VideoSource] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -46,6 +53,10 @@ class CreateResponseRequest:
             for images_item_data in self.images:
                 images_item = images_item_data.to_dict()
                 images.append(images_item)
+
+        max_output_tokens = self.max_output_tokens
+
+        reasoning_effort = self.reasoning_effort
 
         request_id = self.request_id
 
@@ -65,6 +76,10 @@ class CreateResponseRequest:
         )
         if images is not UNSET:
             field_dict["images"] = images
+        if max_output_tokens is not UNSET:
+            field_dict["max_output_tokens"] = max_output_tokens
+        if reasoning_effort is not UNSET:
+            field_dict["reasoning_effort"] = reasoning_effort
         if request_id is not UNSET:
             field_dict["request_id"] = request_id
         if videos is not UNSET:
@@ -89,6 +104,10 @@ class CreateResponseRequest:
 
                 images.append(images_item)
 
+        max_output_tokens = d.pop("max_output_tokens", UNSET)
+
+        reasoning_effort = d.pop("reasoning_effort", UNSET)
+
         request_id = d.pop("request_id", UNSET)
 
         _videos = d.pop("videos", UNSET)
@@ -103,6 +122,8 @@ class CreateResponseRequest:
         create_response_request = cls(
             text=text,
             images=images,
+            max_output_tokens=max_output_tokens,
+            reasoning_effort=reasoning_effort,
             request_id=request_id,
             videos=videos,
         )

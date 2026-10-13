@@ -30,6 +30,9 @@ pub struct Skill {
     pub capture_video: bool,
     /// How long the work may run before it is abandoned. Zero leaves the backend's default.
     pub deadline: Duration,
+    /// The rest of a skill kept as a folder, each file's text by its `/` path relative to
+    /// the folder. Scripts among them run in the sandbox.
+    pub files: BTreeMap<String, String>,
 }
 
 impl Skill {
@@ -53,6 +56,7 @@ impl Skill {
             instructions: self.instructions.clone(),
             capture_video: Some(self.capture_video),
             deadline_ms: self.deadline_ms(),
+            files: self.files.clone(),
             ..types::SkillRequest::default()
         }
     }

@@ -10,9 +10,10 @@ use GetStream\VisionAgents\Json;
 
 /**
  * A connector whose tools an agent config may call, under an alias. The binding is the grant:
- * only the tools it lists are offered, each pinned to the schema it was reviewed against, or
- * for a tool a session binding grants by name alone, to the schema its connection first
- * offered it with.
+ * the tools it lists, each pinned to the schema it was reviewed against, or for a tool a
+ * session binding grants by name alone, to the schema its connection first offered it with. Or
+ * tool_patterns, names or path.Match patterns, pinned per connection on first use, on a
+ * session binding or a fixed one. A binding has one or the other.
  */
 final readonly class AgentConnectorBinding
 {
@@ -34,6 +35,9 @@ final readonly class AgentConnectorBinding
         public ?bool $required = null,
         // How long one tool call may take, in milliseconds. Omitted, the session's default applies.
         public ?int $timeoutMs = null,
+        // Names or path.Match patterns of the tools this binding offers, such as search or linear_*. Set, they are th...
+        /** @var list<string>|null */
+        public ?array $toolPatterns = null,
     ) {
     }
 
@@ -51,6 +55,7 @@ final readonly class AgentConnectorBinding
             policy: array_key_exists('policy', $data) && $data['policy'] !== null ? ConnectorBindingPolicy::fromArray(Json::object($data, 'policy')) : null,
             required: array_key_exists('required', $data) && $data['required'] !== null ? Json::bool($data, 'required') : null,
             timeoutMs: array_key_exists('timeout_ms', $data) && $data['timeout_ms'] !== null ? Json::int($data, 'timeout_ms') : null,
+            toolPatterns: array_key_exists('tool_patterns', $data) && $data['tool_patterns'] !== null ? Json::strings($data, 'tool_patterns') : null,
         );
     }
 
@@ -77,6 +82,9 @@ final readonly class AgentConnectorBinding
         }
         if ($this->timeoutMs !== null) {
             $out['timeout_ms'] = $this->timeoutMs;
+        }
+        if ($this->toolPatterns !== null) {
+            $out['tool_patterns'] = $this->toolPatterns;
         }
         return $out;
     }

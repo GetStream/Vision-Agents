@@ -209,6 +209,17 @@ func newRouter(t *testing.T) *router {
 		})
 	})
 
+	mux.HandleFunc("POST /v1/detection", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.DetectionResult{
+			Id: "det_1", Status: acceleration.DetectionStatusCompleted, CostMicros: 750,
+			Detections: []acceleration.DetectedObject{{
+				Label: "package", Confidence: 0.9,
+				Box: acceleration.DetectionBox{XMin: 0.1, YMin: 0.2, XMax: 0.5, YMax: 0.6},
+			}},
+		})
+	})
+
 	mux.HandleFunc("POST /v1/agents/guests/claim", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		answer(w, http.StatusOK, acceleration.ClaimGuestResult{
@@ -1177,6 +1188,37 @@ func TestClaimingNeedsBothTheGuestAndTheAccount(t *testing.T) {
 	}
 	if backend.requests("POST", "/v1/agents/guests/claim") != 0 {
 		t.Error("the router was asked to claim a guest for nobody")
+	}
+}
+
+func TestAnImageComesBackAsTheBoxesFoundInIt(t *testing.T) {
+	backend := newRouter(t)
+
+	found, err := backend.client(t).Detect(t.Context(), []byte{0xff, 0xd8},
+		&acceleration.DetectionOptions{Target: ptr("detection-open"), Classes: &[]string{"package"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found.Detections) != 1 || found.Detections[0].Label != "package" {
+		t.Errorf("found %v", found.Detections)
+	}
+	body := backend.body(t, "POST", "/v1/detection")
+	if body["image"] != "/9g=" {
+		t.Errorf("the image went over as %v", body["image"])
+	}
+	if sent := body["options"].(map[string]any); sent["target"] != "detection-open" {
+		t.Errorf("the options went over as %v", sent)
+	}
+}
+
+func TestDetectingNeedsAnImage(t *testing.T) {
+	backend := newRouter(t)
+
+	if _, err := backend.client(t).Detect(t.Context(), nil, nil); err == nil {
+		t.Error("a detection with nothing to look at was allowed")
+	}
+	if backend.requests("POST", "/v1/detection") != 0 {
+		t.Error("the router was asked to look at nothing")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -147,8 +148,9 @@ func (s *Store) CustomerSimulations(ctx context.Context, customerID string) ([]S
 }
 
 // StartSimulationRun writes a run and all of its conversations at once, so a run that has
-// only just begun already shows how many ways it is going to ask.
-func (s *Store) StartSimulationRun(ctx context.Context, run *SimulationRun, cases []SimulationCase) error {
+// only just begun already shows how many ways it is going to ask. It is held until
+// heldUntil, and RenewSimulationRuns keeps it held after that.
+func (s *Store) StartSimulationRun(ctx context.Context, run *SimulationRun, cases []SimulationCase, heldUntil time.Time) error {
 	if run.CustomerID == "" || run.SimulationID == "" {
 		return stack.Wrap(errors.New("store: a customer and a simulation id are required"))
 	}
@@ -163,6 +165,9 @@ func (s *Store) StartSimulationRun(ctx context.Context, run *SimulationRun, case
 	run.Failed = 0
 	run.StartedAt = time.Now().UTC()
 	run.FinishedAt = nil
+	held := heldUntil.UTC()
+	run.HeldUntil = &held
+	run.StopRequested = false
 
 	for i := range cases {
 		cases[i].ID = newID()
@@ -312,19 +317,56 @@ func (s *Store) SimulationCases(ctx context.Context, runID string) ([]Simulation
 	return cases, nil
 }
 
-// AbandonSimulationRuns marks as errored the runs an older process left saying they were
-// running. Nothing else will finish them: the conversations were held in that process, and
-// it is gone.
-func (s *Store) AbandonSimulationRuns(ctx context.Context, before time.Time) error {
-	now := time.Now().UTC()
+// RenewSimulationRuns holds the runs a router is having until a later time, and returns the
+// ones among them it should stop: asked to from anywhere, or no longer running.
+func (s *Store) RenewSimulationRuns(ctx context.Context, ids []string, until time.Time) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	var renewed []string
+	err := s.db.NewUpdate().Model((*SimulationRun)(nil)).
+		Set("held_until = ?", until.UTC()).
+		Where("id IN (?)", bun.In(ids)).
+		Where("state = ?", SimulationRunning).
+		Where("NOT stop_requested").
+		Returning("id").
+		Scan(ctx, &renewed)
+	if err != nil {
+		return nil, fmt.Errorf("store: renew simulation runs: %w", err)
+	}
+	return slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
+		return slices.Contains(renewed, id)
+	}), nil
+}
+
+// StopSimulationRun asks whichever router is holding a run to stop it.
+func (s *Store) StopSimulationRun(ctx context.Context, customerID, id string) error {
+	_, err := s.db.NewUpdate().Model((*SimulationRun)(nil)).
+		Set("stop_requested = true").
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Where("state = ?", SimulationRunning).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: stop simulation run: %w", err)
+	}
+	return nil
+}
+
+// AbandonSimulationRuns marks as errored the runs whose router stopped renewing them by
+// now. Nothing else will finish them: the conversations were held in that router, and it is
+// gone. A run another router is still renewing is left alone, however old it is.
+func (s *Store) AbandonSimulationRuns(ctx context.Context, now time.Time) error {
+	now = now.UTC()
 
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		_, err := tx.NewUpdate().Model((*SimulationCase)(nil)).
 			Set("state = ?", SimulationCancelled).
 			Set("finished_at = ?", now).
 			Where("state IN (?)", bun.In([]string{Pending, SimulationRunning})).
-			Where("run_id IN (SELECT id FROM simulation_runs WHERE state = ? AND started_at < ?)",
-				SimulationRunning, before).
+			Where("run_id IN (SELECT id FROM simulation_runs WHERE state = ? AND (held_until IS NULL OR held_until < ?))",
+				SimulationRunning, now).
 			Exec(ctx)
 		if err != nil {
 			return err
@@ -332,10 +374,10 @@ func (s *Store) AbandonSimulationRuns(ctx context.Context, before time.Time) err
 
 		_, err = tx.NewUpdate().Model((*SimulationRun)(nil)).
 			Set("state = ?", SimulationErrored).
-			Set("error = ?", "the router restarted while this run was still going").
+			Set("error = ?", "the router having this run stopped while it was still going").
 			Set("finished_at = ?", now).
 			Where("state = ?", SimulationRunning).
-			Where("started_at < ?", before).
+			Where("held_until IS NULL OR held_until < ?", now).
 			Exec(ctx)
 		return err
 	})

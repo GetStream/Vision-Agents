@@ -543,6 +543,37 @@ async fn a_directorys_simulations_and_page_schedules_are_synced_as_declared() {
 }
 
 #[tokio::test]
+async fn a_skill_kept_as_a_folder_is_synced_with_its_files() {
+    let server = Server::start().await;
+    synced(&server);
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "agent.yaml", "name: jean\nsandbox: daytona\n");
+    write(
+        root.path(),
+        "skills/pdf/SKILL.md",
+        "---\ndescription: Fill PDF forms\n---\nFill the form.\n",
+    );
+    write(root.path(), "skills/pdf/reference/forms.md", "# Forms\n");
+    write(
+        root.path(),
+        "skills/pdf/scripts/fill.py",
+        "print('filled')\n",
+    );
+    let agent = Agent::from_folder(root.path())
+        .unwrap()
+        .client(server.client());
+
+    agent.sync().await.unwrap();
+
+    assert_eq!(
+        server.request(Method::POST, "/v1/agents/sync").body["skills"],
+        json!([{"name": "pdf", "description": "Fill PDF forms", "instructions": "Fill the form.",
+                "capture_video": false, "config_id": "",
+                "files": {"reference/forms.md": "# Forms\n", "scripts/fill.py": "print('filled')\n"}}])
+    );
+}
+
+#[tokio::test]
 async fn an_empty_simulations_directory_is_synced_as_none_declared() {
     let server = Server::start().await;
     synced(&server);

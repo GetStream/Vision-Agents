@@ -50,6 +50,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/detectionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -426,6 +427,7 @@ func (s *RouterSuite) SetupSuite() {
 		routing.Search:        streams.Search,
 		routing.DecisionModel: streams.DecisionModel,
 		routing.Image:         streams.Image,
+		routing.Detection:     streams.Detection,
 	}
 
 	if s.channelProvider != nil {
@@ -689,6 +691,9 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("summarising", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Noted.", summarises: true}, nil
 	})
+	reasoning.Register("analysing", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Noted.", analyses: true}, nil
+	})
 	reasoning.Register("counted", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Counted.", usage: llm.Usage{InputTokens: 1000, InputTokensDetails: llm.InputTokensDetails{CachedTokens: 400}, OutputTokens: 20}}, nil
 	})
@@ -777,13 +782,19 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.Require().NoError(err)
 	s.T().Cleanup(imaging.Close)
 
+	detecting, err := detectionrouter.New(detectionrouter.Options{
+		Config: detectionConfig(), Registry: detectorRegistry(), Gate: gate, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(detecting.Close)
+
 	conversing, err := stsrouterStub()
 	s.Require().NoError(err)
 	s.T().Cleanup(conversing.Close)
 
 	return &Streams{
 		STT: transcriber, TTS: speaker, LLM: reasoner, STS: conversing,
-		Search: finding, DecisionModel: judging, Image: imaging,
+		Search: finding, DecisionModel: judging, Image: imaging, Detection: detecting,
 		Transcriptions: transcriptions, Speech: recordings,
 	}
 }
@@ -943,6 +954,11 @@ func (s *RouterSuite) voiceService() *voices.Service {
 // The routing is shared because what differs between two nodes is which conversations
 // they are holding, not what they route to.
 func (s *RouterSuite) otherNode() *httptest.Server {
+	return s.otherNodeDispatching(nil)
+}
+
+// otherNodeDispatching is otherNode with dispatch workers of its own, waiting in workers.
+func (s *RouterSuite) otherNodeDispatching(workers *dispatch.Pool) *httptest.Server {
 	logger := slog.New(slog.DiscardHandler)
 	other := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(other, logger)
@@ -964,12 +980,19 @@ func (s *RouterSuite) otherNode() *httptest.Server {
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = sessions.Shutdown() })
 
+	bus := s.relayBus(logger)
+	var everyWorker *node.Workers
+	if workers != nil {
+		everyWorker = s.deploymentWorkers(workers, directory, bus)
+	}
 	server, err := NewServer(Options{
 		Routers:           s.modalities,
 		Streams:           s.streams,
 		Sessions:          sessions,
-		Relay:             s.relayBus(logger),
+		Relay:             bus,
 		Directory:         directory,
+		Dispatch:          workers,
+		Workers:           everyWorker,
 		Store:             s.store,
 		Configs:           s.configs,
 		Live:              s.live,
@@ -985,6 +1008,15 @@ func (s *RouterSuite) otherNode() *httptest.Server {
 	other.Start()
 	s.T().Cleanup(other.Close)
 	return other
+}
+
+// deploymentWorkers is one node's view of the dispatch workers across the deployment.
+func (s *RouterSuite) deploymentWorkers(workers *dispatch.Pool, directory *node.Directory, bus *relay.Bus) *node.Workers {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.T().Cleanup(cancel)
+	everyWorker, err := node.NewWorkers(ctx, workers, directory, bus, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	return everyWorker
 }
 
 // nodeDirectory is one node's end of the register of which node is running which session.

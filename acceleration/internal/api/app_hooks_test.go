@@ -104,6 +104,18 @@ func (s *AppHooksSuite) TestAMessageHookTheGatewayVouchedForIsDispatched() {
 	s.True(s.reaches(worker.Messages()))
 }
 
+// The node the hook landed on recorded it as delivered before carrying it over, so the node
+// with the worker must not take it for the same delivery arriving twice.
+func (s *AppHooksSuite) TestAMessageHookCarriedToAnotherNodesWorkerIsDispatchedThere() {
+	other := s.otherNodeDispatching(dispatch.NewPool())
+	worker := s.serverClient.on(other).opens("/v1/dispatch")
+	s.await(worker, "ready")
+
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), s.message(s.config(s.customerID()))))
+
+	s.Equal(s.channelID, s.await(worker, "message")["channel_id"])
+}
+
 func (s *AppHooksSuite) TestAnAppsHookIsNeverCheckedWithTheDeploymentSecret() {
 	// The deployment's secret signs only the deployment app's hooks.
 	s.Equal(http.StatusUnauthorized, s.hook(s.appPath("/v1/chat/hooks/stream"),

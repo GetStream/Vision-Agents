@@ -534,6 +534,30 @@ public sealed class AgentTests : IDisposable
     }
 
     [Fact]
+    public async Task ASkillFolderSendsItsFilesAndASingleFileSkillSendsNone()
+    {
+        var root = Path.Combine(_workspace, "agents", "jean");
+        Directory.CreateDirectory(Path.Combine(root, "skills", "pdf", "scripts"));
+        File.WriteAllText(Path.Combine(root, "agent.yaml"), "name: jean\n");
+        File.WriteAllText(Path.Combine(root, "skills", "think.md"), "---\ndescription: Work it out\n---\nReason it through.\n");
+        File.WriteAllText(Path.Combine(root, "skills", "pdf", "SKILL.md"), "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+        File.WriteAllText(Path.Combine(root, "skills", "pdf", "scripts", "fill.py"), "print('filled')\n");
+
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sync", 200, new { unchanged = false, config = Fixtures.Config("jean", "cfg-1") });
+        using var client = Fixtures.Client(router);
+        await using var agent = new Agent(new AgentOptions { Config = root, Client = client });
+
+        await agent.SyncAsync(TestContext.Current.CancellationToken);
+
+        var skills = router.Only("POST", "/v1/agents/sync").Body!["skills"]!.AsArray();
+        Assert.Equal(["pdf", "think"], skills.Select(skill => skill.Text("name")));
+        Assert.Equal("print('filled')\n", skills[0]!["files"].Text("scripts/fill.py"));
+        Assert.Single(skills[0]!["files"]!.AsObject());
+        Assert.Null(skills[1]!["files"]);
+    }
+
+    [Fact]
     public async Task APageAddedToTheKnowledgeBaseIsWaitedFor()
     {
         await using var router = await TestRouter.StartAsync();

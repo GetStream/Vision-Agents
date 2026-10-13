@@ -113,6 +113,7 @@ support/
   instructions.md
   guardrail.md
   skills/refunds.md   frontmatter: description, deadline, capture_video
+  skills/pdf/SKILL.md the same, beside the text files the skill comes with (scripts/, reference/, ...)
   knowledge/*.md
   knowledge/urls.yaml pages to keep the knowledge base filled from, each with an optional refresh_hours
   simulations/*.yaml  lists of simulations: name, scenario, assertion, variations, ...

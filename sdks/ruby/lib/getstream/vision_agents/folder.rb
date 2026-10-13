@@ -16,8 +16,11 @@ module GetStream
     # @!attribute deadline
     #   How long the work may run before it is abandoned, in seconds. nil leaves the
     #   backend's default.
-    Skill = Data.define(:name, :description, :instructions, :capture_video, :deadline) do
-      def initialize(name:, description:, instructions:, capture_video: false, deadline: nil)
+    # @!attribute files
+    #   What a skill folder brings beside its SKILL.md: slash path relative to the folder,
+    #   to the file's text.
+    Skill = Data.define(:name, :description, :instructions, :capture_video, :deadline, :files) do
+      def initialize(name:, description:, instructions:, capture_video: false, deadline: nil, files: {})
         super
       end
 
@@ -26,6 +29,7 @@ module GetStream
         rendered = { name: name, description: description, instructions: instructions,
                      capture_video: capture_video }
         rendered[:deadline_ms] = (deadline * 1000).to_i if deadline&.positive?
+        rendered[:files] = files unless files.empty?
         rendered
       end
     end
@@ -112,6 +116,7 @@ module GetStream
     #     instructions.md
     #     guardrail.md
     #     skills/think.md
+    #     skills/pdf/SKILL.md a skill as a folder, with the files it brings beside it
     #     knowledge/pricing.md
     #     knowledge/urls.yaml
     #     simulations/lunch.yaml
@@ -125,6 +130,7 @@ module GetStream
       INSTRUCTIONS_FILE = "instructions.md"
       GUARDRAIL_FILE = "guardrail.md"
       SKILLS_DIR = "skills"
+      SKILL_FILE = "SKILL.md"
       KNOWLEDGE_DIR = "knowledge"
       SIMULATIONS_DIR = "simulations"
       URLS_FILE = "urls.yaml"
@@ -218,6 +224,7 @@ module GetStream
           digest << "\nskill:#{skill.name}\n#{skill.description}\n#{skill.instructions}" \
                     "#{skill.capture_video ? "True" : "False"}\n"
           digest << seconds(skill.deadline) if skill.deadline&.positive?
+          skill.files.sort.each { |path, text| digest << "\nfile:#{path}\n#{text}" }
         end
         knowledge.sort_by(&:source).each do |document|
           digest << "\nknowledge:#{document.source}\n#{document.text}"
@@ -394,18 +401,59 @@ module GetStream
         File.file?(full) ? File.read(full).strip : ""
       end
 
+      # A skill is either a markdown file, or a folder holding a SKILL.md and whatever files
+      # it comes with, nested as deep as they are.
       def load_skills
         directory = File.join(@path, SKILLS_DIR)
         return [] unless File.directory?(directory)
 
+        declared = {}
         Dir.children(directory).sort.filter_map do |entry|
-          file = File.join(directory, entry)
-          next unless File.file?(file) && File.extname(entry) == ".md"
+          folder = File.join(directory, entry)
+          if File.directory?(folder)
+            name = entry
+            file = File.join(folder, SKILL_FILE)
+            raise ConfigurationError, "#{folder} has no #{SKILL_FILE}, so it is not a skill" unless File.file?(file)
+          elsif File.file?(folder) && File.extname(entry) == ".md"
+            name = File.basename(entry, ".md")
+            file = folder
+          else
+            next
+          end
+          raise ConfigurationError, "skill #{name.inspect} is both #{declared[name]} and #{entry}" if declared.key?(name)
 
-          Folder.parse_skill(File.basename(entry, ".md"), File.read(file))
-        rescue ConfigurationError => e
-          raise ConfigurationError, "#{file}: #{e.message}"
+          declared[name] = entry
+          skill = begin
+            Folder.parse_skill(name, File.read(file))
+          rescue ConfigurationError => e
+            raise ConfigurationError, "#{file}: #{e.message}"
+          end
+          file == folder ? skill : skill.with(files: skill_files(folder))
         end
+      end
+
+      # Every file in a skill folder but its SKILL.md, by slash path relative to the folder.
+      def skill_files(folder, prefix = "")
+        Dir.children(File.join(folder, prefix)).sort.each_with_object({}) do |entry, files|
+          next if skipped?(entry)
+
+          relative = prefix.empty? ? entry : "#{prefix}/#{entry}"
+          file = File.join(folder, relative)
+          if File.directory?(file)
+            files.merge!(skill_files(folder, relative))
+          elsif relative != SKILL_FILE
+            text = File.binread(file).force_encoding(Encoding::UTF_8)
+            raise ConfigurationError, "#{file} is not text, and a skill brings only text files" unless text.valid_encoding?
+
+            files[relative] = text
+          end
+        end
+      end
+
+      # Hidden files such as .DS_Store, and the __pycache__ running a skill's Python scripts
+      # locally leaves, are not part of a skill.
+      def skipped?(name)
+        name.start_with?(".") || name == "__pycache__"
       end
 
       def load_knowledge

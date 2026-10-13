@@ -20,6 +20,8 @@ pub const AGENT_STAMP: &str = ".agent_sync";
 pub const INSTRUCTIONS_FILE: &str = "instructions.md";
 pub const GUARDRAIL_FILE: &str = "guardrail.md";
 pub const SKILLS_DIR: &str = "skills";
+/// What a skill kept as a folder calls its frontmatter and instructions.
+pub const SKILL_FILE: &str = "SKILL.md";
 pub const KNOWLEDGE_DIR: &str = "knowledge";
 pub const SIMULATIONS_DIR: &str = "simulations";
 /// The pages a knowledge directory is kept filled from, as opposed to the files it is
@@ -142,10 +144,15 @@ pub struct Settings {
 ///   instructions.md
 ///   guardrail.md
 ///   skills/think.md
+///   skills/pdf/SKILL.md
+///   skills/pdf/scripts/fill.py
 ///   knowledge/pricing.md
 ///   knowledge/urls.yaml
 ///   simulations/lunch.yaml
 /// ```
+///
+/// A skill kept as a folder has its SKILL.md for frontmatter and instructions, and brings
+/// the text files beside it; scripts among them run in the sandbox.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Folder {
     /// The directory this was read from.
@@ -305,6 +312,10 @@ pub(crate) fn fingerprint(
                 seconds.push_str(".0");
             }
             hasher.update(seconds);
+        }
+        // Written only when there are some, so a skill without files keeps its fingerprint.
+        for (path, content) in &skill.files {
+            hasher.update(format!("\nfile:{path}\n{content}"));
         }
     }
 
@@ -588,33 +599,98 @@ fn scalar(value: &Yaml) -> Option<String> {
     }
 }
 
+/// Reads skills/: a skill is either a markdown file, or a folder holding a SKILL.md and
+/// whatever files it comes with, nested as deep as they are.
 fn load_skills(path: &Path) -> Result<Vec<Skill>> {
     let entries = match std::fs::read_dir(path) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(Error::io(path, error)),
     };
-    let mut files: Vec<PathBuf> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|file| {
-            file.is_file() && file.extension().is_some_and(|extension| extension == "md")
-        })
-        .collect();
-    files.sort();
+    let mut entries: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    entries.sort();
 
-    files
-        .into_iter()
-        .map(|file| {
-            let content =
-                std::fs::read_to_string(&file).map_err(|error| Error::io(&file, error))?;
-            let stem = file
+    let mut skills = Vec::new();
+    let mut declared: BTreeMap<String, String> = BTreeMap::new();
+    for entry in entries {
+        let entry_name = entry
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (name, file) = if entry.is_dir() {
+            let file = entry.join(SKILL_FILE);
+            if !file.is_file() {
+                return Err(Error::folder(
+                    &entry,
+                    format!("has no {SKILL_FILE}, so it is not a skill"),
+                ));
+            }
+            (entry_name.clone(), file)
+        } else if entry.is_file() && entry.extension().is_some_and(|extension| extension == "md") {
+            let stem = entry
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            parse_skill(stem, &content).map_err(|message| Error::folder(&file, message))
-        })
-        .collect()
+            (stem, entry.clone())
+        } else {
+            continue;
+        };
+        if let Some(first) = declared.get(&name) {
+            return Err(Error::folder(
+                path,
+                format!("skill {name:?} is both {first} and {entry_name}"),
+            ));
+        }
+        declared.insert(name.clone(), entry_name);
+
+        let content = std::fs::read_to_string(&file).map_err(|error| Error::io(&file, error))?;
+        let mut skill =
+            parse_skill(name, &content).map_err(|message| Error::folder(&file, message))?;
+        if entry.is_dir() {
+            load_skill_files(&entry, &entry, &mut skill.files)?;
+        }
+        skills.push(skill);
+    }
+    Ok(skills)
+}
+
+/// Reads every file in a skill folder but its SKILL.md, by `/` path relative to the folder.
+fn load_skill_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut BTreeMap<String, String>,
+) -> Result<()> {
+    let entries = std::fs::read_dir(directory).map_err(|error| Error::io(directory, error))?;
+    for entry in entries.flatten() {
+        let file = entry.path();
+        if skipped(&entry.file_name().to_string_lossy()) {
+            continue;
+        }
+        if file.is_dir() {
+            load_skill_files(root, &file, files)?;
+            continue;
+        }
+        if file == root.join(SKILL_FILE) {
+            continue;
+        }
+        let content = std::fs::read(&file).map_err(|error| Error::io(&file, error))?;
+        let text = String::from_utf8(content)
+            .map_err(|_| Error::folder(&file, "not text, and a skill brings only text files"))?;
+        let relative = file.strip_prefix(root).unwrap_or(&file);
+        let relative = relative
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        files.insert(relative, text);
+    }
+    Ok(())
+}
+
+/// Whether a file or folder in a skill folder is left behind: hidden ones such as
+/// .DS_Store, and the __pycache__ running a skill's Python scripts locally leaves.
+fn skipped(name: &str) -> bool {
+    name.starts_with('.') || name == "__pycache__"
 }
 
 /// Reads a skill file: frontmatter between `---` lines, then the instructions.

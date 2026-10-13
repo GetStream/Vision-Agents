@@ -285,6 +285,42 @@ func (s *ServerSuite) TestActivityReportsWhoUsedTheAgentsAndHowMuch() {
 	s.Zero(buckets[0].Calls, "nobody rang anybody")
 }
 
+func (s *ServerSuite) TestAgentStatsReportThePeakAndTheToolsCalled() {
+	ctx := context.Background()
+	session := &store.AgentSession{
+		ID:         s.utils.uuid(),
+		CustomerID: s.customerID(),
+		AgentName:  "docs",
+		State:      store.SessionRunning,
+		CreatedAt:  s.base.Add(time.Minute),
+	}
+	s.Require().NoError(s.store.SaveSession(ctx, session))
+	responseID := s.utils.uuid()
+	s.Require().NoError(s.store.StartResponse(ctx, &store.AgentResponse{
+		ID:         responseID,
+		SessionID:  session.ID,
+		CustomerID: s.customerID(),
+		CreatedAt:  s.base.Add(2 * time.Minute),
+	}))
+	s.Require().NoError(s.store.AppendResponseItems(ctx, []store.AgentResponseItem{
+		{ResponseID: responseID, Ordinal: 0, SessionID: session.ID, Kind: store.ItemToolCall,
+			ToolName: "lookup_order", Payload: map[string]any{"call_id": "c1"}, At: s.base.Add(2 * time.Minute)},
+		{ResponseID: responseID, Ordinal: 1, SessionID: session.ID, Kind: store.ItemToolResult,
+			ToolName: "lookup_order", Text: "shipped", Payload: map[string]any{"call_id": "c1"},
+			At: s.base.Add(2*time.Minute + 250*time.Millisecond)},
+	}))
+
+	var stats AgentStats
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/stats/agents?from="+s.from()+"&to="+s.to(24*time.Hour), nil, &stats))
+	s.EqualValues(1, stats.PeakConcurrentSessions)
+	s.EqualValues(1, stats.ToolCalls.Calls)
+	s.Require().Len(stats.Tools, 1)
+	s.Equal("lookup_order", stats.Tools[0].Tool)
+	s.Require().NotNil(stats.Tools[0].AvgMs)
+	s.InDelta(250, *stats.Tools[0].AvgMs, 0.01)
+}
+
 func (s *ServerSuite) TestProvidersReportLiveHealth() {
 	s.Require().NoError(s.live.RecordRequest(context.Background(), live.Usage{
 		Modality: "stt", CustomerID: s.customerID(),

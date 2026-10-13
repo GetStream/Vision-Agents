@@ -299,6 +299,27 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/calls/reviews/analysis": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * What caused the calls the agents handled badly
+         * @description Reads the latest 100 calls in the window whose review scored them 3 or lower, and asks a model to group them by cause, each with the fix to make and the calls it explains.
+         *     Costs one language model call, billed as any other, and keeps nothing: ask again for a fresh answer.
+         */
+        readonly post: operations["analyzeReviews"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/campaigns": {
         readonly parameters: {
             readonly query?: never;
@@ -2685,6 +2706,28 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/detection": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Find objects in one image, and return their boxes
+         * @description Routed like image generation: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting the images the vendor billed. Every box comes back as fractions of the image, whatever the vendor sent.
+         *     detection-fast finds COCO's 80 classes quickly; detection-open finds whatever is named in classes; detection-faces finds faces with an embedding each. A confidence floor or embeddings narrow the candidates to the models that declared them, so they are honoured or the request is a 400.
+         *     A detection that got as far as a provider answers 200 whether it found anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. Nothing is stored, so the id cannot be fetched again.
+         */
+        readonly post: operations["detect"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/dispatch": {
         readonly parameters: {
             readonly query?: never;
@@ -3479,6 +3522,27 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/stats/agents": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * How the calling customer's agents ran, across all of them
+         * @description The most agents that were running at once, and which tools they called: how often, how much each call put in front of the model and how long it took.
+         *     One figure for the whole window rather than a row per bucket, because neither a peak nor a percentile can be summed out of smaller ones.
+         */
+        readonly get: operations["getAgentStats"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/stats/rollup": {
         readonly parameters: {
             readonly query?: never;
@@ -3987,10 +4051,40 @@ export type components = {
             /** @description Pass as `cursor` for the next page. Absent on the last one. */
             readonly next_cursor?: string;
         };
+        readonly AgentStats: {
+            /**
+             * Format: date-time
+             * @description When that peak was first reached. Null when no session was open in the window.
+             */
+            readonly peak_at: string | null;
+            /**
+             * Format: int64
+             * @description The most sessions open at the same time, each one an agent running. A session still open counts up to now.
+             */
+            readonly peak_concurrent_sessions: number;
+            /** @description Every tool call in the window, as one. Its tool is empty. */
+            readonly tool_calls: components["schemas"]["ToolStats"];
+            /** @description One row per tool, most called first. */
+            readonly tools: readonly components["schemas"]["ToolStats"][];
+        };
         /** @description How an agent is offered its plugin, MCP server and connector tools. */
         readonly AgentTools: {
             /** @description Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays. */
             readonly progressive?: boolean;
+        };
+        readonly AnalyzeReviewsRequest: {
+            /**
+             * Format: date-time
+             * @description Only calls that started at or after this, inclusive.
+             */
+            readonly from: string;
+            /** @description The model that analyses, a "provider/model" name or a shortcut. Left out, multilingual-high-accuracy. */
+            readonly target?: string;
+            /**
+             * Format: date-time
+             * @description Only calls that started before this, exclusive.
+             */
+            readonly to: string;
         };
         /** @description What the router does for the calling app. It never carries a secret. */
         readonly AppSettings: {
@@ -5455,6 +5549,98 @@ export type components = {
          * @enum {string}
          */
         readonly DecisionKind: "ask" | "wait" | "ignore" | "answer" | "queue" | "interrupt" | "shorten" | "backchannel" | "supersede" | "compact" | "delegate" | "settle" | "fail";
+        readonly DetectedObject: {
+            readonly box: components["schemas"]["DetectionBox"];
+            /**
+             * Format: double
+             * @description The model's score from 0 to 1. A model that scores nothing, such as Moondream, reports 1.
+             */
+            readonly confidence: number;
+            /** @description A vector describing what is in the box. Present only when embeddings was asked for. */
+            readonly embedding?: readonly number[];
+            /** @example person */
+            readonly label: string;
+        };
+        /** @description A rectangle as fractions of the image: 0,0 is the top left corner and 1,1 the bottom right. */
+        readonly DetectionBox: {
+            /** Format: double */
+            readonly x_max: number;
+            /** Format: double */
+            readonly x_min: number;
+            /** Format: double */
+            readonly y_max: number;
+            /** Format: double */
+            readonly y_min: number;
+        };
+        /**
+         * @description Why a detection found nothing, absent when it completed. unsupported_option is a class, setting or overwrite no candidate could honour; provider_failed anything else a provider did wrong; timeout the 30 seconds running out; cancelled the caller hanging up.
+         * @enum {string}
+         */
+        readonly DetectionErrorCode: "unsupported_option" | "provider_failed" | "timeout" | "cancelled";
+        /** @description Where to look and what to keep. */
+        readonly DetectionOptions: {
+            /** @description The labels to keep. An open-vocabulary model (detection-open) looks for these words and has to be given at least one; a fixed-class model returns only these of what it found. Matched without regard to case. */
+            readonly classes?: readonly string[];
+            /** @description Return a vector on every box, for matching what was found against what was seen before. Only a model that computes one is asked. */
+            readonly embeddings?: boolean;
+            /**
+             * Format: double
+             * @description Drop boxes scored below this. Only a model that scores its boxes is asked.
+             */
+            readonly min_confidence?: number;
+            /** @description Settings for one provider that the options above have no word for, keyed by provider. roboflow takes workspace and workflow_id, or specification, for the roboflow/workflow model. An overwrite for a provider that is not a candidate is refused. */
+            readonly overwrites?: {
+                readonly [key: string]: unknown;
+            };
+            /** @description A priority list of where to try, in the order given, which wins over target when it holds anything. */
+            readonly providers?: readonly string[];
+            /**
+             * @description A provider/model or a capability shortcut. Defaults to detection-fast.
+             * @example detection-open
+             */
+            readonly target?: string;
+        };
+        readonly DetectionRequest: {
+            /**
+             * Format: byte
+             * @description The image, base64. A JPEG or PNG of at most 4 MB and 4096 pixels a side; a video frame scaled to 1024 wide is plenty.
+             */
+            readonly image: string;
+            readonly options?: components["schemas"]["DetectionOptions"];
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+        };
+        readonly DetectionResult: {
+            /**
+             * Format: int64
+             * @description Millionths of a dollar, priced per image the vendor billed. Zero when it failed.
+             */
+            readonly cost_micros: number;
+            /** @description What was found. Empty when nothing was, or when it failed. */
+            readonly detections: readonly components["schemas"]["DetectedObject"][];
+            /** @description What went wrong, in words. Absent when the detection completed. */
+            readonly error?: string;
+            readonly error_code?: components["schemas"]["DetectionErrorCode"];
+            /**
+             * @description This response's own id, for logs. Nothing is stored under it.
+             * @example det_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+             */
+            readonly id: string;
+            /** @example moondream3-preview */
+            readonly model?: string;
+            /**
+             * @description Who looked, or who failed to. Absent when nothing got as far as a provider.
+             * @example moondream
+             */
+            readonly provider?: string;
+            readonly status: components["schemas"]["DetectionStatus"];
+        };
+        /**
+         * @description Whether the image was looked at. A failed detection says why in error_code and error.
+         * @enum {string}
+         */
+        readonly DetectionStatus: "completed" | "failed";
         /**
          * @description Whether this kind of work is left to the customer's own dispatch worker.
          * @enum {string}
@@ -5976,10 +6162,10 @@ export type components = {
         };
         readonly MessageContent: string | readonly components["schemas"]["ContentPart"][];
         /**
-         * @description What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+         * @description What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
          * @enum {string}
          */
-        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "decision_model" | "image" | "memory" | "knowledge" | "phone";
+        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "decision_model" | "image" | "detection" | "memory" | "knowledge" | "phone";
         readonly ModelCallTiming: {
             /**
              * Format: double
@@ -6498,6 +6684,25 @@ export type components = {
          * @enum {string}
          */
         readonly ReviewActor: "app" | "staff" | "vendor";
+        readonly ReviewAnalysis: {
+            /**
+             * Format: int64
+             * @description How many badly reviewed calls were read. Zero means there were none, and nothing was asked.
+             */
+            readonly calls_read: number;
+            readonly causes: readonly components["schemas"]["ReviewCause"][];
+            /** @description The whole, in two sentences. */
+            readonly summary: string;
+        };
+        readonly ReviewCause: {
+            /** @description The calls it explains, which are the sessions that ran them. Only ids that were read. */
+            readonly call_ids: readonly string[];
+            /** @description What went wrong in those calls. */
+            readonly explanation: string;
+            /** @description What to change in the agent. */
+            readonly fix: string;
+            readonly title: string;
+        };
         /**
          * @description approve sends the use case to the vendor; request_changes hands it back to the app to edit; reject ends it.
          * @enum {string}
@@ -7098,6 +7303,8 @@ export type components = {
             /** Format: int64 */
             readonly deadline_ms?: number;
             readonly description: string;
+            /** @description The files the skill came with, by path relative to its folder. */
+            readonly file_paths?: readonly string[];
             readonly id: string;
             readonly instructions: string;
             readonly name: string;
@@ -7116,6 +7323,10 @@ export type components = {
             readonly deadline_ms?: number;
             /** @description The one line the fast model sees. */
             readonly description: string;
+            /** @description The rest of the skill's folder beside SKILL.md, each file's text by its path relative to the folder, such as reference/forms.md or scripts/fill.py. The model reads them one at a time when it needs them. A file that is not .md, .mdx or .txt is a script, run in the sandbox, so a skill with one belongs only to an agent with a sandbox. At most 64 files and 1 MB in all. */
+            readonly files?: {
+                readonly [key: string]: string;
+            };
             /** @description The full prompt, which only the subagent sees. */
             readonly instructions: string;
             /** @description How the config names it, which is unique among that config's own skills. */
@@ -7682,6 +7893,28 @@ export type components = {
             readonly turn_id?: string;
             /** @enum {string} */
             readonly type: "tool_result";
+        };
+        readonly ToolStats: {
+            /**
+             * Format: double
+             * @description From the call starting to its result. Null when none was timed.
+             */
+            readonly avg_ms: number | null;
+            /**
+             * Format: double
+             * @description What a call put in front of the model, its arguments and its result, estimated at four characters a token.
+             */
+            readonly avg_tokens: number;
+            /** Format: int64 */
+            readonly calls: number;
+            /**
+             * Format: int64
+             * @description Calls that ended in an error.
+             */
+            readonly failed: number;
+            /** Format: double */
+            readonly p99_ms: number | null;
+            readonly tool: string;
         };
         /** @description Something the recording named, for the providers that pick them out. */
         readonly TranscriptEntity: {
@@ -8488,6 +8721,8 @@ export interface operations {
                 /** @description Only calls that started at or after this, inclusive. */
                 readonly from?: string;
                 readonly limit?: number;
+                /** @description Only reviewed calls scored at or below this, from 1 to 5. */
+                readonly max_review_score?: number;
                 /** @description Only calls that have not ended. */
                 readonly running?: boolean;
                 /** @description Only calls that started before this, exclusive. */
@@ -8687,6 +8922,43 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly analyzeReviews: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AnalyzeReviewsRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The causes, the one behind the most calls first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ReviewAnalysis"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            /** @description Service Unavailable */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly listCampaigns: {
@@ -13561,6 +13833,35 @@ export interface operations {
             };
         };
     };
+    readonly detect: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DetectionRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description What was found, or why nothing was */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DetectionResult"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
     readonly dispatchCalls: {
         readonly parameters: {
             readonly query?: {
@@ -15151,6 +15452,35 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["ActivityBucket"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getAgentStats: {
+        readonly parameters: {
+            readonly query: {
+                /** @description Start of the window, inclusive. */
+                readonly from: string;
+                /** @description End of the window, exclusive. */
+                readonly to: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The window's figures */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentStats"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

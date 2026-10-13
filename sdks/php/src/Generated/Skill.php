@@ -21,6 +21,9 @@ final readonly class Skill
         // Capture task-scoped visual evidence before reasoning.
         public ?bool $captureVideo = null,
         public ?int $deadlineMs = null,
+        // The files the skill came with, by path relative to its folder.
+        /** @var list<string>|null */
+        public ?array $filePaths = null,
     ) {
     }
 
@@ -39,6 +42,7 @@ final readonly class Skill
             updatedAt: Json::date($data, 'updated_at'),
             captureVideo: array_key_exists('capture_video', $data) && $data['capture_video'] !== null ? Json::bool($data, 'capture_video') : null,
             deadlineMs: array_key_exists('deadline_ms', $data) && $data['deadline_ms'] !== null ? Json::int($data, 'deadline_ms') : null,
+            filePaths: array_key_exists('file_paths', $data) && $data['file_paths'] !== null ? Json::strings($data, 'file_paths') : null,
         );
     }
 
@@ -62,6 +66,9 @@ final readonly class Skill
         }
         if ($this->deadlineMs !== null) {
             $out['deadline_ms'] = $this->deadlineMs;
+        }
+        if ($this->filePaths !== null) {
+            $out['file_paths'] = $this->filePaths;
         }
         return $out;
     }

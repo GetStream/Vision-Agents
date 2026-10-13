@@ -21,22 +21,9 @@ final readonly class StreamSettings
         public StreamTypeState|string $channelType,
         public StreamTenancy|string $tenancy,
         public StreamWritesInto|string $writesInto,
-        // Whether guests may be made in the registered app.
-        public ?bool $allowGuests = null,
         // When Stream was asked. Absent when it could not be, and the types are then unknown. Answers are reused for...
         public ?\DateTimeImmutable $checkedAt = null,
-        // The registered app's keys, oldest first. No secret is ever read back.
-        /** @var list<StreamKeyState>|null */
-        public ?array $keys = null,
-        // The key tokens are minted with.
-        public ?string $primaryKey = null,
-        // The registration's revision, 0 for an app that registered none. A write names the one it read.
-        public ?int $revision = null,
-        // Whether the router acts in the registered app. Absent for an app that registered none.
-        public StreamAppState|string|null $state = null,
-        // Why the router stopped acting in the app, for one that is blocked.
-        public ?string $stateReason = null,
-        // The registered app's own id.
+        // The calling app's own Stream app id, in app mode, when its work is written there.
         public ?int $streamAppId = null,
     ) {
     }
@@ -51,13 +38,7 @@ final readonly class StreamSettings
             channelType: Json::enum($data, 'channel_type', StreamTypeState::class),
             tenancy: Json::enum($data, 'tenancy', StreamTenancy::class),
             writesInto: Json::enum($data, 'writes_into', StreamWritesInto::class),
-            allowGuests: array_key_exists('allow_guests', $data) && $data['allow_guests'] !== null ? Json::bool($data, 'allow_guests') : null,
             checkedAt: array_key_exists('checked_at', $data) && $data['checked_at'] !== null ? Json::date($data, 'checked_at') : null,
-            keys: array_key_exists('keys', $data) && $data['keys'] !== null ? array_map(StreamKeyState::fromArray(...), Json::objects($data, 'keys')) : null,
-            primaryKey: array_key_exists('primary_key', $data) && $data['primary_key'] !== null ? Json::string($data, 'primary_key') : null,
-            revision: array_key_exists('revision', $data) && $data['revision'] !== null ? Json::int($data, 'revision') : null,
-            state: array_key_exists('state', $data) && $data['state'] !== null ? Json::enum($data, 'state', StreamAppState::class) : null,
-            stateReason: array_key_exists('state_reason', $data) && $data['state_reason'] !== null ? Json::string($data, 'state_reason') : null,
             streamAppId: array_key_exists('stream_app_id', $data) && $data['stream_app_id'] !== null ? Json::int($data, 'stream_app_id') : null,
         );
     }
@@ -74,26 +55,8 @@ final readonly class StreamSettings
         $out['channel_type'] = Json::enumValue($this->channelType);
         $out['tenancy'] = Json::enumValue($this->tenancy);
         $out['writes_into'] = Json::enumValue($this->writesInto);
-        if ($this->allowGuests !== null) {
-            $out['allow_guests'] = $this->allowGuests;
-        }
         if ($this->checkedAt !== null) {
             $out['checked_at'] = Json::dateValue($this->checkedAt);
-        }
-        if ($this->keys !== null) {
-            $out['keys'] = array_map(static fn (StreamKeyState $each): array => $each->toArray(), $this->keys);
-        }
-        if ($this->primaryKey !== null) {
-            $out['primary_key'] = $this->primaryKey;
-        }
-        if ($this->revision !== null) {
-            $out['revision'] = $this->revision;
-        }
-        if ($this->state !== null) {
-            $out['state'] = Json::enumValue($this->state);
-        }
-        if ($this->stateReason !== null) {
-            $out['state_reason'] = $this->stateReason;
         }
         if ($this->streamAppId !== null) {
             $out['stream_app_id'] = $this->streamAppId;

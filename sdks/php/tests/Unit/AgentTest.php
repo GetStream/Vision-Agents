@@ -275,6 +275,21 @@ final class AgentTest extends TestCase
         self::assertSame('02a7b2c8428f31e3a2b93ca2f5a6ec70', Folder::load($this->dir)->stamp());
     }
 
+    public function testSyncSendsASkillFoldersFiles(): void
+    {
+        $this->folder();
+        mkdir($this->dir . '/skills/pdf/scripts', 0o777, true);
+        file_put_contents($this->dir . '/skills/pdf/SKILL.md', "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+        file_put_contents($this->dir . '/skills/pdf/scripts/fill.py', "print('filled')\n");
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        [$pdf, $think] = Json::objects($this->router->to('POST', '/v1/agents/sync')[0]->json(), 'skills');
+        self::assertSame(['scripts/fill.py' => "print('filled')\n"], $pdf['files']);
+        self::assertArrayNotHasKey('files', $think, 'a skill without files sends none');
+    }
+
     public function testSyncCarriesKnowledgeUrlsInTheSameRequest(): void
     {
         $this->folder();

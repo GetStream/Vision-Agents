@@ -142,6 +142,9 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	if !s.acting(r.Context(), origin, getstream.EventTypeCallSessionStarted, payload) {
 		return
 	}
+	if s.forwardedToWorkers(r, payload, number.CustomerID) {
+		return
+	}
 
 	call := dispatch.Call{
 		CallID:       callID,

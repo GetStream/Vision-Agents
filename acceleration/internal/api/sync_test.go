@@ -649,3 +649,94 @@ func (s *SyncSuite) TestASyncAddingAPluginABindingIsCalledIsRefused() {
 	s.Contains(failure, "plugin")
 	s.Equal("v1", value(s.configsNamed("support")[0].SyncHash))
 }
+
+// pdfSkill is a skill synced from a folder that brings a reference and a script.
+func pdfSkill() []map[string]any {
+	return []map[string]any{{
+		"config_id": "", "name": "pdf", "description": "fill PDF forms", "instructions": "Fill the form.",
+		"files": map[string]string{"reference/forms.md": "# Forms", "scripts/fill.py": "print('filled')"},
+	}}
+}
+
+func (s *SyncSuite) TestASkillThatRunsScriptsIsRefusedForAnAgentWithoutASandbox() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "forms", "hash": "v1", "skills": pdfSkill(),
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `skill "pdf" runs scripts (scripts/fill.py), so the agent needs a sandbox`)
+	s.Empty(s.configsNamed("forms"), "nothing is written when a skill cannot run")
+}
+
+func (s *SyncSuite) TestASkillThatRunsScriptsSyncsForAnAgentWithASandbox() {
+	result := s.sync(map[string]any{
+		"name": "forms", "hash": "v1", "sandbox": "daytona", "skills": pdfSkill(),
+	})
+
+	skill := s.skillNamed(result.Config.Id, "pdf")
+	s.Equal([]string{"reference/forms.md", "scripts/fill.py"}, value(skill.FilePaths))
+}
+
+func (s *SyncSuite) TestASandboxStoredBeforeStillCountsForASkillsScripts() {
+	s.sync(map[string]any{"name": "forms", "hash": "v1", "sandbox": "daytona"})
+
+	result := s.sync(map[string]any{"name": "forms", "hash": "v2", "skills": pdfSkill()})
+
+	s.Equal([]string{"pdf"}, value(result.Config.Skills))
+}
+
+func (s *SyncSuite) TestASkillWithOnlyReferencesNeedsNoSandbox() {
+	result := s.sync(map[string]any{
+		"name": "forms", "hash": "v1",
+		"skills": []map[string]any{{
+			"config_id": "", "name": "pdf", "description": "fill PDF forms", "instructions": "Fill the form.",
+			"files": map[string]string{"reference/forms.md": "# Forms"},
+		}},
+	})
+
+	s.Equal([]string{"reference/forms.md"}, value(s.skillNamed(result.Config.Id, "pdf").FilePaths))
+}
+
+func (s *SyncSuite) TestASkillFileOutsideItsFolderIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "forms", "hash": "v1", "sandbox": "daytona",
+		"skills": []map[string]any{{
+			"config_id": "", "name": "pdf", "description": "fill PDF forms", "instructions": "Fill the form.",
+			"files": map[string]string{"../secrets.py": "print('x')"},
+		}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "not a path inside the skill's folder")
+}
+
+func (s *SyncSuite) TestASkillWithScriptsCannotBeAddedToAnAgentWithoutASandbox() {
+	result := s.sync(map[string]any{"name": "forms", "hash": "v1"})
+
+	status, failure := s.dashboard().failure(http.MethodPost, "/v1/agents/skills", map[string]any{
+		"config_id": result.Config.Id, "name": "pdf", "description": "fill PDF forms",
+		"instructions": "Fill the form.", "files": map[string]string{"scripts/fill.py": "print('filled')"},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "needs a sandbox")
+}
+
+func (s *SyncSuite) TestASessionFromAnAgentWhoseSkillRunsScriptsWithoutASandboxDoesNotStart() {
+	// Every write refuses this, so it is put straight into the store, as a config older
+	// than the check or edited by hand would be.
+	result := s.sync(map[string]any{
+		"name": "forms", "hash": "v1", "mode": "text", "llm": "en-low-latency",
+		"sandbox": "daytona", "skills": pdfSkill(),
+	})
+	config, err := s.configs.AgentConfig(context.Background(), s.customerID(), result.Config.Id)
+	s.Require().NoError(err)
+	config.Sandbox = ""
+	s.Require().NoError(s.configs.UpdateAgentConfig(context.Background(), &config))
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions",
+		CreateSessionRequest{ConfigId: &config.ID})
+
+	s.NotEqual(http.StatusCreated, status)
+	s.Contains(string(payload), "needs a sandbox")
+}

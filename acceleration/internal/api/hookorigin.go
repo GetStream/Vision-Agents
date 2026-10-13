@@ -12,6 +12,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -202,6 +203,10 @@ func (s *Server) acting(ctx context.Context, origin hookOrigin, eventType string
 	if !stamp.fresh(time.Now()) {
 		s.logger.Info("ignoring a stale hook", "type", eventType)
 		return false
+	}
+	// The node that handed it over recorded the delivery, so this one is not the second.
+	if node.Forwarded(ctx) {
+		return true
 	}
 	if !s.firstDelivery(ctx, origin, eventType, stamp) {
 		s.logger.Debug("ignoring a hook delivered again", "type", eventType)
