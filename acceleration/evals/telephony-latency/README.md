@@ -25,8 +25,8 @@ off the network, before any jitter buffer, so a handset would add its own on top
 ## Running it
 
 Credentials come from the environment: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
-`TELNYX_API_KEY` and `TELNYX_CONNECTION_ID`. Optionally `IPINFO_TOKEN` for the report's address
-lookups.
+`TELNYX_API_KEY`, `TELNYX_CONNECTION_ID` and `TELNYX_CALL_CONTROL_ID`. Optionally `IPINFO_TOKEN`
+for the report's address lookups.
 
 ```bash
 cd acceleration
@@ -57,6 +57,10 @@ for a smoke test, `-scope all` to call between cities as well, `-parallel` for c
 - **Telnyx** routes inbound calls through `TELNYX_CONNECTION_ID`. Make it an FQDN/IP connection
   pointing at the bench's address, with the destination number in E.164. Each region's bench
   needs its own connection, or the connection repointed before each run.
+- **Telnyx** places calls through the Call Control Application `TELNYX_CALL_CONTROL_ID`, in three
+  requests: dial the bench, dial the callee linked to that call, bridge the two. The phone
+  package's Telnyx `Dial` is not used, because it sends the bridge address as `link_to`, which
+  Telnyx reads as a call control id, so nothing would be bridged.
 
 ## The report
 

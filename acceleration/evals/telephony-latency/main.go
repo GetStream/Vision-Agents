@@ -39,6 +39,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/twilio"
 )
 
+// minGap is the shortest time between stamps on a call: a stamp lasts 360 ms and the
+// detector needs quiet before the next one.
+const minGap = 500 * time.Millisecond
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -116,6 +120,9 @@ func run(ctx context.Context, arguments []string, log *slog.Logger) error {
 	if err != nil || !host.Is4() {
 		return fmt.Errorf("-host must be this machine's public IPv4 address, got %q", *hostFlag)
 	}
+	if *gap < minGap {
+		return fmt.Errorf("-gap must be at least %s, the length of a stamp and the quiet after it", minGap)
+	}
 	if Scope(*scope) != ScopeCity && Scope(*scope) != ScopeAll {
 		return fmt.Errorf("-scope must be %s or %s", ScopeCity, ScopeAll)
 	}
@@ -152,6 +159,13 @@ func run(ctx context.Context, arguments []string, log *slog.Logger) error {
 		return err
 	}
 
+	var telnyxCaller *TelnyxCaller
+	if vendorNames["telnyx"] {
+		if telnyxCaller, err = NewTelnyxCaller(&http.Client{Timeout: 30 * time.Second}); err != nil {
+			return err
+		}
+	}
+
 	endpoint, err := NewEndpoint(*listen, host, rtpPorts, log)
 	if err != nil {
 		return err
@@ -178,6 +192,7 @@ func run(ctx context.Context, arguments []string, log *slog.Logger) error {
 	prober := &Prober{
 		Endpoint:  endpoint,
 		Providers: providers,
+		Telnyx:    telnyxCaller,
 		Host:      host,
 		Port:      sipPort,
 		Stamps:    *stamps,
@@ -195,6 +210,10 @@ func run(ctx context.Context, arguments []string, log *slog.Logger) error {
 		result.Run = task.Run
 		return result
 	}, func(result Result) {
+		if ctx.Err() != nil && result.Error != "" {
+			// Cut short by stopping the run, which says nothing about the carriers.
+			return
+		}
 		done++
 		if result.Error != "" {
 			failed++

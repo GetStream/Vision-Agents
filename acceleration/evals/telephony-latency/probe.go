@@ -12,6 +12,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 )
 
+// lingerAfterStamps is how long the bench keeps listening after the last stamp is sent.
+const lingerAfterStamps = 3 * time.Second
+
 // Result is one call between two of the bench's numbers.
 type Result struct {
 	// Region is where the bench ran, e.g. "us-east1".
@@ -49,6 +52,9 @@ type Result struct {
 type Prober struct {
 	Endpoint  *Endpoint
 	Providers map[string]phone.Provider
+	// Telnyx places the calls Telnyx numbers make, when set. See TelnyxCaller for why the
+	// phone package's Dial is not used for them.
+	Telnyx *TelnyxCaller
 	// Host is the address carriers send calls to.
 	Host netip.Addr
 	// Port is the SIP port carriers send calls to.
@@ -73,11 +79,6 @@ func (p *Prober) Probe(ctx context.Context, caller, callee Line) Result {
 }
 
 func (p *Prober) probe(ctx context.Context, result *Result) error {
-	provider, ok := p.Providers[result.Caller.Vendor]
-	if !ok {
-		return fmt.Errorf("no provider for %s", result.Caller.Vendor)
-	}
-
 	id, err := probeID()
 	if err != nil {
 		return err
@@ -87,34 +88,21 @@ func (p *Prober) probe(ctx context.Context, result *Result) error {
 	callerArrived := p.Endpoint.Expect(id)
 	defer p.Endpoint.Forget(id)
 
-	outbound := phone.Outbound{
-		From:   result.Caller.E164,
-		To:     result.Callee.E164,
-		Bridge: phone.Bridge{URI: p.uri(id)},
+	place := p.dialBridged
+	if p.Telnyx != nil && result.Caller.Vendor == "telnyx" {
+		place = p.dialLinked
 	}
-	if provider.Dials(phone.FeatureRingTimeout) {
-		outbound.RingTimeout = p.Patience
+	caller, callee, err := place(ctx, result, p.uri(id), callerArrived, calleeArrived)
+	for _, leg := range []*Leg{caller, callee} {
+		if leg != nil {
+			defer p.hangup(leg)
+		}
 	}
-	dialed := time.Now()
-	if _, err := provider.Dial(ctx, outbound); err != nil {
-		return fmt.Errorf("dial: %w", err)
-	}
-
-	callee, err := wait(ctx, calleeArrived, p.Patience, "the callee's leg")
 	if err != nil {
 		return err
 	}
-	defer p.hangup(callee)
-	result.RingMs = millis(callee.Answered.Sub(dialed))
-	result.CalleeSignal = callee.Signal.String()
-
-	caller, err := wait(ctx, callerArrived, p.Patience, "the caller's leg")
-	if err != nil {
-		return err
-	}
-	defer p.hangup(caller)
-	result.BridgeMs = millis(caller.Answered.Sub(callee.Answered))
 	result.CallerSignal = caller.Signal.String()
+	result.CalleeSignal = callee.Signal.String()
 
 	// Media starts flowing a moment after the answer; a stamp sent into that moment is
 	// lost to the call setting up rather than to the network.
@@ -136,8 +124,10 @@ func (p *Prober) probe(ctx context.Context, result *Result) error {
 	}
 	result.Sent = p.Stamps
 
-	forward := collect(ctx, callee.Media.Heard(), p.Stamps, p.Patience)
-	backward := collect(ctx, caller.Media.Heard(), p.Stamps, p.Patience)
+	// A stamp still missing this long after the last one went out was lost, not delayed.
+	deadline := time.After(lingerAfterStamps)
+	forward := collect(ctx, callee.Media.Heard(), p.Stamps, deadline)
+	backward := collect(ctx, caller.Media.Heard(), p.Stamps, deadline)
 	for _, heard := range forward {
 		result.ForwardMs = append(result.ForwardMs, millis(heard.Latency()))
 	}
@@ -154,6 +144,68 @@ func (p *Prober) probe(ctx context.Context, result *Result) error {
 	return nil
 }
 
+// dialBridged asks the caller's vendor to call the callee and bridge the answered call to
+// the bench, which is what the phone package's Dial does.
+func (p *Prober) dialBridged(ctx context.Context, result *Result, bridge string, callerArrived, calleeArrived <-chan *Leg) (*Leg, *Leg, error) {
+	provider, ok := p.Providers[result.Caller.Vendor]
+	if !ok {
+		return nil, nil, fmt.Errorf("no provider for %s", result.Caller.Vendor)
+	}
+	outbound := phone.Outbound{
+		From:   result.Caller.E164,
+		To:     result.Callee.E164,
+		Bridge: phone.Bridge{URI: bridge},
+	}
+	if provider.Dials(phone.FeatureRingTimeout) {
+		outbound.RingTimeout = p.Patience
+	}
+	dialed := time.Now()
+	if _, err := provider.Dial(ctx, outbound); err != nil {
+		return nil, nil, fmt.Errorf("dial: %w", err)
+	}
+
+	callee, err := wait(ctx, calleeArrived, p.Patience, "the callee's leg")
+	if err != nil {
+		return nil, nil, err
+	}
+	result.RingMs = millis(callee.Answered.Sub(dialed))
+	caller, err := wait(ctx, callerArrived, p.Patience, "the caller's leg")
+	if err != nil {
+		return nil, callee, err
+	}
+	result.BridgeMs = millis(caller.Answered.Sub(callee.Answered))
+	return caller, callee, nil
+}
+
+// dialLinked places a Telnyx call as Call Control needs it: the bench's leg first, then the
+// callee linked to it, then the two bridged.
+func (p *Prober) dialLinked(ctx context.Context, result *Result, bridge string, callerArrived, calleeArrived <-chan *Leg) (*Leg, *Leg, error) {
+	toBench, err := p.Telnyx.Dial(ctx, result.Caller.E164, bridge, "", p.Patience)
+	if err != nil {
+		return nil, nil, fmt.Errorf("dial the bench: %w", err)
+	}
+	caller, err := wait(ctx, callerArrived, p.Patience, "the caller's leg")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	dialed := time.Now()
+	toCallee, err := p.Telnyx.Dial(ctx, result.Caller.E164, result.Callee.E164, toBench, p.Patience)
+	if err != nil {
+		return caller, nil, fmt.Errorf("dial: %w", err)
+	}
+	callee, err := wait(ctx, calleeArrived, p.Patience, "the callee's leg")
+	if err != nil {
+		return caller, nil, err
+	}
+	result.RingMs = millis(callee.Answered.Sub(dialed))
+	if err := p.Telnyx.Bridge(ctx, toBench, toCallee); err != nil {
+		return caller, callee, fmt.Errorf("bridge: %w", err)
+	}
+	result.BridgeMs = millis(time.Since(callee.Answered))
+	return caller, callee, nil
+}
+
 // uri is the bench's address for a leg, the one a vendor dials to bridge its call here.
 func (p *Prober) uri(user string) string {
 	return fmt.Sprintf("sip:%s@%s:%d", user, p.Host, p.Port)
@@ -165,8 +217,8 @@ func (p *Prober) hangup(leg *Leg) {
 	_ = leg.Hangup(ctx)
 }
 
-// collect waits for stamps until all of them have arrived or none has for a while.
-func collect(ctx context.Context, heard <-chan Heard, want int, patience time.Duration) []Heard {
+// collect waits for stamps until all of them have arrived or the deadline passes.
+func collect(ctx context.Context, heard <-chan Heard, want int, deadline <-chan time.Time) []Heard {
 	var got []Heard
 	for len(got) < want {
 		select {
@@ -175,7 +227,7 @@ func collect(ctx context.Context, heard <-chan Heard, want int, patience time.Du
 				return got
 			}
 			got = append(got, h)
-		case <-time.After(patience):
+		case <-deadline:
 			return got
 		case <-ctx.Done():
 			return got
