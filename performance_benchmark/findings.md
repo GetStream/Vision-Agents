@@ -17,12 +17,29 @@ Server-side the 32 durations laddered evenly from 2.1 s to 12.3 s, about 330 ms 
 one unit of work the creates were taking in turn. `conversation.Service.open` held the
 service-wide `mu` across three Stream Chat round trips (`CreateMissingUsers`,
 `GetOrCreateChannel`, then the history read), so every conversation opened anywhere queued
-behind every other. `mu` now guards the map it protects and is let go of before Stream is
-asked anything, and an open that loses the race is told the conversation is already open,
-which is what it would have been told had the two gone one after the other.
+behind every other, and anything else wanting that lock waited behind a stranger's
+round trip, up to the function's 20 s budget.
+
+One lock was guarding two unrelated things: the map of live conversations, and the
+building of one. A conversation is now opened behind a gate of its own, taken by its key,
+so two opens of one conversation are still taken in turn while opens of different ones
+never meet. `mu` covers the map and nothing slow.
 
 At 32 agents that is 13.4 s to 2.1 s at p95, and session create no longer grows with
 concurrency. The 9.7 s at the 2-agent step is one create of 63 (see below).
+
+What is left of the 2.1 s, measured on the single-agent step where nothing can be
+queueing: 490 ms to open the conversation (Stream Chat users, channel, history) and the
+database, then 1571 ms of SFU join (`signaling_ms` 951, `subscribe_ms` 210). A create
+cannot be faster than the join, because it waits for the agent to be on the call.
+
+Three other places hold a lock across I/O. None is the same bug:
+`session/plugin_tools.go` is scoped to one session and the lock is what stops two MCP
+sessions being opened for one plugin; `api/popularity.go` holds one across a single
+indexed query, which coalesces concurrent callers, though a request for one modality does
+wait on another's refresh; `pluginevents.Reconcile` is the real repeat — process-wide
+across store reads and `subscribe`, where its own comment says it wants to serialise *one
+config*. It is a background reconciler, so no request waits on it.
 
 ## sync.Pool: measured, not warranted
 
