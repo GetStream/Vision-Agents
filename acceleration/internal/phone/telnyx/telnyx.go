@@ -8,6 +8,7 @@ package telnyx
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -306,7 +307,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		p.logger.Warn("telnyx placed a call but the vendor call id is unknown, so keypad " +
 			"presses and vendor_call_id answers will not work for it")
 	}
-	return phone.Dialed{VendorCallID: placed.CallSID, Status: placed.Status}, nil
+	// Queued is Telnyx's documented first status, and an empty one would break the README's
+	// promise that every placed call has one.
+	return phone.Dialed{VendorCallID: placed.CallSID, Status: cmp.Or(placed.Status, "queued")}, nil
 }
 
 // SendDigits presses digits on a leg Telnyx is holding, which is how an agent gets past a

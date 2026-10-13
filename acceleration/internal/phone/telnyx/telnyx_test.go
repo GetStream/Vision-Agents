@@ -308,6 +308,25 @@ func (s *TelnyxSuite) TestACallWhoseIDTelnyxDoesNotSayIsStillPlaced() {
 	s.NotContains(logged.String(), "secret-p")
 }
 
+// The README promises a status for every vendor's call, and Telnyx's reference does not
+// show one on this answer.
+func (s *TelnyxSuite) TestACallPlacedWithNoStatusIsQueued() {
+	s.answer(`{"call_sid":"v3:cc-1"}`)
+
+	placed, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From: "+15125550100",
+		To:   "+15125550123",
+		Bridge: phone.Bridge{
+			URI:      "sip:+15125550100@app.sip.example.com",
+			Username: "u",
+			Password: "p",
+		},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("queued", placed.Status)
+}
+
 func (s *TelnyxSuite) TestDiallingRefusesTermsItCannotSend() {
 	bridge := phone.Bridge{URI: "sip:+15125550100@app.sip.example.com"}
 	for refusal, outbound := range map[string]phone.Outbound{
