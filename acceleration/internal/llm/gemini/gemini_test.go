@@ -118,6 +118,34 @@ func (s *GeminiSuite) TestAnEffortTheModelDroppedIsRefusedBeforeItIsSent() {
 	s.ErrorContains(err, `reasoning effort "minimal" is not one of low, medium, high`)
 }
 
+func (s *GeminiSuite) TestArgonThinksAtHighWhenNoneIsNamed() {
+	// Argon is routed only in the quality tier, where the answer matters more than how
+	// soon it starts.
+	s.ask(Options{Model: "gemini-4-argon"})
+
+	s.Equal("high", s.request["reasoning_effort"])
+}
+
+func (s *GeminiSuite) TestArgonCanBeAskedToThinkLess() {
+	s.ask(Options{Model: "gemini-4-argon", ReasoningEffort: lowEffort})
+
+	s.Equal(lowEffort, s.request["reasoning_effort"])
+}
+
+func (s *GeminiSuite) TestMinimalIsRefusedOnArgonBeforeItIsSent() {
+	// Google answer minimal on Argon with a 400, as they do on 3.8 Flash.
+	_, err := New(Options{APIKey: "k", Model: "gemini-4-argon", ReasoningEffort: minimalEffort})
+
+	s.ErrorContains(err, `reasoning effort "minimal" is not one of low, medium, high`)
+}
+
+func (s *GeminiSuite) TestArgonAcceptsImages() {
+	provider, err := New(Options{APIKey: "k", Model: "gemini-4-argon"})
+	s.Require().NoError(err)
+
+	s.Contains(provider.Capabilities().InputModalities, "image")
+}
+
 func (s *GeminiSuite) TestMoreThinkingCanBeAskedForOffTheLivePath() {
 	s.ask(Options{ReasoningEffort: "high"})
 
