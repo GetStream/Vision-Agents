@@ -351,7 +351,7 @@ func (p *Provider) findCall(ctx context.Context, from, to string, placedAt time.
 			p.logger.Warn("telnyx could not list calls to find a placed call's id")
 			return ""
 		}
-		if sid := listed.newestSince(since); sid != "" {
+		if sid := listed.newestSince(from, to, since); sid != "" {
 			return sid
 		}
 	}
@@ -625,17 +625,21 @@ type listedCalls struct {
 type listedCall struct {
 	// SID is the call control id, the same id SendDigits acts on.
 	SID         string `json:"sid"`
+	From        string `json:"from"`
+	To          string `json:"to"`
 	Status      string `json:"status"`
 	StartTime   string `json:"start_time"`
 	DateCreated string `json:"date_created"`
 }
 
-// newestSince is the sid of the newest call still going that started at or after since.
-func (l listedCalls) newestSince(since time.Time) string {
+// newestSince is the sid of the newest call still going from one number to another that
+// started at or after since. The numbers are checked here too, because a list filter Telnyx
+// ignored would otherwise hand over another call's id.
+func (l listedCalls) newestSince(from, to string, since time.Time) string {
 	var newest string
 	var newestAt time.Time
 	for _, call := range l.Calls {
-		if call.SID == "" || call.ended() {
+		if call.SID == "" || call.ended() || !sameNumber(call.From, from) || !sameNumber(call.To, to) {
 			continue
 		}
 		at, err := time.Parse(time.RFC1123Z, cmp.Or(call.StartTime, call.DateCreated))
@@ -645,6 +649,12 @@ func (l listedCalls) newestSince(since time.Time) string {
 		newest, newestAt = call.SID, at
 	}
 	return newest
+}
+
+// sameNumber compares two E.164 numbers, allowing one to lack its "+", which is the only
+// difference between a number written two ways that cannot change which number it is.
+func sameNumber(listed, placed string) bool {
+	return listed != "" && strings.TrimPrefix(listed, "+") == strings.TrimPrefix(placed, "+")
 }
 
 func (c listedCall) ended() bool {

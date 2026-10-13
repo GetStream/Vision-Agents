@@ -290,8 +290,10 @@ func (s *TelnyxSuite) TestACallWhoseIDTelnyxDoesNotSayIsLookedUp() {
 		}
 		listed = s.seen
 		_, _ = w.Write([]byte(`{"calls":[
-			{"sid":"v3:old","status":"completed","start_time":"` + before + `","date_created":"` + before + `"},
-			{"sid":"v3:new","status":"ringing","start_time":"` + now + `","date_created":"` + now + `"}]}`))
+			{"sid":"v3:old","from":"+15125550100","to":"+15125550123","status":"completed",
+			 "start_time":"` + before + `","date_created":"` + before + `"},
+			{"sid":"v3:new","from":"+15125550100","to":"+15125550123","status":"ringing",
+			 "start_time":"` + now + `","date_created":"` + now + `"}]}`))
 	}
 
 	placed, err := s.provider.Dial(s.ctx, s.outbound())
@@ -333,13 +335,56 @@ func (s *TelnyxSuite) TestACallTheListOnlyShowsBeforeThisOneIsNotTaken() {
 			_, _ = w.Write([]byte(`{"status":"queued"}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"calls":[{"sid":"v3:old","status":"in-progress","start_time":"` + before + `"}]}`))
+		_, _ = w.Write([]byte(`{"calls":[{"sid":"v3:old","from":"+15125550100","to":"+15125550123","status":"in-progress",
+			"start_time":"` + before + `"}]}`))
 	}
 
 	placed, err := s.provider.Dial(s.ctx, s.outbound())
 	s.Require().NoError(err)
 
 	s.Empty(placed.VendorCallID)
+}
+
+// Telnyx's From and To filters are not trusted alone: a call between other numbers is never
+// taken, however new it is.
+func (s *TelnyxSuite) TestOnlyAListedCallBetweenTheSameNumbersIsTaken() {
+	earlier := time.Now().Add(-5 * time.Second).UTC().Format(time.RFC1123Z)
+	now := time.Now().UTC().Format(time.RFC1123Z)
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"status":"queued"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"calls":[
+			{"sid":"v3:other-from","from":"+15125550199","to":"+15125550123","status":"ringing","start_time":"` + now + `"},
+			{"sid":"v3:other-to","from":"+15125550100","to":"+15125550199","status":"ringing","start_time":"` + now + `"},
+			{"sid":"v3:placed","from":"+15125550100","to":"+15125550123","status":"ringing","start_time":"` + earlier + `"}]}`))
+	}
+
+	placed, err := s.provider.Dial(s.ctx, s.outbound())
+	s.Require().NoError(err)
+
+	s.Equal("v3:placed", placed.VendorCallID)
+}
+
+func (s *TelnyxSuite) TestAListOfOnlyOtherNumbersCallsGivesNoID() {
+	logged := s.logged()
+	now := time.Now().UTC().Format(time.RFC1123Z)
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"status":"queued"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"calls":[
+			{"sid":"v3:other-from","from":"+15125550199","to":"+15125550123","status":"ringing","start_time":"` + now + `"},
+			{"sid":"v3:no-numbers","status":"ringing","start_time":"` + now + `"}]}`))
+	}
+
+	placed, err := s.provider.Dial(s.ctx, s.outbound())
+	s.Require().NoError(err)
+
+	s.Empty(placed.VendorCallID)
+	s.unknownIDWarned(logged)
 }
 
 func (s *TelnyxSuite) TestACallWhoseLookupFailsIsStillPlaced() {
