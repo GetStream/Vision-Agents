@@ -167,8 +167,7 @@ type Service struct {
 	all    map[known]*Conversation
 	logger *slog.Logger
 	// finished is told of every reply finished in a thread channel (OnFinishedReply). It is
-	// apart from mu, which OpenInApp holds across Stream Chat calls of up to its 20 s budget,
-	// so a finished reply in one conversation never waits on another opening.
+	// apart from mu so a finished reply in one conversation never waits on another opening.
 	finished atomic.Pointer[func(FinishedReply)]
 }
 
@@ -440,11 +439,6 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, nil, false, stack.Wrap(errors.New("conversation service is closed"))
-	}
 	var scope memory.Scope
 	if len(scopes) > 0 {
 		scope = scopes[0]
@@ -453,8 +447,20 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	if !Openable(cid) {
 		return nil, nil, false, stack.Wrap(errors.New("invalid conversation channel"))
 	}
-	if c := s.all[known{customer, cid}]; c != nil {
-		c.mu.Lock()
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, nil, false, stack.Wrap(errors.New("conversation service is closed"))
+	}
+	held := s.all[known{customer, cid}]
+	if held != nil {
+		// A conversation is opened one at a time by its own lock, and mu is let go of
+		// before Stream is asked anything: opening talks to Stream Chat three times, and
+		// holding mu across that made every conversation opened anywhere queue behind it.
+		held.mu.Lock()
+	}
+	s.mu.Unlock()
+	if c := held; c != nil {
 		defer c.mu.Unlock()
 		if c.data.Customer != customer || (agentID != "" && c.data.Agent != agentID) || c.data.Owner == "" && caller != "" {
 			return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another customer or agent"))
@@ -523,12 +529,25 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	if agentID == "" {
 		agentID = page.agent
 	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, nil, false, stack.Wrap(errors.New("conversation service is closed"))
+	}
+	// Another open of this conversation may have finished while Stream was being asked.
+	// It holds it, and this one is the second, which is what it would have been had they
+	// gone one after the other.
+	if s.all[known{customer, cid}] != nil {
+		s.mu.Unlock()
+		return nil, nil, false, stack.Wrap(errors.New("conversation is already open"))
+	}
 	c := s.make(ledger{CID: cid, Customer: customer, Agent: agentID, Owner: caller, Commands: commandsIn(page.Messages), StreamApp: pin})
-	c.shared, c.thread = page.shared, page.thread
-	c.active = true
+	s.mu.Unlock()
 	// Nobody here holds the conversation, so a reply Stream still shows as running was
 	// left by a process that stopped.
 	c.mu.Lock()
+	c.shared, c.thread = page.shared, page.thread
+	c.active = true
 	for _, m := range page.Messages {
 		if m.Role == "assistant" && m.FinishedAt == nil {
 			c.data.Current = &m
