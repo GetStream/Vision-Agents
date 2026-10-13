@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginmigrate"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -31,7 +32,15 @@ func (s *CatalogSuite) TestEveryCatalogPluginHasABuiltInConnectorOfTheSameID() {
 	for _, plugin := range plugins.Catalog() {
 		manifest := s.manifest(plugin.ID)
 		s.Equal(plugin.ID, manifest.ID)
-		s.Contains(manifest.Schemes, oauth2code.Name, plugin.ID)
+		// Shopify's storefront MCP needs no login (providers/shopify.yaml). A plugin grant is
+		// oauth2_code, and pluginmigrate skips a manifest that does not resolve it.
+		if plugin.ID == "shopify" {
+			s.Equal([]string{none.Name}, manifest.Schemes)
+			_, err := manifest.Resolve(oauth2code.Name, map[string]string{"shop": "mystore.myshopify.com"}, nil)
+			s.Error(err)
+		} else {
+			s.Contains(manifest.Schemes, oauth2code.Name, plugin.ID)
+		}
 		s.Contains(manifest.Sources, core.SourceRule{Kind: "mcp", Endpoint: "mcp"}, plugin.ID)
 	}
 }
@@ -48,7 +57,11 @@ func (s *CatalogSuite) TestEachConnectorReachesThePluginsServerButSalesforce() {
 		}
 		reached, err := plugin.Endpoint(instance)
 		s.Require().NoError(err)
-		resolved, err := s.manifest(plugin.ID).Resolve(oauth2code.Name, inputs, nil)
+		scheme := oauth2code.Name
+		if plugin.ID == "shopify" {
+			scheme = none.Name
+		}
+		resolved, err := s.manifest(plugin.ID).Resolve(scheme, inputs, nil)
 		s.Require().NoError(err, plugin.ID)
 		if strings.TrimSuffix(reached, "/") != strings.TrimSuffix(resolved.Endpoints["mcp"], "/") {
 			elsewhere[plugin.ID] = resolved.Endpoints["mcp"]
