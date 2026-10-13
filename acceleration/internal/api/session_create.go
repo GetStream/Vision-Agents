@@ -47,6 +47,9 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	if errors.Is(err, session.ErrSessionExists) {
 		return nil, conflict(err.Error())
 	}
+	if errors.Is(err, session.ErrNoAgentCallType) {
+		return nil, errNoAgentCallType
+	}
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
 		return nil, err
 	}

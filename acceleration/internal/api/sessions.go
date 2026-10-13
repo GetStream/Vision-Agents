@@ -133,6 +133,9 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	spec.CallerKind = KindFrom(ctx)
 
 	created, err := s.sessions.Create(ctx, spec)
+	if errors.Is(err, session.ErrNoAgentCallType) {
+		return nil, errNoAgentCallType
+	}
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
 		return nil, err
 	}
