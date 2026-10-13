@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
-	"strings"
+	"net/url"
 	"time"
 
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -33,29 +35,44 @@ const pingEvery = 30 * time.Second
 // than the ping interval so one lost ping is not a disconnection.
 const pongWait = 90 * time.Second
 
-// newUpgrader accepts the origins the deployment named, and any request that names none.
+// newUpgrader accepts the origins originAllowed accepts, and any request that names none.
 //
 // A request without an Origin header did not come from a browser, so there is no session
 // for another site to ride on and nothing for this check to protect. One that does carry
-// an origin is held to the same list as an ordinary cross-origin request: a socket that
-// accepted every origin would be the way around the check the rest of the API makes.
-func newUpgrader(allowed []string) websocket.Upgrader {
-	permitted := make(map[string]struct{}, len(allowed))
-	for _, origin := range allowed {
-		permitted[strings.TrimSpace(origin)] = struct{}{}
-	}
-	_, anywhere := permitted["*"]
-
+// an origin is held to the same rule as an ordinary cross-origin request: a socket with a
+// looser one would be the way around the check the rest of the API makes.
+func newUpgrader(mode auth.Mode) websocket.Upgrader {
 	return websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
-			if origin == "" || anywhere {
-				return true
-			}
-			_, named := permitted[origin]
-			return named
+			return origin == "" || originAllowed(mode, origin)
 		},
 	}
+}
+
+// originAllowed reports whether a page on origin may call this API from the browser.
+//
+// Any origin may where the caller proves who it is, which is every mode but NoAuth: the
+// credential is an API key and a token in a header or the query string, which a page can
+// only send if it already holds them, and no cookie is a credential here. So a customer's
+// own website calls the router the way their servers do, with no list of sites to keep.
+//
+// NoAuth believes the tenant a request names, so any site open in the developer's browser
+// could name one. It answers pages served from this machine only.
+func originAllowed(mode auth.Mode, origin string) bool {
+	if mode != auth.NoAuth {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // frame is one message in either direction. The type names the event and the rest of the
