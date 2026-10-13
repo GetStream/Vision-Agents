@@ -33,6 +33,9 @@ const (
 	defaultTimeout = 30 * time.Second
 )
 
+// noNumbersFound is Telnyx's error code for a search nothing matched.
+const noNumbersFound = "10031"
+
 // errorBodyLimit caps how much of a failed response is read into an error message.
 const errorBodyLimit = 2048
 
@@ -129,6 +132,13 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 
 	var response envelope[[]availableNumber]
 	if err := p.do(ctx, http.MethodGet, "/v2/available_phone_numbers", query, nil, &response); err != nil {
+		// Telnyx says it has nothing to sell with a 400 rather than an empty list. That is an
+		// answer, not a failure: a caller trying one area code after another must be able to
+		// move on to the next. Its suggested best_effort would widen the search to numbers
+		// from elsewhere, which is the answer this package exists not to give.
+		if refused, ok := errors.AsType[*phone.VendorError](err); ok && refused.Code == noNumbersFound {
+			return nil, nil
+		}
 		return nil, err
 	}
 

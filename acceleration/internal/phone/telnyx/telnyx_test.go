@@ -109,6 +109,20 @@ func (s *TelnyxSuite) TestSearchingFiltersByCountryAndReturnsWhatIsOffered() {
 	s.Equal(int64(1_000_000), offered[0].MonthlyCostMicros)
 }
 
+func (s *TelnyxSuite) TestASearchNothingMatchesIsAnEmptyAnswerNotAFailure() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"10031","title":"No numbers found",` +
+			`"detail":"No numbers found for the given filters. Please try again with best_effort=true."}]}`))
+	}
+
+	offered, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", AreaCode: "212"})
+
+	s.Require().NoError(err)
+	s.Empty(offered)
+	s.Empty(s.seen.query.Get("best_effort"))
+}
+
 func (s *TelnyxSuite) TestSearchingWithoutACountryIsRejectedBeforeAnyCall() {
 	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{})
 
