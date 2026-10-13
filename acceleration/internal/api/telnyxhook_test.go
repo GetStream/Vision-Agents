@@ -182,6 +182,54 @@ func (s *TelnyxHookSuite) TestTheCallersNumberIsNotLogged() {
 	s.NotContains(s.logged.String(), "+15550001111")
 }
 
+// A hook is not a customer. Credentials and a claimed tenant on a signed call are not
+// read, so the call still reaches the number's own trunk and nobody is recorded under
+// the app or joined to its organization.
+func (s *TelnyxHookSuite) TestASignedCallCarryingCredentialsRecordsNoUserAndJoinsNoPolicy() {
+	s.attach(s.e164, "sip:"+s.e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
+	userID := "user-" + s.utils.uuid()
+	claimed := "claimed-" + s.utils.uuid()
+
+	body := s.call(s.e164).Encode()
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+telnyxCallHookPath, strings.NewReader(body))
+	s.Require().NoError(err)
+	request.Header = s.serverClient.header.Clone()
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	signature := ed25519.Sign(s.private, []byte(timestamp+"|"+body))
+	request.Header.Set("Telnyx-Timestamp", timestamp)
+	request.Header.Set("Telnyx-Signature-Ed25519", base64.StdEncoding.EncodeToString(signature))
+	request.Header.Set(auth.UserHeader, userID)
+	request.Header.Set(auth.CustomerHeader, claimed)
+
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	answered, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.Contains(string(answered), "sip:"+s.e164+"@trunk.sip.example.test")
+	s.Contains(string(answered), "trunk-user")
+	s.NotContains(string(answered), claimed)
+
+	ctx := context.Background()
+	recorded, err := s.store.DB().NewSelect().Model((*store.User)(nil)).
+		Where("customer_id = ?", s.customerID()).
+		Where("id = ?", userID).
+		Count(ctx)
+	s.Require().NoError(err)
+	s.Zero(recorded)
+
+	s.Never(func() bool {
+		under, err := s.store.OrganizationOf(ctx, s.customerID())
+		return err == nil && under != ""
+	}, time.Second, 20*time.Millisecond)
+	under, err := s.store.OrganizationOf(ctx, claimed)
+	s.Require().NoError(err)
+	s.Empty(under)
+}
+
 // call is the form Telnyx posts when someone rings a number, as seen live on 2026-10-13.
 func (s *TelnyxHookSuite) call(to string) url.Values {
 	return url.Values{

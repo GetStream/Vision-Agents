@@ -633,6 +633,24 @@ func documentHandWritten(api huma.API) {
 		},
 	})
 	document.AddOperation(&huma.Operation{
+		OperationID: "receiveTelnyxCall",
+		Method:      http.MethodPost,
+		Path:        telnyxCallHookPath,
+		Summary:     "Receive a Telnyx call",
+		Description: "Where Telnyx asks what to do with a call to a number on this router's TeXML " +
+			"application. Unauthenticated because Telnyx is not a customer: each call is checked " +
+			"against the account's Ed25519 signature, and the answer dials that number's own trunk " +
+			"and no other. A deployment with no Telnyx key answers 404, so the path never hands out " +
+			"trunk credentials unsigned.",
+		Security: []map[string][]string{},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "TeXML dialling the number's trunk, or hanging up", Content: map[string]*huma.MediaType{"application/xml": {Schema: &huma.Schema{Type: huma.TypeString}}}},
+			"401": {Description: "The call is not signed by Telnyx"},
+			"404": {Description: "Telnyx calls are not configured"},
+			"413": {Description: "The call is over 64 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
 		OperationID: "listAgentLogs",
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/logs",

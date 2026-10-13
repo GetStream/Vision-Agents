@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -10587,6 +10588,13 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/phone/hooks/10dlc (the `ReceiveDLCReport` operationId).
 	ReceiveDLCReport(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReceiveTelnyxCall Receive a Telnyx call
+	//
+	// Where Telnyx asks what to do with a call to a number on this router's TeXML application. Unauthenticated because Telnyx is not a customer: each call is checked against the account's Ed25519 signature, and the answer dials that number's own trunk and no other. A deployment with no Telnyx key answers 404, so the path never hands out trunk credentials unsigned.
+	//
+	// Corresponds with POST /v1/phone/hooks/telnyx (the `ReceiveTelnyxCall` operationId).
+	ReceiveTelnyxCall(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListPhoneNumbers The numbers the calling customer holds
 	//
 	// Corresponds with GET /v1/phone/numbers (the `ListPhoneNumbers` operationId).
@@ -15292,6 +15300,23 @@ func (c *Client) PressPhoneDigits(ctx context.Context, vendorCallId string, body
 // Corresponds with POST /v1/phone/hooks/10dlc (the `ReceiveDLCReport` operationId).
 func (c *Client) ReceiveDLCReport(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReceiveDLCReportRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReceiveTelnyxCall Receive a Telnyx call
+//
+// Where Telnyx asks what to do with a call to a number on this router's TeXML application. Unauthenticated because Telnyx is not a customer: each call is checked against the account's Ed25519 signature, and the answer dials that number's own trunk and no other. A deployment with no Telnyx key answers 404, so the path never hands out trunk credentials unsigned.
+//
+// Corresponds with POST /v1/phone/hooks/telnyx (the `ReceiveTelnyxCall` operationId).
+func (c *Client) ReceiveTelnyxCall(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveTelnyxCallRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -23969,6 +23994,33 @@ func NewReceiveDLCReportRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewReceiveTelnyxCallRequest constructs an http.Request for the ReceiveTelnyxCall method
+func NewReceiveTelnyxCallRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/hooks/telnyx")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListPhoneNumbersRequest constructs an http.Request for the ListPhoneNumbers method
 func NewListPhoneNumbersRequest(server string, params *ListPhoneNumbersParams) (*http.Request, error) {
 	var err error
@@ -28623,6 +28675,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/phone/hooks/10dlc (the `ReceiveDLCReport` operationId).
 	ReceiveDLCReportWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveDLCReportResponse, error)
+
+	// ReceiveTelnyxCallWithResponse Receive a Telnyx call
+	//
+	// Where Telnyx asks what to do with a call to a number on this router's TeXML application. Unauthenticated because Telnyx is not a customer: each call is checked against the account's Ed25519 signature, and the answer dials that number's own trunk and no other. A deployment with no Telnyx key answers 404, so the path never hands out trunk credentials unsigned.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/hooks/telnyx (the `ReceiveTelnyxCall` operationId).
+	ReceiveTelnyxCallWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveTelnyxCallResponse, error)
 
 	// ListPhoneNumbersWithResponse The numbers the calling customer holds
 	//
@@ -41135,6 +41196,54 @@ func (r ReceiveDLCReportResponse) ContentType() string {
 	return ""
 }
 
+type ReceiveTelnyxCallResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// XML200 the response for an HTTP 200 `application/xml` response
+	XML200 *string
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetXML200 returns the response for an HTTP 200 `application/xml` response
+func (r ReceiveTelnyxCallResponse) GetXML200() *string {
+	return r.XML200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReceiveTelnyxCallResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveTelnyxCallResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveTelnyxCallResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveTelnyxCallResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveTelnyxCallResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListPhoneNumbersResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -48410,6 +48519,21 @@ func (c *ClientWithResponses) ReceiveDLCReportWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseReceiveDLCReportResponse(rsp)
+}
+
+// ReceiveTelnyxCallWithResponse Receive a Telnyx call
+//
+// Where Telnyx asks what to do with a call to a number on this router's TeXML application. Unauthenticated because Telnyx is not a customer: each call is checked against the account's Ed25519 signature, and the answer dials that number's own trunk and no other. A deployment with no Telnyx key answers 404, so the path never hands out trunk credentials unsigned.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/hooks/telnyx (the `ReceiveTelnyxCall` operationId).
+func (c *ClientWithResponses) ReceiveTelnyxCallWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveTelnyxCallResponse, error) {
+	rsp, err := c.ReceiveTelnyxCall(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveTelnyxCallResponse(rsp)
 }
 
 // ListPhoneNumbersWithResponse The numbers the calling customer holds
@@ -59063,6 +59187,48 @@ func ParseReceiveDLCReportResponse(rsp *http.Response) (*ReceiveDLCReportRespons
 		break // No content-type
 
 	case rsp.StatusCode == 410:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReceiveTelnyxCallResponse parses an HTTP response from a ReceiveTelnyxCallWithResponse call
+func ParseReceiveTelnyxCallResponse(rsp *http.Response) (*ReceiveTelnyxCallResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveTelnyxCallResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "xml") && rsp.StatusCode == 200:
+		var dest string
+		if err := xml.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.XML200 = &dest
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 404:
 		break // No content-type
 
 	case rsp.StatusCode == 413:
