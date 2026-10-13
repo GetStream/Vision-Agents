@@ -210,8 +210,8 @@ func Compare(before, after Report) string {
 	fmt.Fprintf(&out, "# %s vs %s\n\n", label(before, "before"), label(after, "after"))
 	fmt.Fprintf(&out, "Held %d then %d agents.\n\n", before.Held, after.Held)
 
-	fmt.Fprintln(&out, "| agents | reply p50 | reply p95 | answered | router cpu |")
-	fmt.Fprintln(&out, "|---|---|---|---|---|")
+	fmt.Fprintln(&out, "| agents | reply p50 | reply p95 | session p95 | answered | router cpu |")
+	fmt.Fprintln(&out, "|---|---|---|---|---|---|")
 	indexed := map[int]Step{}
 	for _, step := range before.Steps {
 		indexed[step.Agents] = step
@@ -219,13 +219,15 @@ func Compare(before, after Report) string {
 	for _, step := range after.Steps {
 		was, ran := indexed[step.Agents]
 		if !ran {
-			fmt.Fprintf(&out, "| %d | %s | %s | %s | %s |\n", step.Agents,
-				ms(step.ReplyMs.P50), ms(step.ReplyMs.P95), answered(step), step.Router.CPU())
+			fmt.Fprintf(&out, "| %d | %s | %s | %s | %s | %s |\n", step.Agents,
+				ms(step.ReplyMs.P50), ms(step.ReplyMs.P95), ms(step.SessionMs.P95),
+				answered(step), step.Router.CPU())
 			continue
 		}
-		fmt.Fprintf(&out, "| %d | %s | %s | %s | %s |\n", step.Agents,
+		fmt.Fprintf(&out, "| %d | %s | %s | %s | %s | %s |\n", step.Agents,
 			change(was.ReplyMs.P50, step.ReplyMs.P50),
 			change(was.ReplyMs.P95, step.ReplyMs.P95),
+			change(was.SessionMs.P95, step.SessionMs.P95),
 			answered(was)+" to "+answered(step),
 			was.Router.CPU()+" to "+step.Router.CPU())
 	}

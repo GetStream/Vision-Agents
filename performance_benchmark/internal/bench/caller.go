@@ -261,6 +261,7 @@ func (c Caller) agentID() string { return fmt.Sprintf("%s-%d", c.Agent, c.Index)
 func (c Caller) failed(held conversation, at string, err error) conversation {
 	held.failedAt = at
 	held.err = err
+	c.Logger.Error("a conversation stopped", "caller", c.Index, "at", at, "error", err)
 	return held
 }
 
