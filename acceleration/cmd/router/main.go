@@ -1000,6 +1000,17 @@ func run(settings config.Config, logger *slog.Logger) error {
 			logger.Error("calls to telnyx numbers will not be answered", "error", err)
 		}
 	}
+	// Both gaps are silent otherwise: Telnyx just gets rejected responses.
+	if os.Getenv("TELNYX_API_KEY") != "" {
+		if telnyxPublicKey == nil {
+			logger.Warn("calls to telnyx numbers will not be answered until "+
+				telnyxsig.PublicKeyEnvVar+" is set to a valid key", "setting", telnyxsig.PublicKeyEnvVar)
+		}
+		if os.Getenv("TELNYX_ACCOUNT_SID") == "" {
+			logger.Warn("outbound telnyx calls will be refused until TELNYX_ACCOUNT_SID is set",
+				"setting", "TELNYX_ACCOUNT_SID")
+		}
+	}
 
 	options := api.Options{
 		Routers:               routers,
