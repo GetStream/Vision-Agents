@@ -56,7 +56,8 @@ for a smoke test, `-scope all` to call between cities as well, `-parallel` for c
 - **Twilio** needs nothing: the bench sets each number's voice URL to TwiML that dials it.
 - **Telnyx** routes inbound calls through `TELNYX_CONNECTION_ID`. Make it an FQDN/IP connection
   pointing at the bench's address, with the destination number in E.164. Each region's bench
-  needs its own connection, or the connection repointed before each run.
+  needs its own connection, or the connection repointed before each run. This is not the
+  router's `TELNYX_CONNECTION_ID`, which is a TeXML application.
 - **Telnyx** places calls through the Call Control Application `TELNYX_CALL_CONTROL_ID`, in three
   requests: dial the bench, dial the callee linked to that call, bridge the two. The phone
   package's Telnyx `Dial` is not used, because it sends the bridge address as `link_to`, which
