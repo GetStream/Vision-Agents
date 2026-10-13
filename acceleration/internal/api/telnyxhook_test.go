@@ -1,0 +1,213 @@
+//go:build integration
+
+package api
+
+import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/xml"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+)
+
+// TelnyxHookSuite is Telnyx asking the router where a call to one of the numbers on its
+// TeXML application goes, signed with the account's key as Telnyx signs it.
+type TelnyxHookSuite struct {
+	RouterSuite
+	private ed25519.PrivateKey
+	logged  *lockedLog
+	e164    string
+}
+
+func TestTelnyxHookSuite(t *testing.T) {
+	runSuite(t, new(TelnyxHookSuite))
+}
+
+func (s *TelnyxHookSuite) SetupSuite() {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	s.Require().NoError(err)
+	s.private = private
+	s.telnyxPublicKey = public
+	s.logged = &lockedLog{}
+	s.logs = s.logged
+	s.RouterSuite.SetupSuite()
+}
+
+func (s *TelnyxHookSuite) SetupTest() {
+	s.useApp(s.data.createApp())
+	s.e164 = s.utils.number()
+}
+
+func (s *TelnyxHookSuite) TestACallIsSentToTheNumbersOwnTrunk() {
+	s.attach(s.e164, "sip:"+s.e164+"@trunk.sip.example.test", "trunk-user", "trunk-pa$$<word>")
+
+	status, contentType, body := s.deliver(s.call(s.e164), true)
+
+	s.Require().Equal(http.StatusOK, status, body)
+	s.Equal("application/xml", contentType)
+	var parsed struct {
+		Dial struct {
+			Sip struct {
+				URI      string `xml:",chardata"`
+				Username string `xml:"username,attr"`
+				Password string `xml:"password,attr"`
+			} `xml:"Sip"`
+		} `xml:"Dial"`
+	}
+	s.Require().NoError(xml.Unmarshal([]byte(body), &parsed))
+	s.Equal("sip:"+s.e164+"@trunk.sip.example.test", parsed.Dial.Sip.URI)
+	s.Equal("trunk-user", parsed.Dial.Sip.Username)
+	s.Equal("trunk-pa$$<word>", parsed.Dial.Sip.Password)
+	s.NotContains(s.logged.String(), "trunk-pa$$", "the password is never logged")
+}
+
+func (s *TelnyxHookSuite) TestAnUnsignedCallIsRefused() {
+	s.attach(s.e164, "sip:"+s.e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
+
+	status, _, body := s.deliver(s.call(s.e164), false)
+
+	s.Equal(http.StatusUnauthorized, status)
+	s.NotContains(body, "trunk-password")
+	s.NotContains(body, "signed")
+}
+
+func (s *TelnyxHookSuite) TestACallToANumberNobodyHoldsIsHungUp() {
+	status, contentType, body := s.deliver(s.call(s.utils.number()), true)
+
+	s.Equal(http.StatusOK, status)
+	s.Equal("application/xml", contentType)
+	s.Contains(body, "<Response><Hangup/></Response>")
+}
+
+func (s *TelnyxHookSuite) TestANumberAttachedBeforeItsTrunkWasKeptIsHungUpAndSaysWhatToDo() {
+	s.attach(s.e164, "", "", "")
+
+	status, _, body := s.deliver(s.call(s.e164), true)
+
+	s.Equal(http.StatusOK, status)
+	s.Contains(body, "<Hangup/>")
+	s.True(s.loggedLine(s.e164, "attach the number again"), "the log says what to do about this number")
+}
+
+// loggedLine reports whether one line of the log holds every part.
+func (s *TelnyxHookSuite) loggedLine(parts ...string) bool {
+	for _, line := range strings.Split(s.logged.String(), "\n") {
+		found := true
+		for _, part := range parts {
+			found = found && strings.Contains(line, part)
+		}
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *TelnyxHookSuite) TestACallThatIsNotInboundIsHungUp() {
+	s.attach(s.e164, "sip:"+s.e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
+	form := s.call(s.e164)
+	form.Set("Direction", "outbound-api")
+
+	status, _, body := s.deliver(form, true)
+
+	s.Equal(http.StatusOK, status)
+	s.Contains(body, "<Hangup/>")
+	s.NotContains(body, "trunk-password")
+}
+
+func (s *TelnyxHookSuite) TestTheCallersNumberIsNotLogged() {
+	s.deliver(s.call(s.utils.number()), true)
+
+	s.NotContains(s.logged.String(), "+15550001111")
+}
+
+// call is the form Telnyx posts when someone rings a number, as seen live on 2026-10-13.
+func (s *TelnyxHookSuite) call(to string) url.Values {
+	return url.Values{
+		"AccountSid":       {"00000000-0000-4000-8000-000000000001"},
+		"CallSid":          {"v3:call-" + s.utils.uuid()},
+		"CallSessionId":    {s.utils.uuid()},
+		"CallStatus":       {"in-progress"},
+		"CallerId":         {"+15550001111"},
+		"CallingPartyType": {"pstn"},
+		"ConnectionId":     {"1234567890"},
+		"Direction":        {"inbound"},
+		"From":             {"+15550001111"},
+		"To":               {to},
+	}
+}
+
+// deliver posts the form as Telnyx does, signed or not, and answers with what came back.
+func (s *TelnyxHookSuite) deliver(form url.Values, signed bool) (int, string, string) {
+	body := form.Encode()
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+"/v1/phone/hooks/telnyx", strings.NewReader(body))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if signed {
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+		signature := ed25519.Sign(s.private, []byte(timestamp+"|"+body))
+		request.Header.Set("Telnyx-Timestamp", timestamp)
+		request.Header.Set("Telnyx-Signature-Ed25519", base64.StdEncoding.EncodeToString(signature))
+	}
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	answered, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+	return response.StatusCode, response.Header.Get("Content-Type"), string(answered)
+}
+
+// attach holds the number at Telnyx for the suite's app and attaches it as the phone
+// service does, its trunk password sealed under the service's key. An empty uri is a
+// number attached before trunks were kept.
+func (s *TelnyxHookSuite) attach(e164, uri, username, password string) {
+	ctx := context.Background()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164: e164, Vendor: "telnyx", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+	}))
+	attachment := store.NumberAttachment{TrunkID: "trunk-" + s.utils.uuid(), CallType: "default"}
+	if uri != "" {
+		sealer, err := auth.NewSealer(suiteTrunkKEK)
+		s.Require().NoError(err)
+		sealed, err := sealer.SealWithAAD(password, []byte("phone_numbers/"+s.customerID()+"/"+e164))
+		s.Require().NoError(err)
+		attachment.BridgeURI, attachment.BridgeUsername = uri, username
+		attachment.BridgePasswordSealed, attachment.BridgePasswordKEKVersion = sealed, sealer.CurrentVersion()
+	}
+	s.Require().NoError(s.store.AttachNumber(ctx, s.customerID(), e164, attachment))
+}
+
+// TelnyxHookUnconfiguredSuite is a deployment with no Telnyx public key.
+type TelnyxHookUnconfiguredSuite struct {
+	RouterSuite
+}
+
+func TestTelnyxHookUnconfiguredSuite(t *testing.T) {
+	runSuite(t, new(TelnyxHookUnconfiguredSuite))
+}
+
+func (s *TelnyxHookUnconfiguredSuite) TestWithoutAKeyNoCallIsAnswered() {
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+"/v1/phone/hooks/telnyx",
+		strings.NewReader("Direction=inbound&To=%2B15125550100"))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+	s.Contains(string(body), "not configured")
+}

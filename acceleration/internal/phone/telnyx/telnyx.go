@@ -233,8 +233,8 @@ func (p *Provider) ReleaseNumber(ctx context.Context, e164 string) error {
 	return p.do(ctx, http.MethodDelete, "/v2/phone_numbers/"+id, nil, nil, nil)
 }
 
-// ConfigureInbound assigns the number to the SIP connection that points at the Stream
-// trunk, which is how Telnyx knows where to send a call to it.
+// ConfigureInbound assigns the number to the TeXML application. A call to it then asks the
+// router's Telnyx webhook where to go, and is sent to this number's Stream trunk.
 func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) error {
 	if err := inbound.Bridge.Validate(); err != nil {
 		return err

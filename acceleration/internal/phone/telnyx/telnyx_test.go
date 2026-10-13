@@ -428,6 +428,34 @@ func (s *TelnyxSuite) TestTheTrunkRingsForAsLongAsAsked() {
 	s.True(strings.HasPrefix(string(raw), "<?xml"))
 }
 
+func (s *TelnyxSuite) TestAnInboundCallIsSentToTheNumbersTrunk() {
+	plan, err := RenderInbound(phone.Bridge{
+		URI: "sip:+15125550100@app.sip.example.com", Username: "trunk-1", Password: "s3cret",
+	})
+	s.Require().NoError(err)
+
+	s.Equal("application/xml", plan.ContentType)
+	var parsed parsedTexml
+	s.Require().NoError(xml.Unmarshal(plan.Body, &parsed))
+	s.Equal("sip:+15125550100@app.sip.example.com", parsed.Dial.Sip.URI)
+	s.Equal("trunk-1", parsed.Dial.Sip.Username)
+	s.Equal("s3cret", parsed.Dial.Sip.Password)
+	s.Empty(parsed.Dial.Timeout, "Telnyx's own ring time")
+}
+
+func (s *TelnyxSuite) TestAnInboundCallWithNoTrunkIsNotRendered() {
+	_, err := RenderInbound(phone.Bridge{})
+
+	s.Error(err)
+}
+
+func (s *TelnyxSuite) TestHangingUpIsTeXMLThatEndsTheCall() {
+	plan := RenderHangup()
+
+	s.Equal("application/xml", plan.ContentType)
+	s.Equal(`<?xml version="1.0" encoding="UTF-8"?>`+"\n"+`<Response><Hangup/></Response>`, string(plan.Body))
+}
+
 func (s *TelnyxSuite) TestATrunkWithoutAnAddressIsNotDialled() {
 	_, err := dialTrunk(phone.Bridge{}, 0)
 

@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -75,6 +76,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/telnyxsig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
@@ -991,6 +993,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 			"setting", "redis.addr")
 	}
 
+	var telnyxPublicKey ed25519.PublicKey
+	if encoded := os.Getenv(telnyxsig.PublicKeyEnvVar); encoded != "" {
+		telnyxPublicKey, err = telnyxsig.ParsePublicKey(encoded)
+		if err != nil {
+			logger.Error("calls to telnyx numbers will not be answered", "error", err)
+		}
+	}
+
 	options := api.Options{
 		Routers:               routers,
 		Voices:                voiceService,
@@ -1010,6 +1020,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		TrustAPIKeyHeader:     settings.Stream.TrustAPIKeyHeader,
 		DenyRegistration:      settings.Stream.DenyRegistration,
 		HookSecret:            settings.Stream.APISecret,
+		TelnyxPublicKey:       telnyxPublicKey,
 		Campaigns:             campaigns,
 		Simulations:           simulations,
 		PluginEvents:          events,

@@ -5,6 +5,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"database/sql"
 	"encoding/json"
@@ -109,6 +110,9 @@ func runSuite(t *testing.T, s suite.TestingSuite) {
 // suiteKEK seals the secrets of the keys the suite makes. It is the same for every suite,
 // so a fixture one suite loaded opens in another.
 const suiteKEK = "router suite"
+
+// suiteTrunkKEK seals the trunk passwords of the numbers the phone service attaches.
+const suiteTrunkKEK = "router suite sip trunks"
 
 // The Stream app the suite mints call tokens for. Minting signs a token rather than
 // fetching one, so a made-up app is enough to exercise the join paths.
@@ -239,6 +243,9 @@ type RouterSuite struct {
 	// logs, set by a suite before it starts the harness, is where the router logs, as text at
 	// debug and up, for a suite about what it warns of. Nil discards them.
 	logs io.Writer
+	// telnyxPublicKey, set by a suite about Telnyx's call webhook before it starts the
+	// harness, is the key Telnyx's requests are checked against. Nil leaves it unconfigured.
+	telnyxPublicKey ed25519.PublicKey
 	// episodes is the router's closer, for a suite to sweep the idle thread episodes with.
 	episodes *omnichannel.Closer
 	// transcripts, set by a suite before it starts the harness, opens each voice session's
@@ -496,6 +503,7 @@ func (s *RouterSuite) SetupSuite() {
 		PluginHTTP:        s.mcpTransport(),
 		Stream:            s.stream,
 		HookSecret:        suiteStreamSecret,
+		TelnyxPublicKey:   s.telnyxPublicKey,
 		TrustAPIKeyHeader: s.trustAPIKeyHeader,
 		DenyRegistration:  s.denied,
 		Logger:            logger,
@@ -831,7 +839,7 @@ func (s *RouterSuite) telephony(logger *slog.Logger) *phone.Service {
 	config, err := phone.DefaultConfig()
 	s.Require().NoError(err)
 
-	sealer, err := auth.NewSealer("router suite sip trunks")
+	sealer, err := auth.NewSealer(suiteTrunkKEK)
 	s.Require().NoError(err)
 
 	service, err := phone.NewService(phone.ServiceOptions{

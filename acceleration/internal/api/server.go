@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -195,6 +196,10 @@ type Options struct {
 	// the hooks. Without it the hooks refuse every request, because an unsigned hook is
 	// anyone who found the URL.
 	HookSecret string
+	// TelnyxPublicKey checks that a call webhook came from Telnyx (TELNYX_PUBLIC_KEY).
+	// Without it the Telnyx call webhook answers nothing, since anyone could ask it for a
+	// number's trunk credentials.
+	TelnyxPublicKey ed25519.PublicKey
 	// CORSOrigins are the browser origins allowed to call this API directly, which is
 	// what a dashboard talking to the router without a proxy in between needs. Empty
 	// means no browser may, which is right for a deployment only servers reach.
@@ -310,6 +315,7 @@ type Server struct {
 	trustAPIKeyHeader bool
 	denyRegistration  []string
 	hookSecret        string
+	telnyxPublicKey   ed25519.PublicKey
 	campaigns         *campaign.Runner
 	simulations       *simulation.Runner
 	knowledge         knowledge.Writer
@@ -450,6 +456,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		trustAPIKeyHeader: options.TrustAPIKeyHeader,
 		denyRegistration:  options.DenyRegistration,
 		hookSecret:        options.HookSecret,
+		telnyxPublicKey:   options.TelnyxPublicKey,
 		campaigns:         options.Campaigns,
 		simulations:       options.Simulations,
 		knowledge:         options.Knowledge,
@@ -558,6 +565,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
+	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)

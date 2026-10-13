@@ -14,6 +14,23 @@ const (
 	maxRingSeconds = 120
 )
 
+const texmlContentType = "application/xml"
+
+// RenderInbound answers Telnyx's webhook for a call to one of our numbers: dial that
+// number's Stream trunk, ringing for as long as Telnyx does by default.
+func RenderInbound(bridge phone.Bridge) (phone.Plan, error) {
+	body, err := dialTrunk(bridge, 0)
+	if err != nil {
+		return phone.Plan{}, err
+	}
+	return phone.Plan{ContentType: texmlContentType, Body: body}, nil
+}
+
+// RenderHangup ends a call there is nowhere to send.
+func RenderHangup() phone.Plan {
+	return phone.Plan{ContentType: texmlContentType, Body: []byte(xml.Header + "<Response><Hangup/></Response>")}
+}
+
 // dialTrunk is the TeXML that joins a call to the Stream trunk. ringSeconds bounds how long
 // the trunk is rung, and zero leaves Telnyx's default.
 func dialTrunk(bridge phone.Bridge, ringSeconds int) ([]byte, error) {

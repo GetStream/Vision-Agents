@@ -26,10 +26,10 @@ var gzipMagic = []byte{0x1f, 0x8b}
 // errTooLarge is a delivery past one of the limits.
 var errTooLarge = errors.New("api: that delivery is larger than any event Stream sends")
 
-// isHook reports whether a path is one Stream delivers events to. Stream is not a
+// isHook reports whether a path is one Stream or Telnyx delivers events to. Neither is a
 // customer, so nothing a request to one of them says about who is calling is read.
 func isHook(path string) bool {
-	for _, hook := range []string{phone.CallHookPath, chat.MessageHookPath} {
+	for _, hook := range []string{phone.CallHookPath, chat.MessageHookPath, telnyxCallHookPath} {
 		if path == hook || strings.HasPrefix(path, hook+"/") {
 			return true
 		}
