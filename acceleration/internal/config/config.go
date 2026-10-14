@@ -76,21 +76,21 @@ type Config struct {
 	MockProviders bool `koanf:"mock_providers"`
 	// PprofAddr serves net/http/pprof on its own listener, never the public one. Empty
 	// means no profiling endpoint.
-	PprofAddr string     `koanf:"pprof_addr"`
-	Postgres  Postgres   `koanf:"postgres"`
-	Redis         Redis      `koanf:"redis"`
-	Node          Node       `koanf:"node"`
-	Shutdown      Shutdown   `koanf:"shutdown"`
-	Auth          Auth       `koanf:"auth"`
-	RateLimit     RateLimit  `koanf:"rate_limit"`
-	DataMove      DataMove   `koanf:"data_move"`
-	Stream        Stream     `koanf:"stream"`
-	Agent         Agent      `koanf:"agent"`
-	Connectors    Connectors `koanf:"connectors"`
-	Episodes      Episodes   `koanf:"episodes"`
-	Sandbox       Sandbox    `koanf:"sandbox"`
-	Models        Models     `koanf:"models"`
-	Telnyx        Telnyx     `koanf:"telnyx"`
+	PprofAddr  string     `koanf:"pprof_addr"`
+	Postgres   Postgres   `koanf:"postgres"`
+	Redis      Redis      `koanf:"redis"`
+	Node       Node       `koanf:"node"`
+	Shutdown   Shutdown   `koanf:"shutdown"`
+	Auth       Auth       `koanf:"auth"`
+	RateLimit  RateLimit  `koanf:"rate_limit"`
+	DataMove   DataMove   `koanf:"data_move"`
+	Stream     Stream     `koanf:"stream"`
+	Agent      Agent      `koanf:"agent"`
+	Connectors Connectors `koanf:"connectors"`
+	Episodes   Episodes   `koanf:"episodes"`
+	Sandbox    Sandbox    `koanf:"sandbox"`
+	Models     Models     `koanf:"models"`
+	Telnyx     Telnyx     `koanf:"telnyx"`
 }
 
 // Models are the language models a customer serves themselves, named custom/<name>.
