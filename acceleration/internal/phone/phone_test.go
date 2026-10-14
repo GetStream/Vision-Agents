@@ -231,6 +231,17 @@ func (s *PhoneSuite) TestACallThatCannotBePlacedAsDescribedIsRefused() {
 	s.ErrorContains(long.Validate(), "than the 32")
 }
 
+func (s *PhoneSuite) TestOnlyAFullNumberThatIsNotPremiumRateCanBeDialled() {
+	bridge := Bridge{URI: "sip:trunk@sip.stream-io-api.com"}
+	for _, short := range []string{"911", "112", "999", "000", "988", "+1911", "5125550123", "+1 512 555 0123"} {
+		s.ErrorContains(Outbound{From: "+15125551234", To: short, Bridge: bridge}.Validate(), "E.164", short)
+	}
+	for _, premium := range []string{"+19005550100", "+19765550100"} {
+		s.ErrorIs(Outbound{From: "+15125551234", To: premium, Bridge: bridge}.Validate(), ErrDestinationRefused, premium)
+	}
+	s.NoError(Outbound{From: "+15125551234", To: "+442071838750", Bridge: bridge}.Validate())
+}
+
 func (s *PhoneSuite) TestALineThatWasNotPlacedFromHereCannotPressAnything() {
 	// Pressing needs the vendor's own id for the leg, and an inbound call arrived at
 	// Stream rather than being dialled from here, so there is no such id to name.

@@ -53,13 +53,6 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 	if !mintable {
 		return nil, errNoStreamKeys
 	}
-	// An app that registered its own Stream app decides whether guests are made in it.
-	if !bound.Identity.MintsGuests() {
-		return nil, forbidden("this app does not admit guests")
-	}
-	if bound, err = s.minting(ctx, bound); err != nil {
-		return nil, err
-	}
 
 	body := GuestUserRequest{}
 	if request.Body != nil {

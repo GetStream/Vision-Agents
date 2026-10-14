@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // Service is what the CLI and the HTTP API both talk to.
@@ -107,6 +108,22 @@ type Apps interface {
 
 // errNoStream is a service with no Stream app to make lines in.
 var errNoStream = errors.New("phone: no stream credentials")
+
+// Suspended returns ErrSuspended for an app Stream staff stopped from using the phone. A
+// suspension that cannot be read refuses too: it is there to stop fraud that costs money.
+func (s *Service) Suspended(ctx context.Context, customerID string) error {
+	if s.store == nil {
+		return nil
+	}
+	_, err := s.store.TelephonySuspension(ctx, customerID)
+	if errors.Is(err, store.ErrNotSuspended) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return stack.Wrap(ErrSuspended)
+}
 
 // streamFor is the app new lines for a customer are made in, and its pin.
 func (s *Service) streamFor(ctx context.Context, customer string) (*Stream, int64, error) {
@@ -307,6 +324,15 @@ type Purchase struct {
 func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber, error) {
 	if purchase.Owner.CustomerID == "" {
 		return store.PhoneNumber{}, stack.Wrap(errors.New("phone: a number must belong to a customer"))
+	}
+	if err := s.Suspended(ctx, purchase.Owner.CustomerID); err != nil {
+		return store.PhoneNumber{}, err
+	}
+	// An app Stream blocked could not use a number, so it does not get to pay for one.
+	if s.apps != nil {
+		if _, _, err := s.apps.For(ctx, purchase.Owner.CustomerID); errors.Is(err, streamapp.ErrStreamAppDisconnected) {
+			return store.PhoneNumber{}, stack.Wrap(err)
+		}
 	}
 	provider, err := s.registry.Open(purchase.Vendor)
 	if err != nil {
@@ -520,6 +546,9 @@ func (s *Service) InboundBridge(ctx context.Context, vendor, e164 string) (Bridg
 	if err != nil {
 		return Bridge{}, err
 	}
+	if err := s.Suspended(ctx, stored.CustomerID); err != nil {
+		return Bridge{}, err
+	}
 	password, err := s.sealer.OpenWithAADVersion(stored.PasswordSealed, bridgeAAD(stored.CustomerID, e164), stored.KEKVersion)
 	if err != nil {
 		return Bridge{}, stack.Wrap(fmt.Errorf("phone: open the trunk password of %s: %w", e164, err))
@@ -577,6 +606,14 @@ type Placed struct {
 // rule the answered leg arrives with nothing pointing it at a call, so this creates both and
 // pins the rule to the call the agent is waiting in, the way Transfer does.
 func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error) {
+	if err := s.Suspended(ctx, request.Owner.CustomerID); err != nil {
+		return Placed{}, err
+	}
+	if request.To != "" {
+		if err := Dialable(request.To); err != nil {
+			return Placed{}, err
+		}
+	}
 	if err := s.gate.Allow(ctx, request.Owner.CustomerID, dlc.Voice, request.To); err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
@@ -909,6 +946,18 @@ type TransferRequest struct {
 // the trunk is made, and keeping SIP credentials to reuse later is a worse trade than
 // making a second trunk.
 func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed, error) {
+	if err := s.Suspended(ctx, request.Owner.CustomerID); err != nil {
+		return Dialed{}, err
+	}
+	if request.To != "" {
+		if err := Dialable(request.To); err != nil {
+			return Dialed{}, err
+		}
+	}
+	// A transfer dials someone as surely as a call does, so it answers to the same gate.
+	if err := s.gate.Allow(ctx, request.Owner.CustomerID, dlc.Voice, request.To); err != nil {
+		return Dialed{}, stack.Wrap(err)
+	}
 	// The human is routed into the call the agent is on, so the trunk is made in the app
 	// that call is in.
 	stream, err := s.streamForApp(ctx, request.Owner.CustomerID, request.StreamApp)

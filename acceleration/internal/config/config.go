@@ -162,26 +162,15 @@ type Stream struct {
 	BaseURL string `koanf:"base_url"`
 	// Tenancy says whose app the router acts in. deployment, the default, is the
 	// deployment's own app for every customer, as it always was. app is each customer's
-	// own, registered with its keys.
+	// own, acted in with the server token the gateway in front forwards for it.
 	Tenancy string `koanf:"tenancy"`
-	// Fallback is what app mode does for a customer that registered no app: deployment
+	// Fallback is what app mode does for a customer with no token for its own app: deployment
 	// writes it into the deployment's own app, as before, and refuse writes it nowhere.
 	// Unset is refuse. Deployment mode never reads it.
 	Fallback string `koanf:"fallback"`
 	// AppID is the deployment's own app's id, which Stream is asked for when it is not
 	// set. A pin naming it is finished with the deployment's own key, in either mode.
 	AppID int64 `koanf:"app_id"`
-	// TrustAPIKeyHeader lets the X-Stream-Api-Key a gateway forwards choose which of the
-	// calling app's registered keys mints its tokens. Off, the primary key always does.
-	// Only a gateway that writes that header itself, rather than passing a caller's on,
-	// may have it on.
-	TrustAPIKeyHeader bool `koanf:"trust_api_key_header"`
-	// DenyRegistration are Stream app ids that may never be registered as a customer's own.
-	DenyRegistration []string `koanf:"deny_registration"`
-	// Credentials is what app mode acts in a customer's own app with: registered, the
-	// default, is the secrets the customer registered; forwarded is the server token the
-	// gateway in front minted for the app, for a customer that registered none.
-	Credentials string `koanf:"credentials"`
 	// MintURL is the gateway's internal mint endpoint, which signs the tokens a forwarded
 	// server token cannot, and MintToken the bearer it expects.
 	MintURL   string `koanf:"mint_url"`
@@ -193,15 +182,6 @@ const (
 	TenancyDeployment = "deployment"
 	TenancyApp        = "app"
 )
-
-// What Stream.Credentials holds.
-const (
-	CredentialsRegistered = "registered"
-	CredentialsForwarded  = "forwarded"
-)
-
-// Forwarded reports whether customers' own apps are acted in with the gateway's tokens.
-func (s Stream) Forwarded() bool { return s.Credentials == CredentialsForwarded }
 
 // What Stream.Fallback holds.
 const (
@@ -310,11 +290,8 @@ var variables = map[string]string{
 	"stream.fallback":     "ROUTER_STREAM_FALLBACK",
 	"stream.app_id":       "ROUTER_STREAM_APP_ID",
 
-	"stream.trust_api_key_header": "ROUTER_STREAM_TRUST_API_KEY_HEADER",
-	"stream.deny_registration":    "ROUTER_STREAM_DENY_REGISTRATION",
-	"stream.credentials":          "ROUTER_STREAM_CREDENTIALS",
-	"stream.mint_url":             "ROUTER_STREAM_MINT_URL",
-	"stream.mint_token":           "ROUTER_STREAM_MINT_TOKEN",
+	"stream.mint_url":   "ROUTER_STREAM_MINT_URL",
+	"stream.mint_token": "ROUTER_STREAM_MINT_TOKEN",
 
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
@@ -340,7 +317,7 @@ var variables = map[string]string{
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
-var lists = map[string]bool{"trusted_proxies": true, "stream.deny_registration": true}
+var lists = map[string]bool{"trusted_proxies": true}
 
 // Defaults are what a deployment gets for saying nothing at all.
 func Defaults() Config {
@@ -480,21 +457,6 @@ func (c Config) validate() error {
 	default:
 		return fmt.Errorf("config: stream.fallback is %s or %s, got %q", FallbackDeployment, FallbackRefuse, c.Stream.Fallback)
 	}
-	switch c.Stream.Credentials {
-	case "", CredentialsRegistered:
-	case CredentialsForwarded:
-		if c.Stream.Tenancy != TenancyApp || strings.TrimSpace(c.Auth.Mode) != "proxy" || !c.Auth.ProxyDeclaresKind {
-			return fmt.Errorf("config: stream.credentials=%s takes its tokens from the gateway in front: set "+
-				"stream.tenancy=%s, auth.mode=proxy and auth.proxy_declares_kind=true", CredentialsForwarded, TenancyApp)
-		}
-		if c.Stream.MintURL == "" || c.Stream.MintToken == "" {
-			return fmt.Errorf("config: stream.credentials=%s signs agents' and guests' tokens at the gateway: "+
-				"set stream.mint_url and stream.mint_token", CredentialsForwarded)
-		}
-	default:
-		return fmt.Errorf("config: stream.credentials is %s or %s, got %q",
-			CredentialsRegistered, CredentialsForwarded, c.Stream.Credentials)
-	}
 	if c.Stream.AppID < 0 {
 		return fmt.Errorf("config: stream.app_id is a Stream app's id, got %d", c.Stream.AppID)
 	}
@@ -519,19 +481,15 @@ func (c Config) validate() error {
 // X-Customer-Id.
 func (c Config) validateAppTenancy() error {
 	if c.Postgres.DSN == "" {
-		return fmt.Errorf("config: stream.tenancy=%s keeps every app's keys in Postgres: set postgres.dsn", TenancyApp)
+		return fmt.Errorf("config: stream.tenancy=%s keeps every app's server token in Postgres: set postgres.dsn", TenancyApp)
 	}
-	switch strings.TrimSpace(c.Auth.Mode) {
-	case "noauth":
-		return fmt.Errorf("config: stream.tenancy=%s cannot use auth.mode=noauth, where a caller names "+
-			"its own customer and so whose Stream app it acts in: set auth.mode=api_key, or proxy with "+
-			"auth.proxy_declares_kind", TenancyApp)
-	case "proxy":
-		if !c.Auth.ProxyDeclaresKind {
-			return fmt.Errorf("config: stream.tenancy=%s cannot use auth.mode=proxy without "+
-				"auth.proxy_declares_kind, which reads a caller's own X-Customer-Id: set "+
-				"auth.proxy_declares_kind=true, or auth.mode=api_key", TenancyApp)
-		}
+	if strings.TrimSpace(c.Auth.Mode) != "proxy" || !c.Auth.ProxyDeclaresKind {
+		return fmt.Errorf("config: stream.tenancy=%s acts with the server tokens the gateway in front "+
+			"forwards: set auth.mode=proxy and auth.proxy_declares_kind=true", TenancyApp)
+	}
+	if c.Stream.MintURL == "" || c.Stream.MintToken == "" {
+		return fmt.Errorf("config: stream.tenancy=%s signs agents' and guests' tokens at the gateway: "+
+			"set stream.mint_url and stream.mint_token", TenancyApp)
 	}
 	if c.Stream.UserToken != "" {
 		return fmt.Errorf("config: stream.tenancy=%s cannot use stream.user_token, which is one "+
@@ -573,9 +531,6 @@ func (c Config) export() error {
 		"stream.tenancy":                c.Stream.Tenancy,
 		"stream.fallback":               c.Stream.Fallback,
 		"stream.app_id":                 appID(c.Stream.AppID),
-		"stream.trust_api_key_header":   fmt.Sprint(c.Stream.TrustAPIKeyHeader),
-		"stream.deny_registration":      strings.Join(c.Stream.DenyRegistration, ","),
-		"stream.credentials":            c.Stream.Credentials,
 		"stream.mint_url":               c.Stream.MintURL,
 		"stream.mint_token":             c.Stream.MintToken,
 		"data_move.retention":           c.DataMove.Retention.String(),

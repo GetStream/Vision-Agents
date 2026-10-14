@@ -66,7 +66,7 @@ func (s *ForwardedTokensSuite) router(declares bool) *httptest.Server {
 	forwarded, err := streamapp.NewForwarded(streamapp.ForwardedOptions{Store: s.store, Sealer: s.sealer})
 	s.Require().NoError(err)
 	stored, err := streamapp.NewStored(streamapp.StoredOptions{
-		Store: s.store, Sealer: s.sealer, Forwarded: forwarded,
+		Store: s.store, Forwarded: forwarded,
 		Deployment: streamapp.NewDeployment(streamapp.DeploymentOptions{APIKey: "deploy-key", Secret: "deploy-secret", App: 1, Strict: true}),
 	})
 	s.Require().NoError(err)

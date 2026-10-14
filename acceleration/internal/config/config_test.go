@@ -242,9 +242,19 @@ func (s *ConfigSuite) TestAppModeIsRefusedWithoutPostgres() {
 	s.ErrorContains(err, "postgres.dsn")
 }
 
-func (s *ConfigSuite) TestAppModeRefusesAUserTokenInTheEnvironment() {
+// behindTheGateway sets what app mode needs: Postgres, a proxy that declares kinds, and the
+// gateway's mint endpoint.
+func (s *ConfigSuite) behindTheGateway() {
 	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
 	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
+	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "true")
+	s.T().Setenv("ROUTER_STREAM_MINT_URL", "http://gateway-internal:8082")
+	s.T().Setenv("ROUTER_STREAM_MINT_TOKEN", "the-routers-bearer")
+}
+
+func (s *ConfigSuite) TestAppModeRefusesAUserTokenInTheEnvironment() {
+	s.behindTheGateway()
 	s.T().Setenv("STREAM_USER_TOKEN", "one-apps-token")
 
 	_, _, err := Load("")
@@ -253,95 +263,45 @@ func (s *ConfigSuite) TestAppModeRefusesAUserTokenInTheEnvironment() {
 	s.NotContains(err.Error(), "one-apps-token")
 }
 
-func (s *ConfigSuite) TestAppModeStartsWithPostgresAndNoUserToken() {
-	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
-	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+func (s *ConfigSuite) TestAppModeStartsBehindTheGateway() {
+	s.behindTheGateway()
 
 	config, _, err := Load("")
 
 	s.Require().NoError(err)
 	s.Equal(TenancyApp, config.Stream.Tenancy)
+	s.Equal("http://gateway-internal:8082", config.Stream.MintURL)
 }
 
-func (s *ConfigSuite) TestAppModeRefusesNoAuth() {
-	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
-	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
-	s.T().Setenv("ROUTER_AUTH_MODE", "noauth")
+func (s *ConfigSuite) TestAppModeRefusesAnythingButAProxy() {
+	for _, mode := range []string{"noauth", "api_key"} {
+		s.Run(mode, func() {
+			s.behindTheGateway()
+			s.T().Setenv("ROUTER_AUTH_MODE", mode)
 
-	_, _, err := Load("")
+			_, _, err := Load("")
 
-	s.ErrorContains(err, "auth.mode=noauth")
+			s.ErrorContains(err, "auth.mode=proxy")
+		})
+	}
 }
 
 func (s *ConfigSuite) TestAppModeRefusesAProxyThatDeclaresNoKind() {
-	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
-	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
-	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
+	s.behindTheGateway()
+	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "false")
 
 	_, _, err := Load("")
 
 	s.ErrorContains(err, "auth.proxy_declares_kind")
 }
 
-func (s *ConfigSuite) TestAppModeStartsBehindAProxyThatDeclaresKinds() {
-	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
-	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
-	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
-	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "true")
-
-	config, _, err := Load("")
-
-	s.Require().NoError(err)
-	s.Equal(TenancyApp, config.Stream.Tenancy)
-}
-
-func (s *ConfigSuite) TestForwardedCredentialsStartBehindAProxyThatDeclaresKinds() {
-	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
-	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
-	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
-	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "true")
-	s.T().Setenv("ROUTER_STREAM_CREDENTIALS", CredentialsForwarded)
-	s.T().Setenv("ROUTER_STREAM_MINT_URL", "http://gateway-internal:8082")
-	s.T().Setenv("ROUTER_STREAM_MINT_TOKEN", "the-routers-bearer")
-
-	config, _, err := Load("")
-
-	s.Require().NoError(err)
-	s.True(config.Stream.Forwarded())
-	s.Equal("http://gateway-internal:8082", config.Stream.MintURL)
-}
-
-func (s *ConfigSuite) TestForwardedCredentialsAreRefusedWithoutAProxyToForwardThem() {
-	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
-	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
-	s.T().Setenv("ROUTER_AUTH_MODE", "api_key")
-	s.T().Setenv("ROUTER_STREAM_CREDENTIALS", CredentialsForwarded)
-	s.T().Setenv("ROUTER_STREAM_MINT_URL", "http://gateway-internal:8082")
-	s.T().Setenv("ROUTER_STREAM_MINT_TOKEN", "the-routers-bearer")
-
-	_, _, err := Load("")
-
-	s.ErrorContains(err, "auth.mode=proxy")
-}
-
-func (s *ConfigSuite) TestForwardedCredentialsAreRefusedWithoutTheMintEndpoint() {
-	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
-	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
-	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
-	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "true")
-	s.T().Setenv("ROUTER_STREAM_CREDENTIALS", CredentialsForwarded)
+func (s *ConfigSuite) TestAppModeRefusesToStartWithoutTheMintEndpoint() {
+	s.behindTheGateway()
+	s.T().Setenv("ROUTER_STREAM_MINT_TOKEN", "")
 
 	_, _, err := Load("")
 
 	s.ErrorContains(err, "stream.mint_url")
-}
-
-func (s *ConfigSuite) TestStreamCredentialsAreRegisteredOrForwarded() {
-	s.T().Setenv("ROUTER_STREAM_CREDENTIALS", "borrowed")
-
-	_, _, err := Load("")
-
-	s.ErrorContains(err, "stream.credentials")
 }
 
 func (s *ConfigSuite) TestStreamFallbackDefaultsToRefuseInAppMode() {
@@ -410,20 +370,6 @@ func (s *ConfigSuite) TestALateReplyIsAskedOfAnotherCandidateAfterTheHedgeUnless
 	_, _, err = Load("")
 	s.Require().Error(err)
 	s.Contains(err.Error(), "agent.reply_hedge")
-}
-
-func (s *ConfigSuite) TestRegistrationSettingsAreOffAndEmptyUnlessSet() {
-	config, _, err := Load("")
-	s.Require().NoError(err)
-	s.False(config.Stream.TrustAPIKeyHeader)
-	s.Empty(config.Stream.DenyRegistration)
-
-	s.T().Setenv("ROUTER_STREAM_TRUST_API_KEY_HEADER", "true")
-	s.T().Setenv("ROUTER_STREAM_DENY_REGISTRATION", "11,22")
-	config, _, err = Load("")
-	s.Require().NoError(err)
-	s.True(config.Stream.TrustAPIKeyHeader)
-	s.Equal([]string{"11", "22"}, config.Stream.DenyRegistration)
 }
 
 func (s *ConfigSuite) TestChatTimingsAreOffUnlessTurnedOn() {

@@ -882,6 +882,48 @@ func (e DecisionKind) Valid() bool {
 	}
 }
 
+// Defines values for DetectionErrorCode.
+const (
+	DetectionErrorCodeCancelled         DetectionErrorCode = "cancelled"
+	DetectionErrorCodeProviderFailed    DetectionErrorCode = "provider_failed"
+	DetectionErrorCodeTimeout           DetectionErrorCode = "timeout"
+	DetectionErrorCodeUnsupportedOption DetectionErrorCode = "unsupported_option"
+)
+
+// Valid indicates whether the value is a known member of the DetectionErrorCode enum.
+func (e DetectionErrorCode) Valid() bool {
+	switch e {
+	case DetectionErrorCodeCancelled:
+		return true
+	case DetectionErrorCodeProviderFailed:
+		return true
+	case DetectionErrorCodeTimeout:
+		return true
+	case DetectionErrorCodeUnsupportedOption:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DetectionStatus.
+const (
+	DetectionStatusCompleted DetectionStatus = "completed"
+	DetectionStatusFailed    DetectionStatus = "failed"
+)
+
+// Valid indicates whether the value is a known member of the DetectionStatus enum.
+func (e DetectionStatus) Valid() bool {
+	switch e {
+	case DetectionStatusCompleted:
+		return true
+	case DetectionStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DispatchSetting.
 const (
 	Disabled DispatchSetting = "disabled"
@@ -1317,6 +1359,7 @@ func (e LlmOptionsVerbosity) Valid() bool {
 // Defines values for Modality.
 const (
 	ModalityDecisionModel Modality = "decision_model"
+	ModalityDetection     Modality = "detection"
 	ModalityImage         Modality = "image"
 	ModalityKnowledge     Modality = "knowledge"
 	ModalityLlm           Modality = "llm"
@@ -1332,6 +1375,8 @@ const (
 func (e Modality) Valid() bool {
 	switch e {
 	case ModalityDecisionModel:
+		return true
+	case ModalityDetection:
 		return true
 	case ModalityImage:
 		return true
@@ -2010,66 +2055,6 @@ func (e SipTrunkTransport) Valid() bool {
 	case Tls:
 		return true
 	case Udp:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for StreamAppState.
-const (
-	StreamAppStateBlocked      StreamAppState = "blocked"
-	StreamAppStateConnected    StreamAppState = "connected"
-	StreamAppStateDisconnected StreamAppState = "disconnected"
-)
-
-// Valid indicates whether the value is a known member of the StreamAppState enum.
-func (e StreamAppState) Valid() bool {
-	switch e {
-	case StreamAppStateBlocked:
-		return true
-	case StreamAppStateConnected:
-		return true
-	case StreamAppStateDisconnected:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for StreamKeyStateSignsWebhooks.
-const (
-	StreamKeyStateSignsWebhooksNo      StreamKeyStateSignsWebhooks = "no"
-	StreamKeyStateSignsWebhooksUnknown StreamKeyStateSignsWebhooks = "unknown"
-	StreamKeyStateSignsWebhooksYes     StreamKeyStateSignsWebhooks = "yes"
-)
-
-// Valid indicates whether the value is a known member of the StreamKeyStateSignsWebhooks enum.
-func (e StreamKeyStateSignsWebhooks) Valid() bool {
-	switch e {
-	case StreamKeyStateSignsWebhooksNo:
-		return true
-	case StreamKeyStateSignsWebhooksUnknown:
-		return true
-	case StreamKeyStateSignsWebhooksYes:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for StreamKeyStateStatus.
-const (
-	StreamKeyStateStatusActive   StreamKeyStateStatus = "active"
-	StreamKeyStateStatusRejected StreamKeyStateStatus = "rejected"
-)
-
-// Valid indicates whether the value is a known member of the StreamKeyStateStatus enum.
-func (e StreamKeyStateStatus) Valid() bool {
-	switch e {
-	case StreamKeyStateStatusActive:
-		return true
-	case StreamKeyStateStatusRejected:
 		return true
 	default:
 		return false
@@ -2846,10 +2831,35 @@ type AgentResponsePage struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
+// AgentStats defines model for AgentStats.
+type AgentStats struct {
+	// PeakAt When that peak was first reached. Null when no session was open in the window.
+	PeakAt *time.Time `json:"peak_at"`
+
+	// PeakConcurrentSessions The most sessions open at the same time, each one an agent running. A session still open counts up to now.
+	PeakConcurrentSessions int64     `json:"peak_concurrent_sessions"`
+	ToolCalls              ToolStats `json:"tool_calls"`
+
+	// Tools One row per tool, most called first.
+	Tools []ToolStats `json:"tools"`
+}
+
 // AgentTools How an agent is offered its plugin, MCP server and connector tools.
 type AgentTools struct {
 	// Progressive Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
 	Progressive *bool `json:"progressive,omitempty"`
+}
+
+// AnalyzeReviewsRequest defines model for AnalyzeReviewsRequest.
+type AnalyzeReviewsRequest struct {
+	// From Only calls that started at or after this, inclusive.
+	From time.Time `json:"from"`
+
+	// Target The model that analyses, a "provider/model" name or a shortcut. Left out, multilingual-high-accuracy.
+	Target *string `json:"target,omitempty"`
+
+	// To Only calls that started before this, exclusive.
+	To time.Time `json:"to"`
 }
 
 // AppSettings What the router does for the calling app. It never carries a secret.
@@ -4514,6 +4524,99 @@ type DataPolicy struct {
 // DecisionKind What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent and settling is that work coming back, answered or not.
 type DecisionKind string
 
+// DetectedObject defines model for DetectedObject.
+type DetectedObject struct {
+	// Box A rectangle as fractions of the image: 0,0 is the top left corner and 1,1 the bottom right.
+	Box DetectionBox `json:"box"`
+
+	// Confidence The model's score from 0 to 1. A model that scores nothing, such as Moondream, reports 1.
+	Confidence float64 `json:"confidence"`
+
+	// Embedding A vector describing what is in the box. Present only when embeddings was asked for.
+	Embedding *[]float32 `json:"embedding,omitempty"`
+
+	// Label Example: person
+	Label string `json:"label"`
+}
+
+// DetectionBox A rectangle as fractions of the image: 0,0 is the top left corner and 1,1 the bottom right.
+type DetectionBox struct {
+	XMax float64 `json:"x_max"`
+	XMin float64 `json:"x_min"`
+	YMax float64 `json:"y_max"`
+	YMin float64 `json:"y_min"`
+}
+
+// DetectionErrorCode Why a detection found nothing, absent when it completed. unsupported_option is a class, setting or overwrite no candidate could honour; provider_failed anything else a provider did wrong; timeout the 30 seconds running out; cancelled the caller hanging up.
+type DetectionErrorCode string
+
+// DetectionOptions Where to look and what to keep.
+type DetectionOptions struct {
+	// Classes The labels to keep. An open-vocabulary model (detection-open) looks for these words and has to be given at least one; a fixed-class model returns only these of what it found. Matched without regard to case.
+	Classes *[]string `json:"classes,omitempty"`
+
+	// Embeddings Return a vector on every box, for matching what was found against what was seen before. Only a model that computes one is asked.
+	Embeddings *bool `json:"embeddings,omitempty"`
+
+	// MinConfidence Drop boxes scored below this. Only a model that scores its boxes is asked.
+	MinConfidence *float64 `json:"min_confidence,omitempty"`
+
+	// Overwrites Settings for one provider that the options above have no word for, keyed by provider. roboflow takes workspace and workflow_id, or specification, for the roboflow/workflow model. An overwrite for a provider that is not a candidate is refused.
+	Overwrites *map[string]interface{} `json:"overwrites,omitempty"`
+
+	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything.
+	Providers *[]string `json:"providers,omitempty"`
+
+	// Target A provider/model or a capability shortcut. Defaults to detection-fast.
+	//
+	// Example: detection-open
+	Target *string `json:"target,omitempty"`
+}
+
+// DetectionRequest defines model for DetectionRequest.
+type DetectionRequest struct {
+	// Image The image, base64. A JPEG or PNG of at most 4 MB and 4096 pixels a side; a video frame scaled to 1024 wide is plenty.
+	Image []byte `json:"image"`
+
+	// Options Where to look and what to keep.
+	Options *DetectionOptions  `json:"options,omitempty"`
+	Tags    *map[string]string `json:"tags,omitempty"`
+}
+
+// DetectionResult defines model for DetectionResult.
+type DetectionResult struct {
+	// CostMicros Millionths of a dollar, priced per image the vendor billed. Zero when it failed.
+	CostMicros int64 `json:"cost_micros"`
+
+	// Detections What was found. Empty when nothing was, or when it failed.
+	Detections []DetectedObject `json:"detections"`
+
+	// Error What went wrong, in words. Absent when the detection completed.
+	Error *string `json:"error,omitempty"`
+
+	// ErrorCode Why a detection found nothing, absent when it completed. unsupported_option is a class, setting or overwrite no candidate could honour; provider_failed anything else a provider did wrong; timeout the 30 seconds running out; cancelled the caller hanging up.
+	ErrorCode *DetectionErrorCode `json:"error_code,omitempty"`
+
+	// Id This response's own id, for logs. Nothing is stored under it.
+	//
+	// Example: det_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+	Id string `json:"id"`
+
+	// Model Example: moondream3-preview
+	Model *string `json:"model,omitempty"`
+
+	// Provider Who looked, or who failed to. Absent when nothing got as far as a provider.
+	//
+	// Example: moondream
+	Provider *string `json:"provider,omitempty"`
+
+	// Status Whether the image was looked at. A failed detection says why in error_code and error.
+	Status DetectionStatus `json:"status"`
+}
+
+// DetectionStatus Whether the image was looked at. A failed detection says why in error_code and error.
+type DetectionStatus string
+
 // DispatchSetting Whether this kind of work is left to the customer's own dispatch worker.
 type DispatchSetting string
 
@@ -5090,7 +5193,7 @@ type MessageContent0 = string
 // MessageContent1 defines model for MessageContent.1.
 type MessageContent1 = []ContentPart
 
-// Modality What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// Modality What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 type Modality string
 
 // ModelCallTiming defines model for ModelCallTiming.
@@ -5660,6 +5763,29 @@ type RespondRequest struct {
 
 // ReviewActor Who moved a use case: the app, Stream staff or the vendor.
 type ReviewActor string
+
+// ReviewAnalysis defines model for ReviewAnalysis.
+type ReviewAnalysis struct {
+	// CallsRead How many badly reviewed calls were read. Zero means there were none, and nothing was asked.
+	CallsRead int64         `json:"calls_read"`
+	Causes    []ReviewCause `json:"causes"`
+
+	// Summary The whole, in two sentences.
+	Summary string `json:"summary"`
+}
+
+// ReviewCause defines model for ReviewCause.
+type ReviewCause struct {
+	// CallIds The calls it explains, which are the sessions that ran them. Only ids that were read.
+	CallIds []string `json:"call_ids"`
+
+	// Explanation What went wrong in those calls.
+	Explanation string `json:"explanation"`
+
+	// Fix What to change in the agent.
+	Fix   string `json:"fix"`
+	Title string `json:"title"`
+}
 
 // ReviewDecision approve sends the use case to the vendor; request_changes hands it back to the app to edit; reject ends it.
 type ReviewDecision string
@@ -6391,6 +6517,9 @@ type Skill struct {
 	CreatedAt    time.Time `json:"created_at"`
 	DeadlineMs   *int64    `json:"deadline_ms,omitempty"`
 	Description  string    `json:"description"`
+
+	// FilePaths The files the skill came with, by path relative to its folder.
+	FilePaths    *[]string `json:"file_paths,omitempty"`
 	Id           string    `json:"id"`
 	Instructions string    `json:"instructions"`
 	Name         string    `json:"name"`
@@ -6410,6 +6539,9 @@ type SkillRequest struct {
 
 	// Description The one line the fast model sees.
 	Description string `json:"description"`
+
+	// Files The rest of the skill's folder beside SKILL.md, each file's text by its path relative to the folder, such as reference/forms.md or scripts/fill.py. The model reads them one at a time when it needs them. A file that is not .md, .mdx or .txt is a script, run in the sandbox, so a skill with one belongs only to an agent with a sandbox. At most 64 files and 1 MB in all.
+	Files *map[string]string `json:"files,omitempty"`
 
 	// Instructions The full prompt, which only the subagent sees.
 	Instructions string `json:"instructions"`
@@ -6548,76 +6680,8 @@ type StoredConnectorOAuthClient struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// StreamAppState Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
-type StreamAppState string
-
-// StreamCheck defines model for StreamCheck.
-type StreamCheck struct {
-	Reattach *[]string `json:"reattach"`
-
-	// Settings What the router does for the calling app. It never carries a secret.
-	Settings AppSettings `json:"settings"`
-}
-
-// StreamCredentials The keys the router acts in the calling app's own Stream app with. Secrets are written and never read back: no answer carries one.
-type StreamCredentials struct {
-	// AllowGuests Whether guests may be made in the app. Left out keeps what was set, which starts off false.
-	AllowGuests *bool `json:"allow_guests,omitempty"`
-
-	// ExpectedRevision The revision last read, 0 for an app never registered. A write made against an older one is a 409.
-	ExpectedRevision int64 `json:"expected_revision"`
-
-	// Keys Every key the router may act in the app with, which replaces those it held. Each is checked with Stream. Empty disconnects the app, which needs a proof.
-	Keys *[]StreamKeyInput `json:"keys"`
-
-	// PrimaryKey The key tokens are minted with. Left out is the first.
-	PrimaryKey *string         `json:"primary_key,omitempty"`
-	Proof      *StreamKeyInput `json:"proof,omitempty"`
-}
-
-// StreamKeyInput defines model for StreamKeyInput.
-type StreamKeyInput struct {
-	ApiKey string `json:"api_key"`
-
-	// ApiSecret The key's secret. It is sealed and never read back.
-	ApiSecret *string `json:"api_secret,omitempty"`
-
-	// CreatedAt When Stream made the key, which says which key is the oldest and so signs the app's webhooks.
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-}
-
-// StreamKeyState defines model for StreamKeyState.
-type StreamKeyState struct {
-	ApiKey string `json:"api_key"`
-
-	// CreatedAt When Stream made the key.
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-
-	// LastWebhookAt When Stream last signed a hook with this key.
-	LastWebhookAt *time.Time `json:"last_webhook_at,omitempty"`
-
-	// SecretLast4 The end of the secret, enough to tell two apart.
-	SecretLast4 *string `json:"secret_last4,omitempty"`
-
-	// SignsWebhooks Whether Stream signs the app's hooks with this key, which is its oldest. yes is one a hook arrived signed with.
-	SignsWebhooks StreamKeyStateSignsWebhooks `json:"signs_webhooks"`
-
-	// Status rejected is a key Stream stopped accepting, which the router no longer uses.
-	Status     StreamKeyStateStatus `json:"status"`
-	VerifiedAt *time.Time           `json:"verified_at,omitempty"`
-}
-
-// StreamKeyStateSignsWebhooks Whether Stream signs the app's hooks with this key, which is its oldest. yes is one a hook arrived signed with.
-type StreamKeyStateSignsWebhooks string
-
-// StreamKeyStateStatus rejected is a key Stream stopped accepting, which the router no longer uses.
-type StreamKeyStateStatus string
-
 // StreamSettings Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need.
 type StreamSettings struct {
-	// AllowGuests Whether guests may be made in the registered app.
-	AllowGuests *bool `json:"allow_guests,omitempty"`
-
 	// CallType Whether a Stream app holds a type the router needs. unknown is a type Stream could not be asked about.
 	CallType StreamTypeState `json:"call_type"`
 
@@ -6627,22 +6691,7 @@ type StreamSettings struct {
 	// CheckedAt When Stream was asked. Absent when it could not be, and the types are then unknown. Answers are reused for a minute.
 	CheckedAt *time.Time `json:"checked_at,omitempty"`
 
-	// Keys The registered app's keys, oldest first. No secret is ever read back.
-	Keys *[]StreamKeyState `json:"keys,omitempty"`
-
-	// PrimaryKey The key tokens are minted with.
-	PrimaryKey *string `json:"primary_key,omitempty"`
-
-	// Revision The registration's revision, 0 for an app that registered none. A write names the one it read.
-	Revision *int64 `json:"revision,omitempty"`
-
-	// State Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
-	State *StreamAppState `json:"state,omitempty"`
-
-	// StateReason Why the router stopped acting in the app, for one that is blocked.
-	StateReason *string `json:"state_reason,omitempty"`
-
-	// StreamAppId The registered app's own id.
+	// StreamAppId The calling app's own Stream app id, in app mode, when its work is written there.
 	StreamAppId *int64 `json:"stream_app_id,omitempty"`
 
 	// Tenancy Whose Stream app the router acts in. deployment is one app, the router's own, for every app it serves; app is each app's own.
@@ -6805,6 +6854,15 @@ type SttOptions struct {
 	Words *bool `json:"words,omitempty"`
 }
 
+// SuspendTelephonyRequest defines model for SuspendTelephonyRequest.
+type SuspendTelephonyRequest struct {
+	// Reason Why the app is suspended. The app is never shown it.
+	Reason string `json:"reason"`
+
+	// SuspendedBy Who is suspending it.
+	SuspendedBy string `json:"suspended_by"`
+}
+
 // SyncAgentRequest An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 type SyncAgentRequest struct {
 	// BaseChange The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
@@ -6950,6 +7008,21 @@ type TagValueSummary struct {
 	Value string `json:"value"`
 }
 
+// TelephonySuspension defines model for TelephonySuspension.
+type TelephonySuspension struct {
+	// CustomerId The app that is suspended.
+	CustomerId string `json:"customer_id"`
+
+	// Reason Why, for Stream staff. The app is never shown it.
+	Reason string `json:"reason"`
+
+	// SuspendedAt When it was suspended, or last changed.
+	SuspendedAt time.Time `json:"suspended_at"`
+
+	// SuspendedBy Who suspended it.
+	SuspendedBy string `json:"suspended_by"`
+}
+
 // TextContentPart defines model for TextContentPart.
 type TextContentPart struct {
 	Text string              `json:"text"`
@@ -7063,6 +7136,21 @@ type ToolResultCommand struct {
 
 // ToolResultCommandType defines model for ToolResultCommand.Type.
 type ToolResultCommandType string
+
+// ToolStats defines model for ToolStats.
+type ToolStats struct {
+	// AvgMs From the call starting to its result. Null when none was timed.
+	AvgMs *float64 `json:"avg_ms"`
+
+	// AvgTokens What a call put in front of the model, its arguments and its result, estimated at four characters a token.
+	AvgTokens float64 `json:"avg_tokens"`
+	Calls     int64   `json:"calls"`
+
+	// Failed Calls that ended in an error.
+	Failed int64    `json:"failed"`
+	P99Ms  *float64 `json:"p99_ms"`
+	Tool   string   `json:"tool"`
+}
 
 // TranscriptEntity Something the recording named, for the providers that pick them out.
 type TranscriptEntity struct {
@@ -7654,6 +7742,9 @@ type ListCallsParams struct {
 
 	// To Only calls that started before this, exclusive.
 	To *time.Time `form:"to,omitempty" json:"to,omitempty"`
+
+	// MaxReviewScore Only reviewed calls scored at or below this, from 1 to 5.
+	MaxReviewScore *int `form:"max_review_score,omitempty" json:"max_review_score,omitempty"`
 }
 
 // GetCallEventsParams defines parameters for GetCallEvents.
@@ -7985,6 +8076,15 @@ type GetActivityParams struct {
 	To time.Time `form:"to" json:"to"`
 }
 
+// GetAgentStatsParams defines parameters for GetAgentStats.
+type GetAgentStatsParams struct {
+	// From Start of the window, inclusive.
+	From time.Time `form:"from" json:"from"`
+
+	// To End of the window, exclusive.
+	To time.Time `form:"to" json:"to"`
+}
+
 // GetSpendParams defines parameters for GetSpend.
 type GetSpendParams struct {
 	// GroupBy "modality", or the cost label to group by.
@@ -8061,6 +8161,9 @@ type GetTagStatsParams struct {
 	// To End of the window, exclusive.
 	To time.Time `form:"to" json:"to"`
 }
+
+// AnalyzeReviewsJSONRequestBody defines body for AnalyzeReviews for application/json ContentType.
+type AnalyzeReviewsJSONRequestBody = AnalyzeReviewsRequest
 
 // CreateCallTokenJSONRequestBody defines body for CreateCallToken for application/json ContentType.
 type CreateCallTokenJSONRequestBody = CallTokenRequest
@@ -8201,8 +8304,14 @@ type QueryAuditJSONRequestBody = AuditQuery
 // ClassifyJSONRequestBody defines body for Classify for application/json ContentType.
 type ClassifyJSONRequestBody = ClassifyRequest
 
+// DetectJSONRequestBody defines body for Detect for application/json ContentType.
+type DetectJSONRequestBody = DetectionRequest
+
 // GenerateImageJSONRequestBody defines body for GenerateImage for application/json ContentType.
 type GenerateImageJSONRequestBody = ImageGenerationRequest
+
+// SuspendTelephonyJSONRequestBody defines body for SuspendTelephony for application/json ContentType.
+type SuspendTelephonyJSONRequestBody = SuspendTelephonyRequest
 
 // ReviewUseCaseJSONRequestBody defines body for ReviewUseCase for application/json ContentType.
 type ReviewUseCaseJSONRequestBody = ReviewUseCaseRequest
@@ -8260,9 +8369,6 @@ type UpdateRouterConfigJSONRequestBody = RouterConfigRequest
 
 // SearchJSONRequestBody defines body for Search for application/json ContentType.
 type SearchJSONRequestBody = SearchRequest
-
-// UpdateAppStreamCredentialsJSONRequestBody defines body for UpdateAppStreamCredentials for application/json ContentType.
-type UpdateAppStreamCredentialsJSONRequestBody = StreamCredentials
 
 // RunRollupJSONRequestBody defines body for RunRollup for application/json ContentType.
 type RunRollupJSONRequestBody = RollupRequest
@@ -8613,6 +8719,26 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/calls (the `ListCalls` operationId).
 	ListCalls(ctx context.Context, params *ListCallsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AnalyzeReviewsWithBody What caused the calls the agents handled badly
+	//
+	// Reads the latest 100 calls in the window whose review scored them 3 or lower, and asks a model to group them by cause, each with the fix to make and the calls it explains.
+	// Costs one language model call, billed as any other, and keeps nothing: ask again for a fresh answer.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/calls/reviews/analysis (the `AnalyzeReviews` operationId).
+	AnalyzeReviewsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AnalyzeReviews What caused the calls the agents handled badly
+	//
+	// Reads the latest 100 calls in the window whose review scored them 3 or lower, and asks a model to group them by cause, each with the fix to make and the calls it explains.
+	// Costs one language model call, billed as any other, and keeps nothing: ask again for a fresh answer.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/calls/reviews/analysis (the `AnalyzeReviews` operationId).
+	AnalyzeReviews(ctx context.Context, body AnalyzeReviewsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCall One call, with whatever was made of it afterwards
 	//
@@ -10414,6 +10540,28 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/data/import (the `ImportData` operationId).
 	ImportDataWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DetectWithBody Find objects in one image, and return their boxes
+	//
+	// Routed like image generation: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting the images the vendor billed. Every box comes back as fractions of the image, whatever the vendor sent.
+	// detection-fast finds COCO's 80 classes quickly; detection-open finds whatever is named in classes; detection-faces finds faces with an embedding each. A confidence floor or embeddings narrow the candidates to the models that declared them, so they are honoured or the request is a 400.
+	// A detection that got as far as a provider answers 200 whether it found anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. Nothing is stored, so the id cannot be fetched again.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/detection (the `Detect` operationId).
+	DetectWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// Detect Find objects in one image, and return their boxes
+	//
+	// Routed like image generation: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting the images the vendor billed. Every box comes back as fractions of the image, whatever the vendor sent.
+	// detection-fast finds COCO's 80 classes quickly; detection-open finds whatever is named in classes; detection-faces finds faces with an embedding each. A confidence floor or embeddings narrow the candidates to the models that declared them, so they are honoured or the request is a 400.
+	// A detection that got as far as a provider answers 200 whether it found anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. Nothing is stored, so the id cannot be fetched again.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/detection (the `Detect` operationId).
+	Detect(ctx context.Context, body DetectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GenerateImageWithBody Draw pictures from a prompt, and return them
 	//
 	// Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
@@ -10455,6 +10603,46 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `SetOperatorProviderApp` operationId).
 	SetOperatorProviderApp(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LiftTelephonySuspension Lift an app's telephony suspension
+	//
+	// Lets the app use the phone again. Its paused campaigns stay paused until the app starts them.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Corresponds with DELETE /v1/ops/customers/{customer_id}/telephony-suspension (the `LiftTelephonySuspension` operationId).
+	LiftTelephonySuspension(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTelephonySuspension Get why an app's telephony is suspended
+	//
+	// The suspension an app is under, or 404 when it is not suspended.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Corresponds with GET /v1/ops/customers/{customer_id}/telephony-suspension (the `GetTelephonySuspension` operationId).
+	GetTelephonySuspension(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SuspendTelephonyWithBody Suspend an app's telephony
+	//
+	// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+	SuspendTelephonyWithBody(ctx context.Context, customerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SuspendTelephony Suspend an app's telephony
+	//
+	// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+	SuspendTelephony(ctx context.Context, customerId string, body SuspendTelephonyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListUseCasesForReview List use cases waiting on Stream
 	//
@@ -11019,37 +11207,6 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
 	GetAppSettings(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CheckAppStreamCredentials Check the calling app's own Stream app
-	//
-	// Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
-	//
-	// Server-side only.
-	//
-	// Corresponds with POST /v1/settings/app/stream/check (the `CheckAppStreamCredentials` operationId).
-	CheckAppStreamCredentials(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdateAppStreamCredentialsWithBody Register the calling app's own Stream app
-	//
-	// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
-	//
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
-	UpdateAppStreamCredentialsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdateAppStreamCredentials Register the calling app's own Stream app
-	//
-	// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
-	//
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
-	UpdateAppStreamCredentials(ctx context.Context, body UpdateAppStreamCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// GetActivity Who used the calling customer's agents, and how much
 	//
 	// Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct people were behind them.
@@ -11057,6 +11214,14 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/stats/activity (the `GetActivity` operationId).
 	GetActivity(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAgentStats How the calling customer's agents ran, across all of them
+	//
+	// The most agents that were running at once, and which tools they called: how often, how much each call put in front of the model and how long it took.
+	// One figure for the whole window rather than a row per bucket, because neither a peak nor a percentile can be summed out of smaller ones.
+	//
+	// Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
+	GetAgentStats(ctx context.Context, params *GetAgentStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RunRollupWithBody Aggregate request rows into a rollup table
 	//
@@ -11217,6 +11382,46 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 // Corresponds with GET /v1/agents/calls (the `ListCalls` operationId).
 func (c *Client) ListCalls(ctx context.Context, params *ListCallsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListCallsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AnalyzeReviewsWithBody What caused the calls the agents handled badly
+//
+// Reads the latest 100 calls in the window whose review scored them 3 or lower, and asks a model to group them by cause, each with the fix to make and the calls it explains.
+// Costs one language model call, billed as any other, and keeps nothing: ask again for a fresh answer.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/calls/reviews/analysis (the `AnalyzeReviews` operationId).
+func (c *Client) AnalyzeReviewsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAnalyzeReviewsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AnalyzeReviews What caused the calls the agents handled badly
+//
+// Reads the latest 100 calls in the window whose review scored them 3 or lower, and asks a model to group them by cause, each with the fix to make and the calls it explains.
+// Costs one language model call, billed as any other, and keeps nothing: ask again for a fresh answer.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/calls/reviews/analysis (the `AnalyzeReviews` operationId).
+func (c *Client) AnalyzeReviews(ctx context.Context, body AnalyzeReviewsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAnalyzeReviewsRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14956,6 +15161,48 @@ func (c *Client) ImportDataWithBody(ctx context.Context, contentType string, bod
 	return c.Client.Do(req)
 }
 
+// DetectWithBody Find objects in one image, and return their boxes
+//
+// Routed like image generation: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting the images the vendor billed. Every box comes back as fractions of the image, whatever the vendor sent.
+// detection-fast finds COCO's 80 classes quickly; detection-open finds whatever is named in classes; detection-faces finds faces with an embedding each. A confidence floor or embeddings narrow the candidates to the models that declared them, so they are honoured or the request is a 400.
+// A detection that got as far as a provider answers 200 whether it found anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. Nothing is stored, so the id cannot be fetched again.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/detection (the `Detect` operationId).
+func (c *Client) DetectWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDetectRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// Detect Find objects in one image, and return their boxes
+//
+// Routed like image generation: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting the images the vendor billed. Every box comes back as fractions of the image, whatever the vendor sent.
+// detection-fast finds COCO's 80 classes quickly; detection-open finds whatever is named in classes; detection-faces finds faces with an embedding each. A confidence floor or embeddings narrow the candidates to the models that declared them, so they are honoured or the request is a 400.
+// A detection that got as far as a provider answers 200 whether it found anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. Nothing is stored, so the id cannot be fetched again.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/detection (the `Detect` operationId).
+func (c *Client) Detect(ctx context.Context, body DetectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDetectRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GenerateImageWithBody Draw pictures from a prompt, and return them
 //
 // Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
@@ -15028,6 +15275,86 @@ func (c *Client) DeleteOperatorProviderApp(ctx context.Context, customerId strin
 // Corresponds with PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `SetOperatorProviderApp` operationId).
 func (c *Client) SetOperatorProviderApp(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetOperatorProviderAppRequest(c.Server, customerId, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LiftTelephonySuspension Lift an app's telephony suspension
+//
+// Lets the app use the phone again. Its paused campaigns stay paused until the app starts them.
+//
+// Stream staff only: it needs the ops key.
+//
+// Corresponds with DELETE /v1/ops/customers/{customer_id}/telephony-suspension (the `LiftTelephonySuspension` operationId).
+func (c *Client) LiftTelephonySuspension(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLiftTelephonySuspensionRequest(c.Server, customerId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetTelephonySuspension Get why an app's telephony is suspended
+//
+// The suspension an app is under, or 404 when it is not suspended.
+//
+// Stream staff only: it needs the ops key.
+//
+// Corresponds with GET /v1/ops/customers/{customer_id}/telephony-suspension (the `GetTelephonySuspension` operationId).
+func (c *Client) GetTelephonySuspension(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTelephonySuspensionRequest(c.Server, customerId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SuspendTelephonyWithBody Suspend an app's telephony
+//
+// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+func (c *Client) SuspendTelephonyWithBody(ctx context.Context, customerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSuspendTelephonyRequestWithBody(c.Server, customerId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SuspendTelephony Suspend an app's telephony
+//
+// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+func (c *Client) SuspendTelephony(ctx context.Context, customerId string, body SuspendTelephonyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSuspendTelephonyRequest(c.Server, customerId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -16241,67 +16568,6 @@ func (c *Client) GetAppSettings(ctx context.Context, reqEditors ...RequestEditor
 	return c.Client.Do(req)
 }
 
-// CheckAppStreamCredentials Check the calling app's own Stream app
-//
-// Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
-//
-// Server-side only.
-//
-// Corresponds with POST /v1/settings/app/stream/check (the `CheckAppStreamCredentials` operationId).
-func (c *Client) CheckAppStreamCredentials(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCheckAppStreamCredentialsRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdateAppStreamCredentialsWithBody Register the calling app's own Stream app
-//
-// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
-//
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
-func (c *Client) UpdateAppStreamCredentialsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateAppStreamCredentialsRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdateAppStreamCredentials Register the calling app's own Stream app
-//
-// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
-//
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
-func (c *Client) UpdateAppStreamCredentials(ctx context.Context, body UpdateAppStreamCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateAppStreamCredentialsRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // GetActivity Who used the calling customer's agents, and how much
 //
 // Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct people were behind them.
@@ -16310,6 +16576,24 @@ func (c *Client) UpdateAppStreamCredentials(ctx context.Context, body UpdateAppS
 // Corresponds with GET /v1/stats/activity (the `GetActivity` operationId).
 func (c *Client) GetActivity(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetActivityRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAgentStats How the calling customer's agents ran, across all of them
+//
+// The most agents that were running at once, and which tools they called: how often, how much each call put in front of the model and how long it took.
+// One figure for the whole window rather than a row per bucket, because neither a peak nor a percentile can be summed out of smaller ones.
+//
+// Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
+func (c *Client) GetAgentStats(ctx context.Context, params *GetAgentStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAgentStatsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -16753,6 +17037,18 @@ func NewListCallsRequest(server string, params *ListCallsParams) (*http.Request,
 
 		}
 
+		if params.MaxReviewScore != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "max_review_score", *params.MaxReviewScore, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -16763,6 +17059,46 @@ func NewListCallsRequest(server string, params *ListCallsParams) (*http.Request,
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewAnalyzeReviewsRequest calls the generic AnalyzeReviews builder with application/json body
+func NewAnalyzeReviewsRequest(server string, body AnalyzeReviewsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAnalyzeReviewsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAnalyzeReviewsRequestWithBody constructs an http.Request for the AnalyzeReviews method, with any body, and a specified content type
+func NewAnalyzeReviewsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/calls/reviews/analysis")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -23492,6 +23828,46 @@ func NewImportDataRequestWithBody(server string, contentType string, body io.Rea
 	return req, nil
 }
 
+// NewDetectRequest calls the generic Detect builder with application/json body
+func NewDetectRequest(server string, body DetectJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDetectRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewDetectRequestWithBody constructs an http.Request for the Detect method, with any body, and a specified content type
+func NewDetectRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/detection")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGenerateImageRequest calls the generic GenerateImage builder with application/json body
 func NewGenerateImageRequest(server string, body GenerateImageJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -23610,6 +23986,121 @@ func NewSetOperatorProviderAppRequest(server string, customerId string, id strin
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewLiftTelephonySuspensionRequest constructs an http.Request for the LiftTelephonySuspension method
+func NewLiftTelephonySuspensionRequest(server string, customerId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "customer_id", customerId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/customers/%s/telephony-suspension", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetTelephonySuspensionRequest constructs an http.Request for the GetTelephonySuspension method
+func NewGetTelephonySuspensionRequest(server string, customerId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "customer_id", customerId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/customers/%s/telephony-suspension", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSuspendTelephonyRequest calls the generic SuspendTelephony builder with application/json body
+func NewSuspendTelephonyRequest(server string, customerId string, body SuspendTelephonyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSuspendTelephonyRequestWithBody(server, customerId, "application/json", bodyReader)
+}
+
+// NewSuspendTelephonyRequestWithBody constructs an http.Request for the SuspendTelephony method, with any body, and a specified content type
+func NewSuspendTelephonyRequestWithBody(server string, customerId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "customer_id", customerId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/customers/%s/telephony-suspension", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -25528,73 +26019,6 @@ func NewGetAppSettingsRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewCheckAppStreamCredentialsRequest constructs an http.Request for the CheckAppStreamCredentials method
-func NewCheckAppStreamCredentialsRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/settings/app/stream/check")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewUpdateAppStreamCredentialsRequest calls the generic UpdateAppStreamCredentials builder with application/json body
-func NewUpdateAppStreamCredentialsRequest(server string, body UpdateAppStreamCredentialsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewUpdateAppStreamCredentialsRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewUpdateAppStreamCredentialsRequestWithBody constructs an http.Request for the UpdateAppStreamCredentials method, with any body, and a specified content type
-func NewUpdateAppStreamCredentialsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/settings/app/stream/credentials")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewGetActivityRequest constructs an http.Request for the GetActivity method
 func NewGetActivityRequest(server string, params *GetActivityParams) (*http.Request, error) {
 	var err error
@@ -25634,6 +26058,64 @@ func NewGetActivityRequest(server string, params *GetActivityParams) (*http.Requ
 			}
 
 		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "to", params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetAgentStatsRequest constructs an http.Request for the GetAgentStats method
+func NewGetAgentStatsRequest(server string, params *GetAgentStatsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/stats/agents")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
 
 		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "from", params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 			return nil, err
@@ -26489,6 +26971,26 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/calls (the `ListCalls` operationId).
 	ListCallsWithResponse(ctx context.Context, params *ListCallsParams, reqEditors ...RequestEditorFn) (*ListCallsResponse, error)
+
+	// AnalyzeReviewsWithBodyWithResponse What caused the calls the agents handled badly
+	//
+	// Reads the latest 100 calls in the window whose review scored them 3 or lower, and asks a model to group them by cause, each with the fix to make and the calls it explains.
+	// Costs one language model call, billed as any other, and keeps nothing: ask again for a fresh answer.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/calls/reviews/analysis (the `AnalyzeReviews` operationId).
+	AnalyzeReviewsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AnalyzeReviewsResponse, error)
+
+	// AnalyzeReviewsWithResponse What caused the calls the agents handled badly
+	//
+	// Reads the latest 100 calls in the window whose review scored them 3 or lower, and asks a model to group them by cause, each with the fix to make and the calls it explains.
+	// Costs one language model call, billed as any other, and keeps nothing: ask again for a fresh answer.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/calls/reviews/analysis (the `AnalyzeReviews` operationId).
+	AnalyzeReviewsWithResponse(ctx context.Context, body AnalyzeReviewsJSONRequestBody, reqEditors ...RequestEditorFn) (*AnalyzeReviewsResponse, error)
 
 	// GetCallWithResponse One call, with whatever was made of it afterwards
 	//
@@ -28490,6 +28992,28 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/data/import (the `ImportData` operationId).
 	ImportDataWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportDataResponse, error)
 
+	// DetectWithBodyWithResponse Find objects in one image, and return their boxes
+	//
+	// Routed like image generation: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting the images the vendor billed. Every box comes back as fractions of the image, whatever the vendor sent.
+	// detection-fast finds COCO's 80 classes quickly; detection-open finds whatever is named in classes; detection-faces finds faces with an embedding each. A confidence floor or embeddings narrow the candidates to the models that declared them, so they are honoured or the request is a 400.
+	// A detection that got as far as a provider answers 200 whether it found anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. Nothing is stored, so the id cannot be fetched again.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/detection (the `Detect` operationId).
+	DetectWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DetectResponse, error)
+
+	// DetectWithResponse Find objects in one image, and return their boxes
+	//
+	// Routed like image generation: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting the images the vendor billed. Every box comes back as fractions of the image, whatever the vendor sent.
+	// detection-fast finds COCO's 80 classes quickly; detection-open finds whatever is named in classes; detection-faces finds faces with an embedding each. A confidence floor or embeddings narrow the candidates to the models that declared them, so they are honoured or the request is a 400.
+	// A detection that got as far as a provider answers 200 whether it found anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. Nothing is stored, so the id cannot be fetched again.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/detection (the `Detect` operationId).
+	DetectWithResponse(ctx context.Context, body DetectJSONRequestBody, reqEditors ...RequestEditorFn) (*DetectResponse, error)
+
 	// GenerateImageWithBodyWithResponse Draw pictures from a prompt, and return them
 	//
 	// Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
@@ -28535,6 +29059,50 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `SetOperatorProviderApp` operationId).
 	SetOperatorProviderAppWithResponse(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*SetOperatorProviderAppResponse, error)
+
+	// LiftTelephonySuspensionWithResponse Lift an app's telephony suspension
+	//
+	// Lets the app use the phone again. Its paused campaigns stay paused until the app starts them.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/ops/customers/{customer_id}/telephony-suspension (the `LiftTelephonySuspension` operationId).
+	LiftTelephonySuspensionWithResponse(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*LiftTelephonySuspensionResponse, error)
+
+	// GetTelephonySuspensionWithResponse Get why an app's telephony is suspended
+	//
+	// The suspension an app is under, or 404 when it is not suspended.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/ops/customers/{customer_id}/telephony-suspension (the `GetTelephonySuspension` operationId).
+	GetTelephonySuspensionWithResponse(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*GetTelephonySuspensionResponse, error)
+
+	// SuspendTelephonyWithBodyWithResponse Suspend an app's telephony
+	//
+	// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+	SuspendTelephonyWithBodyWithResponse(ctx context.Context, customerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SuspendTelephonyResponse, error)
+
+	// SuspendTelephonyWithResponse Suspend an app's telephony
+	//
+	// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+	SuspendTelephonyWithResponse(ctx context.Context, customerId string, body SuspendTelephonyJSONRequestBody, reqEditors ...RequestEditorFn) (*SuspendTelephonyResponse, error)
 
 	// ListUseCasesForReviewWithResponse List use cases waiting on Stream
 	//
@@ -29151,39 +29719,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/settings/app (the `GetAppSettings` operationId).
 	GetAppSettingsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAppSettingsResponse, error)
 
-	// CheckAppStreamCredentialsWithResponse Check the calling app's own Stream app
-	//
-	// Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
-	//
-	// Server-side only.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/settings/app/stream/check (the `CheckAppStreamCredentials` operationId).
-	CheckAppStreamCredentialsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CheckAppStreamCredentialsResponse, error)
-
-	// UpdateAppStreamCredentialsWithBodyWithResponse Register the calling app's own Stream app
-	//
-	// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
-	//
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
-	UpdateAppStreamCredentialsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAppStreamCredentialsResponse, error)
-
-	// UpdateAppStreamCredentialsWithResponse Register the calling app's own Stream app
-	//
-	// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
-	//
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
-	UpdateAppStreamCredentialsWithResponse(ctx context.Context, body UpdateAppStreamCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAppStreamCredentialsResponse, error)
-
 	// GetActivityWithResponse Who used the calling customer's agents, and how much
 	//
 	// Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct people were behind them.
@@ -29193,6 +29728,16 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/stats/activity (the `GetActivity` operationId).
 	GetActivityWithResponse(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*GetActivityResponse, error)
+
+	// GetAgentStatsWithResponse How the calling customer's agents ran, across all of them
+	//
+	// The most agents that were running at once, and which tools they called: how often, how much each call put in front of the model and how long it took.
+	// One figure for the whole window rather than a row per bucket, because neither a peak nor a percentile can be summed out of smaller ones.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
+	GetAgentStatsWithResponse(ctx context.Context, params *GetAgentStatsParams, reqEditors ...RequestEditorFn) (*GetAgentStatsResponse, error)
 
 	// RunRollupWithBodyWithResponse Aggregate request rows into a rollup table
 	//
@@ -29507,6 +30052,82 @@ func (r ListCallsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListCallsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AnalyzeReviewsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ReviewAnalysis
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AnalyzeReviewsResponse) GetJSON200() *ReviewAnalysis {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AnalyzeReviewsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AnalyzeReviewsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r AnalyzeReviewsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AnalyzeReviewsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AnalyzeReviewsResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r AnalyzeReviewsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AnalyzeReviewsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AnalyzeReviewsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AnalyzeReviewsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -40326,6 +40947,82 @@ func (r ImportDataResponse) ContentType() string {
 	return ""
 }
 
+type DetectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DetectionResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DetectResponse) GetJSON200() *DetectionResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DetectResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DetectResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DetectResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DetectResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DetectResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DetectResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DetectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DetectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DetectResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GenerateImageResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -40555,6 +41252,206 @@ func (r SetOperatorProviderAppResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SetOperatorProviderAppResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type LiftTelephonySuspensionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r LiftTelephonySuspensionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r LiftTelephonySuspensionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r LiftTelephonySuspensionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r LiftTelephonySuspensionResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r LiftTelephonySuspensionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LiftTelephonySuspensionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LiftTelephonySuspensionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LiftTelephonySuspensionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetTelephonySuspensionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TelephonySuspension
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTelephonySuspensionResponse) GetJSON200() *TelephonySuspension {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetTelephonySuspensionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetTelephonySuspensionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetTelephonySuspensionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetTelephonySuspensionResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTelephonySuspensionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTelephonySuspensionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTelephonySuspensionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTelephonySuspensionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SuspendTelephonyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TelephonySuspension
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SuspendTelephonyResponse) GetJSON200() *TelephonySuspension {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SuspendTelephonyResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SuspendTelephonyResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SuspendTelephonyResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SuspendTelephonyResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r SuspendTelephonyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SuspendTelephonyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SuspendTelephonyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SuspendTelephonyResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -43827,172 +44724,6 @@ func (r GetAppSettingsResponse) ContentType() string {
 	return ""
 }
 
-type CheckAppStreamCredentialsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *StreamCheck
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *ErrorResponse
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *ErrorResponse
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r CheckAppStreamCredentialsResponse) GetJSON200() *StreamCheck {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r CheckAppStreamCredentialsResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r CheckAppStreamCredentialsResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r CheckAppStreamCredentialsResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r CheckAppStreamCredentialsResponse) GetJSON409() *ErrorResponse {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r CheckAppStreamCredentialsResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r CheckAppStreamCredentialsResponse) GetJSON503() *ErrorResponse {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r CheckAppStreamCredentialsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CheckAppStreamCredentialsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CheckAppStreamCredentialsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CheckAppStreamCredentialsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type UpdateAppStreamCredentialsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AppSettings
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *ErrorResponse
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *ErrorResponse
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r UpdateAppStreamCredentialsResponse) GetJSON200() *AppSettings {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r UpdateAppStreamCredentialsResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r UpdateAppStreamCredentialsResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r UpdateAppStreamCredentialsResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r UpdateAppStreamCredentialsResponse) GetJSON409() *ErrorResponse {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r UpdateAppStreamCredentialsResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r UpdateAppStreamCredentialsResponse) GetJSON503() *ErrorResponse {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r UpdateAppStreamCredentialsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r UpdateAppStreamCredentialsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r UpdateAppStreamCredentialsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r UpdateAppStreamCredentialsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type GetActivityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -44056,6 +44787,75 @@ func (r GetActivityResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetActivityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetAgentStatsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentStats
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAgentStatsResponse) GetJSON200() *AgentStats {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetAgentStatsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetAgentStatsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetAgentStatsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetAgentStatsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAgentStatsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAgentStatsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAgentStatsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAgentStatsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -45063,6 +45863,38 @@ func (c *ClientWithResponses) ListCallsWithResponse(ctx context.Context, params 
 		return nil, err
 	}
 	return ParseListCallsResponse(rsp)
+}
+
+// AnalyzeReviewsWithBodyWithResponse What caused the calls the agents handled badly
+//
+// Reads the latest 100 calls in the window whose review scored them 3 or lower, and asks a model to group them by cause, each with the fix to make and the calls it explains.
+// Costs one language model call, billed as any other, and keeps nothing: ask again for a fresh answer.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/calls/reviews/analysis (the `AnalyzeReviews` operationId).
+func (c *ClientWithResponses) AnalyzeReviewsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AnalyzeReviewsResponse, error) {
+	rsp, err := c.AnalyzeReviewsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAnalyzeReviewsResponse(rsp)
+}
+
+// AnalyzeReviewsWithResponse What caused the calls the agents handled badly
+//
+// Reads the latest 100 calls in the window whose review scored them 3 or lower, and asks a model to group them by cause, each with the fix to make and the calls it explains.
+// Costs one language model call, billed as any other, and keeps nothing: ask again for a fresh answer.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/calls/reviews/analysis (the `AnalyzeReviews` operationId).
+func (c *ClientWithResponses) AnalyzeReviewsWithResponse(ctx context.Context, body AnalyzeReviewsJSONRequestBody, reqEditors ...RequestEditorFn) (*AnalyzeReviewsResponse, error) {
+	rsp, err := c.AnalyzeReviews(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAnalyzeReviewsResponse(rsp)
 }
 
 // GetCallWithResponse One call, with whatever was made of it afterwards
@@ -48227,6 +49059,40 @@ func (c *ClientWithResponses) ImportDataWithBodyWithResponse(ctx context.Context
 	return ParseImportDataResponse(rsp)
 }
 
+// DetectWithBodyWithResponse Find objects in one image, and return their boxes
+//
+// Routed like image generation: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting the images the vendor billed. Every box comes back as fractions of the image, whatever the vendor sent.
+// detection-fast finds COCO's 80 classes quickly; detection-open finds whatever is named in classes; detection-faces finds faces with an embedding each. A confidence floor or embeddings narrow the candidates to the models that declared them, so they are honoured or the request is a 400.
+// A detection that got as far as a provider answers 200 whether it found anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. Nothing is stored, so the id cannot be fetched again.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/detection (the `Detect` operationId).
+func (c *ClientWithResponses) DetectWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DetectResponse, error) {
+	rsp, err := c.DetectWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDetectResponse(rsp)
+}
+
+// DetectWithResponse Find objects in one image, and return their boxes
+//
+// Routed like image generation: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting the images the vendor billed. Every box comes back as fractions of the image, whatever the vendor sent.
+// detection-fast finds COCO's 80 classes quickly; detection-open finds whatever is named in classes; detection-faces finds faces with an embedding each. A confidence floor or embeddings narrow the candidates to the models that declared them, so they are honoured or the request is a 400.
+// A detection that got as far as a provider answers 200 whether it found anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. Nothing is stored, so the id cannot be fetched again.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/detection (the `Detect` operationId).
+func (c *ClientWithResponses) DetectWithResponse(ctx context.Context, body DetectJSONRequestBody, reqEditors ...RequestEditorFn) (*DetectResponse, error) {
+	rsp, err := c.Detect(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDetectResponse(rsp)
+}
+
 // GenerateImageWithBodyWithResponse Draw pictures from a prompt, and return them
 //
 // Routed like search: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting its pictures. The pictures come back in the response as bytes, never as a link, and nothing is stored, so the id cannot be fetched again.
@@ -48295,6 +49161,74 @@ func (c *ClientWithResponses) SetOperatorProviderAppWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseSetOperatorProviderAppResponse(rsp)
+}
+
+// LiftTelephonySuspensionWithResponse Lift an app's telephony suspension
+//
+// Lets the app use the phone again. Its paused campaigns stay paused until the app starts them.
+//
+// Stream staff only: it needs the ops key.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/ops/customers/{customer_id}/telephony-suspension (the `LiftTelephonySuspension` operationId).
+func (c *ClientWithResponses) LiftTelephonySuspensionWithResponse(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*LiftTelephonySuspensionResponse, error) {
+	rsp, err := c.LiftTelephonySuspension(ctx, customerId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLiftTelephonySuspensionResponse(rsp)
+}
+
+// GetTelephonySuspensionWithResponse Get why an app's telephony is suspended
+//
+// The suspension an app is under, or 404 when it is not suspended.
+//
+// Stream staff only: it needs the ops key.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/ops/customers/{customer_id}/telephony-suspension (the `GetTelephonySuspension` operationId).
+func (c *ClientWithResponses) GetTelephonySuspensionWithResponse(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*GetTelephonySuspensionResponse, error) {
+	rsp, err := c.GetTelephonySuspension(ctx, customerId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTelephonySuspensionResponse(rsp)
+}
+
+// SuspendTelephonyWithBodyWithResponse Suspend an app's telephony
+//
+// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+func (c *ClientWithResponses) SuspendTelephonyWithBodyWithResponse(ctx context.Context, customerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SuspendTelephonyResponse, error) {
+	rsp, err := c.SuspendTelephonyWithBody(ctx, customerId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSuspendTelephonyResponse(rsp)
+}
+
+// SuspendTelephonyWithResponse Suspend an app's telephony
+//
+// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+func (c *ClientWithResponses) SuspendTelephonyWithResponse(ctx context.Context, customerId string, body SuspendTelephonyJSONRequestBody, reqEditors ...RequestEditorFn) (*SuspendTelephonyResponse, error) {
+	rsp, err := c.SuspendTelephony(ctx, customerId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSuspendTelephonyResponse(rsp)
 }
 
 // ListUseCasesForReviewWithResponse List use cases waiting on Stream
@@ -49296,57 +50230,6 @@ func (c *ClientWithResponses) GetAppSettingsWithResponse(ctx context.Context, re
 	return ParseGetAppSettingsResponse(rsp)
 }
 
-// CheckAppStreamCredentialsWithResponse Check the calling app's own Stream app
-//
-// Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
-//
-// Server-side only.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/settings/app/stream/check (the `CheckAppStreamCredentials` operationId).
-func (c *ClientWithResponses) CheckAppStreamCredentialsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CheckAppStreamCredentialsResponse, error) {
-	rsp, err := c.CheckAppStreamCredentials(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCheckAppStreamCredentialsResponse(rsp)
-}
-
-// UpdateAppStreamCredentialsWithBodyWithResponse Register the calling app's own Stream app
-//
-// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
-//
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
-func (c *ClientWithResponses) UpdateAppStreamCredentialsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAppStreamCredentialsResponse, error) {
-	rsp, err := c.UpdateAppStreamCredentialsWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdateAppStreamCredentialsResponse(rsp)
-}
-
-// UpdateAppStreamCredentialsWithResponse Register the calling app's own Stream app
-//
-// The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
-//
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /v1/settings/app/stream/credentials (the `UpdateAppStreamCredentials` operationId).
-func (c *ClientWithResponses) UpdateAppStreamCredentialsWithResponse(ctx context.Context, body UpdateAppStreamCredentialsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAppStreamCredentialsResponse, error) {
-	rsp, err := c.UpdateAppStreamCredentials(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdateAppStreamCredentialsResponse(rsp)
-}
-
 // GetActivityWithResponse Who used the calling customer's agents, and how much
 //
 // Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct people were behind them.
@@ -49361,6 +50244,22 @@ func (c *ClientWithResponses) GetActivityWithResponse(ctx context.Context, param
 		return nil, err
 	}
 	return ParseGetActivityResponse(rsp)
+}
+
+// GetAgentStatsWithResponse How the calling customer's agents ran, across all of them
+//
+// The most agents that were running at once, and which tools they called: how often, how much each call put in front of the model and how long it took.
+// One figure for the whole window rather than a row per bucket, because neither a peak nor a percentile can be summed out of smaller ones.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
+func (c *ClientWithResponses) GetAgentStatsWithResponse(ctx context.Context, params *GetAgentStatsParams, reqEditors ...RequestEditorFn) (*GetAgentStatsResponse, error) {
+	rsp, err := c.GetAgentStats(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAgentStatsResponse(rsp)
 }
 
 // RunRollupWithBodyWithResponse Aggregate request rows into a rollup table
@@ -49726,6 +50625,67 @@ func ParseListCallsResponse(rsp *http.Response) (*ListCallsResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAnalyzeReviewsResponse parses an HTTP response from a AnalyzeReviewsWithResponse call
+func ParseAnalyzeReviewsResponse(rsp *http.Response) (*AnalyzeReviewsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AnalyzeReviewsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReviewAnalysis
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -58496,6 +59456,67 @@ func ParseImportDataResponse(rsp *http.Response) (*ImportDataResponse, error) {
 	return response, nil
 }
 
+// ParseDetectResponse parses an HTTP response from a DetectWithResponse call
+func ParseDetectResponse(rsp *http.Response) (*DetectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DetectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DetectionResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGenerateImageResponse parses an HTTP response from a GenerateImageWithResponse call
 func ParseGenerateImageResponse(rsp *http.Response) (*GenerateImageResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -58683,6 +59704,164 @@ func ParseSetOperatorProviderAppResponse(rsp *http.Response) (*SetOperatorProvid
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLiftTelephonySuspensionResponse parses an HTTP response from a LiftTelephonySuspensionWithResponse call
+func ParseLiftTelephonySuspensionResponse(rsp *http.Response) (*LiftTelephonySuspensionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LiftTelephonySuspensionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetTelephonySuspensionResponse parses an HTTP response from a GetTelephonySuspensionWithResponse call
+func ParseGetTelephonySuspensionResponse(rsp *http.Response) (*GetTelephonySuspensionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTelephonySuspensionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TelephonySuspension
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSuspendTelephonyResponse parses an HTTP response from a SuspendTelephonyWithResponse call
+func ParseSuspendTelephonyResponse(rsp *http.Response) (*SuspendTelephonyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SuspendTelephonyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TelephonySuspension
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -61319,142 +62498,6 @@ func ParseGetAppSettingsResponse(rsp *http.Response) (*GetAppSettingsResponse, e
 	return response, nil
 }
 
-// ParseCheckAppStreamCredentialsResponse parses an HTTP response from a CheckAppStreamCredentialsWithResponse call
-func ParseCheckAppStreamCredentialsResponse(rsp *http.Response) (*CheckAppStreamCredentialsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CheckAppStreamCredentialsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest StreamCheck
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseUpdateAppStreamCredentialsResponse parses an HTTP response from a UpdateAppStreamCredentialsWithResponse call
-func ParseUpdateAppStreamCredentialsResponse(rsp *http.Response) (*UpdateAppStreamCredentialsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &UpdateAppStreamCredentialsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AppSettings
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseGetActivityResponse parses an HTTP response from a GetActivityWithResponse call
 func ParseGetActivityResponse(rsp *http.Response) (*GetActivityResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -61471,6 +62514,60 @@ func ParseGetActivityResponse(rsp *http.Response) (*GetActivityResponse, error) 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest []ActivityBucket
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAgentStatsResponse parses an HTTP response from a GetAgentStatsWithResponse call
+func ParseGetAgentStatsResponse(rsp *http.Response) (*GetAgentStatsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAgentStatsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentStats
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

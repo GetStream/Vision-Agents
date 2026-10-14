@@ -11,10 +11,10 @@ namespace GetStream\VisionAgents\Generated;
  * speech, one native audio model in place of a transcriber, a text model and a voice.
  * decision_model is a decision model: it answers named questions about a piece of text with a
  * typed value and the probability behind it rather than with prose, which is what a guardrail
- * asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and
- * phone are recorded but not routed, since there is one memory store, one knowledge base and
- * one vendor per number, so the provider paths do not serve them while the statistics paths
- * do.
+ * asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes
+ * found in one. Memory, knowledge and phone are recorded but not routed, since there is one
+ * memory store, one knowledge base and one vendor per number, so the provider paths do not
+ * serve them while the statistics paths do.
  */
 enum Modality: string
 {
@@ -25,6 +25,7 @@ enum Modality: string
     case Search = 'search';
     case DecisionModel = 'decision_model';
     case Image = 'image';
+    case Detection = 'detection';
     case Memory = 'memory';
     case Knowledge = 'knowledge';
     case Phone = 'phone';

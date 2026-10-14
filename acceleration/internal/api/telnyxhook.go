@@ -95,6 +95,10 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 		hangUp(w, logger, "hung up a telnyx call to a number that is unknown, released or not attached", "to", to)
 		return
 	}
+	if errors.Is(err, phone.ErrSuspended) {
+		hangUp(w, logger, "hung up a telnyx call to a number of an app whose telephony is suspended", "to", to)
+		return
+	}
 	if errors.Is(err, store.ErrNoStoredBridge) {
 		hangUp(w, logger, "hung up a telnyx call to a number attached before its trunk was kept: "+
 			"attach the number again", "to", to)

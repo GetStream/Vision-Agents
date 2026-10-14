@@ -377,6 +377,39 @@ pub fn config(id: &str, name: &str) -> Value {
     })
 }
 
+/// One of the app's connections to a connector, as the router lists it.
+pub fn connection(id: &str, connector: &str, label: Option<&str>) -> Value {
+    let mut connection = json!({
+        "id": id,
+        "connector_id": connector,
+        "auth_scheme": "bearer",
+        "created_at": "2026-09-24T10:00:00Z",
+        "updated_at": "2026-09-24T10:00:00Z",
+        "definition_revision": 1,
+        "definition_status": "current",
+        "granted_scopes": null,
+        "inputs": {},
+        "metadata": {},
+        "owner": {"type": "app"},
+        "revision": 1,
+        "status": "connected",
+        "used_by": null,
+    });
+    if let Some(label) = label {
+        connection["label"] = json!(label);
+    }
+    connection
+}
+
+/// A page of connections, with the cursor of the next one when there is one.
+pub fn connections(items: Vec<Value>, next_cursor: Option<&str>) -> Value {
+    let mut page = json!({"items": items, "has_more": next_cursor.is_some()});
+    if let Some(cursor) = next_cursor {
+        page["next_cursor"] = json!(cursor);
+    }
+    page
+}
+
 /// The claims of a token this SDK signed, after checking the signature.
 pub fn claims(token: &str) -> Value {
     use base64::Engine as _;

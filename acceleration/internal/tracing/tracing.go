@@ -54,9 +54,9 @@ func Setup(ctx context.Context, service, version string) (func(context.Context) 
 		attributes = append(attributes, semconv.ServiceVersion(version))
 	}
 	// Merge against the default resource rather than replacing it, so the host and the
-	// process the collector groups by are still there.
-	described, err := resource.Merge(resource.Default(), resource.NewWithAttributes(
-		semconv.SchemaURL, attributes...))
+	// process the collector groups by are still there. Schemaless, because Merge refuses
+	// two schema URLs and the default carries whichever one the SDK was built with.
+	described, err := resource.Merge(resource.Default(), resource.NewSchemaless(attributes...))
 	if err != nil {
 		return nil, fmt.Errorf("tracing: describe this service: %w", err)
 	}

@@ -136,6 +136,28 @@ type ActivityBucket struct {
 	PhoneMinutes float64   `bun:"phone_minutes"`
 }
 
+// ConcurrencyPeak is the most sessions a customer had open at once, and when that was
+// first reached. At is nil when no session was open in the window.
+type ConcurrencyPeak struct {
+	Sessions int64      `bun:"sessions"`
+	At       *time.Time `bun:"at"`
+}
+
+// ToolUsage is how often a tool ran and what it cost. Tool is empty on the row that sums
+// every tool.
+type ToolUsage struct {
+	Tool   string `bun:"tool"`
+	Calls  int64  `bun:"calls"`
+	Failed int64  `bun:"failed"`
+	// AvgTokens is what a call put in front of the model, its arguments and result,
+	// estimated the way a prompt's composition counts tool use.
+	AvgTokens float64 `bun:"avg_tokens"`
+	// AvgMs and P99Ms are from the call starting to its result, nil when no call in the
+	// group has both.
+	AvgMs *float64 `bun:"avg_ms"`
+	P99Ms *float64 `bun:"p99_ms"`
+}
+
 // Turn is one exchange in a conversation, measured the way the caller experienced it.
 // The legs are pointers because a pipeline need not have all of them, and an interrupted
 // turn stops partway through.
@@ -629,6 +651,9 @@ type Skill struct {
 	Description string `bun:"description,notnull"`
 	// Instructions is the full prompt, which only the subagent sees.
 	Instructions string `bun:"instructions,notnull"`
+	// Files are the rest of a skill folder, by path relative to it: references read on
+	// demand and scripts run in the sandbox.
+	Files map[string]string `bun:"files,type:jsonb,notnull"`
 	// DeadlineMs is how long the work may run before it is abandoned. Zero is the
 	// harness's own default.
 	DeadlineMs int64      `bun:"deadline_ms,notnull"`
@@ -1276,6 +1301,10 @@ type SimulationRun struct {
 	Error       string     `bun:"error,nullzero"`
 	StartedAt   time.Time  `bun:"started_at,notnull"`
 	FinishedAt  *time.Time `bun:"finished_at"`
+	// HeldUntil is when the router having the conversations stops being their owner unless
+	// it renews, and StopRequested a cancel asked of a router that may not be that one.
+	HeldUntil     *time.Time `bun:"held_until"`
+	StopRequested bool       `bun:"stop_requested,notnull"`
 }
 
 // SimulationCase is one conversation. With variations off a run has one of these; with
@@ -1351,6 +1380,9 @@ type CallFilter struct {
 	// From and To bound when the call started. A zero time is unbounded.
 	From time.Time
 	To   time.Time
+	// MaxReviewScore limits the list to reviewed calls scored at or below it. Zero leaves
+	// the review out of it.
+	MaxReviewScore int
 	// Limit caps how many come back. Zero leaves the store's own default.
 	Limit int
 }
@@ -1950,4 +1982,15 @@ type SandboxRecipient struct {
 type CreatedPosition struct {
 	At time.Time `json:"t"`
 	ID string    `json:"id"`
+}
+
+// TelephonySuspension is an app Stream staff stopped from using the phone.
+type TelephonySuspension struct {
+	bun.BaseModel `bun:"table:telephony_suspensions,alias:ts"`
+
+	CustomerID string `bun:"customer_id,pk"`
+	// Reason is why, for the staff who read it later. The app is never shown it.
+	Reason      string    `bun:"reason,notnull"`
+	SuspendedBy string    `bun:"suspended_by,notnull"`
+	SuspendedAt time.Time `bun:"suspended_at,notnull"`
 }

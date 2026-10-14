@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -490,6 +490,39 @@ describe("Agent", () => {
       assert.notEqual(hashes[1], hashes[2]);
     });
 
+    it("sends a skill folder's files, and fingerprints a skill moved into a folder the same until it brings one", async () => {
+      router.serve("POST", "/v1/agents/sync", {
+        body: {
+          unchanged: false,
+          config: { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" },
+        },
+      });
+      // Nothing stored, so a stamp that still matches syncs again and the request is seen.
+      router.serve("GET", "/v1/agents/configs", { body: [] });
+      const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
+      const skill = "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n";
+      await mkdir(join(root, "skills"), { recursive: true });
+      await writeFile(join(root, "agent.yaml"), "name: jean\n");
+      await writeFile(join(root, "skills", "pdf.md"), skill);
+      await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+      await rm(join(root, "skills", "pdf.md"));
+      await mkdir(join(root, "skills", "pdf", "scripts"), { recursive: true });
+      await writeFile(join(root, "skills", "pdf", "SKILL.md"), skill);
+      await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+      await writeFile(join(root, "skills", "pdf", "scripts", "fill.py"), "print('filled')\n");
+      await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+      const [asFile, asFolder, withFile] = router
+        .requestsTo("POST", "/v1/agents/sync")
+        .map((one) => one.body as Schemas["SyncAgentRequest"]);
+      assert.equal(asFolder?.skills?.[0] && "files" in asFolder.skills[0], false);
+      assert.deepEqual(withFile?.skills?.[0]?.files, { "scripts/fill.py": "print('filled')\n" });
+      assert.equal(asFile?.hash, asFolder?.hash, "moving a skill into a folder would sync it again");
+      assert.notEqual(asFolder?.hash, withFile?.hash, "a file added to a skill would not sync");
+    });
+
     describe("connectors", () => {
       const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" };
       const folder = (connectors: ConnectorDeclaration[] | undefined): Folder => ({
@@ -589,6 +622,95 @@ describe("Agent", () => {
           /connector "issues": "work" matches 2 app connections/,
         );
         assert.equal(router.requestsTo("POST", "/v1/agents/sync").length, 0);
+      });
+    });
+
+    describe("mcp_servers and channels", () => {
+      const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" };
+
+      beforeEach(() => {
+        router.serve("POST", "/v1/agents/sync", { body: { unchanged: false, config: stored } });
+      });
+
+      async function synced(declaration: string): Promise<Record<string, unknown>> {
+        const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
+        await mkdir(root);
+        await writeFile(join(root, "agent.yaml"), declaration);
+        await writeFile(join(root, "instructions.md"), "Be brief.\n");
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+        return router.requestsTo("POST", "/v1/agents/sync").at(-1)?.body as Record<string, unknown>;
+      }
+
+      it("sends them the way the Go SDK does", async () => {
+        const body = await synced(
+          [
+            "name: jean",
+            "mcp_servers:",
+            "  - name: crm",
+            '    url: "https://crm.example.com/mcp"',
+            "    tools: [list_*, get_deal]",
+            "    scopes:",
+            "      - read",
+            "    user: true",
+            "  - name: notes",
+            "    url: https://notes.example.com/mcp",
+            "    tools: []",
+            "    user: false",
+            "channels:",
+            "  whatsapp:",
+            '    number: "+15551234567" # the main line',
+            "  sms:",
+            "    number: +15557654321",
+            "  imessage:",
+            "  identity: link # by link",
+            "",
+          ].join("\n"),
+        );
+
+        assert.deepEqual(body["mcp_servers"], [
+          {
+            name: "crm",
+            url: "https://crm.example.com/mcp",
+            tools: ["list_*", "get_deal"],
+            scopes: ["read"],
+            user: true,
+          },
+          { name: "notes", url: "https://notes.example.com/mcp" },
+        ]);
+        assert.deepEqual(body["channels"], {
+          whatsapp: { number: "+15551234567" },
+          sms: { number: "+15557654321" },
+          identity: "link",
+        });
+      });
+
+      it("sends no mcp_servers for an empty list, and empty channels for an empty mapping", async () => {
+        const body = await synced("name: jean\nmcp_servers: []\nchannels: {}\n");
+
+        assert.equal("mcp_servers" in body, false);
+        assert.deepEqual(body["channels"], {});
+      });
+
+      it("fingerprints a change to either", async () => {
+        const one = await synced("name: jean\nchannels:\n  sms:\n    number: +15550000001\n");
+        const other = await synced("name: jean\nchannels:\n  sms:\n    number: +15550000002\n");
+        const servers = await synced("name: jean\nmcp_servers:\n  - name: a\n    url: https://a.example.com\n");
+
+        assert.notEqual(one["hash"], other["hash"]);
+        assert.notEqual(one["hash"], servers["hash"]);
+      });
+
+      it("sends the same body as before for an agent.yaml that names neither", async () => {
+        const body = await synced("name: jean\nllm: llm-fast\nplugins:\n  - weather\n");
+
+        assert.deepEqual(body, {
+          name: "jean",
+          instructions: "Be brief.",
+          llm: "llm-fast",
+          plugins: ["weather"],
+          // Probed on the base, before agent.yaml could declare either.
+          hash: "693edb6e1c1bf06d590d73d9b06ec2b7defcb319627b098b9a0c1f56e2b38561",
+        });
       });
     });
 

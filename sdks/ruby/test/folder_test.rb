@@ -47,6 +47,70 @@ class TestFolder < Minitest::Test
     refute_equal folder.fingerprint, VA::Folder.load(@root).fingerprint
   end
 
+  def test_skill_folders_fingerprint_the_way_go_does
+    write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\nsandbox: daytona\n")
+    write("instructions.md", "You are Jean.\n")
+    write("skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
+    write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n")
+    write("skills/pdf/reference/forms.md", "# Forms\n")
+    write("skills/pdf/scripts/fill.py", "print('filled')\n")
+    write("skills/pdf/scripts/lib/fill_lib.py", "def fill():\n    return 1\n")
+    write("skills/pdf/scripts/__pycache__/fill.cpython-313.pyc", "\xcb\x0d\xff".b)
+    write("skills/pdf/.DS_Store", "\x00\xff".b)
+    write("knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+
+    assert_equal "e47f7807b97bbcbdee683c6c481d1d36", VA::Folder.load(@root).fingerprint
+  end
+
+  def test_a_skill_folder_brings_its_nested_text_files_and_leaves_hidden_ones
+    write("agent.yaml", "name: jean\n")
+    write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    write("skills/pdf/reference/forms.md", "# Forms\n")
+    write("skills/pdf/scripts/lib/fill.py", "print('filled')\n")
+    write("skills/pdf/scripts/__pycache__/fill.py", "cached\n")
+    write("skills/pdf/.hidden/notes.md", "hidden\n")
+    write("skills/pdf/.DS_Store", "\x00\xff".b)
+
+    skill = VA::Folder.load(@root).skills[0]
+
+    assert_equal "pdf", skill.name
+    assert_equal "Fill the form.", skill.instructions
+    assert_equal({ "reference/forms.md" => "# Forms\n", "scripts/lib/fill.py" => "print('filled')\n" }, skill.files)
+    assert_equal({ "reference/forms.md" => "# Forms\n", "scripts/lib/fill.py" => "print('filled')\n" },
+                 skill.request[:files])
+  end
+
+  def test_moving_a_skill_into_a_folder_keeps_its_fingerprint_until_it_brings_a_file
+    write("agent.yaml", "name: jean\n")
+    write("skills/pdf.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    single = VA::Folder.load(@root).fingerprint
+
+    FileUtils.mkdir_p(File.join(@root, "skills/pdf"))
+    FileUtils.mv(File.join(@root, "skills/pdf.md"), File.join(@root, "skills/pdf/SKILL.md"))
+    assert_equal single, VA::Folder.load(@root).fingerprint
+    refute VA::Folder.load(@root).skills[0].request.key?(:files)
+
+    write("skills/pdf/forms.md", "# Forms\n")
+    refute_equal single, VA::Folder.load(@root).fingerprint
+  end
+
+  def test_a_skill_folder_that_is_not_a_skill_is_refused
+    write("agent.yaml", "name: jean\n")
+    write("skills/pdf/forms.md", "# Forms\n")
+    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    assert_includes error.message, "has no SKILL.md, so it is not a skill"
+
+    write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    write("skills/pdf.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    assert_equal 'skill "pdf" is both pdf and pdf.md', error.message
+
+    FileUtils.rm(File.join(@root, "skills/pdf.md"))
+    write("skills/pdf/logo.png", "\x89PNG\xff".b)
+    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    assert_includes error.message, "logo.png is not text, and a skill brings only text files"
+  end
+
   def test_refresh_hours_and_simulations_fingerprint_the_way_go_does
     write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\n")
     write("instructions.md", "You are Jean.\n")
@@ -175,6 +239,56 @@ class TestFolder < Minitest::Test
     end
   end
 
+  def test_connectors_are_read_as_written
+    write("agent.yaml", "name: jean\nconnectors:\n  - linear\n  - name: issues\n    connector: linear\n" \
+                        "    tools: [list_*]\n    connection: prod\n    required: true\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal [{ "name" => "linear", "connector" => "", "tools" => nil, "connection" => nil, "required" => nil },
+                  { "name" => "issues", "connector" => "linear", "tools" => ["list_*"], "connection" => "prod",
+                    "required" => true }], folder.settings["connectors"]
+  end
+
+  def test_a_connector_the_file_cannot_bind_is_refused_with_its_reason
+    {
+      "connectors:\n  - \n" => "a connector needs a name",
+      "connectors:\n  - connector: linear\n" => "a connector needs a name",
+      "connectors:\n  - name: ''\n" => "a connector needs a name",
+      "connectors: linear\n" => "connectors must be a list",
+      "connectors: {}\n" => "connectors must be a list",
+      "connectors: {a: b}\n" => "connectors must be a list",
+      "connectors:\n  - name: x\n    tools: {}\n" => 'connector "x": tools should be a list',
+      "connectors:\n  - name: linear\n    tools: []\n" =>
+        'connector "linear": tools: [] grants nothing; leave tools out for every tool',
+      "connectors:\n  - name: linear\n    tools: list_issues\n" => 'connector "linear": tools should be a list',
+      "connectors:\n  - name: linear\n    connection: {id: conn_a}\n" =>
+        'connector "linear": connection must be a connection id or label',
+      "connectors:\n  - name: linear\n    connection: ''\n" =>
+        'connector "linear": connection must be a connection id or label',
+      "connectors:\n  - name: linear\n    required: sometimes\n" =>
+        'connector "linear": required should be true or false',
+      "connectors:\n  - name: linear\n    toools: [x]\n" => "a connector has no toools",
+      "plugins: [linear]\nconnectors:\n  - linear\n" => '"linear" is named under both connectors and plugins'
+    }.each do |yaml, message|
+      write("agent.yaml", "name: jean\n#{yaml}")
+
+      error = assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
+
+      assert_includes error.message, message
+    end
+  end
+
+  def test_the_fingerprint_hashes_agent_yaml_as_written_connectors_included
+    write("agent.yaml", "name: jean\n")
+    plain = VA::Folder.load(@root).fingerprint
+    write("agent.yaml", "name: jean\nconnectors: [linear]\n")
+
+    assert_equal VA::Folder.fingerprint("name: jean\nconnectors: [linear]", "", "", [], [], []),
+                 VA::Folder.load(@root).fingerprint
+    refute_equal plain, VA::Folder.load(@root).fingerprint
+  end
+
   def test_a_directory_without_a_declaration_is_not_an_agent
     write("instructions.md", "You are Jean.\n")
 
@@ -192,5 +306,29 @@ class TestFolder < Minitest::Test
     assert_equal "abc", recorded["hash"]
     assert_match(/\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00\z/, recorded["synced_at"])
     assert_equal "abc", folder.stamp
+  end
+
+  def test_a_connector_and_plugin_sharing_connector_id_but_not_name_coexist
+    write("agent.yaml", "name: jean\nplugins: [linear]\nconnectors:\n  - name: issues\n    connector: linear\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal "issues", folder.settings["connectors"].first["name"]
+  end
+
+  def test_connectors_null_loads_without_error_and_is_not_stored
+    write("agent.yaml", "name: jean\nconnectors: null\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_nil folder.settings["connectors"]
+  end
+
+  def test_a_non_string_connector_entry_is_treated_as_its_string_value
+    write("agent.yaml", "name: jean\nconnectors:\n  - 123\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal "123", folder.settings["connectors"].first["name"]
   end
 end

@@ -93,6 +93,9 @@ type Sandbox interface {
 	// outputs that it wrote. An error means the code could not be run at all; code that
 	// ran and failed is a Result with a non-zero exit.
 	Run(ctx context.Context, code string, outputs []string) (Result, error)
+	// Write puts a file into the sandbox at a path relative to where code runs, making the
+	// directories it sits in.
+	Write(ctx context.Context, path string, data []byte) error
 	// Close releases whatever was held open to run code. Safe to call twice.
 	Close() error
 }
@@ -101,7 +104,7 @@ type Sandbox interface {
 func Tool() llm.Tool {
 	return llm.Tool{
 		Name:        ToolName,
-		Description: "Run a short Python program and read back what it printed. Use it for anything you would otherwise have to work out in your head, such as arithmetic, dates or parsing, and for making files such as images. Print what you want to know.",
+		Description: "Run a short Python program and read back what it printed. Use it for anything you would otherwise have to work out in your head, such as arithmetic, dates or parsing, and for making files such as images. Print what you want to know. A skill's own scripts are under skills/<name>/; run one in another language through subprocess, such as subprocess.run([\"go\", \"run\", \"skills/pdf/scripts/merge.go\"]).",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

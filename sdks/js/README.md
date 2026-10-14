@@ -1,4 +1,4 @@
-# @stream-io/vision-agents
+# @stream-io/calypso
 
 The JavaScript client for the Stream acceleration backend. One package for both ends: a
 Node process that runs agents, and a browser that holds a conversation with one.
@@ -8,7 +8,7 @@ answers and speaks. What arrives here are the events saying so, and what stays h
 function calling — because the functions are here.
 
 ```bash
-npm install @stream-io/vision-agents
+npm install @stream-io/calypso
 ```
 
 Node 22 or newer, or any browser. No runtime dependencies: `fetch`, `WebSocket` and Web
@@ -25,7 +25,7 @@ Which one a deployment uses is a property of the deployment rather than a choice
 | `apiKey` + `token` | A browser | the conversations that user owns |
 
 ```ts
-import { Client } from "@stream-io/vision-agents";
+import { Client } from "@stream-io/calypso";
 
 // On your own server, with STREAM_API_KEY and STREAM_API_SECRET in the environment.
 const api = new Client();
@@ -109,7 +109,7 @@ memory.
 ## An agent
 
 ```ts
-import { Agent } from "@stream-io/vision-agents";
+import { Agent } from "@stream-io/calypso";
 
 const agent = new Agent({
   name: "John",
@@ -151,7 +151,7 @@ and waits, and the router pushes work down the connection as it arrives — noth
 has to be publicly reachable.
 
 ```ts
-import { Agent, Dispatch } from "@stream-io/vision-agents";
+import { Agent, Dispatch } from "@stream-io/calypso";
 
 const dispatch = new Dispatch({ capacity: 4 });
 
@@ -221,6 +221,8 @@ agents/jean/
   instructions.md
   guardrail.md
   skills/think.md
+  skills/pdf/SKILL.md   a skill as a folder: SKILL.md plus the text files it brings
+  skills/pdf/scripts/fill.py
   knowledge/pricing.md
   knowledge/urls.yaml   pages to read, each optionally with refresh_hours
   simulations/lunch.yaml
@@ -228,8 +230,8 @@ agents/jean/
 ```
 
 ```ts
-import { Agent } from "@stream-io/vision-agents";
-import { loadFolder } from "@stream-io/vision-agents/node";
+import { Agent } from "@stream-io/calypso";
+import { loadFolder } from "@stream-io/calypso/node";
 
 const agent = new Agent({ folder: await loadFolder("agents/jean") });
 await agent.sync();
@@ -277,7 +279,7 @@ events socket, the dispatch socket and the four modality sockets are written rat
 generated.
 
 ```ts
-import { Socket } from "@stream-io/vision-agents";
+import { Socket } from "@stream-io/calypso";
 
 const socket = await Socket.open(api.backend, await api.backend.socketURL("/v1/stt/stream"));
 socket.send({ type: "start", options: { language: "en" } });
@@ -356,3 +358,25 @@ They hold real conversations, so they spend the app's daily token allowance, and
 enough they will spend all of it. A test that finds it gone skips saying so rather than
 reporting the deployment broken — worth recognising in the output, because everything else
 still passes and only the one test that needed an answer steps aside.
+
+### Releasing
+
+The **Release JS SDK** workflow publishes to npm, run by hand from the `accelerate` branch.
+semantic-release (`release.config.mjs`) reads the commits since the last `sdk-js-v*` tag and
+counts only those scoped `sdk-js`: `feat(sdk-js):` moves the minor, `fix(sdk-js):` and
+`perf(sdk-js):` the patch, and while the package is 0.x a breaking change moves the minor too.
+A commit with any other scope, or none, ships nothing, whatever it touches. The workflow runs
+as a dry run unless that box is unticked, printing the version and notes it would publish.
+
+It publishes with npm trusted publishing, so there is no token, and npm only lets a package
+trust a workflow once the package exists. The first version is therefore published by hand:
+
+```bash
+npm publish                               # 0.2.0, as package.json says
+git tag sdk-js-v0.2.0 && git push origin sdk-js-v0.2.0
+```
+
+then on npmjs.com, under the package's settings, add GitHub Actions as a trusted publisher:
+`GetStream/Vision-Agents`, workflow `release-sdk-js.yml`. From then on the version in
+`package.json` is not maintained: semantic-release writes the next one into the package it
+publishes and nothing is committed back.

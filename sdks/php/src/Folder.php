@@ -25,6 +25,7 @@ use Symfony\Component\Yaml\Yaml;
  *       instructions.md
  *       guardrail.md
  *       skills/think.md    frontmatter naming what the fast model sees, then the prompt
+ *       skills/pdf/SKILL.md  the same, in a folder with the files the skill comes with
  *       knowledge/pricing.md
  *       knowledge/urls.yaml
  *       simulations/lunch.yaml
@@ -39,6 +40,7 @@ final readonly class Folder
     public const string INSTRUCTIONS_FILE = 'instructions.md';
     public const string GUARDRAIL_FILE = 'guardrail.md';
     public const string SKILLS_DIR = 'skills';
+    public const string SKILL_FILE = 'SKILL.md';
     public const string KNOWLEDGE_DIR = 'knowledge';
     public const string KNOWLEDGE_URLS_FILE = 'urls.yaml';
     public const string SIMULATIONS_DIR = 'simulations';
@@ -87,7 +89,7 @@ final readonly class Folder
         }
         $declaration = self::read($declarationFile);
         try {
-            $settings = Declaration::fromYaml(Yaml::parse($declaration));
+            $settings = Declaration::fromYaml(Yaml::parse($declaration), Yaml::parse($declaration, Yaml::PARSE_OBJECT_FOR_MAP));
         } catch (ParseException | ConfigurationException $bad) {
             throw new ConfigurationException("{$declarationFile}: {$bad->getMessage()}", 0, $bad);
         }
@@ -165,6 +167,12 @@ final readonly class Folder
             if ($skill->deadline > 0) {
                 hash_update($hasher, Json::encode($skill->deadline));
             }
+            // Only when there are some, so a skill without files keeps the fingerprint it had.
+            $files = $skill->files;
+            ksort($files, SORT_STRING);
+            foreach ($files as $file => $content) {
+                hash_update($hasher, "\nfile:{$file}\n{$content}");
+            }
         }
 
         usort($knowledge, static fn (Document $a, Document $b): int => strcmp($a->source, $b->source));
@@ -189,6 +197,9 @@ final readonly class Folder
     }
 
     /**
+     * A skill is either a markdown file, or a folder holding a SKILL.md and whatever files it
+     * comes with, nested as deep as they are.
+     *
      * @return list<Skill>
      */
     private static function loadSkills(string $path): array
@@ -196,21 +207,81 @@ final readonly class Folder
         if (!is_dir($path)) {
             return [];
         }
-        $files = glob($path . '/*.md');
-        $files = $files === false ? [] : $files;
-        sort($files, SORT_STRING);
         $skills = [];
-        foreach ($files as $file) {
-            if (!is_file($file)) {
+        $declared = [];
+        foreach (self::entries($path) as $entry) {
+            $name = $entry;
+            $file = $path . '/' . $entry;
+            $folder = is_dir($file);
+            if ($folder) {
+                $file .= '/' . self::SKILL_FILE;
+                if (!is_file($file)) {
+                    throw new ConfigurationException("{$path}/{$entry} has no " . self::SKILL_FILE . ', so it is not a skill');
+                }
+            } elseif (str_ends_with($entry, '.md') && is_file($file)) {
+                $name = substr($entry, 0, -3);
+            } else {
                 continue;
             }
+            if (array_key_exists($name, $declared)) {
+                throw new ConfigurationException("skill \"{$name}\" is both {$declared[$name]} and {$entry}");
+            }
+            $declared[$name] = $entry;
             try {
-                $skills[] = self::parseSkill(basename($file, '.md'), self::read($file));
+                $skill = self::parseSkill($name, self::read($file));
             } catch (ConfigurationException $bad) {
                 throw new ConfigurationException("{$file}: {$bad->getMessage()}", 0, $bad);
             }
+            $files = $folder ? self::loadSkillFiles($path . '/' . $entry, '') : [];
+            $skills[] = $files === [] ? $skill : new Skill($skill->name, $skill->description, $skill->instructions, $skill->captureVideo, $skill->deadline, $files);
         }
         return $skills;
+    }
+
+    /**
+     * Every file in a skill folder but its SKILL.md, by slash path relative to the folder.
+     * Hidden files such as .DS_Store, and the __pycache__ running its scripts leaves, stay behind.
+     *
+     * @return array<string, string>
+     */
+    private static function loadSkillFiles(string $dir, string $prefix): array
+    {
+        $files = [];
+        foreach (self::entries($dir) as $entry) {
+            if (str_starts_with($entry, '.') || $entry === '__pycache__') {
+                continue;
+            }
+            $file = $dir . '/' . $entry;
+            if (is_dir($file)) {
+                $files += self::loadSkillFiles($file, $prefix . $entry . '/');
+                continue;
+            }
+            if ($prefix === '' && $entry === self::SKILL_FILE) {
+                continue;
+            }
+            $content = self::read($file);
+            if (preg_match('//u', $content) !== 1) {
+                throw new ConfigurationException("{$file} is not text, and a skill brings only text files");
+            }
+            $files[$prefix . $entry] = $content;
+        }
+        return $files;
+    }
+
+    /**
+     * A directory's entries in byte order, the way Go reads them.
+     *
+     * @return list<string>
+     */
+    private static function entries(string $dir): array
+    {
+        $entries = @scandir($dir);
+        if ($entries === false) {
+            throw new ConfigurationException("could not read {$dir}");
+        }
+        $entries = array_values(array_diff($entries, ['.', '..']));
+        sort($entries, SORT_STRING);
+        return $entries;
     }
 
     /**

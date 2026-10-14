@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
 
@@ -127,10 +128,16 @@ func conflictingSkill(name string, body SyncAgentRequest, stored []store.Skill) 
 		return ""
 	}
 	was, held := skillNamedStored(stored, name)
-	if held && skillOf(was) == skillOf(storedSkill(declared, was.CustomerID)) {
+	if held && sameSkill(was, storedSkill(declared, was.CustomerID)) {
 		return ""
 	}
 	return "skill " + name
+}
+
+// sameSkill reports whether two skills say the same thing, whatever their ids and times.
+func sameSkill(a, b store.Skill) bool {
+	return a.Name == b.Name && a.Description == b.Description && a.Instructions == b.Instructions &&
+		a.DeadlineMs == b.DeadlineMs && a.CaptureVideo == b.CaptureVideo && maps.Equal(a.Files, b.Files)
 }
 
 // conflictingDocument is what to call a knowledge file the directory would write over or

@@ -1,14 +1,17 @@
 {
-  "name": "@stream-io/vision-agents",
+  "name": "@stream-io/calypso",
   "version": "0.2.0",
   "description": "JavaScript client for the Stream acceleration backend: agents that run there, and the conversations they hold.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/GetStream/Vision-Agents.git",
     "directory": "sdks/js"
   },
-  "homepage": "https://github.com/GetStream/Vision-Agents/tree/main/sdks/js",
+  "homepage": "https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/js",
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "stream",
     "voice",
@@ -43,7 +46,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "sideEffects": [
     "./dist/chat.js",
@@ -71,7 +75,7 @@
   },
   "peerDependencies": {
     "@stream-io/video-client": ">=1.0.0",
-    "stream-chat": ">=8.0.0"
+    "stream-chat": ">=9.0.0"
   },
   "peerDependenciesMeta": {
     "@stream-io/video-client": {

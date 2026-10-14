@@ -186,25 +186,10 @@ func (c *Clients) ForAppReading(ctx context.Context, customer string, app int64)
 	return c.bind(identity)
 }
 
-// Stored is app mode's source, for registering and checking customers' apps, and false in
-// deployment mode.
+// Stored is app mode's source, and false in deployment mode.
 func (c *Clients) Stored() (*Stored, bool) {
 	stored, ok := c.source.(*Stored)
 	return stored, ok
-}
-
-// WithKey is a bound identity acting with another of its app's keys, when the app holds
-// that key and Stream accepts it; otherwise the bound identity as it was.
-func (c *Clients) WithKey(ctx context.Context, bound Bound, apiKey string) (Bound, error) {
-	stored, ok := c.Stored()
-	if !ok {
-		return bound, nil
-	}
-	identity := stored.ForKey(ctx, bound.Identity, apiKey)
-	if identity.APIKey == bound.Identity.APIKey {
-		return bound, nil
-	}
-	return c.bind(identity)
 }
 
 // Forwarded is the source of the gateway's tokens, false when customers' apps are not

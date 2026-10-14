@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -60,6 +61,9 @@ func (s *Server) startSessionVoice(ctx context.Context, request *sessionVoiceReq
 		if errors.Is(err, session.ErrVoiceUnavailable) {
 			return nil, errVoiceUnavailable
 		}
+		if errors.Is(err, session.ErrNoAgentCallType) {
+			return nil, errNoAgentCallType
+		}
 		return nil, invalidRequest(err.Error())
 	}
 	return &sessionVoiceResponse{Body: sessionOf(found)}, nil
@@ -79,3 +83,9 @@ func (s *Server) stopSessionVoice(ctx context.Context, request *sessionVoiceRequ
 
 // errVoiceUnavailable refuses voice on a session that cannot hold a call.
 var errVoiceUnavailable = notConfigured("this session cannot start voice")
+
+// errNoAgentCallType refuses a call in a Stream app of the customer's own that has no agent
+// call type, which Stream would refuse the agent's call for.
+var errNoAgentCallType = notConfigured("this app's Stream app has no " + streamapp.AgentCallType +
+	" call type, so the agent has no call to join: create it with " +
+	`getstream api CreateCallType --request '{"name":"` + streamapp.AgentCallType + `"}'`)

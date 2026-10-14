@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -203,6 +205,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.storedSkillSandboxComplaint(ctx, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -282,8 +289,12 @@ func (s *Server) createSkill(ctx context.Context, request *createSkillRequest) (
 	if message, ok := skillComplaint(*request.Body); !ok {
 		return nil, invalidRequest(message)
 	}
-	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
+	config, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId)
+	if err != nil {
 		return nil, errUnknownConfig
+	}
+	if message, ok := skillSandboxComplaint([]SkillRequest{*request.Body}, config.Sandbox != ""); !ok {
+		return nil, invalidRequest(message)
 	}
 
 	skill := storedSkill(*request.Body, customerID)
@@ -330,8 +341,12 @@ func (s *Server) updateSkill(ctx context.Context, request *updateSkillRequest) (
 	if message, ok := skillComplaint(*request.Body); !ok {
 		return nil, invalidRequest(message)
 	}
-	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
+	config, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId)
+	if err != nil {
 		return nil, errUnknownConfig
+	}
+	if message, ok := skillSandboxComplaint([]SkillRequest{*request.Body}, config.Sandbox != ""); !ok {
+		return nil, invalidRequest(message)
 	}
 
 	existing, err := s.store.Skill(ctx, customerID, request.Id)
@@ -1305,7 +1320,57 @@ func skillComplaint(request SkillRequest) (string, bool) {
 	if strings.TrimSpace(request.Instructions) == "" {
 		return "a skill needs instructions, which is what the subagent answers under", false
 	}
+	files := value(request.Files)
+	if len(files) > maxSkillFiles {
+		return fmt.Sprintf("a skill may bring at most %d files", maxSkillFiles), false
+	}
+	size := 0
+	for name, content := range files {
+		if name == "" || path.IsAbs(name) || path.Clean(name) != name || name == ".." ||
+			strings.HasPrefix(name, "../") || strings.Contains(name, `\`) {
+			return fmt.Sprintf("skill file %q is not a path inside the skill's folder", name), false
+		}
+		size += len(content)
+	}
+	if size > maxSkillBytes {
+		return fmt.Sprintf("a skill's files may hold at most %d bytes in all", maxSkillBytes), false
+	}
 	return "", true
+}
+
+// maxSkillFiles and maxSkillBytes bound what one skill folder may bring with it.
+const (
+	maxSkillFiles = 64
+	maxSkillBytes = 1 << 20
+)
+
+// skillSandboxComplaint refuses skills that bring scripts to a config with nowhere to run
+// them.
+func skillSandboxComplaint(skills []SkillRequest, sandboxed bool) (string, bool) {
+	for _, skill := range skills {
+		if err := harness.NeedsSandbox(strings.TrimSpace(skill.Name), slices.Collect(maps.Keys(value(skill.Files))), sandboxed); err != nil {
+			return err.Error(), false
+		}
+	}
+	return "", true
+}
+
+// storedSkillSandboxComplaint is skillSandboxComplaint for the skills a config already holds
+// under the names it gives them.
+func (s *Server) storedSkillSandboxComplaint(ctx context.Context, config store.AgentConfig) (string, bool, error) {
+	if config.Sandbox != "" || config.ID == "" || len(config.Skills) == 0 {
+		return "", true, nil
+	}
+	stored, err := s.configs.SkillsNamed(ctx, config.CustomerID, config.ID, config.Skills)
+	if err != nil {
+		return "", false, err
+	}
+	for _, skill := range stored {
+		if err := harness.NeedsSandbox(skill.Name, slices.Collect(maps.Keys(skill.Files)), false); err != nil {
+			return err.Error(), false, nil
+		}
+	}
+	return "", true, nil
 }
 
 // storedConfig turns a request into a row. The customer comes from the trusted header
@@ -1394,6 +1459,7 @@ func storedSkill(request SkillRequest, customerID string) store.Skill {
 		Name:         strings.TrimSpace(request.Name),
 		Description:  request.Description,
 		Instructions: request.Instructions,
+		Files:        value(request.Files),
 		DeadlineMs:   value(request.DeadlineMs),
 		CaptureVideo: value(request.CaptureVideo),
 	}
@@ -1480,6 +1546,10 @@ func skillOf(skill store.Skill) Skill {
 		UpdatedAt:    skill.UpdatedAt,
 	}
 	rendered.CaptureVideo = &skill.CaptureVideo
+	if len(skill.Files) > 0 {
+		paths := slices.Sorted(maps.Keys(skill.Files))
+		rendered.FilePaths = &paths
+	}
 	if skill.DeadlineMs > 0 {
 		deadline := skill.DeadlineMs
 		rendered.DeadlineMs = &deadline

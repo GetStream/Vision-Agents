@@ -35,6 +35,8 @@ export interface Skill {
   captureVideo?: boolean;
   /** How long the work may run before it is abandoned. Zero leaves the backend's default. */
   deadlineMs?: number;
+  /** The rest of a skill folder beside its SKILL.md, each file's text by its slash path. */
+  files?: Record<string, string>;
 }
 
 /**
@@ -118,6 +120,13 @@ export interface Declaration {
    * which leaves the stored bindings; empty when it lists none, which removes them.
    */
   connectors?: ConnectorDeclaration[];
+  /** MCP servers outside the plugin catalog, which the router opens by their url. */
+  mcpServers?: Schemas["McpServer"][];
+  /**
+   * The lines the agent answers on besides its Stream Chat channel, each a number the app
+   * connected on the router.
+   */
+  channels?: Schemas["AgentChannels"];
 }
 
 /** One connector an agent binds, as agent.yaml names it. */
@@ -148,7 +157,7 @@ export interface SyncStamp {
   write(hash: string): Promise<void>;
 }
 
-/** An agent directory, as `loadFolder` from `@stream-io/vision-agents/node` reads one. */
+/** An agent directory, as `loadFolder` from `@stream-io/calypso/node` reads one. */
 export interface Folder {
   path: string;
   name: string;
@@ -673,6 +682,7 @@ function skillRequest(skill: Skill): Omit<Schemas["SkillRequest"], "config_id"> 
     instructions: skill.instructions,
     ...(skill.captureVideo === undefined ? {} : { capture_video: skill.captureVideo }),
     ...(skill.deadlineMs ? { deadline_ms: skill.deadlineMs } : {}),
+    ...(skill.files && Object.keys(skill.files).length > 0 ? { files: skill.files } : {}),
   };
 }
 
@@ -692,6 +702,8 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.search ? { search: declared.search } : {}),
     ...(declared.greeting ? { greeting: declared.greeting } : {}),
     ...(declared.plugins?.length ? { plugins: declared.plugins } : {}),
+    ...(declared.mcpServers?.length ? { mcp_servers: declared.mcpServers } : {}),
+    ...(declared.channels ? { channels: declared.channels } : {}),
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),
     ...(declared.dispatch ? { dispatch: declared.dispatch } : {}),

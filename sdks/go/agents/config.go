@@ -543,6 +543,10 @@ func skillRequestOf(skill Skill) acceleration.SkillRequest {
 		milliseconds := skill.Deadline.Milliseconds()
 		body.DeadlineMs = &milliseconds
 	}
+	if len(skill.Files) > 0 {
+		files := skill.Files
+		body.Files = &files
+	}
 	return body
 }
 

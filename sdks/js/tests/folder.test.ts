@@ -8,7 +8,7 @@ import { ConfigurationError } from "../src/index.js";
 import { loadFolder, parsePages, parseSimulations, parseSkill } from "../src/node.js";
 
 /** Writes an agent directory, with an agent.yaml unless told otherwise, and hands back its path. */
-async function agentDir(files: Record<string, string>): Promise<string> {
+async function agentDir(files: Record<string, string | Uint8Array>): Promise<string> {
   const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
   await mkdir(root, { recursive: true });
 
@@ -195,6 +195,95 @@ describe("loadFolder", () => {
     }
   });
 
+  it("reads mcp_servers and channels", async () => {
+    const folder = await loadFolder(
+      await agentDir({
+        "agent.yaml": [
+          "name: concierge",
+          "mcp_servers:",
+          "  - name: crm # the sales one",
+          '    url: "https://crm.example.com/mcp"',
+          "    tools:",
+          "      - list_*",
+          "    scopes: [read, write]",
+          "    user: true",
+          "  -",
+          "    name: notes",
+          "    url: 'https://notes.example.com/mcp' # the notes one",
+          "    scopes: []",
+          "channels:",
+          "  # the support line",
+          "  whatsapp:",
+          '    number: "+15551234567" # the main line',
+          "  imessage:",
+          "    number: ~",
+          "  identity: phone # by phone",
+          "",
+        ].join("\n"),
+      }),
+    );
+
+    assert.deepEqual(folder.settings?.mcpServers, [
+      {
+        name: "crm",
+        url: "https://crm.example.com/mcp",
+        tools: ["list_*"],
+        scopes: ["read", "write"],
+        user: true,
+      },
+      { name: "notes", url: "https://notes.example.com/mcp" },
+    ]);
+    assert.deepEqual(folder.settings?.channels, {
+      whatsapp: { number: "+15551234567" },
+      identity: "phone",
+    });
+  });
+
+  it("tells mcp_servers and channels that say nothing from ones that are empty", async () => {
+    const without = await loadFolder(await agentDir({ "agent.yaml": "name: concierge\n" }));
+    const nothing = await loadFolder(
+      await agentDir({ "agent.yaml": "name: concierge\nmcp_servers: ~\nchannels:\n" }),
+    );
+    const nulled = await loadFolder(
+      await agentDir({ "agent.yaml": "name: concierge\nmcp_servers:\nchannels: null\n" }),
+    );
+    const empty = await loadFolder(
+      await agentDir({ "agent.yaml": "name: concierge\nmcp_servers: []\nchannels: {}\n" }),
+    );
+
+    assert.deepEqual(without.settings, { name: "concierge" });
+    assert.deepEqual(nothing.settings, { name: "concierge" });
+    assert.deepEqual(nulled.settings, { name: "concierge" });
+    assert.deepEqual(empty.settings?.mcpServers, []);
+    assert.deepEqual(empty.settings?.channels, {});
+  });
+
+  it("refuses mcp_servers or channels it would otherwise have to guess at", async () => {
+    const server = "mcp_servers:\n  - name: notes\n    url: https://example.com/mcp\n";
+    for (const [declaration, reason] of [
+      ["mcp_servers:\n  - https://example.com/mcp\n", /an mcp server is a mapping with a name and a url/],
+      ["mcp_servers:\n  name: notes\n", /mcp_servers should be a list/],
+      ["mcp_servers: notes\n", /mcp_servers should be a list of mappings/],
+      [`${server}    branding: x\n`, /"branding" is not something an mcp server says/],
+      [`${server}    user: yes please\n`, /mcp server "notes": user must be true or false/],
+      [`${server}    tools: list_*\n`, /tools should be a list/],
+      ["mcp_servers:\n  - name:\n      - notes\n", /an mcp server's name is one value, not a list/],
+      [`connectors:\n  - name: notes\n    connector: linear\n${server}`, /"notes" is named under both connectors and mcp_servers/],
+      ["channels: whatsapp\n", /channels should be a mapping/],
+      ["channels:\n  telegram:\n    number: x\n", /unknown channels setting "telegram"/],
+      ["channels:\n  sms:\n    number: x\n    sender: y\n", /unknown channels\.sms setting "sender"/],
+      ['channels:\n  sms: "+15551234567"\n', /channels\.sms should be a mapping with a number/],
+      ["channels:\n  identity:\n    - link\n", /channels\.identity is one value, not a list/],
+      ["channels:\n    sms:\n      number: x\n  identity: link\n", /belongs to no channel/],
+    ] as const) {
+      await assert.rejects(
+        async () => loadFolder(await agentDir({ "agent.yaml": declaration })),
+        reason,
+        declaration,
+      );
+    }
+  });
+
   it("reads knowledge in path order, with the source a reader would recognise", async () => {
     const path = await agentDir({
       "knowledge/b.md": "second",
@@ -253,6 +342,60 @@ describe("loadFolder", () => {
       folder.skills.map((skill) => skill.name),
       ["explain", "recall"],
     );
+  });
+
+  it("reads a skill written as a folder, with the files it brings at any depth", async () => {
+    const path = await agentDir({
+      "skills/pdf/SKILL.md": "---\ndescription: Fill PDF forms\n---\nFill the form.\n",
+      "skills/pdf/reference/forms.md": "# Forms\n",
+      "skills/pdf/scripts/lib/fill.py": "print('filled')\n",
+    });
+
+    const [skill] = (await loadFolder(path)).skills;
+
+    assert.equal(skill?.name, "pdf");
+    assert.equal(skill?.instructions, "Fill the form.");
+    assert.deepEqual(skill?.files, {
+      "reference/forms.md": "# Forms\n",
+      "scripts/lib/fill.py": "print('filled')\n",
+    });
+  });
+
+  it("leaves hidden files and __pycache__ out of a skill folder", async () => {
+    const path = await agentDir({
+      "skills/pdf/SKILL.md": "---\ndescription: Fill PDF forms\n---\nFill the form.\n",
+      "skills/pdf/.DS_Store": new Uint8Array([0x00, 0xff]),
+      "skills/pdf/.cache/notes.md": "hidden",
+      "skills/pdf/scripts/__pycache__/fill.cpython-313.pyc": new Uint8Array([0xcb, 0x0d, 0xff]),
+    });
+
+    const [skill] = (await loadFolder(path)).skills;
+
+    assert.equal(skill?.files, undefined);
+  });
+
+  it("refuses a folder in skills/ without SKILL.md, since it is not a skill", async () => {
+    const path = await agentDir({ "skills/pdf/fill.py": "print('filled')\n" });
+
+    await assert.rejects(() => loadFolder(path), /pdf has no SKILL\.md, so it is not a skill/);
+  });
+
+  it("refuses a skill written both as a file and as a folder", async () => {
+    const path = await agentDir({
+      "skills/pdf.md": "---\ndescription: Fill\n---\nFill.\n",
+      "skills/pdf/SKILL.md": "---\ndescription: Fill\n---\nFill.\n",
+    });
+
+    await assert.rejects(() => loadFolder(path), /skill "pdf" is both pdf and pdf\.md/);
+  });
+
+  it("refuses a file in a skill folder that is not text", async () => {
+    const path = await agentDir({
+      "skills/pdf/SKILL.md": "---\ndescription: Fill\n---\nFill.\n",
+      "skills/pdf/form.pdf": new Uint8Array([0x25, 0x50, 0xff, 0xfe]),
+    });
+
+    await assert.rejects(() => loadFolder(path), /form\.pdf is not text/);
   });
 
   it("reads each simulations file as a list, in file order", async () => {

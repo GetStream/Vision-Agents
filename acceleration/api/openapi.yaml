@@ -680,12 +680,54 @@ components:
         - has_more
         - items
       type: object
+    AgentStats:
+      properties:
+        peak_at:
+          description: When that peak was first reached. Null when no session was open in the window.
+          format: date-time
+          nullable: true
+          type: string
+        peak_concurrent_sessions:
+          description: The most sessions open at the same time, each one an agent running. A session still open counts up to now.
+          format: int64
+          type: integer
+        tool_calls:
+          $ref: '#/components/schemas/ToolStats'
+          description: Every tool call in the window, as one. Its tool is empty.
+        tools:
+          description: One row per tool, most called first.
+          items:
+            $ref: '#/components/schemas/ToolStats'
+          type: array
+      required:
+        - peak_concurrent_sessions
+        - peak_at
+        - tool_calls
+        - tools
+      type: object
     AgentTools:
       description: How an agent is offered its plugin, MCP server and connector tools.
       properties:
         progressive:
           description: Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
           type: boolean
+      type: object
+    AnalyzeReviewsRequest:
+      properties:
+        from:
+          description: Only calls that started at or after this, inclusive.
+          format: date-time
+          type: string
+        target:
+          description: The model that analyses, a "provider/model" name or a shortcut. Left out, multilingual-high-accuracy.
+          type: string
+        to:
+          description: Only calls that started before this, exclusive.
+          format: date-time
+          type: string
+      required:
+        - from
+        - to
       type: object
     AppSettings:
       description: What the router does for the calling app. It never carries a secret.
@@ -3293,6 +3335,153 @@ components:
         - settle
         - fail
       type: string
+    DetectedObject:
+      properties:
+        box:
+          $ref: '#/components/schemas/DetectionBox'
+        confidence:
+          description: The model's score from 0 to 1. A model that scores nothing, such as Moondream, reports 1.
+          format: double
+          type: number
+        embedding:
+          description: A vector describing what is in the box. Present only when embeddings was asked for.
+          items:
+            format: float
+            type: number
+          type: array
+        label:
+          example: person
+          type: string
+      required:
+        - box
+        - confidence
+        - label
+      type: object
+    DetectionBox:
+      description: 'A rectangle as fractions of the image: 0,0 is the top left corner and 1,1 the bottom right.'
+      properties:
+        x_max:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        x_min:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        y_max:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        y_min:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+      required:
+        - x_max
+        - x_min
+        - y_max
+        - y_min
+      type: object
+    DetectionErrorCode:
+      description: Why a detection found nothing, absent when it completed. unsupported_option is a class, setting or overwrite no candidate could honour; provider_failed anything else a provider did wrong; timeout the 30 seconds running out; cancelled the caller hanging up.
+      enum:
+        - unsupported_option
+        - provider_failed
+        - timeout
+        - cancelled
+      type: string
+    DetectionOptions:
+      description: Where to look and what to keep.
+      properties:
+        classes:
+          description: The labels to keep. An open-vocabulary model (detection-open) looks for these words and has to be given at least one; a fixed-class model returns only these of what it found. Matched without regard to case.
+          items:
+            type: string
+          maxItems: 8
+          type: array
+        embeddings:
+          description: Return a vector on every box, for matching what was found against what was seen before. Only a model that computes one is asked.
+          type: boolean
+        min_confidence:
+          description: Drop boxes scored below this. Only a model that scores its boxes is asked.
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        overwrites:
+          additionalProperties: {}
+          description: Settings for one provider that the options above have no word for, keyed by provider. roboflow takes workspace and workflow_id, or specification, for the roboflow/workflow model. An overwrite for a provider that is not a candidate is refused.
+          type: object
+        providers:
+          description: A priority list of where to try, in the order given, which wins over target when it holds anything.
+          items:
+            type: string
+          type: array
+        target:
+          description: A provider/model or a capability shortcut. Defaults to detection-fast.
+          example: detection-open
+          type: string
+      type: object
+    DetectionRequest:
+      properties:
+        image:
+          description: The image, base64. A JPEG or PNG of at most 4 MB and 4096 pixels a side; a video frame scaled to 1024 wide is plenty.
+          format: byte
+          type: string
+        options:
+          $ref: '#/components/schemas/DetectionOptions'
+        tags:
+          additionalProperties:
+            type: string
+          type: object
+      required:
+        - image
+      type: object
+    DetectionResult:
+      properties:
+        cost_micros:
+          description: Millionths of a dollar, priced per image the vendor billed. Zero when it failed.
+          format: int64
+          type: integer
+        detections:
+          description: What was found. Empty when nothing was, or when it failed.
+          items:
+            $ref: '#/components/schemas/DetectedObject'
+          type: array
+        error:
+          description: What went wrong, in words. Absent when the detection completed.
+          type: string
+        error_code:
+          $ref: '#/components/schemas/DetectionErrorCode'
+        id:
+          description: This response's own id, for logs. Nothing is stored under it.
+          example: det_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+          type: string
+        model:
+          example: moondream3-preview
+          type: string
+        provider:
+          description: Who looked, or who failed to. Absent when nothing got as far as a provider.
+          example: moondream
+          type: string
+        status:
+          $ref: '#/components/schemas/DetectionStatus'
+      required:
+        - cost_micros
+        - detections
+        - id
+        - status
+      type: object
+    DetectionStatus:
+      description: Whether the image was looked at. A failed detection says why in error_code and error.
+      enum:
+        - completed
+        - failed
+      type: string
     DispatchSetting:
       description: Whether this kind of work is left to the customer's own dispatch worker.
       enum:
@@ -4116,7 +4305,7 @@ components:
             $ref: '#/components/schemas/ContentPart'
           type: array
     Modality:
-      description: 'What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.'
+      description: 'What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.'
       enum:
         - stt
         - tts
@@ -4125,6 +4314,7 @@ components:
         - search
         - decision_model
         - image
+        - detection
         - memory
         - knowledge
         - phone
@@ -5011,6 +5201,45 @@ components:
         - staff
         - vendor
       type: string
+    ReviewAnalysis:
+      properties:
+        calls_read:
+          description: How many badly reviewed calls were read. Zero means there were none, and nothing was asked.
+          format: int64
+          type: integer
+        causes:
+          items:
+            $ref: '#/components/schemas/ReviewCause'
+          type: array
+        summary:
+          description: The whole, in two sentences.
+          type: string
+      required:
+        - calls_read
+        - summary
+        - causes
+      type: object
+    ReviewCause:
+      properties:
+        call_ids:
+          description: The calls it explains, which are the sessions that ran them. Only ids that were read.
+          items:
+            type: string
+          type: array
+        explanation:
+          description: What went wrong in those calls.
+          type: string
+        fix:
+          description: What to change in the agent.
+          type: string
+        title:
+          type: string
+      required:
+        - title
+        - explanation
+        - fix
+        - call_ids
+      type: object
     ReviewDecision:
       description: approve sends the use case to the vendor; request_changes hands it back to the app to edit; reject ends it.
       enum:
@@ -6105,6 +6334,11 @@ components:
           type: integer
         description:
           type: string
+        file_paths:
+          description: The files the skill came with, by path relative to its folder.
+          items:
+            type: string
+          type: array
         id:
           type: string
         instructions:
@@ -6138,6 +6372,11 @@ components:
         description:
           description: The one line the fast model sees.
           type: string
+        files:
+          additionalProperties:
+            type: string
+          description: The rest of the skill's folder beside SKILL.md, each file's text by its path relative to the folder, such as reference/forms.md or scripts/fill.py. The model reads them one at a time when it needs them. A file that is not .md, .mdx or .txt is a script, run in the sandbox, so a skill with one belongs only to an agent with a sandbox. At most 64 files and 1 MB in all.
+          type: object
         instructions:
           description: The full prompt, which only the subagent sees.
           type: string
@@ -6362,114 +6601,9 @@ components:
         - created_at
         - updated_at
       type: object
-    StreamAppState:
-      description: Whether the router acts in a registered app. disconnected is one the app took back, and blocked one Stream suspended or that stopped checking tokens. Neither is ever written into the router's own app instead.
-      enum:
-        - connected
-        - disconnected
-        - blocked
-      type: string
-    StreamCheck:
-      properties:
-        reattach:
-          items:
-            type: string
-          nullable: true
-          type: array
-        settings:
-          $ref: '#/components/schemas/AppSettings'
-      required:
-        - settings
-        - reattach
-      type: object
-    StreamCredentials:
-      description: 'The keys the router acts in the calling app''s own Stream app with. Secrets are written and never read back: no answer carries one.'
-      properties:
-        allow_guests:
-          description: Whether guests may be made in the app. Left out keeps what was set, which starts off false.
-          type: boolean
-        expected_revision:
-          description: The revision last read, 0 for an app never registered. A write made against an older one is a 409.
-          format: int64
-          type: integer
-        keys:
-          description: Every key the router may act in the app with, which replaces those it held. Each is checked with Stream. Empty disconnects the app, which needs a proof.
-          items:
-            $ref: '#/components/schemas/StreamKeyInput'
-          maxItems: 8
-          nullable: true
-          type: array
-        primary_key:
-          description: The key tokens are minted with. Left out is the first.
-          type: string
-        proof:
-          $ref: '#/components/schemas/StreamKeyInput'
-          description: A key and secret of the app, which disconnecting needs. It is checked with Stream and kept nowhere.
-      required:
-        - keys
-        - expected_revision
-      type: object
-    StreamKeyInput:
-      properties:
-        api_key:
-          maxLength: 128
-          minLength: 1
-          type: string
-        api_secret:
-          description: The key's secret. It is sealed and never read back.
-          maxLength: 256
-          type: string
-          writeOnly: true
-        created_at:
-          description: When Stream made the key, which says which key is the oldest and so signs the app's webhooks.
-          format: date-time
-          type: string
-      required:
-        - api_key
-        - api_secret
-      type: object
-    StreamKeyState:
-      properties:
-        api_key:
-          type: string
-        created_at:
-          description: When Stream made the key.
-          format: date-time
-          type: string
-        last_webhook_at:
-          description: When Stream last signed a hook with this key.
-          format: date-time
-          type: string
-        secret_last4:
-          description: The end of the secret, enough to tell two apart.
-          type: string
-        signs_webhooks:
-          description: Whether Stream signs the app's hooks with this key, which is its oldest. yes is one a hook arrived signed with.
-          enum:
-            - "yes"
-            - "no"
-            - unknown
-          type: string
-        status:
-          description: rejected is a key Stream stopped accepting, which the router no longer uses.
-          enum:
-            - active
-            - rejected
-          type: string
-        verified_at:
-          format: date-time
-          type: string
-      required:
-        - api_key
-        - status
-        - signs_webhooks
-      type: object
     StreamSettings:
       description: Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need.
       properties:
-        allow_guests:
-          description: Whether guests may be made in the registered app.
-          type: boolean
         call_type:
           $ref: '#/components/schemas/StreamTypeState'
           description: Whether the Stream app holds the agent call type calls are made with. Stream reports no grants for it here, so it is present or missing.
@@ -6480,27 +6614,8 @@ components:
           description: When Stream was asked. Absent when it could not be, and the types are then unknown. Answers are reused for a minute.
           format: date-time
           type: string
-        keys:
-          description: The registered app's keys, oldest first. No secret is ever read back.
-          items:
-            $ref: '#/components/schemas/StreamKeyState'
-          nullable: true
-          type: array
-        primary_key:
-          description: The key tokens are minted with.
-          type: string
-        revision:
-          description: The registration's revision, 0 for an app that registered none. A write names the one it read.
-          format: int64
-          type: integer
-        state:
-          $ref: '#/components/schemas/StreamAppState'
-          description: Whether the router acts in the registered app. Absent for an app that registered none.
-        state_reason:
-          description: Why the router stopped acting in the app, for one that is blocked.
-          type: string
         stream_app_id:
-          description: The registered app's own id.
+          description: The calling app's own Stream app id, in app mode, when its work is written there.
           format: int64
           type: integer
         tenancy:
@@ -6688,6 +6803,22 @@ components:
         words:
           description: Word-level timestamps. Recording only.
           type: boolean
+      type: object
+    SuspendTelephonyRequest:
+      properties:
+        reason:
+          description: Why the app is suspended. The app is never shown it.
+          maxLength: 4096
+          minLength: 1
+          type: string
+        suspended_by:
+          description: Who is suspending it.
+          maxLength: 255
+          minLength: 1
+          type: string
+      required:
+        - reason
+        - suspended_by
       type: object
     SyncAgentRequest:
       description: An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
@@ -6935,6 +7066,27 @@ components:
         - share
         - value
       type: object
+    TelephonySuspension:
+      properties:
+        customer_id:
+          description: The app that is suspended.
+          type: string
+        reason:
+          description: Why, for Stream staff. The app is never shown it.
+          type: string
+        suspended_at:
+          description: When it was suspended, or last changed.
+          format: date-time
+          type: string
+        suspended_by:
+          description: Who suspended it.
+          type: string
+      required:
+        - customer_id
+        - reason
+        - suspended_by
+        - suspended_at
+      type: object
     TextContentPart:
       properties:
         text:
@@ -7108,6 +7260,38 @@ components:
       required:
         - tool_call_id
         - type
+      type: object
+    ToolStats:
+      properties:
+        avg_ms:
+          description: From the call starting to its result. Null when none was timed.
+          format: double
+          nullable: true
+          type: number
+        avg_tokens:
+          description: What a call put in front of the model, its arguments and its result, estimated at four characters a token.
+          format: double
+          type: number
+        calls:
+          format: int64
+          type: integer
+        failed:
+          description: Calls that ended in an error.
+          format: int64
+          type: integer
+        p99_ms:
+          format: double
+          nullable: true
+          type: number
+        tool:
+          type: string
+      required:
+        - tool
+        - calls
+        - failed
+        - avg_tokens
+        - avg_ms
+        - p99_ms
       type: object
     TranscriptEntity:
       description: Something the recording named, for the providers that pick them out.
@@ -8395,6 +8579,13 @@ paths:
             description: Only calls that started before this, exclusive.
             format: date-time
             type: string
+        - description: Only reviewed calls scored at or below this, from 1 to 5.
+          explode: false
+          in: query
+          name: max_review_score
+          schema:
+            description: Only reviewed calls scored at or below this, from 1 to 5.
+            type: integer
       responses:
         "200":
           content:
@@ -8609,6 +8800,40 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: What was said on a call
+  /v1/agents/calls/reviews/analysis:
+    post:
+      description: |-
+        Reads the latest 100 calls in the window whose review scored them 3 or lower, and asks a model to group them by cause, each with the fix to make and the calls it explains.
+        Costs one language model call, billed as any other, and keeps nothing: ask again for a fresh answer.
+      operationId: analyzeReviews
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyzeReviewsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewAnalysis'
+          description: The causes, the one behind the most calls first
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+      summary: What caused the calls the agents handled badly
   /v1/agents/campaigns:
     get:
       operationId: listCampaigns
@@ -13852,6 +14077,37 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
           description: This deployment has no database to import into.
       summary: Write an export, or a batch of changes, into this deployment
+  /v1/detection:
+    post:
+      description: |-
+        Routed like image generation: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one request is one stat row counting the images the vendor billed. Every box comes back as fractions of the image, whatever the vendor sent.
+        detection-fast finds COCO's 80 classes quickly; detection-open finds whatever is named in classes; detection-faces finds faces with an embedding each. A confidence floor or embeddings narrow the candidates to the models that declared them, so they are honoured or the request is a 400.
+        A detection that got as far as a provider answers 200 whether it found anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. Nothing is stored, so the id cannot be fetched again.
+      operationId: detect
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DetectionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetectionResult'
+          description: What was found, or why nothing was
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Find objects in one image, and return their boxes
   /v1/dispatch:
     get:
       description: |-
@@ -14027,6 +14283,104 @@ paths:
       security:
         - OpsKey: []
       summary: Make Stream's own app a customer's provider app
+  /v1/ops/customers/{customer_id}/telephony-suspension:
+    delete:
+      description: |-
+        Lets the app use the phone again. Its paused campaigns stay paused until the app starts them.
+
+        Stream staff only: it needs the ops key.
+      operationId: liftTelephonySuspension
+      parameters:
+        - description: The app.
+          in: path
+          name: customer_id
+          required: true
+          schema:
+            description: The app.
+            type: string
+      responses:
+        "204":
+          description: The suspension is lifted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Lift an app's telephony suspension
+    get:
+      description: |-
+        The suspension an app is under, or 404 when it is not suspended.
+
+        Stream staff only: it needs the ops key.
+      operationId: getTelephonySuspension
+      parameters:
+        - description: The app.
+          in: path
+          name: customer_id
+          required: true
+          schema:
+            description: The app.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelephonySuspension'
+          description: The suspension
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Get why an app's telephony is suspended
+    put:
+      description: |-
+        Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+
+        Stream staff only: it needs the ops key.
+      operationId: suspendTelephony
+      parameters:
+        - description: The app.
+          in: path
+          name: customer_id
+          required: true
+          schema:
+            description: The app.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuspendTelephonyRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelephonySuspension'
+          description: The suspension
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Suspend an app's telephony
   /v1/ops/use-cases:
     get:
       description: |-
@@ -15464,82 +15818,6 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
           description: Service Unavailable
       summary: What the router does for the calling app
-  /v1/settings/app/stream/check:
-    post:
-      description: |-
-        Asks Stream again about the registered app: whether it stands, whether it holds the agent channel and call types, and which numbers still have their lines in another app. Needs stream.tenancy=app.
-
-        Server-side only.
-      operationId: checkAppStreamCredentials
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StreamCheck'
-          description: What the check found
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "403":
-          $ref: '#/components/responses/Forbidden'
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Conflict
-        "500":
-          $ref: '#/components/responses/InternalError'
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Service Unavailable
-      summary: Check the calling app's own Stream app
-  /v1/settings/app/stream/credentials:
-    put:
-      description: |-
-        The keys the router acts in the calling app's own Stream app with, from now on, for every conversation, transcript, call and phone line. Each key is checked with Stream: it has to belong to the calling app, and the app may be neither suspended nor taking requests without checking their tokens. Keys left out are dropped, and the sessions acting in the app end. Needs stream.tenancy=app.
-
-        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. Behind a proxy, the proxy has to declare the caller a server.
-      operationId: updateAppStreamCredentials
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/StreamCredentials'
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AppSettings'
-          description: The app's settings as they now are
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "403":
-          $ref: '#/components/responses/Forbidden'
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Conflict
-        "500":
-          $ref: '#/components/responses/InternalError'
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Service Unavailable
-      summary: Register the calling app's own Stream app
   /v1/stats/activity:
     get:
       description: |-
@@ -15588,6 +15866,47 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: Who used the calling customer's agents, and how much
+  /v1/stats/agents:
+    get:
+      description: |-
+        The most agents that were running at once, and which tools they called: how often, how much each call put in front of the model and how long it took.
+        One figure for the whole window rather than a row per bucket, because neither a peak nor a percentile can be summed out of smaller ones.
+      operationId: getAgentStats
+      parameters:
+        - description: Start of the window, inclusive.
+          explode: false
+          in: query
+          name: from
+          required: true
+          schema:
+            description: Start of the window, inclusive.
+            format: date-time
+            type: string
+        - description: End of the window, exclusive.
+          explode: false
+          in: query
+          name: to
+          required: true
+          schema:
+            description: End of the window, exclusive.
+            format: date-time
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentStats'
+          description: The window's figures
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: How the calling customer's agents ran, across all of them
   /v1/stats/rollup:
     post:
       description: 'Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.'

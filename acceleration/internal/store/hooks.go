@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -52,19 +51,6 @@ func (a AppScope) clause() bun.Safe {
 // ErrAmbiguousHook is a hook that matches rows of more than one customer in its app, which
 // is acted on for nobody rather than for whichever came first.
 var ErrAmbiguousHook = errors.New("store: more than one customer holds what that hook names")
-
-// StreamAppByPK is the app registered for a Stream app id, with its keys.
-func (s *Store) StreamAppByPK(ctx context.Context, app int64) (StreamApp, error) {
-	var found StreamApp
-	err := s.db.NewSelect().Model(&found).Column("customer_id").Where("stream_app_pk = ?", app).Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return StreamApp{}, ErrNoStreamApp
-	}
-	if err != nil {
-		return StreamApp{}, fmt.Errorf("store: find stream app: %w", err)
-	}
-	return s.StreamApp(ctx, found.CustomerID)
-}
 
 // NumberByCallInApp finds the number whose lines reach a call, among the numbers attached
 // in one app. A routing rule names the call its callers are put in, which is what an

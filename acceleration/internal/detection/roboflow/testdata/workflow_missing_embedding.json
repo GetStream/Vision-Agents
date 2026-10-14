@@ -1,0 +1,1 @@
+{"outputs":[{"predictions":{"image":{"width":100,"height":100},"predictions":[{"x":25.0,"y":25.0,"width":10.0,"height":10.0,"confidence":0.93,"class":"face","class_id":0}]},"embeddings":[]}]}

@@ -349,6 +349,23 @@ func (s *CallsSuite) inChannel(channel, customer string, at time.Time, text stri
 }
 
 // started records a call the suite's app is on, filling in whatever the test did not name.
+func (s *CallsSuite) TestCallsCanBeListedByHowBadlyTheyWentFor() {
+	ctx := context.Background()
+	bad, good, unreviewed := s.started(store.Call{}), s.started(store.Call{}), s.started(store.Call{})
+	two, five := 2, 5
+	s.Require().NoError(s.store.ReviewCall(ctx, s.customerID(), bad.ID, "Stalled.", &two, ""))
+	s.Require().NoError(s.store.ReviewCall(ctx, s.customerID(), good.ID, "Helped.", &five, ""))
+
+	var listed []Call
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls?max_review_score=3", nil, &listed))
+	s.Require().Len(listed, 1, "neither the good call nor %s, which nobody reviewed", unreviewed.ID)
+	s.Equal(bad.ID, listed[0].Id)
+
+	s.Equal(http.StatusBadRequest, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls?max_review_score=9", nil, nil))
+}
+
 func (s *CallsSuite) started(call store.Call) store.Call {
 	call.CustomerID = s.customerID()
 	if call.ID == "" {

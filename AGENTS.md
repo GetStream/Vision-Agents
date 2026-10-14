@@ -131,6 +131,11 @@ To give an agent a provider's tools (GitHub, Linear, the Slack bot), read the `c
 skill (`.claude/skills/connectors/SKILL.md`). To add a provider to the catalog, read
 `add-connector`. Plugins are deprecated.
 
+## Security
+
+For a security review of the router's API or of the clusters it runs on, read the `security`
+skill (`.claude/skills/security/SKILL.md`).
+
 ## Testing
 
 For Go tests, read the `go-testing` skill (`.claude/skills/go-testing/SKILL.md`) first: testify

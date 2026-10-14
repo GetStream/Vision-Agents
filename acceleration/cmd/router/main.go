@@ -42,6 +42,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/standardwebhooks"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/detectionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
@@ -802,6 +803,25 @@ func run(settings config.Config, logger *slog.Logger) error {
 		streams.Image = imaging
 	}
 
+	// Detection is served the same way: a section in the config, and a provider with no
+	// key is a candidate that refuses to be built rather than a router that is missing.
+	if section, ok := capabilities[routing.Detection]; ok {
+		detecting, err := detectionrouter.New(detectionrouter.Options{
+			Config:   section,
+			Registry: detectionrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Gate:     gate,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer detecting.Close()
+		routers[routing.Detection] = detecting
+		streams.Detection = detecting
+	}
+
 	// Every Stream action taken for a customer, a call joined, a line made, a transcript
 	// written, a token minted, is taken in the app this resolves for them.
 	streamClients, err := newStreamClients(settings, pgStore, secrets, logger)
@@ -874,17 +894,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if sessions != nil {
 		defer sessions.Shutdown()
 	}
-	// In app mode every connected app is checked on, and what the router stops acting in
-	// takes the sessions pinned to it with it.
-	if stored, ok := streamClients.Source().(*streamapp.Stored); ok {
-		ended := func(customer string, app int64) {
-			if sessions != nil {
-				sessions.EndPinned(customer, app)
-			}
-		}
-		go stored.Watch(ctx, streamClients, streamapp.WatchEvery, ended)
-	}
-
 	// A campaign is a phone call, a conversation and a row, so it runs only where all
 	// three are configured. Elsewhere the campaign paths say so.
 	var campaigns *campaign.Runner
@@ -1005,6 +1014,19 @@ func run(settings config.Config, logger *slog.Logger) error {
 			"setting", "redis.addr")
 	}
 
+	// A worker waits on whichever node its socket landed on, and a session needing it may be
+	// running on any other.
+	var everyWorker *node.Workers
+	if sessionRelay != nil && directory != nil {
+		everyWorker, err = node.NewWorkers(ctx, workers, directory, sessionRelay, logger)
+		if err != nil {
+			return err
+		}
+		if sessions != nil {
+			sessions.HostTools(everyWorker)
+		}
+	}
+
 	var telnyxPublicKey ed25519.PublicKey
 	if settings.Telnyx.PublicKey != "" {
 		telnyxPublicKey, err = telnyxsig.ParsePublicKey(settings.Telnyx.PublicKey)
@@ -1042,11 +1064,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Sessions:              sessions,
 		Relay:                 sessionRelay,
 		Directory:             directory,
+		Workers:               everyWorker,
 		Streams:               streams,
 		Stream:                streamClients,
 		ProxyDeclaresKind:     settings.Auth.ProxyDeclaresKind,
-		TrustAPIKeyHeader:     settings.Stream.TrustAPIKeyHeader,
-		DenyRegistration:      settings.Stream.DenyRegistration,
 		HookSecret:            settings.Stream.APISecret,
 		TelnyxPublicKey:       telnyxPublicKey,
 		TelnyxConnectionID:    settings.Telnyx.ConnectionID,

@@ -50,6 +50,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/detectionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -145,17 +146,14 @@ type RouterSuite struct {
 	manager *session.Manager
 
 	// appMode runs the suite's Stream through app mode's own source, over the suite's
-	// database and keyring, with the deployment's app as the fallback. A suite sets it, and
-	// the two after it, before SetupSuite runs.
+	// database and keyring, with the deployment's app as the fallback: behind a gateway,
+	// whose mint endpoint is the suite's, that forwards each app's server token and vouches
+	// for its hooks. A suite sets it, and the one after it, before SetupSuite runs.
 	appMode bool
 	// appRefuses turns app mode's fallback off, so a customer with no app of its own is
 	// written nowhere.
 	appRefuses bool
-	// trustAPIKeyHeader lets X-Stream-Api-Key choose the minting key.
-	trustAPIKeyHeader bool
-	// denied are the app ids the suite refuses registration to.
-	denied []string
-	server *httptest.Server
+	server     *httptest.Server
 	// router is the suite's router itself, for what cmd/router calls on it besides serving.
 	router *Server
 	app    testApp
@@ -375,8 +373,14 @@ func (s *RouterSuite) SetupSuite() {
 	})}
 	s.stream = streamapp.NewClients(s.apps, streamapp.ClientsOptions{})
 	if s.appMode {
+		mint, err := streamapp.NewMint(s.gatewayMint().URL, suiteMintBearer)
+		s.Require().NoError(err)
+		forwarded, err := streamapp.NewForwarded(streamapp.ForwardedOptions{
+			Store: pgStore, Sealer: s.sealer, Mint: mint, BaseURL: s.chat.URL, Logger: logger,
+		})
+		s.Require().NoError(err)
 		stored, err := streamapp.NewStored(streamapp.StoredOptions{
-			Store: pgStore, Sealer: s.sealer, Deployment: s.apps.deployment, FallbackToDeployment: !s.appRefuses, Logger: logger,
+			Store: pgStore, Deployment: s.apps.deployment, FallbackToDeployment: !s.appRefuses, Forwarded: forwarded, Logger: logger,
 		})
 		s.Require().NoError(err)
 		s.stream = streamapp.NewClients(stored, streamapp.ClientsOptions{})
@@ -423,6 +427,7 @@ func (s *RouterSuite) SetupSuite() {
 		routing.Search:        streams.Search,
 		routing.DecisionModel: streams.DecisionModel,
 		routing.Image:         streams.Image,
+		routing.Detection:     streams.Detection,
 	}
 
 	if s.channelProvider != nil {
@@ -471,32 +476,34 @@ func (s *RouterSuite) SetupSuite() {
 		connectorSecrets, serverTransports, connectorLimiter = nil, nil, nil
 	}
 	server, err := NewServer(Options{
-		Routers:       s.modalities,
-		Streams:       streams,
-		Relay:         s.relayBus(logger),
-		Directory:     directory,
-		Sessions:      sessions,
-		Store:         pgStore,
-		Configs:       s.configs,
-		Live:          liveClient,
-		Auth:          s.authenticator(),
-		AuthMode:      auth.APIKey,
-		Phone:         s.telephony(logger),
-		Campaigns:     s.campaigns(sessions, logger),
-		Simulations:   s.simulations(sessions, streams, logger),
-		PluginEvents:  s.events,
-		Channels:      s.inbound,
-		DLC:           s.registrations(listener, logger),
-		Gate:          s.gate,
-		OpsKey:        suiteOpsKey,
-		Secrets:       s.sealer,
-		Knowledge:     s.knowledgeWriter(),
-		KnowledgeURLs: s.pages(redisAddr),
-		Voices:        s.voiceService(),
-		VoiceLibrary:  voices.NewCatalogue(),
-		Dispatch:      s.dispatch,
-		Policies:      policies,
-		Connectors:    s.connectors,
+		Routers:   s.modalities,
+		Streams:   streams,
+		Relay:     s.relayBus(logger),
+		Directory: directory,
+		Sessions:  sessions,
+		Store:     pgStore,
+		Configs:   s.configs,
+		Live:      liveClient,
+		Auth:      s.authenticator(),
+		AuthMode:  s.authMode(),
+		// App mode is served only behind a gateway that declares kinds.
+		ProxyDeclaresKind: s.appMode,
+		Phone:             s.telephony(logger),
+		Campaigns:         s.campaigns(sessions, logger),
+		Simulations:       s.simulations(sessions, streams, logger),
+		PluginEvents:      s.events,
+		Channels:          s.inbound,
+		DLC:               s.registrations(listener, logger),
+		Gate:              s.gate,
+		OpsKey:            suiteOpsKey,
+		Secrets:           s.sealer,
+		Knowledge:         s.knowledgeWriter(),
+		KnowledgeURLs:     s.pages(redisAddr),
+		Voices:            s.voiceService(),
+		VoiceLibrary:      voices.NewCatalogue(),
+		Dispatch:          s.dispatch,
+		Policies:          policies,
+		Connectors:        s.connectors,
 		// Connector consents and credentials seal under the suite's key.
 		ConnectorSecrets:   connectorSecrets,
 		PublicURL:          s.publicURL,
@@ -508,8 +515,6 @@ func (s *RouterSuite) SetupSuite() {
 		HookSecret:         suiteStreamSecret,
 		TelnyxPublicKey:    s.telnyxPublicKey,
 		TelnyxConnectionID: s.telnyxConnectionID,
-		TrustAPIKeyHeader:  s.trustAPIKeyHeader,
-		DenyRegistration:   s.denied,
 		Logger:             logger,
 		// The connector events endpoint revokes through the suite's resolver.
 		ConnectorResolver:     s.resolver,
@@ -686,6 +691,9 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("summarising", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Noted.", summarises: true}, nil
 	})
+	reasoning.Register("analysing", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Noted.", analyses: true}, nil
+	})
 	reasoning.Register("counted", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Counted.", usage: llm.Usage{InputTokens: 1000, InputTokensDetails: llm.InputTokensDetails{CachedTokens: 400}, OutputTokens: 20}}, nil
 	})
@@ -774,13 +782,19 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.Require().NoError(err)
 	s.T().Cleanup(imaging.Close)
 
+	detecting, err := detectionrouter.New(detectionrouter.Options{
+		Config: detectionConfig(), Registry: detectorRegistry(), Gate: gate, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(detecting.Close)
+
 	conversing, err := stsrouterStub()
 	s.Require().NoError(err)
 	s.T().Cleanup(conversing.Close)
 
 	return &Streams{
 		STT: transcriber, TTS: speaker, LLM: reasoner, STS: conversing,
-		Search: finding, DecisionModel: judging, Image: imaging,
+		Search: finding, DecisionModel: judging, Image: imaging, Detection: detecting,
 		Transcriptions: transcriptions, Speech: recordings,
 	}
 }
@@ -940,6 +954,11 @@ func (s *RouterSuite) voiceService() *voices.Service {
 // The routing is shared because what differs between two nodes is which conversations
 // they are holding, not what they route to.
 func (s *RouterSuite) otherNode() *httptest.Server {
+	return s.otherNodeDispatching(nil)
+}
+
+// otherNodeDispatching is otherNode with dispatch workers of its own, waiting in workers.
+func (s *RouterSuite) otherNodeDispatching(workers *dispatch.Pool) *httptest.Server {
 	logger := slog.New(slog.DiscardHandler)
 	other := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(other, logger)
@@ -961,26 +980,43 @@ func (s *RouterSuite) otherNode() *httptest.Server {
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = sessions.Shutdown() })
 
+	bus := s.relayBus(logger)
+	var everyWorker *node.Workers
+	if workers != nil {
+		everyWorker = s.deploymentWorkers(workers, directory, bus)
+	}
 	server, err := NewServer(Options{
-		Routers:    s.modalities,
-		Streams:    s.streams,
-		Sessions:   sessions,
-		Relay:      s.relayBus(logger),
-		Directory:  directory,
-		Store:      s.store,
-		Configs:    s.configs,
-		Live:       s.live,
-		Auth:       s.authenticator(),
-		AuthMode:   auth.APIKey,
-		Stream:     s.stream,
-		HookSecret: suiteStreamSecret,
-		Logger:     logger,
+		Routers:           s.modalities,
+		Streams:           s.streams,
+		Sessions:          sessions,
+		Relay:             bus,
+		Directory:         directory,
+		Dispatch:          workers,
+		Workers:           everyWorker,
+		Store:             s.store,
+		Configs:           s.configs,
+		Live:              s.live,
+		Auth:              s.authenticator(),
+		AuthMode:          s.authMode(),
+		ProxyDeclaresKind: s.appMode,
+		Stream:            s.stream,
+		HookSecret:        suiteStreamSecret,
+		Logger:            logger,
 	})
 	s.Require().NoError(err)
 	other.Config.Handler = server.Handler()
 	other.Start()
 	s.T().Cleanup(other.Close)
 	return other
+}
+
+// deploymentWorkers is one node's view of the dispatch workers across the deployment.
+func (s *RouterSuite) deploymentWorkers(workers *dispatch.Pool, directory *node.Directory, bus *relay.Bus) *node.Workers {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.T().Cleanup(cancel)
+	everyWorker, err := node.NewWorkers(ctx, workers, directory, bus, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	return everyWorker
 }
 
 // nodeDirectory is one node's end of the register of which node is running which session.
@@ -1521,6 +1557,15 @@ func (s *RouterSuite) setApps(customer string, change func(*suiteApps)) {
 	s.stream.Invalidate(customer)
 }
 
+// authMode is the mode the suite's router says it runs in: proxy in app mode, which only a
+// gateway serves, though the suite's callers still sign with the app's key.
+func (s *RouterSuite) authMode() auth.Mode {
+	if s.appMode {
+		return auth.Proxy
+	}
+	return auth.APIKey
+}
+
 // giveApp makes the customer act in an app of its own, a chattest of its own, from now on.
 func (s *RouterSuite) giveApp(customer string, app int64, key string) *chattest.Server {
 	own := chattest.NewServer(s.T())
@@ -1528,7 +1573,7 @@ func (s *RouterSuite) giveApp(customer string, app int64, key string) *chattest.
 	s.apps.own[customer] = streamapp.Identity{
 		CustomerID: customer, StreamApp: app, APIKey: key,
 		Secret: streamapp.NewSecret(key + "-secret"), BaseURL: own.URL,
-		Registered: true, AllowGuests: true,
+		Registered: true,
 	}
 	s.apps.mu.Unlock()
 	s.stream.Invalidate(customer)

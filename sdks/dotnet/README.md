@@ -149,6 +149,7 @@ agents/jean/
   instructions.md
   guardrail.md
   skills/think.md
+  skills/pdf/SKILL.md   a skill as a folder: SKILL.md plus the text files it brings, at any depth
   knowledge/pricing.md
   knowledge/urls.yaml   urls, or {url, title, description, refresh_hours}
   simulations/lunch.yaml

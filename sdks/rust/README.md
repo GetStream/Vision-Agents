@@ -194,6 +194,8 @@ agents/jean/
   instructions.md
   guardrail.md
   skills/think.md
+  skills/pdf/SKILL.md   a skill kept as a folder: SKILL.md plus the text files beside it
+  skills/pdf/scripts/fill.py
   knowledge/pricing.md
   knowledge/urls.yaml   pages to read, each a url or {url, title, description, refresh_hours}
   simulations/*.yaml    each a list of {name, scenario, assertion, mode, variations, ...}
@@ -209,7 +211,10 @@ agent.knowledge()?.add_url("https://example.com/pricing", "Pricing", "", Some(24
 `sync` stores the directory as a config in one request, and `.agent_sync` records its
 fingerprint, so syncing on every startup sends nothing when nothing changed. A key
 `agent.yaml` does not know is refused; besides the models it takes `harness`, `subagent`,
-`greeting` (`{text, mode}`), `plugins`, `sandbox` and `dispatch`. With a `simulations/` directory the config's
+`greeting` (`{text, mode}`), `plugins` (deprecated), `connectors`, `sandbox` and `dispatch`. A
+connector is its alias (`- github`) or `{name, connector, tools, connection, required}`; `connection`
+is an app connection's id or its only label. Leaving `connectors` out keeps the stored bindings, and
+`connectors: []` removes them. With a `simulations/` directory the config's
 simulations become exactly what it declares, and an empty one deletes them; without one they
 are left alone. `Agent::new("jean")` finds `agents/jean` or `examples/*/jean` from the
 working directory up and syncs it before the first session.

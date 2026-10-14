@@ -214,7 +214,7 @@ func (s *Store) PinnedProviderApps(ctx context.Context) ([]ConnectorOAuthClient,
 }
 
 // RewrapConnectorOAuthClientSecret replaces the record's sealed client secret with the same
-// secret sealed under a newer key encryption key, as RewrapStreamAppKey does for a Stream key.
+// secret sealed under a newer key encryption key.
 // It changes nothing when the secret was replaced meanwhile, and reports whether it applied.
 func (s *Store) RewrapConnectorOAuthClientSecret(ctx context.Context, customerID, connectorID string, was, sealed []byte, version int) (bool, error) {
 	return s.rewrapConnectorOAuthClient(ctx, "secret_sealed", "kek_version", customerID, connectorID, was, sealed, version)

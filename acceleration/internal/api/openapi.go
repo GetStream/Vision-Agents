@@ -267,7 +267,6 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerHealth(api)
 	s.registerPolicies(api)
 	s.registerSettings(api)
-	s.registerStreamCredentials(api)
 	s.registerSessionQuery(api)
 	s.registerSessionUpdate(api)
 	s.registerSessionStop(api)
@@ -287,6 +286,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerCampaigns(api)
 	s.registerSimulations(api)
 	s.registerCalls(api)
+	s.registerReviews(api)
 	s.registerSessionCreate(api)
 	s.registerGuests(api)
 	s.registerSessions(api)
@@ -295,6 +295,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerClassify(api)
 	s.registerRecordings(api)
 	s.registerImages(api)
+	s.registerDetection(api)
 	documentHandWritten(api)
 	s.registerPlugins(api)
 	s.registerConfigPatch(api)
@@ -310,6 +311,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerConnectionRecords(api)
 	s.registerChannels(api)
 	s.registerDLC(api)
+	s.registerSuspensions(api)
 	return api
 }
 

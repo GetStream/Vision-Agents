@@ -3,9 +3,11 @@ package streamapp
 import (
 	"cmp"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -178,6 +180,11 @@ func (f *Forwarded) read(ctx context.Context, app int64) (heldToken, error) {
 	if err != nil {
 		return heldToken{}, err
 	}
+	if !row.ExpiresAt.After(f.now()) {
+		// Nothing to open: an expired row, or a placeholder seeded for an app that had
+		// registered its keys, is only the key the gateway is asked to mint for.
+		return heldToken{customer: row.CustomerID, apiKey: row.APIKey, expires: row.ExpiresAt}, nil
+	}
 	opened, err := f.sealer.OpenWithAADVersion(row.Sealed, boundTo(tokenPurpose, row.CustomerID, app, row.APIKey), row.KEKVersion)
 	if err != nil {
 		return heldToken{}, fmt.Errorf("streamapp: opening the token held for app %d: %w", app, err)
@@ -189,6 +196,19 @@ func (f *Forwarded) read(ctx context.Context, app int64) (heldToken, error) {
 		f.held[app] = read
 	}
 	return f.held[app], nil
+}
+
+// boundTo is what something sealed for an app's key is bound to: what it is, whose it is,
+// which app and which key. A sealed value moved to any other row does not open there. Each
+// part is prefixed with its length, so no two different rows can run together into the
+// same bytes.
+func boundTo(purpose, customer string, app int64, apiKey string) []byte {
+	var aad []byte
+	for _, part := range []string{purpose, customer, strconv.FormatInt(app, 10), apiKey} {
+		aad = binary.BigEndian.AppendUint32(aad, uint32(len(part)))
+		aad = append(aad, part...)
+	}
+	return aad
 }
 
 // expiryOf is when a token the gateway minted expires. Its signature is not checked: the

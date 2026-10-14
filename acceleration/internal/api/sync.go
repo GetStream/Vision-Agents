@@ -228,6 +228,10 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	}
 
 	skills := skillsOf(body.Skills)
+	// After the settings, so a sandbox stored before and not repeated still counts.
+	if message, ok := skillSandboxComplaint(skills, config.Sandbox != ""); !ok {
+		return nil, invalidRequest(message)
+	}
 	named := make([]string, 0, len(skills))
 	for _, skill := range skills {
 		named = append(named, strings.TrimSpace(skill.Name))

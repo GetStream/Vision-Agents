@@ -69,6 +69,108 @@ class TestFolder:
         assert folder.knowledge[0].source == "pricing.md"
         assert folder.knowledge_namespace() == "jean"
 
+    def test_a_skill_folder_brings_its_nested_files(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(
+            tmp_path,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: fill PDFs\n---\nFill it.",
+        )
+        write(tmp_path, "skills/pdf/reference/forms.md", "# Forms\n")
+        write(tmp_path, "skills/pdf/scripts/lib/fill.py", "print('filled')\n")
+
+        skill = load(tmp_path).skills[0]
+
+        assert skill.name == "pdf"
+        assert skill.instructions == "Fill it."
+        assert skill.files == {
+            "reference/forms.md": "# Forms\n",
+            "scripts/lib/fill.py": "print('filled')\n",
+        }
+
+    def test_a_skill_folder_without_skill_md_is_refused(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(tmp_path, "skills/pdf/fill.py", "print('filled')\n")
+        with pytest.raises(ValueError, match="SKILL.md"):
+            load(tmp_path)
+
+    def test_a_skill_both_a_file_and_a_folder_is_refused(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(tmp_path, "skills/pdf.md", "---\ndescription: fill PDFs\n---\nFill it.")
+        write(
+            tmp_path,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: fill PDFs\n---\nFill it.",
+        )
+        with pytest.raises(ValueError, match="both"):
+            load(tmp_path)
+
+    def test_a_skill_file_that_is_not_text_is_refused(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(
+            tmp_path,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: fill PDFs\n---\nFill it.",
+        )
+        (tmp_path / "skills/pdf/logo.png").write_bytes(b"\x89PNG\xff\xfe")
+        with pytest.raises(ValueError, match="not text"):
+            load(tmp_path)
+
+    def test_a_folder_skill_hashes_the_way_every_sdk_hashes_it(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\nsandbox: daytona\n")
+        write(root, "instructions.md", "You are Jean.\n")
+        write(
+            root,
+            "skills/think.md",
+            "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n",
+        )
+        write(
+            root,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n",
+        )
+        write(root, "skills/pdf/reference/forms.md", "# Forms\n")
+        write(root, "skills/pdf/scripts/fill.py", "print('filled')\n")
+        write(root, "skills/pdf/scripts/lib/fill_lib.py", "def fill():\n    return 1\n")
+        pycache = root / "skills/pdf/scripts/__pycache__"
+        pycache.mkdir()
+        (pycache / "fill.cpython-313.pyc").write_bytes(b"\xcb\x0d\xff")
+        (root / "skills/pdf/.DS_Store").write_bytes(b"\x00\xff")
+        write(root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+
+        assert load(root).hash() == "e47f7807b97bbcbdee683c6c481d1d36"
+
+    def test_hidden_files_and_pycache_are_left_out_of_a_skill(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(
+            tmp_path,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: fill PDFs\n---\nFill it.",
+        )
+        write(tmp_path, "skills/pdf/scripts/fill.py", "print('filled')\n")
+        pycache = tmp_path / "skills/pdf/scripts/__pycache__"
+        pycache.mkdir()
+        (pycache / "fill.cpython-313.pyc").write_bytes(b"\xcb\x0d\xff")
+        (tmp_path / "skills/pdf/.DS_Store").write_bytes(b"\x00\xff")
+
+        assert load(tmp_path).skills[0].files == {
+            "scripts/fill.py": "print('filled')\n"
+        }
+
+    def test_moving_a_skill_into_a_folder_keeps_its_hash(self, tmp_path: Path):
+        skill = "---\ndescription: fill PDFs\n---\nFill it."
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(tmp_path, "skills/pdf.md", skill)
+        flat = load(tmp_path).hash()
+
+        (tmp_path / "skills/pdf.md").unlink()
+        write(tmp_path, "skills/pdf/SKILL.md", skill)
+        assert load(tmp_path).hash() == flat
+
+        write(tmp_path, "skills/pdf/scripts/fill.py", "print('filled')\n")
+        assert load(tmp_path).hash() != flat
+
     def test_the_same_files_hash_the_same(self, tmp_path: Path):
         root = tmp_path / "jean"
         write(root, "agent.yaml", "name: jean\n")

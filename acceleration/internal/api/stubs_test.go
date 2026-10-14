@@ -102,6 +102,7 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "holding", Model: "holding-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "summarising", Model: "summarising-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "analysing", Model: "analysing-model", Languages: []string{"la"}},
 	)
 	// Where a socket that names no target goes.
 	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}}
@@ -146,6 +147,9 @@ type scriptedLLM struct {
 	// summarises answers a request for JSON as a reviewer would, with a summary that is the
 	// whole of what it was given to read. Any other request is answered with reply.
 	summarises bool
+	// analyses answers a request for JSON as a review analyst would: one cause behind every
+	// call it was handed and one it made up, and a second cause behind made-up calls only.
+	analyses bool
 }
 
 func (s *scriptedLLM) Start(context.Context) error { return nil }
@@ -169,6 +173,22 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 	if s.summarises && params.Text.Format == llm.FormatJSONObject && len(params.Input) > 0 {
 		summary, _ := json.Marshal(map[string]string{"summary": params.Input[0].Content})
 		reply = string(summary)
+	}
+	if s.analyses && params.Text.Format == llm.FormatJSONObject && len(params.Input) > 0 {
+		ids := []string{"invented"}
+		for _, line := range strings.Split(params.Input[0].Content, "\n") {
+			if rest, found := strings.CutPrefix(line, "Call "); found {
+				ids = append(ids, strings.TrimSuffix(strings.Fields(rest)[0], ","))
+			}
+		}
+		analysis, _ := json.Marshal(map[string]any{
+			"summary": "Callers asking about refunds were not helped.",
+			"causes": []map[string]any{
+				{"title": "Ghost", "explanation": "Nothing.", "fix": "Nothing.", "call_ids": []string{"invented"}},
+				{"title": "No refund policy", "explanation": "It did not know.", "fix": "Add the policy.", "call_ids": ids},
+			},
+		})
+		reply = string(analysis)
 	}
 	held := s.held
 	var calls []llm.ToolCall

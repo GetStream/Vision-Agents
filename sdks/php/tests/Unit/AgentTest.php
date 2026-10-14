@@ -17,7 +17,9 @@ use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Pipeline;
 use GetStream\VisionAgents\Skill;
 use GetStream\VisionAgents\Tests\Support\LocalRouter;
+use GetStream\VisionAgents\Tests\Support\RecordedLog;
 use GetStream\VisionAgents\Tests\Support\Rows;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class AgentTest extends TestCase
@@ -275,6 +277,21 @@ final class AgentTest extends TestCase
         self::assertSame('02a7b2c8428f31e3a2b93ca2f5a6ec70', Folder::load($this->dir)->stamp());
     }
 
+    public function testSyncSendsASkillFoldersFiles(): void
+    {
+        $this->folder();
+        mkdir($this->dir . '/skills/pdf/scripts', 0o777, true);
+        file_put_contents($this->dir . '/skills/pdf/SKILL.md', "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+        file_put_contents($this->dir . '/skills/pdf/scripts/fill.py', "print('filled')\n");
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        [$pdf, $think] = Json::objects($this->router->to('POST', '/v1/agents/sync')[0]->json(), 'skills');
+        self::assertSame(['scripts/fill.py' => "print('filled')\n"], $pdf['files']);
+        self::assertArrayNotHasKey('files', $think, 'a skill without files sends none');
+    }
+
     public function testSyncCarriesKnowledgeUrlsInTheSameRequest(): void
     {
         $this->folder();
@@ -357,9 +374,263 @@ final class AgentTest extends TestCase
         self::assertSame([['assertion' => 'One club.', 'name' => 'lunch', 'scenario' => 'Order a club.', 'variations' => 3]], $declared->json()['simulations']);
     }
 
+    public function testSyncSendsNoConnectorsWhenAgentYamlHasNone(): void
+    {
+        $this->folder();
+
+        $this->syncConnectors(null);
+
+        self::assertArrayNotHasKey('connectors', $this->router->to('POST', '/v1/agents/sync')[0]->json());
+        self::assertSame([], $this->router->to('GET', '/v1/agents/connections'));
+    }
+
+    public function testSyncSendsNoConnectorsForAKeyWithNoValue(): void
+    {
+        $this->folder();
+
+        $this->syncConnectors('');
+
+        self::assertArrayNotHasKey('connectors', $this->router->to('POST', '/v1/agents/sync')[0]->json());
+    }
+
+    public function testSyncSendsAnEmptyListToClearTheBindings(): void
+    {
+        $this->folder();
+
+        $this->syncConnectors('[]');
+
+        $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
+        self::assertSame([], $sent['connectors']);
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function mappingsWhereGoWantsAList(): iterable
+    {
+        yield 'connectors: {}' => ['{}', 'connectors must be a list'];
+        yield 'connectors: {a: b}' => ['{a: b}', 'connectors must be a list'];
+        yield 'tools: {}' => ["\n  - name: linear\n    tools: {}", 'connector "linear": tools is a list'];
+        yield 'connection: {}' => ["\n  - name: linear\n    connection: {}", 'connector "linear": connection must be a connection id or label'];
+    }
+
+    #[DataProvider('mappingsWhereGoWantsAList')]
+    public function testSyncRefusesAMappingWhereGoWantsAListAndSendsNothing(string $yaml, string $message): void
+    {
+        $this->folder();
+
+        $caught = null;
+        try {
+            $this->syncConnectors($yaml);
+        } catch (ConfigurationException $caught) {
+            // message checked below
+        }
+        self::assertInstanceOf(ConfigurationException::class, $caught);
+        self::assertSame("{$this->dir}/agent.yaml: {$message}", $caught->getMessage());
+        self::assertSame([], $this->router->to('POST', '/v1/agents/sync'), 'nothing is stored');
+    }
+
+    public function testSyncSendsAStringEntryAsASessionBinding(): void
+    {
+        $this->folder();
+
+        $this->syncConnectors("\n  - linear");
+
+        self::assertEquals(
+            [['connection' => ['type' => 'session'], 'connector_id' => 'linear', 'name' => 'linear', 'tool_patterns' => ['*'], 'tools' => []]],
+            $this->sentConnectors(),
+        );
+    }
+
+    public function testSyncSendsAnObjectEntryWithItsConnectorToolsAndRequired(): void
+    {
+        $this->folder();
+
+        $this->syncConnectors("\n  - name: issues\n    connector: linear\n    tools: [search, linear_*]\n    required: true\n  - name: github");
+
+        [$issues, $github] = $this->sentConnectors();
+        self::assertEquals(
+            ['connection' => ['type' => 'session'], 'connector_id' => 'linear', 'name' => 'issues', 'required' => true, 'tool_patterns' => ['search', 'linear_*'], 'tools' => []],
+            $issues,
+        );
+        self::assertSame('github', $github['connector_id'], 'the connector defaults to the name');
+        self::assertSame(['*'], $github['tool_patterns'], 'tools left out is every tool');
+        self::assertArrayNotHasKey('required', $github);
+    }
+
+    public function testSyncReadsNullToolsAsEveryTool(): void
+    {
+        $this->folder();
+
+        $this->syncConnectors("\n  - name: linear\n    tools:");
+
+        self::assertSame(['*'], $this->sentConnectors()[0]['tool_patterns']);
+    }
+
+    public function testSyncFixesAConnectionById(): void
+    {
+        $this->folder();
+        $this->router->answer('GET', '/v1/agents/connections', 200, ['has_more' => false, 'items' => [
+            Rows::connection('conn_a', 'linear', 'prod'),
+            Rows::connection('conn_b', 'linear', 'conn_a'),
+        ]]);
+
+        $this->syncConnectors("\n  - name: linear\n    connection: conn_a");
+
+        self::assertEquals(['connection_id' => 'conn_a', 'type' => 'fixed'], $this->sentConnectors()[0]['connection']);
+        self::assertEquals(
+            ['connector_id' => 'linear', 'owner_type' => 'app'],
+            $this->router->to('GET', '/v1/agents/connections')[0]->params(),
+        );
+    }
+
+    public function testSyncFixesAConnectionByTheOneLabelThatMatches(): void
+    {
+        $this->folder();
+        $this->router->answer('GET', '/v1/agents/connections', 200, ['has_more' => false, 'items' => [
+            Rows::connection('conn_a', 'linear', 'staging'),
+            Rows::connection('conn_b', 'linear', 'prod'),
+        ]]);
+
+        $this->syncConnectors("\n  - name: linear\n    connection: prod");
+
+        self::assertEquals(['connection_id' => 'conn_b', 'type' => 'fixed'], $this->sentConnectors()[0]['connection']);
+    }
+
+    public function testSyncQueriesConnectionsByConnectorId(): void
+    {
+        $this->folder();
+        $this->router->answer('GET', '/v1/agents/connections', 200, ['has_more' => false, 'items' => [
+            Rows::connection('conn_a', 'linear', 'prod'),
+        ]]);
+
+        $this->syncConnectors("\n  - name: issues\n    connector: linear\n    connection: prod");
+
+        self::assertEquals(
+            ['connector_id' => 'linear', 'owner_type' => 'app'],
+            $this->router->to('GET', '/v1/agents/connections')[0]->params(),
+        );
+    }
+
+    public function testSyncReadsEveryPageBeforeChoosingAConnection(): void
+    {
+        $this->folder();
+        $this->router->answer(
+            'GET',
+            '/v1/agents/connections',
+            200,
+            ['has_more' => true, 'next_cursor' => 'c2', 'items' => [Rows::connection('conn_a', 'linear', 'conn_z')]],
+            ['has_more' => false, 'items' => [Rows::connection('conn_z', 'linear', 'other')]],
+        );
+
+        $this->syncConnectors("\n  - name: linear\n    connection: conn_z");
+
+        self::assertEquals(
+            ['connection_id' => 'conn_z', 'type' => 'fixed'],
+            $this->sentConnectors()[0]['connection'],
+            'an id on a later page wins over a label on an earlier one',
+        );
+        self::assertSame(['c2'], [$this->router->to('GET', '/v1/agents/connections')[1]->params()['cursor']]);
+    }
+
+    public function testSyncStopsWhenRouterRepeatsNextCursor(): void
+    {
+        $this->folder();
+        $page = ['has_more' => true, 'next_cursor' => 'c1', 'items' => [Rows::connection('conn_a', 'linear', 'prod')]];
+        $this->router->answer('GET', '/v1/agents/connections', 200, $page, $page);
+        // A third list call fails the sync rather than spinning on the repeated cursor.
+        $this->router->answer('GET', '/v1/agents/connections', 400, ['error' => [
+            'message' => 'listed past a repeated cursor',
+            'type' => 'invalid_request',
+            'code' => 'invalid_request',
+            'doc_url' => 'https://getstream.io/agents/docs/api/errors/#invalid_request',
+        ]]);
+
+        $this->syncConnectors("\n  - name: linear\n    connection: conn_a");
+
+        self::assertCount(2, $this->router->to('GET', '/v1/agents/connections'));
+    }
+
+    public function testSyncRefusesALabelThatMatchesNoConnection(): void
+    {
+        $this->folder();
+        $this->router->answer('GET', '/v1/agents/connections', 200, ['has_more' => false, 'items' => [Rows::connection('conn_a', 'linear', 'staging')]]);
+
+        $caught = null;
+        try {
+            $this->syncConnectors("\n  - name: linear\n    connection: prod");
+        } catch (ConfigurationException $caught) {
+            // message checked below
+        }
+        self::assertInstanceOf(ConfigurationException::class, $caught, 'expected ConfigurationException');
+        self::assertSame('agents: connector "linear": no app connection with id or label "prod"', $caught->getMessage());
+        self::assertSame([], $this->router->to('POST', '/v1/agents/sync'), 'nothing is stored');
+    }
+
+    public function testSyncRefusesALabelThatMatchesSeveralConnections(): void
+    {
+        $this->folder();
+        $this->router->answer('GET', '/v1/agents/connections', 200, ['has_more' => false, 'items' => [
+            Rows::connection('conn_a', 'linear', 'prod'),
+            Rows::connection('conn_b', 'linear', 'prod'),
+        ]]);
+
+        $caught = null;
+        try {
+            $this->syncConnectors("\n  - name: linear\n    connection: prod");
+        } catch (ConfigurationException $caught) {
+            // message checked below
+        }
+        self::assertInstanceOf(ConfigurationException::class, $caught);
+        self::assertSame('agents: connector "linear": "prod" matches 2 app connections', $caught->getMessage());
+    }
+
+    public function testSyncWarnsOnceThatPluginsAreDeprecatedAndStillSendsThem(): void
+    {
+        $this->folder();
+        file_put_contents($this->dir . '/agent.yaml', "name: jean\nplugins: [sentry]\n");
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+        $log = new RecordedLog();
+
+        (new Agent(folder: $this->dir, client: $this->router->client(), logger: $log))->sync();
+
+        self::assertSame([['warning', 'agent.yaml plugins are deprecated: rename plugins to connectors']], $log->lines);
+        self::assertSame(['sentry'], $this->router->to('POST', '/v1/agents/sync')[0]->json()['plugins']);
+    }
+
+    public function testSyncDoesNotWarnWithoutPlugins(): void
+    {
+        $this->folder();
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+        $log = new RecordedLog();
+
+        (new Agent(folder: $this->dir, client: $this->router->client(), logger: $log))->sync();
+
+        self::assertSame([], $log->lines);
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function sentConnectors(): array
+    {
+        return Json::objects($this->router->to('POST', '/v1/agents/sync')[0]->json(), 'connectors');
+    }
+
     private function edge(): Edge
     {
         return new Edge('key', str_repeat('s', 32), $this->router->url);
+    }
+
+    /**
+     * Syncs the folder with `connectors:` set to the YAML given after the key, or left out when null.
+     */
+    private function syncConnectors(?string $yaml): void
+    {
+        file_put_contents($this->dir . '/agent.yaml', "name: jean\n" . ($yaml === null ? '' : "connectors: {$yaml}\n"));
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
     }
 
     private function folder(): void

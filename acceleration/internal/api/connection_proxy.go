@@ -44,7 +44,7 @@ const maxProxyBody = 1 << 20
 // They are the caller's to the router, never the provider's, so none is forwarded. The
 // scheme's Wrap then sets the provider's own credential.
 var routerHeaders = []string{"Authorization", auth.APIKeyHeader, auth.AuthTypeHeader, auth.OrganizationHeader,
-	auth.AppHeader, auth.CustomerHeader, auth.UserHeader, mintingKeyHeader}
+	auth.AppHeader, auth.CustomerHeader, auth.UserHeader}
 
 // routerParams are the query parameters the router reads a credential and a caller from
 // (auth.credentials, auth.go:457-470, and the customer and user it names).

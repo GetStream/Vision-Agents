@@ -54,7 +54,7 @@ func (s *AppsSuite) SetupSuite() {
 
 func (s *AppsSuite) SetupTest() {
 	s.deployment, s.own = chattest.NewServer(s.T()), chattest.NewServer(s.T())
-	s.apps = &testApps{deployment: s.deployment, own: map[string]*chattest.Server{}, pins: map[string]int64{}}
+	s.apps = &testApps{deployment: s.deployment, own: map[string]*chattest.Server{}, pins: map[string]int64{}, blocked: map[string]bool{}}
 	s.customer = "customer-" + uuid.NewString()
 	s.e164 = "+1512" + uuid.NewString()[:7]
 
@@ -245,6 +245,13 @@ type testApps struct {
 	deployment *chattest.Server
 	own        map[string]*chattest.Server
 	pins       map[string]int64
+	blocked    map[string]bool
+}
+
+func (a *testApps) block(customer string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.blocked[customer] = true
 }
 
 func (a *testApps) give(customer string, pin int64, server *chattest.Server) {
@@ -256,6 +263,9 @@ func (a *testApps) give(customer string, pin int64, server *chattest.Server) {
 func (a *testApps) For(_ context.Context, customer string) (*Stream, int64, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.blocked[customer] {
+		return nil, 0, streamapp.ErrStreamAppDisconnected
+	}
 	if server, ok := a.own[customer]; ok {
 		return NewStreamFromClient(server.Client), a.pins[customer], nil
 	}
@@ -279,6 +289,14 @@ func (a *testApps) ForAppRemoving(_ context.Context, customer string, app int64)
 		return NewStreamFromClient(server.Client), nil
 	}
 	return NewStreamFromClient(a.deployment.Client), nil
+}
+
+func (s *AppsSuite) TestAnAppStreamBlockedCannotBuyANumber() {
+	s.apps.block(s.customer)
+
+	_, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: "+15550002222", Owner: routing.Owner{CustomerID: s.customer}})
+
+	s.ErrorIs(err, streamapp.ErrStreamAppDisconnected)
 }
 
 func (s *AppsSuite) TestTheVendorIsGivenATrunkAddressStreamCanFindByTheCallingNumber() {

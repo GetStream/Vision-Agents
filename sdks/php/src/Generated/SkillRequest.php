@@ -23,6 +23,9 @@ final readonly class SkillRequest
         public ?bool $captureVideo = null,
         // How long the work may run before it is abandoned. Zero is the default.
         public ?int $deadlineMs = null,
+        // The rest of the skill's folder beside SKILL.md, each file's text by its path relative to the folder, such a...
+        /** @var array<string, string>|null */
+        public ?array $files = null,
     ) {
     }
 
@@ -38,6 +41,7 @@ final readonly class SkillRequest
             name: Json::string($data, 'name'),
             captureVideo: array_key_exists('capture_video', $data) && $data['capture_video'] !== null ? Json::bool($data, 'capture_video') : null,
             deadlineMs: array_key_exists('deadline_ms', $data) && $data['deadline_ms'] !== null ? Json::int($data, 'deadline_ms') : null,
+            files: array_key_exists('files', $data) && $data['files'] !== null ? Json::stringMap($data, 'files') : null,
         );
     }
 
@@ -58,6 +62,9 @@ final readonly class SkillRequest
         }
         if ($this->deadlineMs !== null) {
             $out['deadline_ms'] = $this->deadlineMs;
+        }
+        if ($this->files !== null) {
+            $out['files'] = $this->files;
         }
         return $out;
     }

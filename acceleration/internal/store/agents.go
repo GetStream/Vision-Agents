@@ -428,6 +428,9 @@ func (s *Store) CreateSkill(ctx context.Context, skill *Skill) error {
 	skill.CreatedAt = now
 	skill.UpdatedAt = now
 	skill.DeletedAt = nil
+	if skill.Files == nil {
+		skill.Files = map[string]string{}
+	}
 
 	if _, err := s.db.NewInsert().Model(skill).Exec(ctx); err != nil {
 		if constraint(err) == "skills_name_idx" {
@@ -448,9 +451,12 @@ func (s *Store) UpdateSkill(ctx context.Context, skill *Skill) error {
 	}
 
 	skill.UpdatedAt = time.Now().UTC()
+	if skill.Files == nil {
+		skill.Files = map[string]string{}
+	}
 
 	result, err := s.db.NewUpdate().Model(skill).
-		Column("config_id", "name", "description", "instructions", "capture_video", "deadline_ms", "updated_at").
+		Column("config_id", "name", "description", "instructions", "files", "capture_video", "deadline_ms", "updated_at").
 		Where("id = ?", skill.ID).
 		Where("customer_id = ?", skill.CustomerID).
 		Where("deleted_at IS NULL").

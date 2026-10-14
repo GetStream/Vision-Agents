@@ -150,3 +150,6 @@ xcuserdata/
 .agent_sync
 .router_sync
 .thoughts/**
+
+# Left by the pre-2026-10-02 conversation outbox (CHAT_OUTBOX_DIR default), removed in 367662800
+acceleration/internal/api/.local/

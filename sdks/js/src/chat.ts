@@ -2,7 +2,7 @@
  * Stream Chat for `session.chat()`, opted into by importing this once:
  *
  * ```ts
- * import "@stream-io/vision-agents/chat";
+ * import "@stream-io/calypso/chat";
  * ```
  *
  * Its own entry point so `stream-chat` is resolved only for an app that asked for it.

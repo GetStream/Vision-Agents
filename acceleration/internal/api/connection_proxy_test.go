@@ -172,7 +172,7 @@ func (s *ConnectionProxySuite) TestTheProviderGetsTheRequestAsItCameWithTheConne
 func (s *ConnectionProxySuite) TestNoneOfTheRoutersCredentialsOrCallerNamesReachTheProvider() {
 	id := s.connected(s.connector(""), bearer.Name)
 	router := []string{"Authorization", auth.APIKeyHeader, auth.AuthTypeHeader, auth.OrganizationHeader,
-		auth.AppHeader, auth.CustomerHeader, auth.UserHeader, mintingKeyHeader}
+		auth.AppHeader, auth.CustomerHeader, auth.UserHeader}
 	extra := http.Header{}
 	for _, name := range router[3:] {
 		extra.Set(name, "router-"+name)

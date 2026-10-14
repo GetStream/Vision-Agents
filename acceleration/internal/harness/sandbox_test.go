@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -24,6 +25,26 @@ type stubSandbox struct {
 	result  sandbox.Result
 	err     error
 	closed  bool
+	// written are the files put into it, in order, by path.
+	written []string
+	files   map[string]string
+}
+
+func (s *stubSandbox) Write(_ context.Context, path string, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.written = append(s.written, path)
+	if s.files == nil {
+		s.files = map[string]string{}
+	}
+	s.files[path] = string(data)
+	return nil
+}
+
+func (s *stubSandbox) writes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.written...)
 }
 
 func (s *stubSandbox) Run(_ context.Context, code string, outputs []string) (sandbox.Result, error) {
@@ -327,4 +348,61 @@ func (s *HarnessSuite) TestAFileTheCodeDidNotWriteIsNamed() {
 	s.awaitSettled(1)
 	told := s.slow.requests()[1].Input[len(s.slow.requests()[1].Input)-1].Content
 	s.Contains(told, "were not written, or were too large to return: /tmp/render.png")
+}
+
+// pdfSkills is a stored skill that came as a folder, with a reference and a script.
+func pdfSkills() Skills {
+	return Skills{
+		Skills: []Skill{{Name: "pdf", Description: "fill PDF forms", Deadline: time.Minute,
+			Files: []string{"reference/forms.md", "scripts/fill.py"}}},
+		Load: func(context.Context, string) (Loaded, error) {
+			return Loaded{Instructions: "Fill the form.", Files: map[string]string{
+				"reference/forms.md": "# Forms\nUse field names as printed.",
+				"scripts/fill.py":    "print('filled')",
+			}}, nil
+		},
+	}
+}
+
+func readSkillFile(id, path string) [][]llm.ToolCall {
+	return [][]llm.ToolCall{{{ID: id, Name: ReadSkillFileTool, Arguments: `{"path":` + strconv.Quote(path) + `}`}}}
+}
+
+func (s *HarnessSuite) TestASkillsFileIsReadOnlyWhenTheSubagentAsksForIt() {
+	s.skills = pdfSkills()
+	s.build(true)
+	s.slow.calls = readSkillFile("call-1", "reference/forms.md")
+	s.slow.automatic = "Done."
+	s.respond("turn-1", "fill in my form")
+
+	s.reply("turn-1", `<ask skill="pdf">fill in my form</ask>`)
+
+	s.Equal(Done, s.awaitSettled(1)[0].State)
+	first := s.slow.requests()[0]
+	s.Contains(first.Instructions, "- reference/forms.md", "the subagent is told which files there are")
+	s.NotContains(first.Instructions, "Use field names as printed.", "and is not handed them all")
+	s.Require().Len(first.Tools, 1, "without a sandbox it may read, not run")
+	s.Equal(ReadSkillFileTool, first.Tools[0].Name)
+
+	s.Require().Len(s.slow.requests(), 2)
+	last := s.slow.requests()[1].Input[len(s.slow.requests()[1].Input)-1]
+	s.Equal("# Forms\nUse field names as printed.", last.Content)
+}
+
+func (s *HarnessSuite) TestASkillsFilesAreWrittenToTheSandboxOnceBeforeItsCodeRuns() {
+	s.box = &stubSandbox{result: sandbox.Result{Output: "filled"}}
+	s.skills = pdfSkills()
+	s.build(true)
+	s.slow.calls = append(runCode("call-1", "import subprocess"), runCode("call-2", "import subprocess")...)
+	s.slow.automatic = "Filled."
+	s.respond("turn-1", "fill in my form")
+
+	s.reply("turn-1", `<ask skill="pdf">fill in my form</ask>`)
+
+	s.Equal(Done, s.awaitSettled(1)[0].State)
+	s.Equal([]string{"skills/pdf/reference/forms.md", "skills/pdf/scripts/fill.py"}, s.box.writes(),
+		"every file once, though the code ran twice")
+	s.Equal("print('filled')", s.box.files["skills/pdf/scripts/fill.py"])
+	s.Len(s.box.code(), 2)
+	s.Contains(s.slow.requests()[0].Instructions, "under skills/pdf/")
 }

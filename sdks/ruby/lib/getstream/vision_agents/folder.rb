@@ -16,8 +16,11 @@ module GetStream
     # @!attribute deadline
     #   How long the work may run before it is abandoned, in seconds. nil leaves the
     #   backend's default.
-    Skill = Data.define(:name, :description, :instructions, :capture_video, :deadline) do
-      def initialize(name:, description:, instructions:, capture_video: false, deadline: nil)
+    # @!attribute files
+    #   What a skill folder brings beside its SKILL.md: slash path relative to the folder,
+    #   to the file's text.
+    Skill = Data.define(:name, :description, :instructions, :capture_video, :deadline, :files) do
+      def initialize(name:, description:, instructions:, capture_video: false, deadline: nil, files: {})
         super
       end
 
@@ -26,6 +29,7 @@ module GetStream
         rendered = { name: name, description: description, instructions: instructions,
                      capture_video: capture_video }
         rendered[:deadline_ms] = (deadline * 1000).to_i if deadline&.positive?
+        rendered[:files] = files unless files.empty?
         rendered
       end
     end
@@ -112,6 +116,7 @@ module GetStream
     #     instructions.md
     #     guardrail.md
     #     skills/think.md
+    #     skills/pdf/SKILL.md a skill as a folder, with the files it brings beside it
     #     knowledge/pricing.md
     #     knowledge/urls.yaml
     #     simulations/lunch.yaml
@@ -125,6 +130,7 @@ module GetStream
       INSTRUCTIONS_FILE = "instructions.md"
       GUARDRAIL_FILE = "guardrail.md"
       SKILLS_DIR = "skills"
+      SKILL_FILE = "SKILL.md"
       KNOWLEDGE_DIR = "knowledge"
       SIMULATIONS_DIR = "simulations"
       URLS_FILE = "urls.yaml"
@@ -135,11 +141,12 @@ module GetStream
 
       SETTING_STRINGS = %w[name description mode stt tts sts voice llm harness subagent search sandbox].freeze
       SETTING_LISTS = %w[plugins keyterms].freeze
-      SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[greeting tags video dispatch]).freeze
+      SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[greeting tags video dispatch connectors]).freeze
       GREETING_KEYS = %w[text mode].freeze
       VIDEO_KEYS = %w[source max_frames].freeze
       DISPATCH_KEYS = %w[incoming_call text].freeze
       PAGE_KEYS = %w[url title description refresh_hours].freeze
+      CONNECTOR_KEYS = %w[name connector tools connection required].freeze
       SIMULATION_STRINGS = %w[name scenario assertion mode caller_target judge_target caller_stt caller_tts
                               caller_voice].freeze
       SIMULATION_INTEGERS = %w[variations max_turns].freeze
@@ -218,6 +225,7 @@ module GetStream
           digest << "\nskill:#{skill.name}\n#{skill.description}\n#{skill.instructions}" \
                     "#{skill.capture_video ? "True" : "False"}\n"
           digest << seconds(skill.deadline) if skill.deadline&.positive?
+          skill.files.sort.each { |path, text| digest << "\nfile:#{path}\n#{text}" }
         end
         knowledge.sort_by(&:source).each do |document|
           digest << "\nknowledge:#{document.source}\n#{document.text}"
@@ -253,10 +261,12 @@ module GetStream
           raise ConfigurationError, "#{file}: #{unknown.join(", ")} is not a setting; #{SETTINGS.join(", ")} are"
         end
 
-        parsed.to_h do |key, value|
+        settings = parsed.to_h do |key, value|
           key = key.to_s
           [key, setting(key, value, file)]
         end
+        refuse_connector_aliases(settings, file)
+        settings
       rescue Psych::Exception => e
         raise ConfigurationError, "#{file}: #{e.message}"
       end
@@ -282,7 +292,84 @@ module GetStream
         when "greeting" then greeting(value, file)
         when "video" then video(value, file)
         when "dispatch" then dispatch(value, file)
+        when "connectors" then connectors(value, file)
         end
+      end
+
+      # The connectors whose tools the agent may call, each a name alone or a mapping. A null
+      # entry is refused, since dropping it would sync an empty list and wipe the stored
+      # bindings.
+      def self.connectors(value, file)
+        raise ConfigurationError, "#{file}: connectors must be a list" unless value.is_a?(Array)
+
+        value.map { |entry| connector(entry, file) }
+      end
+
+      def self.connector(entry, file)
+        case entry
+        when Hash
+          unknown = entry.keys.map(&:to_s) - CONNECTOR_KEYS
+          raise ConfigurationError, "#{file}: a connector has no #{unknown.join(", ")}" unless unknown.empty?
+
+          fields = entry.transform_keys(&:to_s)
+        when Array then raise ConfigurationError, "#{file}: a connector is a name, or a mapping naming one"
+        else
+          fields = { "name" => entry }
+        end
+        name = connector_scalar(fields["name"], "name", file).to_s
+        raise ConfigurationError, "#{file}: a connector needs a name" if name.empty?
+
+        { "name" => name, "connector" => connector_scalar(fields["connector"], "connector", file).to_s,
+          "tools" => connector_tools(fields["tools"], name, file),
+          "connection" => connector_connection(fields["connection"], name, file),
+          "required" => connector_required(fields["required"], name, file) }
+      end
+
+      def self.connector_scalar(value, key, file)
+        raise ConfigurationError, "#{file}: connector #{key} should be a string" if value.is_a?(Hash) || value.is_a?(Array)
+
+        value
+      end
+
+      # Names or path patterns, as written. nil, whether the key was left out or null, is every
+      # tool; an empty list grants nothing and is refused.
+      def self.connector_tools(value, name, file)
+        return nil if value.nil?
+
+        unless value.is_a?(Array) && value.none? { |each| each.is_a?(Hash) || each.is_a?(Array) }
+          raise ConfigurationError, "#{file}: connector #{name.inspect}: tools should be a list"
+        end
+        if value.empty?
+          raise ConfigurationError,
+                "#{file}: connector #{name.inspect}: tools: [] grants nothing; leave tools out for every tool"
+        end
+
+        value.map(&:to_s)
+      end
+
+      def self.connector_connection(value, name, file)
+        return nil if value.nil?
+
+        if value.is_a?(Hash) || value.is_a?(Array) || value.to_s.empty?
+          raise ConfigurationError, "#{file}: connector #{name.inspect}: connection must be a connection id or label"
+        end
+
+        value.to_s
+      end
+
+      def self.connector_required(value, name, file)
+        return value if value.nil? || value == true || value == false
+
+        raise ConfigurationError, "#{file}: connector #{name.inspect}: required should be true or false"
+      end
+
+      # The model is offered each connector and plugin as <name>__<tool>, so one name under
+      # both would be two tools. Compared on the alias, not the connector id.
+      def self.refuse_connector_aliases(settings, file)
+        both = (settings["connectors"] || []).map { |each| each["name"] } & (settings["plugins"] || [])
+        return if both.empty?
+
+        raise ConfigurationError, "#{file}: #{both.first.inspect} is named under both connectors and plugins"
       end
 
       # What the agent says as it joins: text, and a mode of exact, said word for word, or
@@ -394,18 +481,59 @@ module GetStream
         File.file?(full) ? File.read(full).strip : ""
       end
 
+      # A skill is either a markdown file, or a folder holding a SKILL.md and whatever files
+      # it comes with, nested as deep as they are.
       def load_skills
         directory = File.join(@path, SKILLS_DIR)
         return [] unless File.directory?(directory)
 
+        declared = {}
         Dir.children(directory).sort.filter_map do |entry|
-          file = File.join(directory, entry)
-          next unless File.file?(file) && File.extname(entry) == ".md"
+          folder = File.join(directory, entry)
+          if File.directory?(folder)
+            name = entry
+            file = File.join(folder, SKILL_FILE)
+            raise ConfigurationError, "#{folder} has no #{SKILL_FILE}, so it is not a skill" unless File.file?(file)
+          elsif File.file?(folder) && File.extname(entry) == ".md"
+            name = File.basename(entry, ".md")
+            file = folder
+          else
+            next
+          end
+          raise ConfigurationError, "skill #{name.inspect} is both #{declared[name]} and #{entry}" if declared.key?(name)
 
-          Folder.parse_skill(File.basename(entry, ".md"), File.read(file))
-        rescue ConfigurationError => e
-          raise ConfigurationError, "#{file}: #{e.message}"
+          declared[name] = entry
+          skill = begin
+            Folder.parse_skill(name, File.read(file))
+          rescue ConfigurationError => e
+            raise ConfigurationError, "#{file}: #{e.message}"
+          end
+          file == folder ? skill : skill.with(files: skill_files(folder))
         end
+      end
+
+      # Every file in a skill folder but its SKILL.md, by slash path relative to the folder.
+      def skill_files(folder, prefix = "")
+        Dir.children(File.join(folder, prefix)).sort.each_with_object({}) do |entry, files|
+          next if skipped?(entry)
+
+          relative = prefix.empty? ? entry : "#{prefix}/#{entry}"
+          file = File.join(folder, relative)
+          if File.directory?(file)
+            files.merge!(skill_files(folder, relative))
+          elsif relative != SKILL_FILE
+            text = File.binread(file).force_encoding(Encoding::UTF_8)
+            raise ConfigurationError, "#{file} is not text, and a skill brings only text files" unless text.valid_encoding?
+
+            files[relative] = text
+          end
+        end
+      end
+
+      # Hidden files such as .DS_Store, and the __pycache__ running a skill's Python scripts
+      # locally leaves, are not part of a skill.
+      def skipped?(name)
+        name.start_with?(".") || name == "__pycache__"
       end
 
       def load_knowledge
