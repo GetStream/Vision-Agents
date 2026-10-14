@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use axum::http::Method;
 use serde_json::{Value, json};
-use support::{Server, config, connection, connections, session};
+use support::{Server, config, connection, connections, refusal, session};
 use vision_agents::{Agent, Harness, InboundCall, InboundMessage, Session, Skill, folder, types};
 
 fn agent(server: &Server, name: &str) -> Agent {
@@ -993,8 +993,93 @@ async fn an_empty_connectors_list_is_sent_as_an_empty_list() {
     assert_eq!(body["connectors"], json!([]));
 }
 
-/// Syncs the directory in `PLUGIN_WARNING_DIR`, once. Only the test below runs it, in a child
-/// process, because a warning is written to stderr, which a test cannot read back itself.
+#[tokio::test]
+async fn a_null_connectors_value_sends_none_and_keeps_the_stored_bindings() {
+    let server = Server::start().await;
+
+    let body = synced_connectors(&server, "name: jean\nconnectors:\n")
+        .await
+        .unwrap();
+
+    assert!(
+        body.get("connectors").is_none(),
+        "connectors went as {body}"
+    );
+    assert!(
+        server
+            .requests(Method::GET, "/v1/agents/connections")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_repeated_next_cursor_stops_after_exactly_two_list_calls() {
+    let server = Server::start().await;
+    // Always replies with next_cursor "c1", even when the request already carries cursor "c1".
+    server.route(
+        Method::GET,
+        "/v1/agents/connections",
+        200,
+        connections(vec![connection("conn_a", "github", None)], Some("c1")),
+    );
+    synced(&server);
+
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "agent.yaml",
+        "name: jean\nconnectors:\n  - name: github\n    connection: conn_a\n",
+    );
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        Agent::from_folder(root.path())
+            .unwrap()
+            .client(server.client())
+            .sync(),
+    )
+    .await
+    .expect("sync timed out — repeated-cursor guard is missing")
+    .unwrap();
+
+    assert_eq!(
+        server.requests(Method::GET, "/v1/agents/connections").len(),
+        2,
+        "the repeated-cursor guard should stop after the cursor is seen a second time"
+    );
+}
+
+#[tokio::test]
+async fn a_failing_connections_list_is_wrapped_with_the_connector_name() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/v1/agents/connections",
+        422,
+        refusal("validation_failed", "validation_failed", "bad request"),
+    );
+    synced(&server);
+
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "agent.yaml",
+        "name: jean\nconnectors:\n  - name: github\n    connection: conn_a\n",
+    );
+    let error = Agent::from_folder(root.path())
+        .unwrap()
+        .client(server.client())
+        .sync()
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("connector \"github\": listing connections:"),
+        "unexpected error: {error}"
+    );
+}
+
 #[tokio::test]
 async fn sync_the_directory_in_plugin_warning_dir() {
     let Ok(root) = std::env::var("PLUGIN_WARNING_DIR") else {

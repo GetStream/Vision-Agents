@@ -687,6 +687,9 @@ fn saying_nothing_about_connectors_is_not_listing_none() {
     write(&root, "agent.yaml", "name: jean\n");
     assert_eq!(Folder::load(&root).unwrap().settings.connectors, None);
 
+    write(&root, "agent.yaml", "name: jean\nconnectors:\n");
+    assert_eq!(Folder::load(&root).unwrap().settings.connectors, None);
+
     write(&root, "agent.yaml", "connectors: []\n");
     assert_eq!(
         Folder::load(&root).unwrap().settings.connectors,
@@ -716,9 +719,14 @@ fn a_connector_that_names_nothing_grants_nothing_or_connects_nowhere_is_refused(
             "connector \"github\": connection must be a connection id or label",
         ),
         ("connectors: github\n", "connectors must be a list"),
+        ("connectors: {}\n", "connectors must be a list"),
         (
             "connectors:\n  - name: github\n    tool: [search]\n",
             "\"tool\" is not a connector setting",
+        ),
+        (
+            "connectors:\n  - name: github\n    tools: {}\n",
+            "connectors.tools is a list of strings",
         ),
         (
             "plugins: [github]\nconnectors: [github]\n",

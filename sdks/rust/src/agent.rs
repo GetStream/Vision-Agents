@@ -750,7 +750,6 @@ pub fn user_id_of(name: &str) -> String {
     }
 }
 
-/// Splits the filter into who the memories are about and what narrows them.
 /// The connectors agent.yaml names, in the shape the sync takes.
 async fn connector_bindings(
     client: &Client,
@@ -810,7 +809,10 @@ async fn fixed_connection(
                 cursor: cursor.clone(),
                 ..Default::default()
             })
-            .await?;
+            .await
+            .map_err(|e| {
+                Error::configuration(format!("connector {name:?}: listing connections: {e}"))
+            })?;
         connections.extend(page.items.unwrap_or_default());
         match page.next_cursor {
             Some(next) if !next.is_empty() => cursor = Some(next),
@@ -836,6 +838,7 @@ async fn fixed_connection(
     }
 }
 
+/// Splits the filter into who the memories are about and what narrows them.
 fn memory_of(filter: &BTreeMap<String, String>) -> Option<types::SessionMemory> {
     if filter.is_empty() {
         return None;
