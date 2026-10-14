@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -61,13 +62,18 @@ func (s *LLMQuotaSuite) SetupTest() {
 // session returns a session over the stub provider, limited to the given allowance and
 // owned by the caller under test.
 func (s *LLMQuotaSuite) session(messages, tokens int64, caller routing.Caller) (*Session, *stubLLM) {
+	return s.sessionAs("stub", messages, tokens, caller)
+}
+
+// sessionAs is session with the stub routed under the provider name given.
+func (s *LLMQuotaSuite) sessionAs(name string, messages, tokens int64, caller routing.Caller) (*Session, *stubLLM) {
 	limiter, err := quota.New(s.redis,
-		quota.Limits{MessagesPerDay: messages, TokensPerDay: tokens}, slog.Default())
+		quota.Limits{MessagesPerDay: messages, TokensPerDay: tokens}, nil, slog.Default())
 	s.Require().NoError(err)
 
 	provider := newStubLLM()
 	recorder := routing.NewRecorder(routing.LLM, nil, nil, slog.Default())
-	config := routing.ProviderConfig{Provider: "stub", Model: "stub-model"}
+	config := routing.ProviderConfig{Provider: name, Model: "stub-model"}
 	session := newSession(provider, config,
 		routing.Owner{CustomerID: "acme", Caller: caller}, recorder, limiter)
 
@@ -141,4 +147,37 @@ func (s *LLMQuotaSuite) TestARefusedTurnAsksTheProviderForNothing() {
 
 	s.Require().ErrorIs(err, quota.ErrExhausted)
 	s.Len(provider.asked, 1, "a refused turn should never reach the provider")
+}
+
+func (s *LLMQuotaSuite) TestASessionABackendOpenedForAUserIsNeverRefused() {
+	// The backend names the user it acts for, and is trusted with that spend all the same.
+	backend := s.caller
+	backend.ServerSide = true
+	session, provider := s.session(1, 1, backend)
+
+	for turn := range 3 {
+		stream, err := session.Create(s.ctx, llm.ResponseParams{
+			ID: fmt.Sprintf("c%d", turn), Input: prompt(),
+		})
+		s.Require().NoError(err, "a backend's session should not be refused on turn %d", turn)
+		s.answer(provider, stream, turn, 1_000, 1_000)
+	}
+	own, _ := s.session(1, 1, s.caller)
+	_, err := own.Create(s.ctx, llm.ResponseParams{ID: "own", Input: prompt()})
+	s.NoError(err, "what the backend spent was not charged to the user's own day")
+}
+
+func (s *LLMQuotaSuite) TestAMockAnswerIsNeitherCheckedNorCounted() {
+	session, provider := s.sessionAs(mock.ProviderName, 1, 1, s.caller)
+
+	for turn := range 3 {
+		stream, err := session.Create(s.ctx, llm.ResponseParams{
+			ID: fmt.Sprintf("c%d", turn), Input: prompt(),
+		})
+		s.Require().NoError(err, "a mock answer should not be refused on turn %d", turn)
+		s.answer(provider, stream, turn, 1_000, 1_000)
+	}
+	counted, _ := s.session(1, 1, s.caller)
+	_, err := counted.Create(s.ctx, llm.ResponseParams{ID: "real", Input: prompt()})
+	s.NoError(err, "the mock answers were not charged to the user's day")
 }

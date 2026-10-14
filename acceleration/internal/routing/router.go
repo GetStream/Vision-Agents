@@ -180,6 +180,9 @@ type Caller struct {
 	UserID string
 	// IP is where the request came from, as far as the trusted proxies can tell.
 	IP string
+	// ServerSide is a customer's own process, trusted with its spend even when it names a
+	// user, so no daily limit is counted against it.
+	ServerSide bool
 }
 
 // Anonymous reports whether there is nobody to count a limit against.

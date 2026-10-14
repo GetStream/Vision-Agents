@@ -1,11 +1,13 @@
 // Package policy enforces what an organization and its apps have decided about spend, data
-// handling, prompt injection, which models may be used and how usage is labelled.
+// handling, prompt injection, which models may be used, how usage is labelled and what one
+// end user may spend in a day.
 //
 // An organization's policy is a floor its apps can tighten and cannot loosen: both budgets
 // apply, a data policy is the stricter of the two, prompt injection is screened if either
-// turns it on, only a model both allow may be routed to, and the organization's tags win
-// over the app's. That is the only reading under which an organization's setting means
-// anything, since an app that could switch it off would make it a suggestion.
+// turns it on, only a model both allow may be routed to, the organization's tags win
+// over the app's, and a daily limit is the lower of the two that are set. That is the only
+// reading under which an organization's setting means anything, since an app that could
+// switch it off would make it a suggestion.
 //
 // Decisions are cached per customer for a few seconds, because Admit is asked before every
 // routed session and every LLM response, and a budget is a sum over the request rows. The
@@ -23,6 +25,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -66,6 +69,10 @@ type decision struct {
 	screen  bool
 	// ownApp is a customer that must act in a Stream app of its own.
 	ownApp bool
+	// messages and tokens are the daily limits per end user the policies set, nil where
+	// neither scope set one.
+	messages *int64
+	tokens   *int64
 	// unread is a decision made without the policies, which could not be read.
 	unread  error
 	expires time.Time
@@ -92,6 +99,24 @@ func (e *Enforcer) Admit(ctx context.Context, customerID string) (routing.Admiss
 	defer span.End()
 	decided := e.decide(ctx, customerID)
 	return routing.Admission{DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags}, stack.Wrap(decided.refusal)
+}
+
+// Limits returns what one of a customer's end users may spend in a day: the lower of the
+// organization's and the app's where both set one, the one that is set, or defaults where
+// neither is. A limit of zero is no cap, so an app may lift the deployment's and only its
+// organization's holds it down. A policy that could not be read leaves defaults in place.
+func (e *Enforcer) Limits(ctx context.Context, customerID string, defaults quota.Limits) (quota.Limits, error) {
+	if e == nil || customerID == "" {
+		return defaults, nil
+	}
+	decided := e.decide(ctx, customerID)
+	if decided.unread != nil {
+		return defaults, decided.unread
+	}
+	return quota.Limits{
+		MessagesPerDay: orDefault(decided.messages, defaults.MessagesPerDay),
+		TokensPerDay:   orDefault(decided.tokens, defaults.TokensPerDay),
+	}, nil
 }
 
 // Join records that an app was seen under an organization, which is what an organization's
@@ -214,6 +239,14 @@ func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
 		// Either scope requiring it requires it: an app can ask for it and cannot opt out.
 		ownApp: enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
 	}
+	if organization.Quota != nil {
+		decided.messages = organization.Quota.MessagesPerUserPerDay
+		decided.tokens = organization.Quota.TokensPerUserPerDay
+	}
+	if app.Quota != nil {
+		decided.messages = lower(decided.messages, app.Quota.MessagesPerUserPerDay)
+		decided.tokens = lower(decided.tokens, app.Quota.TokensPerUserPerDay)
+	}
 	if organization.Budget != nil {
 		if decided.refusal, err = e.over(ctx, store.ScopeOrganization, organizationID, *organization.Budget); err != nil {
 			return decided, err
@@ -250,6 +283,30 @@ func (e *Enforcer) forget(customerID string) {
 }
 
 func enabled(flag *bool) bool { return flag != nil && *flag }
+
+// lower is the tighter of two daily limits, either of which may be unset. Zero is no cap,
+// so it is the looser of any two.
+func lower(organization, app *int64) *int64 {
+	switch {
+	case organization == nil:
+		return app
+	case app == nil:
+		return organization
+	case *organization == 0:
+		return app
+	case *app == 0:
+		return organization
+	}
+	lowest := min(*organization, *app)
+	return &lowest
+}
+
+func orDefault(limit *int64, fallback int64) int64 {
+	if limit == nil {
+		return fallback
+	}
+	return *limit
+}
 
 // allowedByBoth is the models both scopes allow: nil where neither has a list, the one
 // list where only one has, and what is on both where both have.

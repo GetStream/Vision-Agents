@@ -3,18 +3,22 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
-// QuotaSuite runs against a router that allows one message a day, so what a caller who has
-// spent their day may still do is a question the HTTP surface answers.
+// QuotaSuite runs against a router that allows one message a day by default, so what a
+// caller who has spent their day may still do is a question the HTTP surface answers.
 type QuotaSuite struct {
 	RouterSuite
 
-	// backend is the app's own server, naming the suite's user as who it acts for. Asking
-	// for a reply is server-side, and the reply is charged to the user it was for.
+	// backend is the app's own server, naming the suite's user as who it acts for. What it
+	// asks for is server-side, and is charged to nobody's day.
 	backend *testClient
 }
 
@@ -80,22 +84,131 @@ func (s *QuotaSuite) TestABackendIsNotCountedAgainstADaysAllowance() {
 	}
 }
 
-// spendTheDay has the app's backend ask for a reply on the client's behalf, which is what
-// the allowance counts, and waits until the client is refused a new session. It returns
-// the session it opened, which is still the client's to close.
-func (s *QuotaSuite) spendTheDay() string {
-	opened := s.backend.createSession(textSession(nil))
-
+func (s *QuotaSuite) TestABackendsRepliesForAUserAreNotChargedToTheirDay() {
+	// The backend asks for a reply on the user's behalf, which it is trusted with. The
+	// counted model reports what each reply cost, so the reply's row says it was answered.
+	request := textSession(nil)
+	request.Llm = pointerTo("counted/counted-model")
+	opened := s.backend.createSession(request)
 	command := s.utils.uuid()
 	status, failure := s.backend.failure(http.MethodPost,
 		"/v1/agents/sessions/"+opened.Id+"/respond",
 		RespondRequest{Text: "how much does a call cost", RequestId: &command})
 	s.Require().Equal(http.StatusOK, status, failure)
-
+	// The day is debited just before the reply's request row is recorded, so a row means
+	// the debit, if there was going to be one, has landed.
 	s.Require().Eventually(func() bool {
-		status, _ := s.client.call(http.MethodPost, "/v1/agents/sessions", textSession(nil))
-		return status == http.StatusTooManyRequests
-	}, settleFor, 20*time.Millisecond, "the reply was never counted against the day")
+		var spent CallTokens
+		return s.backend.do(http.MethodGet, "/v1/agents/calls/"+opened.Id+"/tokens", nil, &spent) == http.StatusOK &&
+			spent.InputTokens+spent.OutputTokens > 0
+	}, settleFor, 20*time.Millisecond, "the reply was never recorded")
+
+	s.NotEqual(http.StatusTooManyRequests, s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(nil), nil))
+}
+
+func (s *QuotaSuite) TestAnAppWithNoPolicyIsHeldToTheDeploymentsLimit() {
+	// Control: on the base, a fresh app with no policy and this suite's default of one was
+	// refused after one message was debited (probe in author-1.md).
+	s.useApp(s.data.createApp())
+	s.client = s.data.createUser()
+
+	s.Equal(1, s.messagesBeforeRefusal())
+}
+
+func (s *QuotaSuite) TestAnAppsOwnLimitIsWhatItsUsersAreRefusedAt() {
+	s.useApp(s.data.createApp())
+	s.client = s.data.createUser()
+	s.putQuota("/v1/policies/app", 3)
+
+	s.Equal(3, s.messagesBeforeRefusal())
+
+	response := s.client.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
+	s.Equal(http.StatusTooManyRequests, response.StatusCode)
+	s.NotEmpty(response.Header.Get("Retry-After"))
+	status, payload := s.client.call(http.MethodPost, "/v1/agents/sessions", textSession(nil))
+	s.Require().Equal(http.StatusTooManyRequests, status)
+	var refused ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &refused))
+	s.Equal("rate_limited", refused.Error.Code)
+}
+
+func (s *QuotaSuite) TestAnAppsLimitOfZeroRefusesNobody() {
+	s.useApp(s.data.createApp())
+	s.client = s.data.createUser()
+	s.putQuota("/v1/policies/app", 0)
+
+	for range 3 {
+		s.spend(s.client)
+	}
+
+	response := s.client.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
+	s.Equal(http.StatusCreated, response.StatusCode)
+	s.Empty(response.Header.Get("X-RateLimit-Limit"), "a caller with no cap is told nothing")
+}
+
+func (s *QuotaSuite) TestAnOrganizationsLimitCapsWhatItsAppSets() {
+	s.useApp(s.data.createApp())
+	s.client = s.data.createUser()
+	s.putQuota("/v1/policies/organization", 2)
+	s.putQuota("/v1/policies/app", 20_000)
+
+	s.Equal(2, s.messagesBeforeRefusal())
+}
+
+func (s *QuotaSuite) TestACountedAnswerSaysWhatIsLeftOfTheDay() {
+	s.useApp(s.data.createApp())
+	s.client = s.data.createUser()
+	s.putQuota("/v1/policies/app", 3)
+	s.spend(s.client)
+
+	response := s.client.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
+
+	s.Require().Equal(http.StatusCreated, response.StatusCode)
+	s.Equal("3", response.Header.Get("X-RateLimit-Limit"))
+	s.Equal("2", response.Header.Get("X-RateLimit-Remaining"))
+	now := time.Now().UTC()
+	midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	s.Equal(strconv.FormatInt(midnight.Unix(), 10), response.Header.Get("X-RateLimit-Reset"))
+}
+
+func (s *QuotaSuite) TestABackendsAnswerCarriesNoRateLimit() {
+	response := s.backend.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
+
+	s.Require().Equal(http.StatusCreated, response.StatusCode)
+	s.Empty(response.Header.Get("X-RateLimit-Limit"))
+}
+
+// putQuota sets, at the scope given, the messages one user may ask for in a day.
+func (s *QuotaSuite) putQuota(path string, messages int64) {
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, path,
+		map[string]any{"quota": map[string]any{"messages_per_user_per_day": messages}}, nil))
+}
+
+// messagesBeforeRefusal spends the client's day one message at a time until a new session
+// is refused, and says how many it took, up to ten.
+func (s *QuotaSuite) messagesBeforeRefusal() int {
+	spent := 0
+	for ; spent < 10; spent++ {
+		if s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(nil), nil) == http.StatusTooManyRequests {
+			return spent
+		}
+		s.spend(s.client)
+	}
+	return spent
+}
+
+// spend charges one message to a user's day, the way one of their own replies is.
+func (s *QuotaSuite) spend(user *testClient) {
+	s.limiter.Debit(s.T().Context(), s.customerID(), routing.Caller{UserID: user.userID}, 1)
+}
+
+// spendTheDay opens a session the app's backend holds for the client, and spends the
+// client's day. It returns the session, which is still the client's to close.
+func (s *QuotaSuite) spendTheDay() string {
+	opened := s.backend.createSession(textSession(nil))
+	s.spend(s.client)
+	s.Require().Equal(http.StatusTooManyRequests,
+		s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(nil), nil))
 	return opened.Id
 }
 

@@ -132,6 +132,41 @@ func (s *PoliciesSuite) TestUsageIsRecordedUnderThePolicysTagsOverTheRequests() 
 }
 
 // put stores the policy the body describes.
+func (s *PoliciesSuite) TestAnAppsDailyLimitIsStoredAndReadBack() {
+	stored := s.put(map[string]any{"quota": map[string]any{
+		"messages_per_user_per_day": 20_000, "tokens_per_user_per_day": 0,
+	}})
+	s.Require().NotNil(stored.Quota)
+
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
+	s.Require().NotNil(read.Quota)
+	s.Equal(pointerTo(int64(20_000)), read.Quota.MessagesPerUserPerDay)
+	s.Equal(pointerTo(int64(0)), read.Quota.TokensPerUserPerDay, "zero is no cap, kept apart from left out")
+}
+
+func (s *PoliciesSuite) TestAnOrganizationsDailyLimitIsStoredAndReadBack() {
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/policies/organization",
+		map[string]any{"quota": map[string]any{"messages_per_user_per_day": 5_000}}, nil))
+
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/organization", nil, &read))
+	s.Require().NotNil(read.Quota)
+	s.Equal(pointerTo(int64(5_000)), read.Quota.MessagesPerUserPerDay)
+	s.Nil(read.Quota.TokensPerUserPerDay, "left out is no opinion")
+}
+
+func (s *PoliciesSuite) TestANegativeDailyLimitIsRefused() {
+	for _, field := range []string{"messages_per_user_per_day", "tokens_per_user_per_day"} {
+		status, body := s.serverClient.call(http.MethodPut, "/v1/policies/app",
+			map[string]any{"quota": map[string]any{field: -1}})
+
+		s.Equal(http.StatusBadRequest, status, field)
+		s.Contains(string(body), `"code":"validation_failed"`, field)
+		s.Contains(string(body), field)
+	}
+}
+
 func (s *PoliciesSuite) put(body map[string]any) Policy {
 	var stored Policy
 	s.Require().Equal(http.StatusOK,

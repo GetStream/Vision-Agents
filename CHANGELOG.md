@@ -612,6 +612,16 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### Each app sets its own daily limit per end user
+
+`PUT /v1/policies/app` and `/v1/policies/organization` take `quota`:
+`messages_per_user_per_day` and `tokens_per_user_per_day`. An app may set a number above the
+deployment's default or below it, and `0` is no cap. An organization's number is a ceiling for
+its apps. Left out, the deployment's `ROUTER_RATE_LIMIT_*` default applies, as before. A
+counted answer carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`.
+The answers in a session a backend opened are no longer charged to the user it named, `mock/*`
+answers are not counted, and an address is counted per app.
+
 ### A customer's website can call the router directly
 
 A browser page on any site may call the API and open a session socket with an API key and a

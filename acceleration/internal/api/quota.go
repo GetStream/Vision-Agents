@@ -37,6 +37,18 @@ func exemptFromQuota(ctx context.Context) bool {
 	return !known || ServerSideFrom(ctx) || CallerFrom(ctx).Anonymous()
 }
 
+// rateLimitHeaders tells a counted caller where they stand, the way Stream Chat does: the
+// day's allowance, what is left of it and the unix time it resets at. A caller nothing was
+// counted for is told nothing.
+func rateLimitHeaders(header http.Header, status quota.Status) {
+	if status.Limit == 0 {
+		return
+	}
+	header.Set("X-RateLimit-Limit", strconv.FormatInt(status.Limit, 10))
+	header.Set("X-RateLimit-Remaining", strconv.FormatInt(status.Remaining, 10))
+	header.Set("X-RateLimit-Reset", strconv.FormatInt(status.Reset.Unix(), 10))
+}
+
 // withQuota refuses a caller who has spent their day before any work is started.
 //
 // It is not the only place the limit is enforced, and it is not the one that matters most:
@@ -68,7 +80,9 @@ func (s *Server) withQuota(next http.Handler) http.Handler {
 		customerID, _ := CustomerFrom(r.Context())
 		caller := CallerFrom(r.Context())
 
-		if err := s.quota.Allow(r.Context(), customerID, caller); err != nil {
+		status, err := s.quota.Allow(r.Context(), customerID, caller)
+		rateLimitHeaders(w.Header(), status)
+		if err != nil {
 			if !errors.Is(err, quota.ErrExhausted) {
 				next.ServeHTTP(w, r)
 				return
