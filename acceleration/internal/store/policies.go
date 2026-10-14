@@ -76,7 +76,7 @@ type Budget struct {
 type PolicyDocument struct {
 	Budget *Budget `json:"budget,omitempty"`
 	// Quota is what one end user of the app may spend in a UTC day.
-	Quota *QuotaPolicy `json:"quota,omitempty"`
+	Quota *Quota `json:"quota,omitempty"`
 	// DataPolicy is the floor every routed request is held to, on top of whatever the
 	// request itself asked for.
 	DataPolicy options.DataPolicy `json:"data_policy,omitzero"`
@@ -93,9 +93,9 @@ type PolicyDocument struct {
 	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
 }
 
-// QuotaPolicy is what one end user of an app may spend in a UTC day. A nil field is no
+// Quota is what one end user of an app may spend in a UTC day. A nil field is no
 // opinion, so the organization's or the deployment's number shows through; zero is no cap.
-type QuotaPolicy struct {
+type Quota struct {
 	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty"`
 	TokensPerUserPerDay   *int64 `json:"tokens_per_user_per_day,omitempty"`
 }

@@ -27,7 +27,7 @@ var (
 // injection, which models may be used and how usage is labelled.
 type Policy struct {
 	Budget              *Budget           `json:"budget,omitempty"`
-	Quota               *Quota      `json:"quota,omitempty"`
+	Quota               *Quota            `json:"quota,omitempty"`
 	DataPolicy          *DataPolicy       `json:"data_policy,omitempty"`
 	PromptInjection     *bool             `json:"prompt_injection,omitempty" doc:"Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on."`
 	AllowedModels       *[]string         `json:"allowed_models,omitempty" example:"[\"deepseek/DeepSeek-V4-Flash-0731\"]" doc:"The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one."`
@@ -314,18 +314,18 @@ func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id strin
 }
 
 // quotaOf is a sent quota as it is stored. One that sets neither number is no opinion.
-func quotaOf(sent *Quota) *store.QuotaPolicy {
+func quotaOf(sent *Quota) *store.Quota {
 	if sent == nil || sent.MessagesPerUserPerDay == nil && sent.TokensPerUserPerDay == nil {
 		return nil
 	}
-	return &store.QuotaPolicy{
+	return &store.Quota{
 		MessagesPerUserPerDay: sent.MessagesPerUserPerDay,
 		TokensPerUserPerDay:   sent.TokensPerUserPerDay,
 	}
 }
 
 // quotaFor is a stored quota as it reads out.
-func quotaFor(stored *store.QuotaPolicy) *Quota {
+func quotaFor(stored *store.Quota) *Quota {
 	if stored == nil {
 		return nil
 	}

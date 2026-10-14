@@ -343,14 +343,14 @@ func (s *PolicySuite) TestANewAppsFirstRequestsAreHeldToItsOrganizationsRequirem
 // nothing leaves in place.
 var deployment = quota.Limits{MessagesPerDay: 200, TokensPerDay: 5_000_000}
 
-func quotaOf(messages, tokens *int64) *store.QuotaPolicy {
-	return &store.QuotaPolicy{MessagesPerUserPerDay: messages, TokensPerUserPerDay: tokens}
+func quotaOf(messages, tokens *int64) *store.Quota {
+	return &store.Quota{MessagesPerUserPerDay: messages, TokensPerUserPerDay: tokens}
 }
 
 func (s *PolicySuite) TestADailyLimitIsTheLowerOfTheOrganizationsAndTheAppsThatAreSet() {
 	cases := []struct {
 		name              string
-		organization, app *store.QuotaPolicy
+		organization, app *store.Quota
 		want              quota.Limits
 	}{
 		{name: "nobody set one, so it is the deployment's", want: deployment},
