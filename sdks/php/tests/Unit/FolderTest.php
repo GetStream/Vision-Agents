@@ -247,6 +247,62 @@ final class FolderTest extends TestCase
         Folder::load($this->dir);
     }
 
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function refusedConnectors(): iterable
+    {
+        yield 'null entry' => ["connectors:\n  - \n", 'a connector needs a name'];
+        yield 'empty name' => ["connectors:\n  - name: ''\n", 'a connector needs a name'];
+        yield 'mapping without a name' => ["connectors:\n  - connector: linear\n", 'a connector needs a name'];
+        yield 'empty tools' => ["connectors:\n  - name: linear\n    tools: []\n", 'connector "linear": tools: [] grants nothing; leave tools out for every tool'];
+        yield 'connection as a map' => ["connectors:\n  - name: linear\n    connection:\n      id: conn_a\n", 'connector "linear": connection must be a connection id or label'];
+        yield 'empty connection' => ["connectors:\n  - name: linear\n    connection: ''\n", 'connector "linear": connection must be a connection id or label'];
+        yield 'unknown key' => ["connectors:\n  - name: linear\n    tool: [search]\n", '"connectors.tool" is not something agent.yaml declares'];
+        yield 'not a list' => ["connectors: linear\n", 'connectors must be a list'];
+        yield 'alias of a plugin' => ["plugins: [linear]\nconnectors: [linear]\n", '"linear" is named under both connectors and plugins'];
+    }
+
+    #[DataProvider('refusedConnectors')]
+    public function testRefusesConnectorsTheWayGoDoes(string $declaration, string $message): void
+    {
+        $this->write('agent.yaml', $declaration);
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage($message);
+        Folder::load($this->dir);
+    }
+
+    public function testReadsConnectorsAsWritten(): void
+    {
+        $this->write('agent.yaml', "connectors:\n  - linear\n  - name: issues\n    connector: linear\n    tools: [search]\n    connection: prod\n    required: false\n");
+
+        $connectors = Folder::load($this->dir)->settings->connectors;
+
+        self::assertSame(['linear', 'issues'], array_map(static fn ($each) => $each->name, $connectors ?? []));
+        self::assertSame([null, ['search']], array_map(static fn ($each) => $each->tools, $connectors ?? []));
+        self::assertSame(['', 'linear'], array_map(static fn ($each) => $each->connector, $connectors ?? []));
+        self::assertSame([null, 'prod'], array_map(static fn ($each) => $each->connection, $connectors ?? []));
+        self::assertSame([null, false], array_map(static fn ($each) => $each->required, $connectors ?? []));
+    }
+
+    public function testConnectorsLeftOutAreNullAndAnEmptyListIsEmpty(): void
+    {
+        self::assertNull(Folder::load($this->dir)->settings->connectors);
+
+        $this->write('agent.yaml', "connectors: []\n");
+
+        self::assertSame([], Folder::load($this->dir)->settings->connectors);
+    }
+
+    public function testConnectorsAreHashedAsWritten(): void
+    {
+        $before = Folder::load($this->dir)->hash();
+        $this->write('agent.yaml', "name: jean\nllm: openai/gpt-5.6\nconnectors: [linear]\n");
+
+        self::assertNotSame($before, Folder::load($this->dir)->hash());
+    }
+
     public function testStampRoundTrips(): void
     {
         $folder = Folder::load($this->dir);

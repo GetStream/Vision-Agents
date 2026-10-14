@@ -6,6 +6,7 @@ namespace GetStream\VisionAgents;
 
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Exception\RouterException;
+use GetStream\VisionAgents\Folder\Connector;
 use GetStream\VisionAgents\Folder\Declaration;
 use GetStream\VisionAgents\Folder\Document;
 use GetStream\VisionAgents\Folder\KnowledgeUrl;
@@ -25,6 +26,8 @@ use GetStream\VisionAgents\Generated\SyncAgentRequest;
 use GetStream\VisionAgents\Generated\SyncAgentResult;
 use GetStream\VisionAgents\Inbound\InboundCall;
 use GetStream\VisionAgents\Inbound\InboundMessage;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 /**
  * A configured agent, before and between the calls it holds.
@@ -52,6 +55,7 @@ final class Agent
     public readonly ?Folder $folder;
     private readonly ?Harness $harness;
     private ?Edge $edge;
+    private readonly LoggerInterface $logger;
     /** `config` resolved to the id the backend wants, looked up once. */
     private ?string $configId = null;
 
@@ -65,6 +69,7 @@ final class Agent
      *     and what narrows recall
      * @param ?Sandbox $sandbox where code the agent writes gets run
      * @param string $userId who the agent joins a call as; derived from the name when empty
+     * @param ?LoggerInterface $logger where a sync says what agent.yaml does that is deprecated
      */
     public function __construct(
         public readonly string $config = '',
@@ -81,6 +86,7 @@ final class Agent
         ?Tools $tools = null,
         ?Client $client = null,
         ?Edge $edge = null,
+        ?LoggerInterface $logger = null,
     ) {
         $this->folder = is_string($folder) ? Folder::load($folder) : $folder;
         $this->name = $name !== '' ? $name : ($this->folder->name ?? $config);
@@ -101,6 +107,7 @@ final class Agent
         $this->tools = $tools ?? new Tools();
         $this->client = $client ?? new Client();
         $this->edge = $edge;
+        $this->logger = $logger ?? new NullLogger();
     }
 
     /**
@@ -242,6 +249,9 @@ final class Agent
     {
         $folder = $this->folder;
         $declared = $folder->settings ?? new Declaration();
+        if ($declared->plugins !== []) {
+            $this->logger->warning('agent.yaml plugins are deprecated: rename plugins to connectors', ['agent' => $this->name, 'plugins' => $declared->plugins]);
+        }
         $skills = $this->harness->skills ?? [];
         $knowledge = $folder->knowledge ?? [];
         $pages = $folder->knowledgeUrls ?? [];
@@ -286,6 +296,7 @@ final class Agent
             subagent: self::set($subagent) ?? self::set($declared->subagent),
             search: self::set($declared->search),
             greeting: $pipeline->greeting() ?? $declared->greeting,
+            connectors: $declared->connectors === null ? null : array_map(fn (Connector $connector) => $connector->toBinding($this->client), $declared->connectors),
             plugins: $declared->plugins === [] ? null : $declared->plugins,
             keyterms: $pipeline->keyterms ?? ($declared->keyterms === [] ? null : $declared->keyterms),
             sandbox: $this->sandbox ?? ($declared->sandbox === '' ? null : (Sandbox::tryFrom($declared->sandbox) ?? $declared->sandbox)),
