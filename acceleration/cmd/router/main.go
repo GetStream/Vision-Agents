@@ -10,8 +10,10 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -1267,6 +1269,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 		go serve(peerServer, peers)
 	}
 
+	if settings.PprofAddr != "" {
+		go servePprof(settings.PprofAddr, logger)
+	}
+
 	select {
 	case err := <-listening:
 		return err
@@ -1372,6 +1378,24 @@ func running(sessions *session.Manager) int {
 		return 0
 	}
 	return sessions.Len()
+}
+
+// servePprof serves the runtime profiles on an address of their own, with lock contention
+// and blocking sampled so the mutex and block profiles have something in them.
+func servePprof(addr string, logger *slog.Logger) {
+	runtime.SetMutexProfileFraction(100)
+	runtime.SetBlockProfileRate(int(time.Millisecond))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	logger.Info("serving pprof", "address", addr, "setting", "pprof_addr")
+	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout}
+	if err := server.ListenAndServe(); err != nil {
+		logger.Error("pprof stopped", "error", err)
+	}
 }
 
 // shutdown drains a server that may not exist.

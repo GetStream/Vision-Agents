@@ -73,8 +73,11 @@ type Config struct {
 	// a thousand conversations cost what one does. Off by default: with it off the
 	// catalogue still declares them and nothing can be built for them, which is what a
 	// deployment carrying real traffic wants.
-	MockProviders bool       `koanf:"mock_providers"`
-	Postgres      Postgres   `koanf:"postgres"`
+	MockProviders bool `koanf:"mock_providers"`
+	// PprofAddr serves net/http/pprof on its own listener, never the public one. Empty
+	// means no profiling endpoint.
+	PprofAddr string     `koanf:"pprof_addr"`
+	Postgres  Postgres   `koanf:"postgres"`
 	Redis         Redis      `koanf:"redis"`
 	Node          Node       `koanf:"node"`
 	Shutdown      Shutdown   `koanf:"shutdown"`
@@ -292,6 +295,7 @@ var variables = map[string]string{
 	"phone_config":        "ROUTER_PHONE_CONFIG",
 	"voices_bucket_url":   "ROUTER_VOICES_BUCKET_URL",
 	"mock_providers":      "ROUTER_MOCK_PROVIDERS",
+	"pprof_addr":          "ROUTER_PPROF_ADDR",
 	"postgres.dsn":        "ROUTER_POSTGRES_DSN",
 	"redis.addr":          "ROUTER_REDIS_ADDR",
 	"redis.username":      "ROUTER_REDIS_USERNAME",
@@ -537,6 +541,7 @@ func (c Config) export() error {
 		"phone_config":                  c.PhoneConfig,
 		"voices_bucket_url":             c.VoicesBucketURL,
 		"mock_providers":                fmt.Sprint(c.MockProviders),
+		"pprof_addr":                    c.PprofAddr,
 		"postgres.dsn":                  c.Postgres.DSN,
 		"redis.addr":                    c.Redis.Addr,
 		"redis.username":                c.Redis.Username,
