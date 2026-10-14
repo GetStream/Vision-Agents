@@ -5579,7 +5579,7 @@ type Policy struct {
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
 
 	// Quota What one end user may spend in a UTC day, counted per user and per address. The lower of the organization's and the app's number applies, and 0 is no cap, so it is never the lower one. A backend's own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset.
-	Quota *QuotaPolicy `json:"quota,omitempty"`
+	Quota *Quota `json:"quota,omitempty"`
 
 	// RequireOwnStreamApp Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
 	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
@@ -5709,8 +5709,8 @@ type ProviderPrice struct {
 	PerMillionOutputTokens *float64 `json:"per_million_output_tokens,omitempty"`
 }
 
-// QuotaPolicy What one end user may spend in a UTC day, counted per user and per address. The lower of the organization's and the app's number applies, and 0 is no cap, so it is never the lower one. A backend's own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset.
-type QuotaPolicy struct {
+// Quota What one end user may spend in a UTC day, counted per user and per address. The lower of the organization's and the app's number applies, and 0 is no cap, so it is never the lower one. A backend's own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset.
+type Quota struct {
 	// MessagesPerUserPerDay How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the organization's number applies, or the router's default when it has none.
 	//
 	// Example: 20000

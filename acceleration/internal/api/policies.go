@@ -27,7 +27,7 @@ var (
 // injection, which models may be used and how usage is labelled.
 type Policy struct {
 	Budget              *Budget           `json:"budget,omitempty"`
-	Quota               *QuotaPolicy      `json:"quota,omitempty"`
+	Quota               *Quota      `json:"quota,omitempty"`
 	DataPolicy          *DataPolicy       `json:"data_policy,omitempty"`
 	PromptInjection     *bool             `json:"prompt_injection,omitempty" doc:"Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on."`
 	AllowedModels       *[]string         `json:"allowed_models,omitempty" example:"[\"deepseek/DeepSeek-V4-Flash-0731\"]" doc:"The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one."`
@@ -58,13 +58,13 @@ func (*Budget) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schem
 	return schema
 }
 
-// QuotaPolicy is what one end user of the app may spend in a UTC day.
-type QuotaPolicy struct {
+// Quota is what one end user of the app may spend in a UTC day.
+type Quota struct {
 	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty" minimum:"0" example:"20000" doc:"How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the organization's number applies, or the router's default when it has none."`
 	TokensPerUserPerDay   *int64 `json:"tokens_per_user_per_day,omitempty" minimum:"0" example:"50000000" doc:"How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the organization's number applies, or the router's default when it has none."`
 }
 
-func (*QuotaPolicy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+func (*Quota) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "What one end user may spend in a UTC day, counted per user and per " +
 		"address. The lower of the organization's and the app's number applies, and 0 is no " +
 		"cap, so it is never the lower one. A backend's own requests are never counted. A request " +
@@ -222,7 +222,7 @@ func (s *Server) updateOrganizationPolicy(ctx context.Context, request *policyRe
 // savePolicy validates and stores a policy, and returns it as it now reads.
 func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id string, sent Policy) (Policy, error) {
 	document := store.PolicyDocument{
-		Quota:               quotaPolicyOf(sent.Quota),
+		Quota:               quotaOf(sent.Quota),
 		DataPolicy:          dataPolicyOf(sent.DataPolicy),
 		PromptInjection:     sent.PromptInjection,
 		AllowedModels:       sent.AllowedModels,
@@ -313,8 +313,8 @@ func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id strin
 	return policy, nil
 }
 
-// quotaPolicyOf is a sent quota as it is stored. One that sets neither number is no opinion.
-func quotaPolicyOf(sent *QuotaPolicy) *store.QuotaPolicy {
+// quotaOf is a sent quota as it is stored. One that sets neither number is no opinion.
+func quotaOf(sent *Quota) *store.QuotaPolicy {
 	if sent == nil || sent.MessagesPerUserPerDay == nil && sent.TokensPerUserPerDay == nil {
 		return nil
 	}
@@ -325,11 +325,11 @@ func quotaPolicyOf(sent *QuotaPolicy) *store.QuotaPolicy {
 }
 
 // quotaFor is a stored quota as it reads out.
-func quotaFor(stored *store.QuotaPolicy) *QuotaPolicy {
+func quotaFor(stored *store.QuotaPolicy) *Quota {
 	if stored == nil {
 		return nil
 	}
-	return &QuotaPolicy{
+	return &Quota{
 		MessagesPerUserPerDay: stored.MessagesPerUserPerDay,
 		TokensPerUserPerDay:   stored.TokensPerUserPerDay,
 	}
