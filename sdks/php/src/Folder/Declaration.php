@@ -56,8 +56,12 @@ final readonly class Declaration
     /**
      * Reads agent.yaml, parsed. A key nobody knows is refused rather than dropped, since a
      * misspelt llm that goes quietly is a config running on a model the file does not name.
+     *
+     * @param mixed $mapped the same file parsed with Yaml::PARSE_OBJECT_FOR_MAP, which
+     *     `connectors` is read from: there `{}` is an object and not an empty list, so it is
+     *     refused rather than sent as [] and wiping the stored bindings
      */
-    public static function fromYaml(mixed $parsed): self
+    public static function fromYaml(mixed $parsed, mixed $mapped): self
     {
         if ($parsed === null) {
             return new self();
@@ -85,7 +89,7 @@ final readonly class Declaration
             } elseif ($key === 'dispatch') {
                 $values['dispatch'] = self::dispatch($value);
             } elseif ($key === 'connectors') {
-                $connectors = self::connectors($value);
+                $connectors = self::connectors($mapped instanceof \stdClass ? $mapped->connectors : $value);
             } else {
                 throw new ConfigurationException("\"{$key}\" is not something agent.yaml declares");
             }

@@ -89,7 +89,7 @@ final readonly class Folder
         }
         $declaration = self::read($declarationFile);
         try {
-            $settings = Declaration::fromYaml(Yaml::parse($declaration));
+            $settings = Declaration::fromYaml(Yaml::parse($declaration), Yaml::parse($declaration, Yaml::PARSE_OBJECT_FOR_MAP));
         } catch (ParseException | ConfigurationException $bad) {
             throw new ConfigurationException("{$declarationFile}: {$bad->getMessage()}", 0, $bad);
         }

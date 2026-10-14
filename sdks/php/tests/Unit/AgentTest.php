@@ -19,6 +19,7 @@ use GetStream\VisionAgents\Skill;
 use GetStream\VisionAgents\Tests\Support\LocalRouter;
 use GetStream\VisionAgents\Tests\Support\RecordedLog;
 use GetStream\VisionAgents\Tests\Support\Rows;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class AgentTest extends TestCase
@@ -402,6 +403,33 @@ final class AgentTest extends TestCase
         self::assertSame([], $sent['connectors']);
     }
 
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function mappingsWhereGoWantsAList(): iterable
+    {
+        yield 'connectors: {}' => ['{}', 'connectors must be a list'];
+        yield 'connectors: {a: b}' => ['{a: b}', 'connectors must be a list'];
+        yield 'tools: {}' => ["\n  - name: linear\n    tools: {}", 'connector "linear": tools is a list'];
+        yield 'connection: {}' => ["\n  - name: linear\n    connection: {}", 'connector "linear": connection must be a connection id or label'];
+    }
+
+    #[DataProvider('mappingsWhereGoWantsAList')]
+    public function testSyncRefusesAMappingWhereGoWantsAListAndSendsNothing(string $yaml, string $message): void
+    {
+        $this->folder();
+
+        $caught = null;
+        try {
+            $this->syncConnectors($yaml);
+        } catch (ConfigurationException $caught) {
+            // message checked below
+        }
+        self::assertInstanceOf(ConfigurationException::class, $caught);
+        self::assertSame("{$this->dir}/agent.yaml: {$message}", $caught->getMessage());
+        self::assertSame([], $this->router->to('POST', '/v1/agents/sync'), 'nothing is stored');
+    }
+
     public function testSyncSendsAStringEntryAsASessionBinding(): void
     {
         $this->folder();
@@ -508,11 +536,15 @@ final class AgentTest extends TestCase
     public function testSyncStopsWhenRouterRepeatsNextCursor(): void
     {
         $this->folder();
-        $this->router->answer('GET', '/v1/agents/connections', 200, [
-            'has_more' => true,
-            'next_cursor' => 'c1',
-            'items' => [Rows::connection('conn_a', 'linear', 'prod')],
-        ]);
+        $page = ['has_more' => true, 'next_cursor' => 'c1', 'items' => [Rows::connection('conn_a', 'linear', 'prod')]];
+        $this->router->answer('GET', '/v1/agents/connections', 200, $page, $page);
+        // A third list call fails the sync rather than spinning on the repeated cursor.
+        $this->router->answer('GET', '/v1/agents/connections', 400, ['error' => [
+            'message' => 'listed past a repeated cursor',
+            'type' => 'invalid_request',
+            'code' => 'invalid_request',
+            'doc_url' => 'https://getstream.io/agents/docs/api/errors/#invalid_request',
+        ]]);
 
         $this->syncConnectors("\n  - name: linear\n    connection: conn_a");
 

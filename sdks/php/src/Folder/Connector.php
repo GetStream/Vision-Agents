@@ -36,7 +36,8 @@ final readonly class Connector
 
     /**
      * Reads one entry of `connectors`, parsed. A key nobody knows is refused, as everywhere in
-     * agent.yaml.
+     * agent.yaml. Parsed with Yaml::PARSE_OBJECT_FOR_MAP, so a mapping is an object and `{}`
+     * is never mistaken for an empty list.
      */
     public static function fromYaml(mixed $entry): self
     {
@@ -44,14 +45,14 @@ final readonly class Connector
             throw new ConfigurationException('a connector needs a name');
         }
         if (is_scalar($entry)) {
-            $entry = ['name' => $entry];
+            $entry = (object) ['name' => $entry];
         }
-        if (!is_array($entry) || (array_is_list($entry) && $entry !== [])) {
+        if (!$entry instanceof \stdClass) {
             throw new ConfigurationException('a connector is a name or a mapping');
         }
 
         $values = ['name' => null, 'connector' => null, 'tools' => null, 'connection' => null, 'required' => null];
-        foreach ($entry as $key => $value) {
+        foreach (get_object_vars($entry) as $key => $value) {
             $key = (string) $key;
             if (!in_array($key, self::KEYS, true)) {
                 throw new ConfigurationException("\"connectors.{$key}\" is not something agent.yaml declares");
