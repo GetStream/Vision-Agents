@@ -612,6 +612,13 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### Fish Audio Drama 3 is `fish/drama-3`, and the `fish` default
+
+Fish's hosted Drama 3 can be routed as `fish/drama-3`, with the same `FISH_API_KEY`, and a
+`fish` target that names no model now gets it instead of `s2-pro`. Like ElevenLabs v3 it acts
+bracketed directions such as `[laughs]` or `[whispers]` rather than reading them out, so the
+model writing the lines is told it may use them. `fish/s2-pro` is still served as before.
+
 ### A customer's website can call the router directly
 
 A browser page on any site may call the API and open a session socket with an API key and a
