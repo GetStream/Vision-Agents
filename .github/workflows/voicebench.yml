@@ -97,6 +97,8 @@ jobs:
       # previous night is not comparable with.
       VOICEBENCH_NIGHT: ${{ (inputs.set || 'frozen') == 'frozen' && (inputs.packs || 'all') == 'all' && (inputs.k || '1') == '1' }}
       VOICEBENCH_LIVEKIT_ARMS: ""
+      # GPT-Live runs the same set beside our stack, on the same router, as its own row.
+      VOICEBENCH_STS_ARMS: openai/gpt-live-1
       VOICEBENCH_SLACK_BOT_TOKEN: ${{ secrets.VOICEBENCH_SLACK_BOT_TOKEN }}
       VOICEBENCH_SLACK_CHANNEL: ${{ inputs.channel || secrets.VOICEBENCH_SLACK_CHANNEL }}
     steps:
