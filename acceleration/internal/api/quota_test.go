@@ -87,6 +87,10 @@ func (s *QuotaSuite) TestABackendIsNotCountedAgainstADaysAllowance() {
 func (s *QuotaSuite) TestABackendsRepliesForAUserAreNotChargedToTheirDay() {
 	// The backend asks for a reply on the user's behalf, which it is trusted with. The
 	// counted model reports what each reply cost, so the reply's row says it was answered.
+	// An app of its own keeps other suites' answers from the same address out of its day.
+	s.useApp(s.data.createApp())
+	s.client = s.data.createUser()
+	s.backend = s.serverClient.actingFor(s.client)
 	request := textSession(nil)
 	request.Llm = pointerTo("counted/counted-model")
 	opened := s.backend.createSession(request)
