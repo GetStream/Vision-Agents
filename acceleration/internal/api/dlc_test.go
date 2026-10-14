@@ -166,6 +166,11 @@ func (s *DLCSuite) dial(to string) (int, string) {
 	return s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{From: "+15550000001", To: to})
 }
 
+func (s *DLCSuite) transfer(to string) (int, string) {
+	return s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer",
+		TransferCallRequest{From: "+15550000001", To: to, SessionId: "session-" + s.utils.uuid()})
+}
+
 func (s *DLCSuite) spend(field string, amount int) {
 	key := "dlc:" + time.Now().UTC().Format("20060102") + ":" + s.customerID()
 	redis := s.live.Redis()
@@ -314,6 +319,28 @@ func (s *DLCSuite) TestASandboxedAppReachesOnlyItsTwoRecipients() {
 	s.Equal(http.StatusForbidden, status)
 	s.Contains(failure, "sandbox recipients")
 	status, _ = s.dial("+15551110000")
+	s.Equal(http.StatusBadRequest, status, "a recipient passes the gate")
+}
+
+func (s *DLCSuite) TestATransferToSomebodyWhoOptedOutIsRefused() {
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/sandbox/recipients",
+		SetSandboxRecipientsRequest{Recipients: []string{"+15551110000"}}, nil))
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/phone/opt-outs",
+		CreateOptOutRequest{Recipient: "+15551110000", Channel: OptOutChannel(dlc.Voice)}, nil))
+
+	status, failure := s.transfer("+15551110000")
+	s.Equal(http.StatusForbidden, status)
+	s.Contains(failure, "opted out")
+}
+
+func (s *DLCSuite) TestASandboxedAppTransfersOnlyToItsRecipients() {
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/sandbox/recipients",
+		SetSandboxRecipientsRequest{Recipients: []string{"+15551110000"}}, nil))
+
+	status, failure := s.transfer("+15553330000")
+	s.Equal(http.StatusForbidden, status)
+	s.Contains(failure, "sandbox recipients")
+	status, _ = s.transfer("+15551110000")
 	s.Equal(http.StatusBadRequest, status, "a recipient passes the gate")
 }
 

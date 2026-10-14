@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // Service is what the CLI and the HTTP API both talk to.
@@ -307,6 +308,12 @@ type Purchase struct {
 func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber, error) {
 	if purchase.Owner.CustomerID == "" {
 		return store.PhoneNumber{}, stack.Wrap(errors.New("phone: a number must belong to a customer"))
+	}
+	// An app Stream blocked could not use a number, so it does not get to pay for one.
+	if s.apps != nil {
+		if _, _, err := s.apps.For(ctx, purchase.Owner.CustomerID); errors.Is(err, streamapp.ErrStreamAppDisconnected) {
+			return store.PhoneNumber{}, stack.Wrap(err)
+		}
 	}
 	provider, err := s.registry.Open(purchase.Vendor)
 	if err != nil {
@@ -909,6 +916,10 @@ type TransferRequest struct {
 // the trunk is made, and keeping SIP credentials to reuse later is a worse trade than
 // making a second trunk.
 func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed, error) {
+	// A transfer dials someone as surely as a call does, so it answers to the same gate.
+	if err := s.gate.Allow(ctx, request.Owner.CustomerID, dlc.Voice, request.To); err != nil {
+		return Dialed{}, stack.Wrap(err)
+	}
 	// The human is routed into the call the agent is on, so the trunk is made in the app
 	// that call is in.
 	stream, err := s.streamForApp(ctx, request.Owner.CustomerID, request.StreamApp)
