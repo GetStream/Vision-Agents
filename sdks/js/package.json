@@ -10,8 +10,7 @@
   },
   "homepage": "https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/js",
   "publishConfig": {
-    "access": "public",
-    "tag": "beta"
+    "access": "public"
   },
   "keywords": [
     "stream",

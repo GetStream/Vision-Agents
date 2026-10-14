@@ -368,26 +368,13 @@ counts only those scoped `sdk-js`: `feat(sdk-js):` moves the minor, `fix(sdk-js)
 A commit with any other scope, or none, ships nothing, whatever it touches. The workflow runs
 as a dry run unless that box is unticked, printing the version and notes it would publish.
 
-Every release goes to npm's `beta` dist-tag (`npm install @stream-io/calypso@beta`), set
-both in `release.config.mjs` and in `publishConfig`, so a `npm publish` by hand lands there too.
-`latest` moves only when somebody promotes a version:
-
-```bash
-npm dist-tag add @stream-io/calypso@0.3.0 latest
-```
-
 It publishes with npm trusted publishing, so there is no token, and npm only lets a package
 trust a workflow once the package exists. The first version is therefore published by hand:
 
 ```bash
-npm publish                               # 0.2.0 on beta, as package.json says
-npm view @stream-io/calypso dist-tags
+npm publish                               # 0.2.0, as package.json says
 git tag sdk-js-v0.2.0 && git push origin sdk-js-v0.2.0
 ```
-
-npm may point `latest` at a package's first version whatever tag it was published on; the
-`dist-tags` line shows whether it did. If 0.2.0 should not be what a plain install gets, there
-is no way to leave `latest` unset, so it stays until the first version worth promoting.
 
 then on npmjs.com, under the package's settings, add GitHub Actions as a trusted publisher:
 `GetStream/Vision-Agents`, workflow `release-sdk-js.yml`. From then on the version in

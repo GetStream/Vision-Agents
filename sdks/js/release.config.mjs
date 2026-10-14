@@ -10,9 +10,7 @@
 const scope = "sdk-js";
 
 export default {
-  // Every release lands on npm's `beta` dist-tag; `latest` moves only when somebody
-  // promotes a version by hand.
-  branches: [{ name: "accelerate", channel: "beta" }],
+  branches: ["accelerate"],
   tagFormat: "sdk-js-v${version}",
   plugins: [
     [
