@@ -25,6 +25,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
@@ -155,6 +156,7 @@ type utterance struct {
 // TTS is a streaming Inworld text-to-speech session.
 type TTS struct {
 	options Options
+	keys    *keypool.Pool
 	logger  *slog.Logger
 	emitter *tts.Emitter
 
@@ -177,12 +179,11 @@ type TTS struct {
 
 // New validates the options and returns an unstarted provider.
 func New(options Options) (*TTS, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv("INWORLD_API_KEY")
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, "INWORLD_API_KEY").Pin()
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("inworld: api key is required (set INWORLD_API_KEY)"))
 	}
+	options.APIKey = keys.Peek()
 	if options.VoiceID == "" {
 		options.VoiceID = os.Getenv("INWORLD_VOICE_ID")
 	}
@@ -214,6 +215,7 @@ func New(options Options) (*TTS, error) {
 
 	return &TTS{
 		options: options,
+		keys:    keys,
 		logger:  logger.With("provider", ProviderName, "model", options.Model),
 		emitter: tts.NewEmitter(64),
 		active:  map[string]*utterance{},
@@ -243,12 +245,12 @@ func (t *TTS) Start(ctx context.Context) error {
 
 func (t *TTS) dial(ctx context.Context) error {
 	dialer := &websocket.Dialer{HandshakeTimeout: t.options.HandshakeTimeout}
-	header := http.Header{
-		"Authorization": []string{"Basic " + t.options.APIKey},
-		"X-Request-Id":  []string{uuid.NewString()},
-	}
-
-	conn, response, err := dialer.DialContext(ctx, t.url(), header)
+	conn, response, _, err := t.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+		return t.url(), http.Header{
+			"Authorization": []string{"Basic " + key},
+			"X-Request-Id":  []string{uuid.NewString()},
+		}
+	})
 	if err != nil {
 		if response != nil {
 			return stack.Wrap(fmt.Errorf("inworld: dial: %w (http %d)", err, response.StatusCode))

@@ -23,12 +23,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
@@ -173,12 +173,11 @@ type TTS struct {
 
 // New validates the options and returns an unstarted provider.
 func New(options Options) (*TTS, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar)
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(fmt.Errorf("gemini: api key is required (set %s)", apiKeyEnvVar))
 	}
+	options.APIKey = keys.Peek()
 	if options.Model == "" {
 		options.Model = DefaultModel
 	}
@@ -198,6 +197,7 @@ func New(options Options) (*TTS, error) {
 	if client == nil {
 		client = &http.Client{}
 	}
+	client = keys.WrapClient(client, keypool.Header("x-goog-api-key", ""))
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()

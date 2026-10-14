@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
@@ -83,6 +84,7 @@ type dialogueServerMessage struct {
 // Barge-in has no cancel frame either, so it replaces the socket.
 type Dialogue struct {
 	options Options
+	keys    *keypool.Pool
 	logger  *slog.Logger
 	emitter *tts.Emitter
 
@@ -112,7 +114,7 @@ type Dialogue struct {
 
 // NewDialogue validates the options and returns an unstarted dialogue provider.
 func NewDialogue(options Options) (*Dialogue, error) {
-	options, logger, err := normalize(options, DefaultDialogueModel)
+	options, keys, logger, err := normalize(options, DefaultDialogueModel)
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +129,7 @@ func NewDialogue(options Options) (*Dialogue, error) {
 
 	return &Dialogue{
 		options:  options,
+		keys:     keys,
 		logger:   logger.With("provider", ProviderName, "model", options.Model),
 		emitter:  tts.NewEmitter(64),
 		done:     make(chan struct{}),
@@ -321,9 +324,9 @@ func (d *Dialogue) url() string {
 // dial opens a connection, registers the voice and starts reading.
 func (d *Dialogue) dial(ctx context.Context) error {
 	dialer := &websocket.Dialer{HandshakeTimeout: d.options.HandshakeTimeout}
-	header := http.Header{"xi-api-key": []string{d.options.APIKey}}
-
-	conn, response, err := dialer.DialContext(ctx, d.url(), header)
+	conn, response, key, err := d.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+		return d.url(), http.Header{"xi-api-key": []string{key}}
+	})
 	if err != nil {
 		if response != nil {
 			return stack.Wrap(fmt.Errorf("elevenlabs: dial: %w (http %d)", err, response.StatusCode))
@@ -349,7 +352,7 @@ func (d *Dialogue) dial(ctx context.Context) error {
 		return stack.Wrap(fmt.Errorf("elevenlabs: register voice: %w", err))
 	}
 
-	go d.readLoop(conn)
+	go d.readLoop(conn, key)
 	return nil
 }
 
@@ -458,7 +461,7 @@ func (d *Dialogue) send(message dialogueClientMessage) error {
 // readLoop turns server frames into events until this connection ends. It takes the
 // connection rather than reading the field, so a loop left over from a socket that
 // barge-in replaced cannot report the new one's audio.
-func (d *Dialogue) readLoop(conn *websocket.Conn) {
+func (d *Dialogue) readLoop(conn *websocket.Conn, key string) {
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -477,6 +480,9 @@ func (d *Dialogue) readLoop(conn *websocket.Conn) {
 		if err := json.Unmarshal(raw, &message); err != nil {
 			d.logger.Debug("undecodable frame", "error", err)
 			continue
+		}
+		if message.Error == quotaExceeded {
+			d.keys.Cooldown(key, keypool.MaxCooldown)
 		}
 		if d.current(conn) {
 			d.handleMessage(message)

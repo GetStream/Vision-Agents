@@ -3,6 +3,7 @@ package fal
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"image"
@@ -33,6 +34,8 @@ type queue struct {
 	pending int
 	// submitStatus, when set, is what a submission is refused with.
 	submitStatus int
+	// limitedKey, when set, is a key whose submissions are rate limited.
+	limitedKey string
 	// job, when set, is what a submission answers with instead of this queue's own
 	// addresses.
 	job map[string]string
@@ -63,6 +66,10 @@ func (q *queue) serve(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		q.submitted = append(q.submitted, body)
+		if q.limitedKey != "" && r.Header.Get("Authorization") == "Key "+q.limitedKey {
+			http.Error(w, `{"detail":"slow down"}`, http.StatusTooManyRequests)
+			return
+		}
 		if q.submitStatus != 0 {
 			http.Error(w, `{"detail":"no"}`, q.submitStatus)
 			return
@@ -156,6 +163,24 @@ func (s *FALSuite) TestAKeyIsRequired() {
 
 	_, err := New(Options{Model: model})
 	s.ErrorContains(err, apiKeyEnvVar)
+}
+
+func (s *FALSuite) TestARateLimitedSubmissionGoesToTheNextKeyAndTheJobStaysOnIt() {
+	first, second := "fal-"+rand.Text(), "fal-"+rand.Text()
+	provider, err := New(Options{APIKey: first + "," + second, Model: model, BaseURL: s.queue.server.URL})
+	s.Require().NoError(err)
+	s.queue.limitedKey = first
+	s.queue.pending = 1
+	s.queue.finishWith(map[string]any{"images": []any{inline("png", picture("png", 1024, 1024))}})
+
+	drawn, err := provider.Generate(s.ctx, imagegen.Request{Prompt: "A kettle"})
+	s.Require().NoError(err)
+
+	s.Len(drawn.Images, 1)
+	s.Equal([]string{
+		"Key " + first, "Key " + second,
+		"Key " + second, "Key " + second, "Key " + second,
+	}, s.queue.keys, "the job is polled and fetched with the key that submitted it")
 }
 
 func (s *FALSuite) TestAModelThatIsNotAFALEndpointIsRefused() {

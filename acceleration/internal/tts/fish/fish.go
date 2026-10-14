@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
@@ -101,12 +102,11 @@ type TTS struct {
 
 // New validates the options and returns an unstarted provider.
 func New(options Options) (*TTS, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv("FISH_API_KEY")
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, "FISH_API_KEY")
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("fish: api key is required (set FISH_API_KEY)"))
 	}
+	options.APIKey = keys.Peek()
 	if options.Voice == "" {
 		options.Voice = os.Getenv("FISH_VOICE_ID")
 	}
@@ -129,6 +129,7 @@ func New(options Options) (*TTS, error) {
 	if client == nil {
 		client = &http.Client{}
 	}
+	client = keys.WrapClient(client, keypool.Bearer)
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()

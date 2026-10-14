@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -188,12 +188,13 @@ type STT struct {
 
 // New validates the options and returns an unstarted provider.
 func New(options Options) (*STT, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar)
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(fmt.Errorf("muse: api key is required (set %s)", apiKeyEnvVar))
 	}
+	// The key goes in the setup frame rather than the handshake, so a refusal cannot be
+	// told from one; sessions only take the keys in turn.
+	options.APIKey = keys.Next()
 	if options.URL == "" {
 		options.URL = DefaultURL
 	}

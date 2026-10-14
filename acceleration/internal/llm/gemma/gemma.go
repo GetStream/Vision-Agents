@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -47,7 +48,7 @@ type Options struct {
 // makes an undeployed Gemma fail over rather than hang.
 func New(options Options) (*openaicompat.LLM, error) {
 	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
+		options.APIKey = keypool.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
 		return nil, stack.Wrap(errors.New("gemma: " + apiKeyEnvVar + " is required"))

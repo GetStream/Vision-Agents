@@ -10,11 +10,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -57,12 +57,11 @@ type Prerecorded struct {
 
 // NewPrerecorded validates the options and returns a transcriber.
 func NewPrerecorded(options PrerecordedOptions) (*Prerecorded, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv("DEEPGRAM_API_KEY")
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, "DEEPGRAM_API_KEY")
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("deepgram: api key is required (set DEEPGRAM_API_KEY)"))
 	}
+	options.APIKey = keys.Peek()
 	if options.Model == "" {
 		options.Model = PrerecordedModel
 	}
@@ -76,7 +75,7 @@ func NewPrerecorded(options PrerecordedOptions) (*Prerecorded, error) {
 
 	return &Prerecorded{
 		options: options,
-		client:  &http.Client{Timeout: prerecordedTimeout},
+		client:  keys.WrapClient(&http.Client{Timeout: prerecordedTimeout}, keypool.Header("Authorization", "Token ")),
 		logger:  logger.With("provider", ProviderName, "model", options.Model),
 	}, nil
 }
