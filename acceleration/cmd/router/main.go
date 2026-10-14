@@ -576,7 +576,12 @@ func run(settings config.Config, logger *slog.Logger) error {
 	case liveClient == nil:
 		logger.Warn("no redis configured, daily limits will not be enforced", "setting", "redis.addr")
 	default:
-		if limiter, err = quota.New(liveClient.Redis(), limits, policies, logger); err != nil {
+		// A nil *Enforcer in the interface is not a nil Source.
+		var source quota.Source
+		if policies != nil {
+			source = policies
+		}
+		if limiter, err = quota.New(liveClient.Redis(), limits, source, logger); err != nil {
 			return err
 		}
 		if !limits.Enforced() {
