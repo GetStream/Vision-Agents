@@ -102,6 +102,10 @@ tests/Unit tests/Live tests/Support tests/server/router.php
   in `FolderTest`; if it moves, the port is wrong, not the pin. `.agent_sync` is
   `{"hash","synced_at":"...+00:00"}`; a matching stamp reads the stored config instead of
   syncing. Unknown `agent.yaml` keys are refused.
+- **`connectors:` is read like Go's** (`Folder/Connector.php`): a string is a session binding,
+  an object `{name, connector, tools, connection, required}`; absent sends nothing, `[]` clears.
+  A fixed `connection` is resolved through `GET /v1/agents/connections` (every page) at sync
+  time. `plugins` still sync and warn through `Agent`'s PSR-3 `logger`.
 - **Rewind takes a response `id`**, never a `turn_id`, and answers 204. Fork takes
   `responseId` in `ForkSessionRequest`. A persisted conversation refuses rewind with 400.
 - **`responses->create()` returns while the response is `running`.** It does not wait; the

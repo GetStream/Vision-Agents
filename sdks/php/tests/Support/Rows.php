@@ -29,6 +29,32 @@ final class Rows
     }
 
     /**
+     * An app's connection to a connector.
+     *
+     * @return array<string, mixed>
+     */
+    public static function connection(string $id, string $connectorId, ?string $label = null): array
+    {
+        return [
+            'id' => $id,
+            'connector_id' => $connectorId,
+            'auth_scheme' => 'oauth2_code',
+            'created_at' => self::AT,
+            'updated_at' => self::AT,
+            'definition_revision' => 1,
+            'definition_status' => 'current',
+            'granted_scopes' => [],
+            'inputs' => new \stdClass(),
+            'metadata' => new \stdClass(),
+            'owner' => ['type' => 'app'],
+            'revision' => 1,
+            'status' => 'connected',
+            'used_by' => [],
+            ...($label === null ? [] : ['label' => $label]),
+        ];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public static function response(string $id, string $status = 'completed'): array

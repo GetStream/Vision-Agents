@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use axum::http::Method;
 use serde_json::{Value, json};
-use support::{Server, config, session};
+use support::{Server, config, connection, connections, refusal, session};
 use vision_agents::{Agent, Harness, InboundCall, InboundMessage, Session, Skill, folder, types};
 
 fn agent(server: &Server, name: &str) -> Agent {
@@ -739,4 +739,388 @@ fn a_knowledge_base_belongs_to_a_stored_config() {
 fn a_name_becomes_something_a_call_can_be_joined_under() {
     assert_eq!(vision_agents::user_id_of("Jean Luc!"), "jean-luc");
     assert_eq!(vision_agents::user_id_of("¡!"), "vision-agent");
+}
+
+async fn synced_connectors(server: &Server, declaration: &str) -> vision_agents::Result<Value> {
+    synced(server);
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "agent.yaml", declaration);
+    Agent::from_folder(root.path())
+        .unwrap()
+        .client(server.client())
+        .sync()
+        .await?;
+    Ok(server.request(Method::POST, "/v1/agents/sync").body)
+}
+
+fn binding(name: &str, connector: &str, patterns: Value, connection: Value) -> Value {
+    json!({
+        "name": name,
+        "connector_id": connector,
+        "tools": [],
+        "tool_patterns": patterns,
+        "connection": connection,
+    })
+}
+
+#[tokio::test]
+async fn a_connector_named_alone_is_a_session_binding_to_every_tool() {
+    let server = Server::start().await;
+
+    let body = synced_connectors(&server, "name: jean\nconnectors:\n  - github\n")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        body["connectors"],
+        json!([binding(
+            "github",
+            "github",
+            json!(["*"]),
+            json!({"type": "session"})
+        )])
+    );
+    assert!(
+        server
+            .requests(Method::GET, "/v1/agents/connections")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_connector_mapping_defaults_its_connector_to_its_name_and_sends_tools_as_written() {
+    let server = Server::start().await;
+
+    let body = synced_connectors(
+        &server,
+        "name: jean
+connectors:
+  - name: issues
+    connector: linear
+    tools: [search, create_*]
+    required: true
+  - name: slack
+  - name: notes
+    tools:
+",
+    )
+    .await
+    .unwrap();
+
+    let session = json!({"type": "session"});
+    let mut issues = binding(
+        "issues",
+        "linear",
+        json!(["search", "create_*"]),
+        session.clone(),
+    );
+    issues["required"] = json!(true);
+    assert_eq!(
+        body["connectors"],
+        json!([
+            issues,
+            binding("slack", "slack", json!(["*"]), session.clone()),
+            binding("notes", "notes", json!(["*"]), session),
+        ])
+    );
+}
+
+#[tokio::test]
+async fn a_connection_named_by_id_is_fixed_and_wins_over_a_label_spelt_the_same() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/v1/agents/connections",
+        200,
+        connections(
+            vec![
+                connection("conn_a", "github", Some("conn_b")),
+                connection("conn_b", "github", None),
+            ],
+            None,
+        ),
+    );
+
+    let body = synced_connectors(
+        &server,
+        "connectors:\n  - name: github\n    connection: conn_b\n",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        body["connectors"],
+        json!([binding(
+            "github",
+            "github",
+            json!(["*"]),
+            json!({"type": "fixed", "connection_id": "conn_b"})
+        )])
+    );
+    let listed = server.request(Method::GET, "/v1/agents/connections");
+    assert_eq!(listed.query, "owner_type=app&connector_id=github");
+}
+
+#[tokio::test]
+async fn a_connection_named_by_its_only_label_is_fixed_to_its_id() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/v1/agents/connections",
+        200,
+        connections(
+            vec![
+                connection("conn_a", "linear", Some("personal")),
+                connection("conn_b", "linear", Some("work")),
+            ],
+            None,
+        ),
+    );
+
+    let body = synced_connectors(
+        &server,
+        "connectors:\n  - name: issues\n    connector: linear\n    connection: work\n",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        body["connectors"][0]["connection"],
+        json!({"type": "fixed", "connection_id": "conn_b"})
+    );
+    let listed = server.request(Method::GET, "/v1/agents/connections");
+    assert_eq!(listed.query, "owner_type=app&connector_id=linear");
+}
+
+#[tokio::test]
+async fn every_page_of_connections_is_read_before_an_id_or_a_label_is_chosen() {
+    let server = Server::start().await;
+    let page = |cursor: Option<&str>| match cursor {
+        None => connections(
+            vec![connection("conn_a", "github", Some("conn_b"))],
+            Some("c2"),
+        ),
+        Some(_) => connections(vec![connection("conn_b", "github", None)], None),
+    };
+    server.route(Method::GET, "/v1/agents/connections", 200, page(None));
+    server.route(Method::GET, "/v1/agents/connections", 200, page(Some("c2")));
+
+    let body = synced_connectors(
+        &server,
+        "connectors:\n  - name: github\n    connection: conn_b\n",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        body["connectors"][0]["connection"],
+        json!({"type": "fixed", "connection_id": "conn_b"})
+    );
+    let listed = server.requests(Method::GET, "/v1/agents/connections");
+    assert_eq!(listed.len(), 2);
+    assert!(listed[1].query.contains("cursor=c2"), "{}", listed[1].query);
+}
+
+#[tokio::test]
+async fn a_connection_no_one_or_two_labels_name_is_refused_before_anything_is_synced() {
+    for (items, wording) in [
+        (
+            vec![connection("conn_a", "github", Some("personal"))],
+            "connector \"github\": no app connection with id or label \"work\"",
+        ),
+        (
+            vec![
+                connection("conn_a", "github", Some("work")),
+                connection("conn_b", "github", Some("work")),
+            ],
+            "connector \"github\": \"work\" matches 2 app connections",
+        ),
+    ] {
+        let server = Server::start().await;
+        server.route(
+            Method::GET,
+            "/v1/agents/connections",
+            200,
+            connections(items, None),
+        );
+        synced(&server);
+        let root = tempfile::tempdir().unwrap();
+        write(
+            root.path(),
+            "agent.yaml",
+            "connectors:\n  - name: github\n    connection: work\n",
+        );
+
+        let error = Agent::from_folder(root.path())
+            .unwrap()
+            .client(server.client())
+            .sync()
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), wording);
+        assert!(server.requests(Method::POST, "/v1/agents/sync").is_empty());
+    }
+}
+
+#[tokio::test]
+async fn leaving_connectors_out_sends_none_and_keeps_the_stored_bindings() {
+    let server = Server::start().await;
+
+    let body = synced_connectors(&server, "name: jean\nllm: openai/gpt-5.6\n")
+        .await
+        .unwrap();
+
+    assert!(
+        body.get("connectors").is_none(),
+        "connectors went as {body}"
+    );
+    assert!(
+        server
+            .requests(Method::GET, "/v1/agents/connections")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn an_empty_connectors_list_is_sent_as_an_empty_list() {
+    let server = Server::start().await;
+
+    let body = synced_connectors(&server, "name: jean\nconnectors: []\n")
+        .await
+        .unwrap();
+
+    assert_eq!(body["connectors"], json!([]));
+}
+
+#[tokio::test]
+async fn a_null_connectors_value_sends_none_and_keeps_the_stored_bindings() {
+    let server = Server::start().await;
+
+    let body = synced_connectors(&server, "name: jean\nconnectors:\n")
+        .await
+        .unwrap();
+
+    assert!(
+        body.get("connectors").is_none(),
+        "connectors went as {body}"
+    );
+    assert!(
+        server
+            .requests(Method::GET, "/v1/agents/connections")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_repeated_next_cursor_stops_after_exactly_two_list_calls() {
+    let server = Server::start().await;
+    // Always replies with next_cursor "c1", even when the request already carries cursor "c1".
+    server.route(
+        Method::GET,
+        "/v1/agents/connections",
+        200,
+        connections(vec![connection("conn_a", "github", None)], Some("c1")),
+    );
+    synced(&server);
+
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "agent.yaml",
+        "name: jean\nconnectors:\n  - name: github\n    connection: conn_a\n",
+    );
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        Agent::from_folder(root.path())
+            .unwrap()
+            .client(server.client())
+            .sync(),
+    )
+    .await
+    .expect("sync timed out — repeated-cursor guard is missing")
+    .unwrap();
+
+    assert_eq!(
+        server.requests(Method::GET, "/v1/agents/connections").len(),
+        2,
+        "the repeated-cursor guard should stop after the cursor is seen a second time"
+    );
+}
+
+#[tokio::test]
+async fn a_failing_connections_list_is_wrapped_with_the_connector_name() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/v1/agents/connections",
+        422,
+        refusal("validation_failed", "validation_failed", "bad request"),
+    );
+    synced(&server);
+
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "agent.yaml",
+        "name: jean\nconnectors:\n  - name: github\n    connection: conn_a\n",
+    );
+    let error = Agent::from_folder(root.path())
+        .unwrap()
+        .client(server.client())
+        .sync()
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("connector \"github\": listing connections:"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn sync_the_directory_in_plugin_warning_dir() {
+    let Ok(root) = std::env::var("PLUGIN_WARNING_DIR") else {
+        return;
+    };
+    let server = Server::start().await;
+    synced(&server);
+    Agent::from_folder(root)
+        .unwrap()
+        .client(server.client())
+        .sync()
+        .await
+        .unwrap();
+}
+
+#[test]
+fn plugins_still_sync_and_are_warned_of_once_per_sync() {
+    let warning = "agent.yaml plugins are deprecated: rename plugins to connectors";
+    for (declaration, warnings) in [
+        ("name: jean\nplugins: [sentry]\n", 1),
+        ("name: jean\nconnectors: [sentry]\n", 0),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        write(root.path(), "agent.yaml", declaration);
+
+        let ran = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "sync_the_directory_in_plugin_warning_dir",
+                "--nocapture",
+            ])
+            .env("PLUGIN_WARNING_DIR", root.path())
+            .output()
+            .unwrap();
+
+        let stderr = String::from_utf8_lossy(&ran.stderr);
+        assert!(ran.status.success(), "{stderr}");
+        assert_eq!(
+            stderr.matches(warning).count(),
+            warnings,
+            "{declaration:?}: {stderr}"
+        );
+    }
 }
