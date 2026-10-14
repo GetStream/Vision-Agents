@@ -323,7 +323,7 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 	}
 
 	placed, err := s.phone.Call(ctx, call)
-	if errors.Is(err, dlc.ErrRefused) {
+	if errors.Is(err, dlc.ErrRefused) || errors.Is(err, phone.ErrDestinationRefused) {
 		return nil, forbidden(err.Error())
 	}
 	if isNumberNotHeld(err) {
@@ -403,6 +403,9 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 	transfer.StreamApp = app
 
 	placed, err := s.phone.Transfer(ctx, transfer)
+	if errors.Is(err, phone.ErrDestinationRefused) {
+		return nil, forbidden(err.Error())
+	}
 	if errors.Is(err, dlc.ErrRefused) {
 		return nil, forbidden(err.Error())
 	}
