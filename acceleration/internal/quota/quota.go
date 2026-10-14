@@ -122,6 +122,7 @@ func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.C
 	if !limits.Enforced() {
 		return Status{}, nil
 	}
+	reset := nextMidnight(now)
 	var nearest Status
 	for _, key := range keys {
 		spent, err := l.spent(ctx, key)
@@ -129,8 +130,8 @@ func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.C
 			l.logger.Error("could not read a quota, allowing the request", "error", err)
 			return Status{}, nil
 		}
-		nearest = closer(nearest, limits.MessagesPerDay, spent.messages, nextMidnight(now))
-		nearest = closer(nearest, limits.TokensPerDay, spent.tokens, nextMidnight(now))
+		nearest = closer(nearest, limits.MessagesPerDay, spent.messages, reset)
+		nearest = closer(nearest, limits.TokensPerDay, spent.tokens, reset)
 		if limits.MessagesPerDay > 0 && spent.messages >= limits.MessagesPerDay {
 			return nearest, stack.Wrap(fmt.Errorf("%w: %d messages a day", ErrExhausted, limits.MessagesPerDay))
 		}

@@ -10,17 +10,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 )
 
-// retryAfter is what an exhausted caller is told to wait. A daily limit resets at midnight
-// UTC, and the honest number is the time until then.
-func retryAfter(now time.Time) int {
-	midnight := now.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
-	seconds := int(midnight.Sub(now.UTC()).Seconds())
-	if seconds < 1 {
-		return 1
-	}
-	return seconds
-}
-
 // rateLimitHeaders tells a counted caller where they stand, the way Stream Chat does: the
 // day's allowance, what is left of it and the unix time it resets at. A caller nothing was
 // counted for is told nothing.
@@ -78,7 +67,7 @@ func (s *Server) withQuota(next http.Handler) http.Handler {
 			}
 			s.logger.Info("refused a caller who has spent their day",
 				"method", r.Method, "path", r.URL.Path, "customer", customerID)
-			w.Header().Set("Retry-After", strconv.Itoa(retryAfter(time.Now())))
+			w.Header().Set("Retry-After", strconv.Itoa(max(int(time.Until(status.Reset).Seconds()), 1)))
 			writeError(w, rateLimited(err.Error()))
 			return
 		}

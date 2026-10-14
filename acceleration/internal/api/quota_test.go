@@ -127,7 +127,12 @@ func (s *QuotaSuite) TestAnAppsOwnLimitIsWhatItsUsersAreRefusedAt() {
 
 	response := s.client.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 	s.Equal(http.StatusTooManyRequests, response.StatusCode)
-	s.NotEmpty(response.Header.Get("Retry-After"))
+	retryAfter, err := strconv.Atoi(response.Header.Get("Retry-After"))
+	s.Require().NoError(err)
+	reset, err := strconv.ParseInt(response.Header.Get("X-RateLimit-Reset"), 10, 64)
+	s.Require().NoError(err)
+	// Both headers name the same midnight: the wait is what is left of it, to the second.
+	s.InDelta(time.Until(time.Unix(reset, 0)).Seconds(), float64(retryAfter), 2)
 	s.Equal("3", response.Header.Get("X-RateLimit-Limit"))
 	s.Equal("0", response.Header.Get("X-RateLimit-Remaining"))
 	var refused ErrorResponse
