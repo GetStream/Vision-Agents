@@ -27,6 +27,8 @@ final readonly class Declaration
      * @param list<string> $plugins
      * @param list<string> $keyterms
      * @param array<string, string> $tags
+     * @param ?list<Connector> $connectors null when the declaration says nothing, which leaves
+     *     the stored bindings; empty when it lists none, which removes them
      */
     public function __construct(
         public string $name = '',
@@ -47,6 +49,7 @@ final readonly class Declaration
         public array $tags = [],
         public ?SessionVideo $video = null,
         public ?AgentDispatch $dispatch = null,
+        public ?array $connectors = null,
     ) {
     }
 
@@ -64,6 +67,7 @@ final readonly class Declaration
         }
 
         $values = [];
+        $connectors = null;
         foreach ($parsed as $key => $value) {
             $key = (string) $key;
             if (in_array($key, self::STRINGS, true)) {
@@ -80,8 +84,17 @@ final readonly class Declaration
                 $values['video'] = self::video($value);
             } elseif ($key === 'dispatch') {
                 $values['dispatch'] = self::dispatch($value);
+            } elseif ($key === 'connectors') {
+                $connectors = self::connectors($value);
             } else {
                 throw new ConfigurationException("\"{$key}\" is not something agent.yaml declares");
+            }
+        }
+
+        $plugins = self::pickList($values, 'plugins');
+        foreach ($connectors ?? [] as $connector) {
+            if (in_array($connector->name, $plugins, true)) {
+                throw new ConfigurationException("\"{$connector->name}\" is named under both connectors and plugins");
             }
         }
 
@@ -99,11 +112,12 @@ final readonly class Declaration
             search: self::pick($values, 'search'),
             greeting: ($values['greeting'] ?? null) instanceof Greeting ? $values['greeting'] : null,
             sandbox: self::pick($values, 'sandbox'),
-            plugins: self::pickList($values, 'plugins'),
+            plugins: $plugins,
             keyterms: self::pickList($values, 'keyterms'),
             tags: self::pickTags($values),
             video: ($values['video'] ?? null) instanceof SessionVideo ? $values['video'] : null,
             dispatch: ($values['dispatch'] ?? null) instanceof AgentDispatch ? $values['dispatch'] : null,
+            connectors: $connectors,
         );
     }
 
@@ -204,6 +218,23 @@ final readonly class Declaration
             }
         }
         return new Greeting(text: $text, mode: $mode);
+    }
+
+    /**
+     * Null when the key has no value, which sends nothing; a list, even an empty one, is the
+     * whole of the agent's bindings.
+     *
+     * @return ?list<Connector>
+     */
+    private static function connectors(mixed $value): ?array
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (!is_array($value) || !array_is_list($value)) {
+            throw new ConfigurationException('connectors must be a list');
+        }
+        return array_map(Connector::fromYaml(...), $value);
     }
 
     /**
