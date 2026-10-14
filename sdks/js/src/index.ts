@@ -7,7 +7,7 @@
  * conversations that user owns and nothing about how an agent is configured.
  *
  * Reading an agent directory needs a filesystem, so `loadFolder` lives in
- * `@stream-io/vision-agents/node`.
+ * `@stream-io/calypso/node`.
  */
 
 export {

@@ -612,7 +612,7 @@ describe("Session", () => {
 
     await assert.rejects(session.chat(), (error: Error) => {
       assert.ok(error instanceof ConfigurationError);
-      assert.match(error.message, /import "@stream-io\/vision-agents\/chat"/);
+      assert.match(error.message, /import "@stream-io\/calypso\/chat"/);
       return true;
     });
     await session.close();
