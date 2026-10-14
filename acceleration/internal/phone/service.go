@@ -584,6 +584,11 @@ type Placed struct {
 // rule the answered leg arrives with nothing pointing it at a call, so this creates both and
 // pins the rule to the call the agent is waiting in, the way Transfer does.
 func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error) {
+	if request.To != "" {
+		if err := Dialable(request.To); err != nil {
+			return Placed{}, err
+		}
+	}
 	if err := s.gate.Allow(ctx, request.Owner.CustomerID, dlc.Voice, request.To); err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
@@ -916,6 +921,11 @@ type TransferRequest struct {
 // the trunk is made, and keeping SIP credentials to reuse later is a worse trade than
 // making a second trunk.
 func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed, error) {
+	if request.To != "" {
+		if err := Dialable(request.To); err != nil {
+			return Dialed{}, err
+		}
+	}
 	// A transfer dials someone as surely as a call does, so it answers to the same gate.
 	if err := s.gate.Allow(ctx, request.Owner.CustomerID, dlc.Voice, request.To); err != nil {
 		return Dialed{}, stack.Wrap(err)
