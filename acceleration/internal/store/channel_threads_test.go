@@ -293,6 +293,22 @@ func (s *StoreSuite) TestTheConfigsThatBindAConnectionAreFound() {
 	s.Equal(second, configs[1].ID)
 }
 
+// AI-1049, AI-1048: a test copy (DraftOfTag) answers no channel message and subscribes to no
+// event, so it is not among the configs that bind a connection.
+func (s *StoreSuite) TestATestCopyIsNotAmongTheConfigsThatBindAConnection() {
+	bot := s.connection("acme-app", nil)
+	live := s.bind("acme-app", fixedBinding(bot.ID))
+	copied := s.bind("acme-app", fixedBinding(bot.ID))
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE agent_configs SET tags = ?::jsonb WHERE id = ?", `{"draft_of": "`+live+`"}`, copied)
+	s.Require().NoError(err)
+
+	configs, err := s.store.AgentConfigsBindingConnection(s.ctx, "acme-app", bot.ID)
+
+	s.Require().NoError(err)
+	s.Require().Len(configs, 1)
+	s.Equal(live, configs[0].ID)
+}
+
 func (s *StoreSuite) TestOnlyTheThreadThatWasLinkedIsLinked() {
 	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "C0000CHAN:1"))
 	s.Require().NoError(err)

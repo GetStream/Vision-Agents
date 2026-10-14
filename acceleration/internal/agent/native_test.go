@@ -2,12 +2,15 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -16,10 +19,14 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sts/gemini"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sts/openailive"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts/openairealtime"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
 // heldPlayback models a track whose queued speech cannot play until it is dropped.
@@ -59,7 +66,7 @@ func (s *AgentSuite) TestNativeInterruptionStopsBlockedPlaybackAndKeepsTheNextRe
 	agent.pipe = newPipeline(agent.ctx, true)
 	agent.pipe.running.Add(2)
 	go agent.receiveSTS(agent.pipe, source, ordered)
-	go agent.consumeSTS(agent.pipe, ordered)
+	go agent.consumeSTS(agent.pipe, nil, ordered)
 	s.T().Cleanup(func() { close(source) })
 
 	pcm := audio.PcmData{Samples: []int16{1, 2, 3}, SampleRate: 24000, Channels: 1}
@@ -89,6 +96,7 @@ func (s *AgentSuite) TestNativeInterruptionStopsBlockedPlaybackAndKeepsTheNextRe
 type nativePeer struct {
 	conn   *websocket.Conn
 	frames chan map[string]json.RawMessage
+	setup  json.RawMessage
 }
 
 func (s *AgentSuite) joinNativeDelegating() *nativePeer {
@@ -177,7 +185,7 @@ func (s *AgentSuite) TestNativeDelegationKeepsTalkingAndDeliversTheResultWhenIdl
 	s.Contains(string(setup["session"]), "delegate_skill")
 	s.Contains(string(setup["session"]), "cancel_skill")
 	s.Nil(s.agent.LLM(), "STS must not open a text conversation model")
-	turnID, err := s.agent.RespondTo(s.ctx, "My booking is for six people", nil)
+	turnID, err := s.agent.RespondTo(s.ctx, "My booking is for six people", nil, options.LLM{})
 	s.Require().NoError(err)
 	s.Empty(turnID, "a native agent names its own turns")
 	s.nativeFrame(peer, "response.create")
@@ -268,4 +276,411 @@ func (s *AgentSuite) TestNativeToolCancellationBeforeExecution() {
 	s.ErrorIs(result.Err, context.Canceled)
 	s.False(s.agent.delegating())
 	s.Zero(countOf[Delegated](s.reported()))
+}
+
+type liveRetryMode struct {
+	rejectFrom     int
+	withholdAt     int
+	dropEvery      bool
+	failFirstWrite bool
+}
+
+type failedAudioWriteSTS struct{ sts.STS }
+
+func (failedAudioWriteSTS) ProcessAudio(sts.PcmData, sts.Participant) error {
+	return errors.New("test audio write failure")
+}
+
+type liveRetryFixture struct {
+	peers    chan *nativePeer
+	attempts atomic.Int32
+}
+
+func (s *AgentSuite) joinNative(registry *stsrouter.Registry, opts Options) {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	router, err := stsrouter.New(stsrouter.Options{Config: config[routing.STS], Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	s.edge = newLoopbackEdge()
+	opts.Edge = s.edge
+	opts.STS = router
+	agent, err := New(opts)
+	s.Require().NoError(err)
+	s.agent = agent
+	s.events = collect(agent)
+	s.T().Cleanup(func() { _ = agent.Close() })
+	s.Require().NoError(agent.Join(s.ctx))
+}
+
+func (s *AgentSuite) newLiveRetryFixture(mode liveRetryMode, tools harness.Tools, runner ToolRunner) *liveRetryFixture {
+	fixture := &liveRetryFixture{peers: make(chan *nativePeer, 8)}
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		var start struct {
+			Session json.RawMessage `json:"session"`
+		}
+		if conn.ReadJSON(&start) != nil {
+			return
+		}
+		attempt := int(fixture.attempts.Add(1))
+		if mode.withholdAt == attempt {
+			_, _, _ = conn.ReadMessage()
+			return
+		}
+		if mode.rejectFrom > 0 && attempt >= mode.rejectFrom {
+			_ = conn.WriteJSON(map[string]any{"type": "error", "error": map[string]any{"code": "rejected", "message": "setup rejected"}})
+			return
+		}
+		if conn.WriteJSON(map[string]any{"type": "session.started", "session": map[string]any{"id": "test-live", "model": "gpt-live-1"}}) != nil {
+			return
+		}
+		peer := &nativePeer{conn: conn, frames: make(chan map[string]json.RawMessage, 64), setup: start.Session}
+		select {
+		case fixture.peers <- peer:
+		default:
+		}
+		if mode.dropEvery {
+			return
+		}
+		for {
+			var frame map[string]json.RawMessage
+			if conn.ReadJSON(&frame) != nil {
+				return
+			}
+			peer.frames <- frame
+		}
+	}))
+	s.T().Cleanup(server.Close)
+	registry := stsrouter.NewRegistry()
+	registry.Register("openai", func(spec routing.Spec) (sts.STS, error) {
+		session, err := openailive.New(openailive.Options{
+			APIKey: "test-key", URL: "ws" + strings.TrimPrefix(server.URL, "http"),
+			Model: spec.Model, Instructions: spec.STS.Instructions,
+			ReplyGap: time.Minute, HandshakeTimeout: 5 * time.Second,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if mode.failFirstWrite && fixture.attempts.Load() == 0 {
+			return failedAudioWriteSTS{STS: session}, nil
+		}
+		return session, nil
+	})
+	s.joinNative(registry, Options{
+		CustomerID: "acme", STSTarget: "openai/gpt-live-1",
+		Tools: tools, ToolRunner: runner,
+	})
+	return fixture
+}
+
+func (s *AgentSuite) nextNativePeer(peers <-chan *nativePeer) *nativePeer {
+	select {
+	case peer := <-peers:
+		return peer
+	case <-time.After(settleFor):
+		s.FailNow("the live session did not connect")
+		return nil
+	}
+}
+
+func (s *AgentSuite) TestLosingTheLiveSocketRecoversTheConversationAndAudio() {
+	fixture := s.newLiveRetryFixture(liveRetryMode{}, harness.Tools{}, nil)
+	oldPeer := s.nextNativePeer(fixture.peers)
+	oldSession := s.agent.speech()
+	_, err := s.agent.RespondTo(s.ctx, "The delivery is for 12 Oak Street", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeSend(oldPeer, `{"type":"session.output_audio.delta","delta":"AQACAA=="}`)
+	s.nativeSend(oldPeer, `{"type":"session.output_transcript.delta","delta":"Your order is on its way."}`)
+	s.Require().Eventually(func() bool {
+		return len(s.edge.heard()) == 1 && countOf[ResponseDelta](s.events.seen()) == 1
+	}, settleFor, time.Millisecond)
+	oldReply, _ := firstOf[Responding](s.events.seen())
+	s.Equal([]int16{1, 2}, s.edge.heard()[0].Samples)
+	s.nativeSend(oldPeer, `{"type":"session.input_transcript.delta","delta":"unfinished caller words"}`)
+	s.Eventually(func() bool {
+		for _, event := range s.events.seen() {
+			if heard, ok := event.(Hearing); ok && strings.Contains(heard.Text, "unfinished caller words") {
+				return true
+			}
+		}
+		return false
+	}, settleFor, time.Millisecond)
+	_ = oldPeer.conn.Close()
+
+	newPeer := s.nextNativePeer(fixture.peers)
+	s.Equal(int32(2), fixture.attempts.Load())
+	s.Eventually(func() bool {
+		return !s.agent.switching.Load() && s.agent.speech() != oldSession
+	}, settleFor, time.Millisecond)
+	var setup struct {
+		Instructions string `json:"instructions"`
+	}
+	s.Require().NoError(json.Unmarshal(newPeer.setup, &setup))
+	s.Contains(setup.Instructions, "Caller: The delivery is for 12 Oak Street")
+	s.Contains(setup.Instructions, "You: Your order is on its way.")
+	s.Contains(setup.Instructions, "Caller: unfinished caller words")
+	s.Empty(s.edge.heard(), "recovery drops queued audio from the old reply")
+
+	pcm := audio.PcmData{Samples: []int16{5, 6, 7}, SampleRate: sts.InputSampleRate, Channels: 1}
+	s.edge.inbound <- InboundAudio{Audio: pcm, Participant: stt.Participant{ID: "caller"}}
+	frame := s.nativeFrame(newPeer, "session.input_audio.append")
+	encoded := strings.Trim(string(frame["audio"]), `"`)
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	s.Require().NoError(err)
+	s.Equal(audio.Resample(pcm, openailive.SampleRate, 1).Bytes(), data)
+
+	before := len(s.events.seen())
+	s.nativeSend(newPeer, `{"type":"session.output_audio.delta","delta":"AwAEAA=="}`)
+	s.Require().Eventually(func() bool {
+		return len(s.edge.heard()) == 1 && countOf[Responding](s.events.seen()[before:]) == 1
+	}, settleFor, time.Millisecond)
+	newReply, ok := firstOf[Responding](s.events.seen()[before:])
+	s.Require().True(ok)
+	s.NotEqual(oldReply.TurnID, newReply.TurnID)
+	s.Equal([]int16{3, 4}, s.edge.heard()[0].Samples)
+	s.Zero(countOf[Left](s.events.seen()))
+	s.Zero(countOf[Error](s.events.seen()), "a recovered socket loss is not an agent error")
+	s.Equal(int32(2), fixture.attempts.Load())
+	_ = newPeer.conn.Close()
+	thirdPeer := s.nextNativePeer(fixture.peers)
+	s.Require().NoError(json.Unmarshal(thirdPeer.setup, &setup))
+	s.Equal(1, strings.Count(setup.Instructions, "Caller: unfinished caller words"))
+	s.Equal(int32(3), fixture.attempts.Load())
+}
+
+func (s *AgentSuite) TestFailedNativeReplacementSetupsExhaustTheCallBudget() {
+	fixture := s.newLiveRetryFixture(liveRetryMode{rejectFrom: 2}, harness.Tools{}, nil)
+	_ = s.nextNativePeer(fixture.peers).conn.Close()
+	select {
+	case <-s.events.done:
+	case <-time.After(settleFor):
+		s.FailNow("the agent did not leave after exhausting native retries")
+	}
+	events := s.events.seen()
+	s.Equal(1, countOf[Left](events))
+	s.Equal(1, countOf[Error](events))
+	s.Equal(int32(4), fixture.attempts.Load())
+}
+
+func (s *AgentSuite) TestRepeatedNativeConnectAndDropUsesTheSameCallBudget() {
+	fixture := s.newLiveRetryFixture(liveRetryMode{dropEvery: true}, harness.Tools{}, nil)
+	select {
+	case <-s.events.done:
+	case <-time.After(settleFor):
+		s.FailNow("the agent did not leave after repeated native drops")
+	}
+	s.Equal(int32(4), fixture.attempts.Load())
+	s.Len(fixture.peers, 4)
+	s.Equal(1, countOf[Left](s.events.seen()))
+}
+
+func (s *AgentSuite) TestCleanNativeCloseDoesNotRetry() {
+	fixture := s.newLiveRetryFixture(liveRetryMode{}, harness.Tools{}, nil)
+	peer := s.nextNativePeer(fixture.peers)
+	s.nativeSend(peer, `{"type":"session.closed","reason":"finished"}`)
+	select {
+	case <-s.events.done:
+	case <-time.After(settleFor):
+		s.FailNow("the agent did not leave on a clean close")
+	}
+	s.Equal(int32(1), fixture.attempts.Load())
+	s.Equal(1, countOf[Left](s.events.seen()))
+}
+
+func (s *AgentSuite) TestNonfatalNativeAPIErrorKeepsTheSession() {
+	fixture := s.newLiveRetryFixture(liveRetryMode{}, harness.Tools{}, nil)
+	peer := s.nextNativePeer(fixture.peers)
+	s.nativeSend(peer, `{"type":"error","error":{"code":"transient","message":"request rejected"}}`)
+	s.Eventually(func() bool { return countOf[Error](s.events.seen()) == 1 }, settleFor, time.Millisecond)
+	s.nativeSend(peer, `{"type":"session.output_audio.delta","delta":"AQACAA=="}`)
+	s.Eventually(func() bool { return len(s.edge.heard()) == 1 }, settleFor, time.Millisecond)
+	s.Equal(1, int(fixture.attempts.Load()))
+	s.Zero(countOf[Left](s.events.seen()))
+}
+
+func (s *AgentSuite) TestANativeWriteFailureRecoversWithoutAReadError() {
+	fixture := s.newLiveRetryFixture(liveRetryMode{failFirstWrite: true}, harness.Tools{}, nil)
+	_ = s.nextNativePeer(fixture.peers)
+	pcm := audio.PcmData{Samples: []int16{5, 6, 7}, SampleRate: sts.InputSampleRate, Channels: 1}
+	s.edge.inbound <- InboundAudio{Audio: pcm, Participant: stt.Participant{ID: "caller"}}
+
+	peer := s.nextNativePeer(fixture.peers)
+	s.Equal(int32(2), fixture.attempts.Load())
+	s.Require().Eventually(func() bool { return !s.agent.switching.Load() }, settleFor, time.Millisecond)
+	s.edge.inbound <- InboundAudio{Audio: pcm, Participant: stt.Participant{ID: "caller"}}
+	frame := s.nativeFrame(peer, "session.input_audio.append")
+	encoded := strings.Trim(string(frame["audio"]), `"`)
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	s.Require().NoError(err)
+	s.Equal(audio.Resample(pcm, openailive.SampleRate, 1).Bytes(), data)
+	s.Equal(int32(2), fixture.attempts.Load())
+	s.Zero(countOf[Error](s.events.seen()))
+	s.Zero(countOf[Left](s.events.seen()))
+	_ = peer.conn.Close()
+}
+
+type heldNativeTool struct {
+	started chan llm.ToolCall
+	release chan struct{}
+	runs    atomic.Int32
+}
+
+func (r *heldNativeTool) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+	r.runs.Add(1)
+	r.started <- call
+	select {
+	case <-r.release:
+		return llm.TextParts("packed and ready"), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (s *AgentSuite) TestNativeRetryWaitsForAndReplaysACompletedTool() {
+	tools := harness.Tools{Tools: []harness.Tool{{
+		Name: "lookup_order", Description: "find the order",
+		Parameters: map[string]any{"type": "object", "properties": map[string]any{"order": map[string]any{"type": "string"}}},
+	}}}
+	runner := &heldNativeTool{started: make(chan llm.ToolCall, 1), release: make(chan struct{})}
+	fixture := s.newLiveRetryFixture(liveRetryMode{}, tools, runner)
+	oldPeer := s.nextNativePeer(fixture.peers)
+	s.nativeSend(oldPeer, `{"type":"response.event","delegation_id":"reply","event":{"type":"response.output_item.done","item":{"type":"function_call","call_id":"old-call","name":"lookup_order","arguments":"{\"order\":\"A42\"}"}}}`)
+	select {
+	case call := <-runner.started:
+		s.Equal("old-call", call.ID)
+	case <-time.After(settleFor):
+		s.FailNow("the registered tool did not start")
+	}
+	_ = oldPeer.conn.Close()
+	s.Eventually(func() bool { return s.agent.switching.Load() }, settleFor, time.Millisecond)
+	select {
+	case peer := <-fixture.peers:
+		s.Fail("replacement setup completed before the old tool finished", peer)
+	case <-time.After(200 * time.Millisecond):
+	}
+	s.Equal(int32(1), fixture.attempts.Load(), "no replacement setup began while the old tool was running")
+	close(runner.release)
+	newPeer := s.nextNativePeer(fixture.peers)
+	s.Equal(int32(2), fixture.attempts.Load())
+	var setup struct {
+		Instructions string `json:"instructions"`
+	}
+	s.Require().NoError(json.Unmarshal(newPeer.setup, &setup))
+	s.Contains(setup.Instructions, `Completed tool lookup_order({"order":"A42"}): packed and ready`)
+	s.NotContains(setup.Instructions, "old-call")
+	s.Equal(int32(1), runner.runs.Load())
+	s.Eventually(func() bool { return countOf[ToolRan](s.events.seen()) == 1 }, settleFor, time.Millisecond)
+	result, ok := firstOf[ToolRan](s.events.seen())
+	s.Require().True(ok)
+	s.Equal("packed and ready", result.Result)
+	s.Zero(countOf[Error](s.events.seen()))
+	s.Zero(countOf[Left](s.events.seen()))
+}
+
+func (s *AgentSuite) TestCloseCancelsAWithheldNativeReplacementHandshake() {
+	fixture := s.newLiveRetryFixture(liveRetryMode{withholdAt: 2}, harness.Tools{}, nil)
+	_ = s.nextNativePeer(fixture.peers).conn.Close()
+	s.Require().Eventually(func() bool { return fixture.attempts.Load() == 2 }, settleFor, time.Millisecond)
+	done := make(chan error, 1)
+	go func() { done <- s.agent.Close() }()
+	select {
+	case err := <-done:
+		s.NoError(err)
+	case <-time.After(time.Second):
+		s.FailNow("Close did not cancel the withheld native handshake")
+	}
+	select {
+	case <-s.events.done:
+	case <-time.After(settleFor):
+		s.FailNow("the event stream did not close after Close")
+	}
+	s.Equal(int32(2), fixture.attempts.Load())
+}
+
+func (s *AgentSuite) TestGeminiResumesInsideItsAdapterWithoutLeavingTheCall() {
+	peers := make(chan *nativePeer, 3)
+	var attempts atomic.Int32
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		attempts.Add(1)
+		var start map[string]json.RawMessage
+		if conn.ReadJSON(&start) != nil || conn.WriteJSON(map[string]any{"setupComplete": map[string]any{}}) != nil {
+			return
+		}
+		peer := &nativePeer{conn: conn, setup: start["setup"], frames: make(chan map[string]json.RawMessage, 32)}
+		peers <- peer
+		for {
+			var frame map[string]json.RawMessage
+			if conn.ReadJSON(&frame) != nil {
+				return
+			}
+			peer.frames <- frame
+		}
+	}))
+	s.T().Cleanup(server.Close)
+	registry := stsrouter.NewRegistry()
+	registry.Register("gemini", func(spec routing.Spec) (sts.STS, error) {
+		return gemini.New(gemini.Options{
+			APIKey: "test-key", URL: "ws" + strings.TrimPrefix(server.URL, "http"),
+			Model: spec.Model, Instructions: spec.STS.Instructions,
+			InputTranscript: true, OutputTranscript: true, HandshakeTimeout: time.Second,
+		})
+	})
+	s.joinNative(registry, Options{
+		CustomerID: "acme",
+		STSTarget:  "gemini/" + gemini.DefaultModel,
+	})
+	first := s.nextNativePeer(peers)
+	if len(first.setup) == 0 {
+		s.FailNow("Gemini setup was missing")
+	}
+	s.nativeSend(first, `{"sessionResumptionUpdate":{"newHandle":"resume-handle","resumable":true}}`)
+	s.Require().NoError(first.conn.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseGoingAway, "connection dropped"),
+		time.Now().Add(time.Second),
+	))
+	second := s.nextNativePeer(peers)
+	var setup struct {
+		SessionResumption struct {
+			Handle string `json:"handle"`
+		} `json:"sessionResumption"`
+	}
+	s.Require().NoError(json.Unmarshal(second.setup, &setup))
+	s.Equal("resume-handle", setup.SessionResumption.Handle)
+
+	s.nativeSend(second, `{"serverContent":{"modelTurn":{"parts":[{"inlineData":{"mimeType":"audio/pcm;rate=24000","data":"AQACAA=="}}]}}}`)
+	s.Require().Eventually(func() bool { return len(s.edge.heard()) == 1 }, settleFor, time.Millisecond)
+	s.Equal([]int16{1, 2}, s.edge.heard()[0].Samples)
+	pcm := audio.PcmData{Samples: []int16{11, 12, 13}, SampleRate: sts.InputSampleRate, Channels: 1}
+	s.edge.inbound <- InboundAudio{Audio: pcm, Participant: stt.Participant{ID: "caller"}}
+	var frame map[string]json.RawMessage
+	select {
+	case frame = <-second.frames:
+	case <-time.After(settleFor):
+		s.FailNow("the resumed Gemini session did not receive caller audio")
+	}
+	var realtime struct {
+		Audio struct {
+			Data string `json:"data"`
+		} `json:"audio"`
+	}
+	s.Require().NoError(json.Unmarshal(frame["realtimeInput"], &realtime))
+	data, err := base64.StdEncoding.DecodeString(realtime.Audio.Data)
+	s.Require().NoError(err)
+	s.Equal(pcm.Bytes(), data)
+	s.Equal(int32(2), attempts.Load(), "the adapter resumed instead of opening a replacement agent session")
+	s.Zero(countOf[Left](s.events.seen()))
+	s.Zero(countOf[Error](s.events.seen()))
 }

@@ -165,21 +165,14 @@ sends `skills: []` and turns delegation off. Both live on the agent config, writ
 
 ## A backend rule the caller cannot guess gets a function, not a doc note
 
-Holding a text conversation is the example. It has two rules that are nowhere in
-the spec and both load-bearing: the channel is the backend's to name, so a first open passes no
-`conversation_id` and a resume passes the one the first was given; and a resume has to come back
-as the same `agent_id`, because the backend checks a conversation is reopened by whoever held it.
-So they are a named function that owns them, validating up front (`ConfigurationError`, before a
-request) rather than a paragraph every caller has to find. When a rule like this turns up, add
-the function here instead of explaining it downstream.
+Holding a text conversation is the example. The channel is the backend's to name, so a
+conversation is carried on by the id of the session it was held in: `sessions.resume(id)` reads
+the session and watches it, rather than a create naming a channel. When a rule like this turns
+up, add the function here instead of explaining it downstream.
 
-Both rules were got wrong first time from reading the router, and only the live suite found it.
-Naming the channel on a first open reads like the obvious thing — it makes `agent_id` and
-`conversation_id` agree, which is what the message hook wants — and the backend refuses it
-outright, because a resume reads the channel without creating it. What follows is that a session
-a browser opened cannot be driven by writing into its channel: the hook looks for a session
-whose `agent_id` is the channel, the backend named the channel something else, and the write
-lands nowhere. Chat is the transcript; `responses.create` is the way in.
+A session a browser opened cannot be driven by writing into its channel: the hook looks for a
+session whose `agent_id` is the channel, the backend named the channel something else, and the
+write lands nowhere. Chat is the transcript; `responses.create` is the way in.
 
 ## Check a claim about the backend against the backend
 
@@ -187,7 +180,11 @@ lands nowhere. Chat is the transcript; `responses.create` is the way in.
 being true. The unit suite proves the SDK sends what it meant to; only a deployment proves that
 was the right thing to send. Two suites, neither in CI, both skipping when there is nothing to
 talk to: `local.test.ts` against a router on this machine, `staging.test.ts` against the hosted
-deployments.
+deployments. A third, `integration.test.ts` (`npm run test:integration`), holds the client
+promises: a device token gets 403 `server_side_only` from a router in `api_key` mode, and
+sessions share one Stream Chat and one Video socket, counted off Node's diagnostics channels.
+The README says how to run the second router it needs. Add to it when a new server-side
+operation or a new Stream connection appears.
 
 They earn it. The QA suite is what found that the hosted deployments want the credential spelled
 Stream's own way — `api_key`, not `X-Api-Key`, and `stream-auth-type: jwt` whoever the token is
@@ -207,11 +204,14 @@ would have to be found and undone by whoever fixes it.
 
 `Agent` is configuration plus function calling. The conversation runs in the backend.
 
-- `join` creates a Stream call then opens a session; `chat` opens one with `text: true` and no
-  call; `answer` joins a call that already exists, because dispatch already put the caller in
-  it; `startCall` places the call *before* joining, since placing it makes the routing rule
-  pinned to that call, and attaching the number first would be a second rule for the same
-  number.
+- A session owns its call, `agent:<session id>`. `join` opens one with `start_voice`; `chat`
+  opens one without, and `session.voice` starts and stops it later. `answer` opens the session
+  an inbound call names, because dispatch already put the caller in its call; `startCall`
+  places the call *before* joining and joins the `session_id` it comes back with, since placing
+  it makes the routing rule pinned to that session, and attaching the number first would be a
+  second rule for the same number. `waitForCall` attaches the number and waits on a dispatch
+  socket of its own for the next caller.
+- Instructions are the stored config's, written by `sync`: a session takes none.
 - What is written in code wins over what a `folder` says. A directory is a starting point.
 - `sync` uses **`POST /v1/agents/sync`**, one request carrying the whole directory, not the
   configs/skills/knowledge sequence, with the directory's knowledge urls as `knowledge_urls` in
@@ -305,3 +305,11 @@ Reject it if it:
 `sessions.query`, `sessions.search`, `responses.list` and `items.list` take a `cursor` and return
 the page, `{items, has_more, next_cursor}`. `items.unwind` follows `next_cursor` until `has_more`
 is false. See the `pagination` skill.
+
+## Releasing
+
+Only a commit scoped `sdk-js` releases this package: `feat(sdk-js):` a minor, `fix(sdk-js):` or
+`perf(sdk-js):` a patch, and a breaking one a minor while it is 0.x. A JS change under any other
+scope (`feat(router):`, `AI-1234: …`) is in the next release but never causes one, so scope it
+`sdk-js` if it should ship. The rules are in `sdks/js/release.config.mjs`; the workflow is
+`.github/workflows/release-sdk-js.yml`, dispatched by hand. See "Releasing" in the README.

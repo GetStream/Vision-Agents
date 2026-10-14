@@ -6,6 +6,7 @@ namespace GetStream\VisionAgents\Tests\Unit;
 
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Folder;
+use GetStream\VisionAgents\Generated\GreetingMode;
 use GetStream\VisionAgents\Json;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -31,6 +32,69 @@ final class FolderTest extends TestCase
     public function testHashMatchesTheGoSdk(): void
     {
         self::assertSame('02a7b2c8428f31e3a2b93ca2f5a6ec70', Folder::load($this->dir)->hash());
+    }
+
+    public function testASkillFolderHashesTheWayGoDoes(): void
+    {
+        $this->write('agent.yaml', "name: jean\nllm: openai/gpt-5.6\nsandbox: daytona\n");
+        $this->write('skills/pdf/SKILL.md', "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n");
+        $this->write('skills/pdf/reference/forms.md', "# Forms\n");
+        $this->write('skills/pdf/scripts/fill.py', "print('filled')\n");
+        $this->write('skills/pdf/scripts/lib/fill_lib.py', "def fill():\n    return 1\n");
+        $this->write('skills/pdf/scripts/__pycache__/fill.cpython-313.pyc', "\xcb\x0d\xff");
+        $this->write('skills/pdf/.DS_Store', "\x00\xff");
+
+        $folder = Folder::load($this->dir);
+
+        self::assertSame(['pdf', 'think'], array_map(static fn ($skill) => $skill->name, $folder->skills));
+        self::assertSame(120.0, $folder->skills[0]->deadline);
+        self::assertSame(
+            ['reference/forms.md' => "# Forms\n", 'scripts/fill.py' => "print('filled')\n", 'scripts/lib/fill_lib.py' => "def fill():\n    return 1\n"],
+            $folder->skills[0]->files,
+        );
+        self::assertSame([], $folder->skills[1]->files);
+        self::assertSame('e47f7807b97bbcbdee683c6c481d1d36', $folder->hash());
+    }
+
+    public function testMovingASkillIntoAFolderKeepsTheHashAndAFileChangesIt(): void
+    {
+        $before = Folder::load($this->dir)->hash();
+        $this->write('skills/think/SKILL.md', (string) file_get_contents($this->dir . '/skills/think.md'));
+        unlink($this->dir . '/skills/think.md');
+
+        self::assertSame($before, Folder::load($this->dir)->hash());
+
+        $this->write('skills/think/notes.md', "Check twice.\n");
+
+        self::assertNotSame($before, Folder::load($this->dir)->hash());
+    }
+
+    public function testASkillFolderNeedsSkillMd(): void
+    {
+        $this->write('skills/pdf/reference/forms.md', "# Forms\n");
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('skills/pdf has no SKILL.md, so it is not a skill');
+        Folder::load($this->dir);
+    }
+
+    public function testASkillIsEitherAFileOrAFolder(): void
+    {
+        $this->write('skills/think/SKILL.md', "---\ndescription: Work it out\n---\nReason it through.\n");
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('skill "think" is both think and think.md');
+        Folder::load($this->dir);
+    }
+
+    public function testASkillBringsOnlyTextFiles(): void
+    {
+        $this->write('skills/pdf/SKILL.md', "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+        $this->write('skills/pdf/logo.png', "\x89PNG\xff");
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('logo.png is not text, and a skill brings only text files');
+        Folder::load($this->dir);
     }
 
     public function testAKnowledgeUrlChangesTheHash(): void
@@ -92,13 +156,15 @@ final class FolderTest extends TestCase
         self::assertNull(Folder::load($this->dir)->simulations);
     }
 
-    public function testReadsSpeedAndHarness(): void
+    public function testReadsGreetingSubagentAndHarness(): void
     {
-        $this->write('agent.yaml', "speed: 1.1\nharness: default\n");
+        $this->write('agent.yaml', "greeting:\n  text: Hello there.\n  mode: exact\nsubagent: openai/gpt-5.6\nharness: default\n");
 
         $settings = Folder::load($this->dir)->settings;
 
-        self::assertSame(1.1, $settings->speed);
+        self::assertSame('Hello there.', $settings->greeting?->text);
+        self::assertSame(GreetingMode::Exact, $settings->greeting->mode);
+        self::assertSame('openai/gpt-5.6', $settings->subagent);
         self::assertSame('default', $settings->harness);
     }
 
@@ -114,7 +180,9 @@ final class FolderTest extends TestCase
         yield 'simulation without an assertion' => ['simulations/a.yaml', "- name: a\n  scenario: s\n"];
         yield 'simulation in an unknown mode' => ['simulations/a.yaml', "- name: a\n  scenario: s\n  assertion: x\n  mode: video\n"];
         yield 'simulations file not a list' => ['simulations/a.yaml', "name: a\n"];
-        yield 'speed not a number' => ['agent.yaml', "speed: fast\n"];
+        yield 'speed, which is gone' => ['agent.yaml', "speed: 1.1\n"];
+        yield 'greeting as a string' => ['agent.yaml', "greeting: Hello there.\n"];
+        yield 'unknown greeting key' => ['agent.yaml', "greeting:\n  text: Hello there.\n  voice: ash\n"];
     }
 
     #[DataProvider('refusedFiles')]
@@ -177,6 +245,62 @@ final class FolderTest extends TestCase
 
         $this->expectException(ConfigurationException::class);
         Folder::load($this->dir);
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function refusedConnectors(): iterable
+    {
+        yield 'null entry' => ["connectors:\n  - \n", 'a connector needs a name'];
+        yield 'empty name' => ["connectors:\n  - name: ''\n", 'a connector needs a name'];
+        yield 'mapping without a name' => ["connectors:\n  - connector: linear\n", 'a connector needs a name'];
+        yield 'empty tools' => ["connectors:\n  - name: linear\n    tools: []\n", 'connector "linear": tools: [] grants nothing; leave tools out for every tool'];
+        yield 'connection as a map' => ["connectors:\n  - name: linear\n    connection:\n      id: conn_a\n", 'connector "linear": connection must be a connection id or label'];
+        yield 'empty connection' => ["connectors:\n  - name: linear\n    connection: ''\n", 'connector "linear": connection must be a connection id or label'];
+        yield 'unknown key' => ["connectors:\n  - name: linear\n    tool: [search]\n", '"connectors.tool" is not something agent.yaml declares'];
+        yield 'not a list' => ["connectors: linear\n", 'connectors must be a list'];
+        yield 'alias of a plugin' => ["plugins: [linear]\nconnectors: [linear]\n", '"linear" is named under both connectors and plugins'];
+    }
+
+    #[DataProvider('refusedConnectors')]
+    public function testRefusesConnectorsTheWayGoDoes(string $declaration, string $message): void
+    {
+        $this->write('agent.yaml', $declaration);
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage($message);
+        Folder::load($this->dir);
+    }
+
+    public function testReadsConnectorsAsWritten(): void
+    {
+        $this->write('agent.yaml', "connectors:\n  - linear\n  - name: issues\n    connector: linear\n    tools: [search]\n    connection: prod\n    required: false\n");
+
+        $connectors = Folder::load($this->dir)->settings->connectors;
+
+        self::assertSame(['linear', 'issues'], array_map(static fn ($each) => $each->name, $connectors ?? []));
+        self::assertSame([null, ['search']], array_map(static fn ($each) => $each->tools, $connectors ?? []));
+        self::assertSame(['', 'linear'], array_map(static fn ($each) => $each->connector, $connectors ?? []));
+        self::assertSame([null, 'prod'], array_map(static fn ($each) => $each->connection, $connectors ?? []));
+        self::assertSame([null, false], array_map(static fn ($each) => $each->required, $connectors ?? []));
+    }
+
+    public function testConnectorsLeftOutAreNullAndAnEmptyListIsEmpty(): void
+    {
+        self::assertNull(Folder::load($this->dir)->settings->connectors);
+
+        $this->write('agent.yaml', "connectors: []\n");
+
+        self::assertSame([], Folder::load($this->dir)->settings->connectors);
+    }
+
+    public function testConnectorsAreHashedAsWritten(): void
+    {
+        $before = Folder::load($this->dir)->hash();
+        $this->write('agent.yaml', "name: jean\nllm: openai/gpt-5.6\nconnectors: [linear]\n");
+
+        self::assertNotSame($before, Folder::load($this->dir)->hash());
     }
 
     public function testStampRoundTrips(): void

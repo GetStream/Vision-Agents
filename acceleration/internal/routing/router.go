@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"net/http"
 	"slices"
 	"sort"
 	"strings"
@@ -69,6 +70,38 @@ type VoiceResolver interface {
 	ResolveVoice(ctx context.Context, customerID, provider, voice string) (string, error)
 }
 
+// CustomProvider is what a customer's own model is routed under: custom/<name>.
+const CustomProvider = "custom"
+
+// CustomName is the name of the customer's model a target names as custom/<name>, if it
+// names one.
+func CustomName(target string) (string, bool) {
+	name, own := strings.CutPrefix(target, CustomProvider+"/")
+	return name, own && name != ""
+}
+
+// Endpoint is where a customer's own model is served and what it wants to let a request in.
+type Endpoint struct {
+	// BaseURL is the endpoint root, up to and including /v1.
+	BaseURL string
+	// Model is the id the endpoint serves the weights under. The candidate's own model is
+	// the customer's name for them, which is what stats and targets read.
+	Model string
+	// APIKey is empty for an endpoint that takes none.
+	APIKey string
+	// Client is how requests reach it. On a router tenants share it dials public addresses
+	// only, because the endpoint is whatever a tenant wrote.
+	Client *http.Client
+}
+
+// ModelResolver finds the models a customer serves themselves.
+//
+// They are not in the catalogue because they are nobody else's: two customers may each
+// have a model called prod. So a target naming one is resolved for the customer asking.
+type ModelResolver interface {
+	CustomModel(ctx context.Context, customerID, name string) (ProviderConfig, Endpoint, error)
+}
+
 // ErrModelNotAllowed says the customer's policies allow none of the models a request could
 // be routed to.
 var ErrModelNotAllowed = errors.New("routing: your policy does not allow this model")
@@ -116,6 +149,9 @@ type Options[P Provider] struct {
 	Store    *store.Store
 	Live     *live.Client
 	Voices   VoiceResolver
+	// Models resolves custom/<name>. Nil leaves a deployment with no models of a
+	// customer's own.
+	Models ModelResolver
 	// Gate enforces the customer's policies. Nil enforces nothing.
 	Gate   Gate
 	Logger *slog.Logger
@@ -130,6 +166,7 @@ type Router[P Provider] struct {
 	recorder *Recorder
 	live     *live.Client
 	voices   VoiceResolver
+	models   ModelResolver
 	gate     Gate
 	logger   *slog.Logger
 }
@@ -221,6 +258,8 @@ func (r Request) Owner() Owner {
 type Candidate struct {
 	Config ProviderConfig
 	Health live.Health
+	// endpoint is where a customer's own model is served, and empty for the catalogue's.
+	endpoint Endpoint
 }
 
 // New validates the options and returns a Router.
@@ -247,6 +286,7 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 		recorder: newRecorder(options.Modality, options.Store, options.Live, options.Gate, logger),
 		live:     options.Live,
 		voices:   options.Voices,
+		models:   options.Models,
 		gate:     options.Gate,
 		logger:   logger,
 	}, nil
@@ -399,9 +439,29 @@ func (r *Router[P]) Admit(ctx context.Context, customerID string) (Admission, er
 // it has started walks this, so it falls back in the order the caller wrote.
 func (r *Router[P]) Candidates(ctx context.Context, request Request) ([]Candidate, error) {
 	if len(request.Providers) == 0 {
-		return r.Resolve(ctx, request.Target, request.LanguageHints)
+		return r.resolveFor(ctx, request.CustomerID, request.Target, request.LanguageHints)
 	}
 	return r.resolveChain(ctx, request)
+}
+
+// resolveFor is Resolve, plus the customer's own models, which only a request can name
+// because only it says whose they are.
+func (r *Router[P]) resolveFor(ctx context.Context, customerID, target string, languageHints []string) ([]Candidate, error) {
+	name, own := CustomName(target)
+	if !own {
+		return r.Resolve(ctx, target, languageHints)
+	}
+	if r.models == nil {
+		return nil, stack.Wrap(fmt.Errorf("routing: %q was asked for, and this deployment has no models of a customer's own", target))
+	}
+	config, endpoint, err := r.models.CustomModel(ctx, customerID, name)
+	if err != nil {
+		return nil, err
+	}
+	// Live health is kept per provider and model for everyone, and two customers may give
+	// their models the same name, so a model of one's own is never measured against it.
+	health := live.Health{Provider: config.Provider, Model: config.Model, Available: true}
+	return []Candidate{{Config: config, Health: health, endpoint: endpoint}}, nil
 }
 
 // resolveChain expands a priority list in the order it was written.
@@ -419,7 +479,7 @@ func (r *Router[P]) resolveChain(ctx context.Context, request Request) ([]Candid
 	var refusals []error
 
 	for _, target := range request.Providers {
-		found, err := r.resolveEntry(ctx, target, request.LanguageHints)
+		found, err := r.resolveEntry(ctx, request.CustomerID, target, request.LanguageHints)
 		if err != nil {
 			refusals = append(refusals, err)
 			continue
@@ -452,8 +512,8 @@ func (r *Router[P]) resolveChain(ctx context.Context, request Request) ([]Candid
 //
 // The vendor name is tried last, so a name that is somehow both an alias and a provider
 // still means the alias, which is what it means everywhere else.
-func (r *Router[P]) resolveEntry(ctx context.Context, target string, languageHints []string) ([]Candidate, error) {
-	candidates, err := r.Resolve(ctx, target, languageHints)
+func (r *Router[P]) resolveEntry(ctx context.Context, customerID, target string, languageHints []string) ([]Candidate, error) {
+	candidates, err := r.resolveFor(ctx, customerID, target, languageHints)
 	if err == nil {
 		return candidates, nil
 	}
@@ -492,6 +552,7 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 		STS:             request.STS,
 		Search:          request.Search,
 		Overwrites:      r.overwrites(request, candidate.Config.Provider),
+		Endpoint:        candidate.endpoint,
 		Logger:          r.logger,
 	}
 

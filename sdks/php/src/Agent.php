@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents;
 
 use GetStream\VisionAgents\Exception\ConfigurationException;
+use GetStream\VisionAgents\Exception\RouterException;
+use GetStream\VisionAgents\Folder\Connector;
 use GetStream\VisionAgents\Folder\Declaration;
 use GetStream\VisionAgents\Folder\Document;
 use GetStream\VisionAgents\Folder\KnowledgeUrl;
@@ -24,6 +26,8 @@ use GetStream\VisionAgents\Generated\SyncAgentRequest;
 use GetStream\VisionAgents\Generated\SyncAgentResult;
 use GetStream\VisionAgents\Inbound\InboundCall;
 use GetStream\VisionAgents\Inbound\InboundMessage;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 /**
  * A configured agent, before and between the calls it holds.
@@ -32,7 +36,7 @@ use GetStream\VisionAgents\Inbound\InboundMessage;
  * call, hearing the caller, answering and speaking, happens in the backend.
  *
  *     $agent = new Agent(config: 'simple_voice_ai', costTracking: ['env' => 'production'], memoryFilter: ['user_id' => '123']);
- *     $session = $agent->join('hello');
+ *     $session = $agent->join();
  *     $session->responses->create('greet the user in one short sentence');
  *
  * What is written in code wins over what a folder says. A directory is a starting point.
@@ -51,6 +55,7 @@ final class Agent
     public readonly ?Folder $folder;
     private readonly ?Harness $harness;
     private ?Edge $edge;
+    private readonly LoggerInterface $logger;
     /** `config` resolved to the id the backend wants, looked up once. */
     private ?string $configId = null;
 
@@ -64,6 +69,7 @@ final class Agent
      *     and what narrows recall
      * @param ?Sandbox $sandbox where code the agent writes gets run
      * @param string $userId who the agent joins a call as; derived from the name when empty
+     * @param ?LoggerInterface $logger where a sync says what agent.yaml does that is deprecated
      */
     public function __construct(
         public readonly string $config = '',
@@ -80,6 +86,7 @@ final class Agent
         ?Tools $tools = null,
         ?Client $client = null,
         ?Edge $edge = null,
+        ?LoggerInterface $logger = null,
     ) {
         $this->folder = is_string($folder) ? Folder::load($folder) : $folder;
         $this->name = $name !== '' ? $name : ($this->folder->name ?? $config);
@@ -100,31 +107,30 @@ final class Agent
         $this->tools = $tools ?? new Tools();
         $this->client = $client ?? new Client();
         $this->edge = $edge;
+        $this->logger = $logger ?? new NullLogger();
     }
 
     /**
-     * Has the backend join a Stream call and hold a conversation on it.
+     * Holds a conversation on the session's own call, `agent:<session id>`.
      *
-     * An empty id creates a call named after a random one. It returns once the backend is in
-     * the call, so an agent that has joined is one that is already listening.
+     * It returns once the backend is in the call, so an agent that has joined is one that is
+     * already listening.
      */
-    public function join(Call|string $call = ''): Session
+    public function join(): Session
     {
-        $created = $this->edge()->createCall(is_string($call) ? new Call($call) : $call, $this->userId);
-        return $this->open(callId: $created->id, callType: $created->type);
+        return $this->open(startVoice: true);
     }
 
     /**
      * Holds the conversation in writing rather than on a call. Everything between hearing a
      * question and answering it is unchanged: the same instructions, skills and knowledge. It is
-     * kept in Stream Chat unless incognito.
+     * kept in Stream Chat unless incognito. `Session::startVoice` puts the agent on its call.
      *
      * @param string $agentId the conversation being answered, which names the channel replies
      *     are written into; a worker answering several conversations has to set it
      * @param array<string, mixed>|null $custom
      */
     public function chat(
-        ?string $conversationId = null,
         string $agentId = '',
         ?string $title = null,
         ?string $description = null,
@@ -134,8 +140,6 @@ final class Agent
         ?ModelOverwrites $modelOverwrites = null,
     ): Session {
         return $this->open(
-            text: true,
-            conversationId: $conversationId,
             agentId: $agentId === '' ? null : $agentId,
             title: $title,
             description: $description,
@@ -147,50 +151,65 @@ final class Agent
     }
 
     /**
-     * Answers a call that arrived through dispatch. The call exists already, since the caller
-     * is in it; the number they reached is carried in, which is what lets the agent transfer.
+     * Carries on a conversation held in writing, by the id of the session it was held in.
+     * `watch()` it to answer its tool calls with this agent's.
+     */
+    public function resume(string $id): Session
+    {
+        return new Session($this->client, SessionRow::fromArray(Json::asObject($this->client->get('/v1/agents/sessions/{id}', ['id' => $id]))), $this);
+    }
+
+    /**
+     * Answers a call that arrived through dispatch, on the call the router routed the caller
+     * into, which is named for the session opened here. The number they reached is carried in,
+     * which is what lets the agent transfer.
      */
     public function answer(InboundCall $call): Session
     {
+        if ($call->sessionId === '') {
+            throw new ConfigurationException('the call names no session; attach its number again');
+        }
         return $this->open(
-            callId: $call->callId,
-            callType: $call->callType,
+            id: $call->sessionId,
+            startVoice: true,
             phone: $call->calledNumber === '' ? null : new SessionPhone(number: $call->calledNumber),
         );
     }
 
     /**
-     * Answers a message written to an agent that is not running, in the channel it came from.
+     * Answers a message written to an agent that is not running, in the channel its agent id
+     * names.
      */
     public function reply(InboundMessage $message): Session
     {
-        return $this->chat(conversationId: $message->conversationId(), agentId: $message->agentId);
+        return $this->chat(agentId: $message->agentId);
     }
 
     /**
      * Rings somebody and holds the conversation when they answer.
      *
      * The call is placed before the agent joins, because placing it pins its own routing rule to
-     * this call; attaching the number first would be a second rule for the same number. The
-     * agent is told it is navigating, so recordings are let finish and menus are answered.
+     * the call of the session it names; attaching the number first would be a second rule for
+     * the same number. The agent is told it is navigating, so recordings are let finish and
+     * menus are answered.
      */
-    public function outboundCall(string $from, string $to, Call|string $call = ''): Session
+    public function outboundCall(string $from, string $to): Session
     {
         if ($from === '' || $to === '') {
             throw new ConfigurationException('a call needs a number to ring from and one to ring');
         }
-        $created = $this->edge()->createCall(is_string($call) ? new Call($call) : $call, $this->userId);
         $request = new PlaceCallRequest(
             from: $from,
             to: $to,
-            callId: $created->id,
-            callType: $created->type,
             tags: $this->costTracking === [] ? null : $this->costTracking,
         );
         $placed = PlacedCall::fromArray(Json::asObject($this->client->post('/v1/phone/calls', body: $request->toArray())));
+        if ($placed->sessionId === null || $placed->sessionId === '') {
+            throw new RouterException(201, 'POST /v1/phone/calls', 'the router placed the call for no session');
+        }
         return $this->open(
-            callId: $created->id,
-            callType: $created->type,
+            id: $placed->sessionId,
+            startVoice: true,
             navigating: true,
             phone: new SessionPhone(number: $from, vendorCallId: $placed->vendorCallId),
         );
@@ -202,10 +221,10 @@ final class Agent
      */
     public function monitorUrl(Session $session): string
     {
-        if ($session->callId() === '') {
+        if (!$session->voiceStarted()) {
             throw new ConfigurationException('a conversation held in writing has no call to watch');
         }
-        return $this->edge()->monitorUrl(new Call($session->callId(), $session->created->callType), 'monitor-' . $session->id(), 'Monitor');
+        return $this->edge()->monitorUrl($session->call(), 'monitor-' . $session->id(), 'Monitor');
     }
 
     /**
@@ -230,6 +249,9 @@ final class Agent
     {
         $folder = $this->folder;
         $declared = $folder->settings ?? new Declaration();
+        if ($declared->plugins !== []) {
+            $this->logger->warning('agent.yaml plugins are deprecated: rename plugins to connectors', ['agent' => $this->name, 'plugins' => $declared->plugins]);
+        }
         $skills = $this->harness->skills ?? [];
         $knowledge = $folder->knowledge ?? [];
         $pages = $folder->knowledgeUrls ?? [];
@@ -268,14 +290,14 @@ final class Agent
             tts: $pipeline->tts ?? self::set($declared->tts),
             sts: $pipeline->sts ?? $declared->sts,
             voice: $pipeline->voice ?? self::set($declared->voice),
-            speed: $declared->speed !== 0.0 ? $declared->speed : null,
             llm: $pipeline->llm ?? self::set($declared->llm),
             video: $pipeline->video ?? $declared->video,
             harness: self::harness($harnessName) ?? self::harness($declared->harness),
-            thinkingLlm: self::set($subagent) ?? self::set($declared->subagent),
+            subagent: self::set($subagent) ?? self::set($declared->subagent),
             search: self::set($declared->search),
-            greeting: $pipeline->greeting ?? self::set($declared->greeting),
-            agentPlugins: $declared->plugins === [] ? null : $declared->plugins,
+            greeting: $pipeline->greeting() ?? $declared->greeting,
+            connectors: $declared->connectors === null ? null : array_map(fn (Connector $connector) => $connector->toBinding($this->client), $declared->connectors),
+            plugins: $declared->plugins === [] ? null : $declared->plugins,
             keyterms: $pipeline->keyterms ?? ($declared->keyterms === [] ? null : $declared->keyterms),
             sandbox: $this->sandbox ?? ($declared->sandbox === '' ? null : (Sandbox::tryFrom($declared->sandbox) ?? $declared->sandbox)),
             tags: $tags === [] ? null : $tags,
@@ -321,12 +343,10 @@ final class Agent
      * @param array<string, mixed>|null $custom
      */
     private function open(
-        ?string $callId = null,
-        ?string $callType = null,
+        ?string $id = null,
+        ?bool $startVoice = null,
         ?SessionPhone $phone = null,
         ?bool $navigating = null,
-        ?bool $text = null,
-        ?string $conversationId = null,
         ?string $agentId = null,
         ?string $title = null,
         ?string $description = null,
@@ -341,9 +361,8 @@ final class Agent
         // The harness, the sandbox and the skills are the config's, written by `sync`, never
         // the session's.
         $request = new CreateSessionRequest(
-            conversationId: $conversationId,
-            callId: $callId,
-            text: $text,
+            id: $id,
+            startVoice: $startVoice,
             configId: $this->config === '' ? null : $this->resolveConfig(),
             incognito: $incognito,
             title: $title,
@@ -351,12 +370,10 @@ final class Agent
             projectId: $projectId,
             custom: $custom,
             modelOverwrites: $modelOverwrites,
-            callType: $callType,
             userId: $this->userId,
             userName: $this->name,
             agentId: $agentId ?? $this->userId,
-            instructions: self::set($this->instructions),
-            greeting: $pipeline->greeting,
+            greeting: $pipeline->greeting(),
             navigating: $navigating,
             llm: $pipeline->llm,
             stt: $pipeline->stt,

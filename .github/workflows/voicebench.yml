@@ -1,24 +1,33 @@
 name: Voicebench
 on:
   schedule:
-    - cron: '0 4 * * *'
+    - cron: "0 4 * * *"
   workflow_dispatch:
     inputs:
       bench:
-        description: 'agents (calls against the agent) or components (the STT and TTS benches)'
+        description: "agents (calls against the agent) or components (the STT and TTS benches)"
         type: choice
-        options: [ agents, components ]
+        options: [agents, components]
         default: agents
       set:
-        description: 'Scenario set: frozen (the nightly, compared with the previous night), short (a quicker check), or extended (scenarios outside the frozen set)'
+        description: "Scenario set: frozen (the nightly, compared with the previous night), short (a quicker check), supershort (one coherence call a pack, the quickest), or extended (scenarios outside the frozen set)"
         type: choice
-        options: [ frozen, short, extended ]
+        options: [frozen, short, extended, supershort]
         default: frozen
       packs:
-        description: 'Packs to run: all (the nightly) or one of them (a quicker check, compared with nothing)'
+        description: "Packs to run: all (the nightly) or one of them (a quicker check, compared with nothing)"
         type: choice
-        options: [ all, restaurant, healthcare, telecom ]
+        options: [all, restaurant, healthcare, telecom]
         default: all
+      k:
+        description: "Calls per scenario: 1 (the nightly) or 3 (a pass rate per scenario, three times the calls and cost)"
+        type: choice
+        options: ["1", "3"]
+        default: "1"
+      channel:
+        description: "Slack channel ID to post the digest to instead of the usual one (the bot has to be in it)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -26,7 +35,7 @@ permissions:
 # Live calls against the providers below, on a router built from this checkout.
 # The network profile names the runner, so a CI number never lands in a laptop's series.
 env:
-  CGO_ENABLED: '1'
+  CGO_ENABLED: "1"
   VOICEBENCH_NETWORK_PROFILE: github-ubuntu-latest
   STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
   STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
@@ -45,14 +54,16 @@ env:
 
 jobs:
   # Nightly: the frozen set at k=1 on our stack alone, compared against the previous night's
-  # run. The digest is posted to Slack only once VOICEBENCH_SLACK_BOT_TOKEN and
-  # VOICEBENCH_SLACK_CHANNEL are set. GitHub fires a schedule, and offers Run workflow, only
-  # for a file on the default branch, so a run on that branch checks out accelerate, where
-  # the benchmark lives; Run workflow on any other branch benchmarks that branch.
+  # run; Run workflow can ask for k=3. The digest is posted to Slack only once
+  # VOICEBENCH_SLACK_BOT_TOKEN and VOICEBENCH_SLACK_CHANNEL are set (the channel input
+  # overrides the secret). GitHub fires a schedule, and offers Run workflow, only for a file
+  # on the default branch, so a run on that branch checks out accelerate, where the
+  # benchmark lives; Run workflow on any other branch benchmarks that branch.
   nightly:
     if: github.event_name == 'schedule' || inputs.bench != 'components'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # k=3 places three times the calls: the frozen set on every pack outgrows two hours.
+    timeout-minutes: ${{ (inputs.k || '1') == '1' && 120 || 330 }}
     # The agent syncs its config to the router, which keeps configs in Postgres, and the
     # router keeps live sessions in Redis.
     services:
@@ -81,17 +92,38 @@ jobs:
     env:
       VOICEBENCH_SET: ${{ inputs.set || 'frozen' }}
       VOICEBENCH_PACK_CHOICE: ${{ inputs.packs || 'all' }}
-      # Only the frozen set on every pack is a night: anything less is a quick check.
-      VOICEBENCH_NIGHT: ${{ (inputs.set || 'frozen') == 'frozen' && (inputs.packs || 'all') == 'all' }}
-      VOICEBENCH_LIVEKIT_ARMS: ''
+      VOICEBENCH_K: ${{ inputs.k || '1' }}
+      # Only the frozen set on every pack at k=1 is a night: anything else is a check that the
+      # previous night is not comparable with.
+      VOICEBENCH_NIGHT: ${{ (inputs.set || 'frozen') == 'frozen' && (inputs.packs || 'all') == 'all' && (inputs.k || '1') == '1' }}
+      VOICEBENCH_LIVEKIT_ARMS: ""
       VOICEBENCH_SLACK_BOT_TOKEN: ${{ secrets.VOICEBENCH_SLACK_BOT_TOKEN }}
-      VOICEBENCH_SLACK_CHANNEL: ${{ secrets.VOICEBENCH_SLACK_CHANNEL }}
+      VOICEBENCH_SLACK_CHANNEL: ${{ inputs.channel || secrets.VOICEBENCH_SLACK_CHANNEL }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name == github.event.repository.default_branch && 'accelerate' || '' }}
 
       - uses: ./.github/actions/voicebench-setup
+
+      # A router session's agent joins the call agent:<session id>, so the Stream app needs that
+      # call type. Create it when it is missing rather than fail every call on it.
+      - name: Make sure the Stream app has the agent call type
+        run: |
+          b64() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+          header=$(printf '{"alg":"HS256","typ":"JWT"}' | b64)
+          claims=$(printf '{"server":true}' | b64)
+          signature=$(printf '%s.%s' "$header" "$claims" | openssl dgst -sha256 -hmac "$STREAM_API_SECRET" -binary | b64)
+          auth=(-H "Authorization: $header.$claims.$signature" -H 'stream-auth-type: jwt')
+          calltypes="https://video.stream-io-api.com/api/v2/video/calltypes?api_key=$STREAM_API_KEY"
+          present() { curl -fsS "${auth[@]}" "$calltypes" | jq -e '.call_types | has("agent")' >/dev/null; }
+          if present; then
+            echo "The agent call type is there"
+            exit 0
+          fi
+          # Another run may create it at the same moment, which this one's create then refuses.
+          curl -fsS "${auth[@]}" -H 'Content-Type: application/json' -d '{"name":"agent"}' "$calltypes" >/dev/null || present
+          echo "Created the agent call type"
 
       # The Gemma deployment scales down when idle and takes minutes to come back, and calls
       # placed while it wakes go unanswered and score as failures. Wait for it to answer first,
@@ -129,7 +161,7 @@ jobs:
           key: voicebench-nightly-${{ github.run_id }}
           restore-keys: voicebench-nightly-
 
-      - name: Run the ${{ env.VOICEBENCH_SET }} set on ${{ env.VOICEBENCH_PACK_CHOICE }} packs
+      - name: Run the ${{ env.VOICEBENCH_SET }} set on ${{ env.VOICEBENCH_PACK_CHOICE }} packs at k=${{ env.VOICEBENCH_K }}
         run: |
           if [[ -z "$VOICEBENCH_SLACK_BOT_TOKEN" || -z "$VOICEBENCH_SLACK_CHANNEL" ]]; then
             echo "Slack is not configured, writing the digest without posting it"
@@ -139,9 +171,9 @@ jobs:
             export VOICEBENCH_PACKS="$VOICEBENCH_PACK_CHOICE"
           fi
           if [[ "$VOICEBENCH_NIGHT" != true ]]; then
-            export VOICEBENCH_DIGEST_TITLE="Voicebench $VOICEBENCH_SET · $VOICEBENCH_PACK_CHOICE"
+            export VOICEBENCH_DIGEST_TITLE="Voicebench $VOICEBENCH_SET · $VOICEBENCH_PACK_CHOICE · k=$VOICEBENCH_K"
           fi
-          VOICEBENCH_K=1 scripts/digest.sh out/nightly
+          scripts/digest.sh out/nightly
 
       - name: Compare with the previous night
         if: always() && env.VOICEBENCH_NIGHT == 'true'
@@ -180,7 +212,6 @@ jobs:
           path: benchmark/out/nightly
           retention-days: 30
 
-
   # Nightly too: the STT bench on the short set's caller lines and the TTS bench on the
   # scenarios' agent lines, against a router built from the checkout. No calls are placed.
   components:
@@ -212,7 +243,7 @@ jobs:
         working-directory: benchmark
     env:
       VOICEBENCH_SLACK_BOT_TOKEN: ${{ secrets.VOICEBENCH_SLACK_BOT_TOKEN }}
-      VOICEBENCH_SLACK_CHANNEL: ${{ secrets.VOICEBENCH_SLACK_CHANNEL }}
+      VOICEBENCH_SLACK_CHANNEL: ${{ inputs.channel || secrets.VOICEBENCH_SLACK_CHANNEL }}
     steps:
       - uses: actions/checkout@v4
         with:

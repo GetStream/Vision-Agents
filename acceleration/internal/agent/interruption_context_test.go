@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -18,7 +19,7 @@ func (s *AgentSuite) TestInterruptedReplyPrefixIsContextForTheNextCallerTurn() {
 	s.voice.silent = true
 	s.voice.mu.Unlock()
 
-	firstID, err := s.agent.RespondTo(s.ctx, "What is on the menu?", nil)
+	firstID, err := s.agent.RespondTo(s.ctx, "What is on the menu?", nil, options.LLM{})
 	s.Require().NoError(err)
 	s.eventually(func() bool { return s.model.script(firstID) != nil }, "the first reply never opened")
 	partial := "We have tomato soup. The mains include grilled fish and"
@@ -50,7 +51,7 @@ func (s *AgentSuite) TestInterruptedReplyPrefixIsContextForTheNextCallerTurn() {
 	s.model.mu.Lock()
 	s.model.reply = nil
 	s.model.mu.Unlock()
-	_, err = s.agent.RespondTo(s.ctx, "Could you include salads?", nil)
+	_, err = s.agent.RespondTo(s.ctx, "Could you include salads?", nil, options.LLM{})
 	s.Require().NoError(err)
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
 		"the new caller turn was not sent to the model")
@@ -83,7 +84,7 @@ func (s *AgentSuite) TestCompletedReplyInterruptedWhileDrainingIsNotDuplicated()
 	s.voice.silent = true
 	s.voice.mu.Unlock()
 
-	turnID, err := s.agent.RespondTo(s.ctx, "How many?", nil)
+	turnID, err := s.agent.RespondTo(s.ctx, "How many?", nil, options.LLM{})
 	s.Require().NoError(err)
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
 		"the complete model response did not finish")
@@ -114,7 +115,7 @@ func (s *AgentSuite) TestInterruptWinsRaceWithACompletingReplyAndKeepsOnePrefix(
 	s.voice.silent = true
 	s.voice.mu.Unlock()
 
-	turnID, err := s.agent.RespondTo(s.ctx, "Explain the first step.", nil)
+	turnID, err := s.agent.RespondTo(s.ctx, "Explain the first step.", nil, options.LLM{})
 	s.Require().NoError(err)
 	s.eventually(func() bool { return s.model.script(turnID) != nil }, "the reply never opened")
 	partial := "The first step is to pick a destination"

@@ -12,7 +12,11 @@ T = TypeVar("T", bound="AgentConfigRequestTags")
 
 @_attrs_define
 class AgentConfigRequestTags:
-    """Cost labels, carried onto every request a session using it makes."""
+    """Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it
+    copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with
+    the live config, and it may bind a channel connection another config binds.
+
+    """
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 

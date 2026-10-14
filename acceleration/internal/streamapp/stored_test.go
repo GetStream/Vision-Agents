@@ -7,14 +7,11 @@ import (
 	"errors"
 	"os"
 	"strconv"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
-	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
@@ -58,7 +55,7 @@ func (s *StoredSuite) SetupSuite() {
 
 func (s *StoredSuite) SetupTest() {
 	// The database is this suite's own, and an api key is the same key in every test.
-	_, err := s.store.DB().ExecContext(s.ctx, "TRUNCATE stream_apps, stream_fallback_uses CASCADE")
+	_, err := s.store.DB().ExecContext(s.ctx, "TRUNCATE stream_fallback_uses, stream_app_tokens CASCADE")
 	s.Require().NoError(err)
 	s.stream = chattest.NewServer(s.T())
 	s.deployment = NewDeployment(DeploymentOptions{APIKey: "deploy-key", Secret: "deploy-secret", App: 1, Strict: true, BaseURL: s.stream.URL})
@@ -70,42 +67,17 @@ func (s *StoredSuite) SetupTest() {
 
 func (s *StoredSuite) source(fallback bool) *Stored {
 	source, err := NewStored(StoredOptions{
-		Store: s.store, Sealer: s.sealer, Deployment: s.deployment, FallbackToDeployment: fallback, Now: s.clock.Now,
+		Store: s.store, Deployment: s.deployment, FallbackToDeployment: fallback, Forwarded: s.forwarded(nil), Now: s.clock.Now,
 	})
 	s.Require().NoError(err)
 	return source
 }
 
-// register gives the test's customer its own app with the keys named, the first primary.
-func (s *StoredSuite) register(keys ...string) store.StreamApp {
-	return s.registerWith(s.sealer, keys...)
-}
-
-func (s *StoredSuite) registerWith(sealer *auth.Sealer, keys ...string) store.StreamApp {
-	sealed := make([]store.StreamAppKey, 0, len(keys))
-	for _, key := range keys {
-		one, err := SealKey(sealer, s.customer, s.app, key, key+"-secret-value")
-		s.Require().NoError(err)
-		sealed = append(sealed, one)
-	}
-	app, err := s.store.PutStreamApp(s.ctx, store.StreamAppRegistration{
-		CustomerID: s.customer, StreamAppPK: s.app, Keys: sealed, PrimaryKey: keys[0], VerifiedAt: time.Now(),
-	})
+// ownToken keeps a server token for the test's customer's own app, as the gateway forwards
+// one with each request it vouches for.
+func (s *StoredSuite) ownToken() {
+	_, err := s.forwarded(nil).Keep(s.ctx, s.customer, forwardedKey, s.serverToken(24*time.Hour))
 	s.Require().NoError(err)
-	return app
-}
-
-func (s *StoredSuite) TestAnAppWithItsOwnCredentialActsInItsOwnApp() {
-	s.register("own-key")
-
-	identity, err := s.source(true).For(s.ctx, s.customer)
-
-	s.Require().NoError(err)
-	s.Equal("own-key", identity.APIKey)
-	s.Equal("own-key-secret-value", identity.Secret.Reveal())
-	s.Equal(s.app, identity.StreamApp)
-	s.True(identity.Registered)
-	s.False(identity.MintsGuests(), "a registered app mints no guests until it says so")
 }
 
 func (s *StoredSuite) TestTheDeploymentAppWritesWithTheEnvironmentCredential() {
@@ -114,7 +86,6 @@ func (s *StoredSuite) TestTheDeploymentAppWritesWithTheEnvironmentCredential() {
 	s.Require().NoError(err)
 	s.Equal("deploy-key", identity.APIKey)
 	s.Equal(int64(1), identity.StreamApp, "app mode writes the deployment app's real id")
-	s.True(identity.MintsGuests())
 }
 
 func (s *StoredSuite) TestOnlyTheCanonicalDeploymentIdGetsTheEnvironmentIdentity() {
@@ -141,56 +112,17 @@ func (s *StoredSuite) TestAnUnregisteredAppIsRefusedWhenFallbackIsRefuse() {
 	s.ErrorIs(err, ErrNoIdentity)
 }
 
-func (s *StoredSuite) TestADisconnectedAppNeverFallsBack() {
-	s.register("own-key")
-	_, err := s.store.DisconnectStreamApp(s.ctx, s.customer, nil, "test")
-	s.Require().NoError(err)
-
-	_, err = s.source(true).For(s.ctx, s.customer)
-
-	s.ErrorIs(err, ErrStreamAppDisconnected)
-}
-
-func (s *StoredSuite) TestABlockedAppNeverFallsBack() {
-	s.register("own-key")
-	_, err := s.store.BlockStreamApp(s.ctx, s.customer, "suspended")
-	s.Require().NoError(err)
-
-	_, err = s.source(true).For(s.ctx, s.customer)
-
-	s.ErrorIs(err, ErrStreamAppDisconnected)
-}
-
-func (s *StoredSuite) TestAnAppWhoseKeysAreAllRejectedNeverFallsBack() {
-	s.register("own-key")
-	s.Require().NoError(s.store.RejectStreamAppKey(s.ctx, s.customer, "own-key", "401", time.Now()))
-
-	_, err := s.source(true).For(s.ctx, s.customer)
-
-	s.ErrorIs(err, ErrStreamAppDisconnected)
-}
-
-func (s *StoredSuite) TestARejectedPrimaryIsPassedOverForTheOldestAcceptedKey() {
-	s.register("primary", "secondary")
-	s.Require().NoError(s.store.RejectStreamAppKey(s.ctx, s.customer, "primary", "401", time.Now()))
-
-	identity, err := s.source(false).For(s.ctx, s.customer)
-
-	s.Require().NoError(err)
-	s.Equal("secondary", identity.APIKey)
-}
-
 func (s *StoredSuite) TestWorkIsFinishedInTheAppItWasPinnedTo() {
-	s.register("own-key")
+	s.ownToken()
 
 	identity, err := s.source(false).ForApp(s.ctx, s.customer, s.app)
 
 	s.Require().NoError(err)
-	s.Equal("own-key", identity.APIKey)
+	s.Equal(forwardedKey, identity.APIKey)
 }
 
 func (s *StoredSuite) TestARecordPinnedToAnotherAppIsParked() {
-	s.register("own-key")
+	s.ownToken()
 
 	_, err := s.source(true).ForApp(s.ctx, s.customer, 999)
 	s.ErrorIs(err, ErrStreamAppMoved)
@@ -201,7 +133,7 @@ func (s *StoredSuite) TestARecordPinnedToAnotherAppIsParked() {
 func (s *StoredSuite) TestAnotherCustomersLegacyWorkIsReadOnlyUnderRefusal() {
 	// Written into the shared app before the customer had one of its own: still read back
 	// from there, never added to.
-	s.register("own-key")
+	s.ownToken()
 	source := s.source(false)
 
 	for _, pin := range []int64{0, 1} {
@@ -246,23 +178,6 @@ func (s *StoredSuite) TestDeploymentAppWorkWaitsUntilItsIdIsKnown() {
 	s.Equal("deploy-key", identity.APIKey)
 }
 
-func (s *StoredSuite) TestAKeySealedUnderAnOldVersionIsRewrappedOnUse() {
-	s.register("own-key")
-	s.sealer, _ = auth.NewSealerWithKeyring(2, map[int]string{1: "first-key", 2: "second-key"})
-	defer func() { s.sealer, _ = auth.NewSealerWithKeyring(1, map[int]string{1: "first-key"}) }()
-
-	identity, err := s.source(false).For(s.ctx, s.customer)
-
-	s.Require().NoError(err)
-	s.Equal("own-key-secret-value", identity.Secret.Reveal())
-	held, err := s.store.StreamApp(s.ctx, s.customer)
-	s.Require().NoError(err)
-	s.Equal(2, held.Keys[0].KEKVersion)
-	reopened, err := s.source(false).For(s.ctx, s.customer)
-	s.Require().NoError(err)
-	s.Equal("own-key-secret-value", reopened.Secret.Reveal())
-}
-
 func (s *StoredSuite) TestTheFallbackIsRecordedAtMostOnceAMinute() {
 	source := s.source(true)
 	for range 3 {
@@ -278,8 +193,8 @@ func (s *StoredSuite) TestTheFallbackIsRecordedAtMostOnceAMinute() {
 	s.Equal(int64(4), s.usesOf(s.customer), "uses in between are counted when next written")
 }
 
-func (s *StoredSuite) TestAppModeRefusesToStartWithoutAKeyring() {
-	_, err := NewStored(StoredOptions{Store: s.store, Deployment: s.deployment})
+func (s *StoredSuite) TestForwardedTokensAreNotKeptWithoutAKeyring() {
+	_, err := NewForwarded(ForwardedOptions{Store: s.store})
 
 	s.ErrorContains(err, "keyring")
 }
@@ -303,89 +218,6 @@ func customersOf(uses []store.StreamFallbackUse) []string {
 	return customers
 }
 
-// checked runs one check of every connected app, and says which apps it ended.
-func (s *StoredSuite) checked(source *Stored) []int64 {
-	var ended []int64
-	source.CheckApps(s.ctx, NewClients(source, ClientsOptions{}), func(customer string, app int64) {
-		s.Equal(s.customer, customer)
-		ended = append(ended, app)
-	})
-	return ended
-}
-
-func (s *StoredSuite) TestAnAppThatDisablesAuthChecksIsBlocked() {
-	// A token the router mints there proves nothing, so nothing more is written there.
-	s.register("own-key")
-	s.stream.SetApp(chattest.App{ID: s.app, DisableAuthChecks: true})
-	source := s.source(true)
-
-	s.Equal([]int64{s.app}, s.checked(source))
-
-	held, err := s.store.StreamApp(s.ctx, s.customer)
-	s.Require().NoError(err)
-	s.Equal(store.StreamAppBlocked, held.State)
-	_, err = source.For(s.ctx, s.customer)
-	s.ErrorIs(err, ErrStreamAppDisconnected, "a blocked app never falls back")
-}
-
-func (s *StoredSuite) TestASuspendedAppIsBlocked() {
-	s.register("own-key")
-	s.stream.SetApp(chattest.App{ID: s.app, Suspended: true})
-
-	s.Equal([]int64{s.app}, s.checked(s.source(false)))
-}
-
-func (s *StoredSuite) TestAnAppWhoseKeyIsAnotherAppsIsBlocked() {
-	s.register("own-key")
-	s.stream.SetApp(chattest.App{ID: s.app + 1})
-
-	s.Equal([]int64{s.app}, s.checked(s.source(false)))
-}
-
-func (s *StoredSuite) TestAKeyStreamRefusesIsRejectedAndTheNextOneUsed() {
-	s.register("primary", "secondary")
-	s.stream.SetApp(chattest.App{ID: s.app, Refuses: true})
-	source := s.source(false)
-
-	s.Empty(s.checked(source))
-
-	held, err := s.store.StreamApp(s.ctx, s.customer)
-	s.Require().NoError(err)
-	primary, _ := held.Key("primary")
-	s.Equal(store.StreamAppKeyRejected, primary.Status)
-	identity, err := source.For(s.ctx, s.customer)
-	s.Require().NoError(err)
-	s.Equal("secondary", identity.APIKey)
-}
-
-func (s *StoredSuite) TestAnAppWhoseEveryKeyIsRefusedIsBlocked() {
-	// The first check rejects the app's one key. The next finds nothing left to act with,
-	// and ends what was pinned to the app rather than leaving it to wait forever.
-	s.register("own-key")
-	s.stream.SetApp(chattest.App{ID: s.app, Refuses: true})
-	source := s.source(false)
-	s.Require().Empty(s.checked(source))
-
-	s.Equal([]int64{s.app}, s.checked(source))
-
-	held, err := s.store.StreamApp(s.ctx, s.customer)
-	s.Require().NoError(err)
-	s.Equal(store.StreamAppBlocked, held.State)
-	s.Equal("Stream refused every key the app holds", held.StateReason)
-}
-
-func (s *StoredSuite) TestAHealthyAppStaysConnectedWithWhatItsCheckFound() {
-	s.register("own-key")
-	s.stream.SetApp(chattest.App{ID: s.app, CallTypes: []string{AgentCallType}})
-
-	s.Empty(s.checked(s.source(false)))
-
-	held, err := s.store.StreamApp(s.ctx, s.customer)
-	s.Require().NoError(err)
-	s.Equal(store.StreamAppConnected, held.State)
-	s.JSONEq(`{"channel_type":"missing","call_type":"present","suspended":false,"auth_checks_off":false}`, string(held.Checks))
-}
-
 func (s *StoredSuite) TestADeploymentSignedHookWaitsForTheDeploymentApp() {
 	s.deployment = NewDeployment(DeploymentOptions{APIKey: "deploy-key", Secret: "deploy-secret", Strict: true})
 	clients := NewClients(s.source(false), ClientsOptions{})
@@ -394,61 +226,6 @@ func (s *StoredSuite) TestADeploymentSignedHookWaitsForTheDeploymentApp() {
 	s.ErrorIs(err, ErrDeploymentAppUnknown)
 	_, err = clients.Verifiers(s.ctx, "", 999)
 	s.ErrorIs(err, ErrDeploymentAppUnknown, "999 may be the deployment's own app")
-
-	s.register("own-key")
-	verifiers, err := clients.Verifiers(s.ctx, "", s.app)
-	s.Require().NoError(err, "a registered app's hooks do not wait on the deployment's")
-	s.Require().Len(verifiers, 1)
-	s.Equal(s.customer, verifiers[0].CustomerID)
-}
-
-// afterKeysRead runs do once, as soon as an app's keys have been read through the store it
-// is added to, as a registration landing at that moment would.
-type afterKeysRead struct {
-	once sync.Once
-	do   func()
-}
-
-func (a *afterKeysRead) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
-	return ctx
-}
-
-func (a *afterKeysRead) AfterQuery(_ context.Context, event *bun.QueryEvent) {
-	if event.Operation() == "SELECT" && strings.Contains(event.Query, `"stream_app_keys"`) {
-		a.once.Do(a.do)
-	}
-}
-
-func (s *StoredSuite) TestAHookKeyDroppedWhileItWasReadIsNotKept() {
-	// A registration dropping a key lands while a hook reads the app's keys. Kept, what the
-	// hook read would verify hooks signed with the dropped key until it expired.
-	s.register("old-key")
-	reading, err := store.Open(testenv.Database(os.Getenv("ROUTER_POSTGRES_DSN"), "streamapp"))
-	s.Require().NoError(err)
-	s.T().Cleanup(func() { s.Require().NoError(reading.Close()) })
-	source, err := NewStored(StoredOptions{Store: reading, Sealer: s.sealer, Deployment: s.deployment})
-	s.Require().NoError(err)
-	clients := NewClients(source, ClientsOptions{})
-	reading.DB().AddQueryHook(&afterKeysRead{do: func() {
-		s.register("new-key")
-		clients.Invalidate(s.customer)
-	}})
-
-	first, err := clients.Verifiers(s.ctx, "", s.app)
-	s.Require().NoError(err)
-	s.Equal([]string{"old-key"}, apiKeysOf(first), "what was read before the registration answers that hook")
-	second, err := clients.Verifiers(s.ctx, "", s.app)
-	s.Require().NoError(err)
-
-	s.Equal([]string{"new-key"}, apiKeysOf(second), "and is not kept past it")
-}
-
-func apiKeysOf(verifiers []Verifier) []string {
-	keys := make([]string, 0, len(verifiers))
-	for _, verifier := range verifiers {
-		keys = append(keys, verifier.APIKey)
-	}
-	return keys
 }
 
 // floored is app mode's source with the fallback on and a floor answering as given.
@@ -487,13 +264,13 @@ func (s *StoredSuite) TestTheDeploymentAppIsUnaffectedByTheRequirement() {
 	s.Equal("deploy-key", identity.APIKey)
 }
 
-func (s *StoredSuite) TestARegisteredAppIsUnaffectedByTheRequirement() {
-	s.register("own-key")
+func (s *StoredSuite) TestAnAppWithATokenOfItsOwnIsUnaffectedByTheRequirement() {
+	s.ownToken()
 
 	identity, err := s.floored(true, nil).For(s.ctx, s.customer)
 
 	s.Require().NoError(err)
-	s.Equal("own-key", identity.APIKey)
+	s.Equal(forwardedKey, identity.APIKey)
 }
 
 func (s *StoredSuite) TestADeploymentWithoutASecretChecksNoHookWithAnEmptyOne() {
@@ -508,21 +285,26 @@ func (s *StoredSuite) TestADeploymentWithoutASecretChecksNoHookWithAnEmptyOne() 
 	}
 }
 
-func (s *StoredSuite) TestTheDeploymentAppsOwnRegistrationChecksItsHooksAsTheDeployments() {
-	// The deployment's customer registered the deployment's app. A hook from that app is
-	// still about everything written there, not that customer's alone.
-	s.app, s.customer = 1, "1"
-	s.register("deploy-app-key")
+func (s *StoredSuite) TestTheDeploymentAppsHooksAreCheckedWithItsOwnSecret() {
 	clients := NewClients(s.source(false), ClientsOptions{})
 
 	verifiers, err := clients.Verifiers(s.ctx, "", 1)
 
 	s.Require().NoError(err)
-	s.Require().NotEmpty(verifiers)
-	for _, verifier := range verifiers {
-		s.True(verifier.Deployment, verifier.APIKey)
-		s.Empty(verifier.CustomerID)
-	}
+	s.Require().Len(verifiers, 1)
+	s.True(verifiers[0].Deployment)
+	s.Equal("deploy-secret", verifiers[0].Secret.Reveal())
+}
+
+func (s *StoredSuite) TestACustomersOwnAppsHooksAreCheckedAgainstNoSecretHere() {
+	// The router holds none of the app's secrets: the gateway in front vouches for them.
+	s.ownToken()
+	clients := NewClients(s.source(false), ClientsOptions{})
+
+	verifiers, err := clients.Verifiers(s.ctx, forwardedKey, s.app)
+
+	s.Require().NoError(err)
+	s.Empty(verifiers)
 }
 
 func (s *StoredSuite) TestADeploymentWithNoKeyOfItsOwnMakesNobodyWait() {

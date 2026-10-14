@@ -109,12 +109,15 @@ def sync_detailed(
     Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the
     connection's own credential is added instead. On a 401 the credential is renewed and the request
     sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are,
-    and the connection's calls are then refused with a 429 here until that Retry-After passes. A path
-    with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a
-    provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key
-    and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned
-    one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent
-    leaves one proxy_call audit row.
+    and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's
+    direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by
+    default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is
+    not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a
+    backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1
+    MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token
+    and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's;
+    a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call
+    that is sent leaves one proxy_call audit row.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -156,12 +159,15 @@ def sync(
     Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the
     connection's own credential is added instead. On a 401 the credential is renewed and the request
     sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are,
-    and the connection's calls are then refused with a 429 here until that Retry-After passes. A path
-    with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a
-    provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key
-    and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned
-    one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent
-    leaves one proxy_call audit row.
+    and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's
+    direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by
+    default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is
+    not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a
+    backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1
+    MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token
+    and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's;
+    a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call
+    that is sent leaves one proxy_call audit row.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -198,12 +204,15 @@ async def asyncio_detailed(
     Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the
     connection's own credential is added instead. On a 401 the credential is renewed and the request
     sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are,
-    and the connection's calls are then refused with a 429 here until that Retry-After passes. A path
-    with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a
-    provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key
-    and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned
-    one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent
-    leaves one proxy_call audit row.
+    and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's
+    direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by
+    default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is
+    not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a
+    backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1
+    MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token
+    and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's;
+    a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call
+    that is sent leaves one proxy_call audit row.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -243,12 +252,15 @@ async def asyncio(
     Id) and query parameters (api_key, token, customer_id, user_id), which never reach the provider; the
     connection's own credential is added instead. On a 401 the credential is renewed and the request
     sent once more when the scheme can renew it. A provider's 429 and Retry-After come back as they are,
-    and the connection's calls are then refused with a 429 here until that Retry-After passes. A path
-    with a dot segment, which would leave api_base, is refused. The body is at most 1 MiB. Point a
-    provider's own SDK at this URL as its base URL, with a server-side token as its token and X-Api-Key
-    and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's; a user-owned
-    one is reached only by a backend acting for that user (X-Stream-User-Id). Each call that is sent
-    leaves one proxy_call audit row.
+    and the connection's calls are then refused with a 429 here until that Retry-After passes. An app's
+    direct calls to one connector are capped per minute (ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE, 60 by
+    default); a call over the cap is refused with a 429 and a Retry-After until the minute ends, and is
+    not sent. A path with a dot segment, written or escaped, or with an escaped slash (%2F) or a
+    backslash (%5C), which a provider could resolve to leave api_base, is refused. The body is at most 1
+    MiB. Point a provider's own SDK at this URL as its base URL, with a server-side token as its token
+    and X-Api-Key and Stream-Auth-Type as extra headers. An app-owned connection is the app's backend's;
+    a user-owned one is reached only by a backend acting for that user (X-Stream-User-Id). Each call
+    that is sent leaves one proxy_call audit row.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

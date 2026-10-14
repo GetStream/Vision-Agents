@@ -94,6 +94,9 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) error {
 	if campaign.FromNumber == "" {
 		return stack.Wrap(errors.New("campaign: a campaign needs one of your numbers to call from"))
 	}
+	if err := r.phone.Suspended(ctx, customerID); err != nil {
+		return err
+	}
 	// The config is read once, here, rather than per call: a campaign is one agent
 	// ringing many people, and editing it halfway through should not change who they
 	// are talking to.
@@ -216,7 +219,14 @@ func (r *Runner) ring(
 	finished := store.Contact{ID: contact.ID, State: store.Done}
 	spec := session.FromConfig(config)
 
-	placed, err := r.phone.Call(ctx, placing(campaign, contact, spec.CallType))
+	placed, err := r.phone.Call(ctx, placing(campaign, contact))
+	if errors.Is(err, phone.ErrSuspended) {
+		// Nobody was rung, so the contact stays to be rung once the campaign is started
+		// again, and every router running this campaign stops at its next call.
+		r.logger.Info("paused a campaign of a suspended app", "campaign", campaign.ID)
+		r.stop(campaign, store.Paused)
+		return
+	}
 	if err != nil {
 		finished.State = store.Failed
 		finished.Error = err.Error()
@@ -252,23 +262,21 @@ func (r *Runner) ring(
 	r.finish(ctx, finished)
 }
 
-// placing is the call one contact is rung on. The answered leg is routed into the Stream
-// call this names, and the agent has to be in that same call: without naming it, the route
-// sends the person into a fresh call of its own while the agent waits in another.
-func placing(campaign store.Campaign, contact store.Contact, callType string) phone.CallRequest {
+// placing is the call one contact is rung on. The answered leg is routed into the call of
+// the session the phone service chooses, which is opened with that id.
+func placing(campaign store.Campaign, contact store.Contact) phone.CallRequest {
 	return phone.CallRequest{
-		Owner:    routing.Owner{CustomerID: campaign.CustomerID, Tags: campaign.Tags},
-		From:     campaign.FromNumber,
-		To:       contact.ToNumber,
-		CallID:   "campaign-" + contact.ID,
-		CallType: callType,
+		Owner: routing.Owner{CustomerID: campaign.CustomerID, Tags: campaign.Tags},
+		From:  campaign.FromNumber,
+		To:    contact.ToNumber,
 	}
 }
 
-// meet puts the agent in the call the person was routed into.
+// meet opens the session under the id the call was placed for, so the agent is in the call
+// the person was routed into.
 func meet(spec *session.Spec, placed phone.Placed) {
-	spec.CallID = placed.CallID
-	spec.CallType = placed.CallType
+	spec.ID = placed.SessionID
+	spec.Text = false
 }
 
 // hold waits for the conversation to end, and ends it if nothing else does.

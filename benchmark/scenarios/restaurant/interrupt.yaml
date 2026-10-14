@@ -16,7 +16,7 @@ turns:
       kind: barge_in_after_ms
       after_ms: 900
   - id: name
-    text: "Name is Alvarez, 512-555-0142."
+    text: "Name is Alvarez, 512-555-0142. No high chair."
     trigger:
       kind: after_agent_turn
       delay_ms: 350

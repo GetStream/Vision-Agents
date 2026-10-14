@@ -88,7 +88,7 @@ type ConnectorAuditEvent struct {
 	LatencyMs    *int64                    `json:"latency_ms,omitempty" doc:"How long a proxy_call took until the provider's answer, in milliseconds. Absent for a grant."`
 	Target       string                    `json:"target,omitempty" doc:"The host a proxy_call reached. Absent for a grant."`
 	CreatedAt    time.Time                 `json:"created_at"`
-	Credential   *ConnectorAuditCredential `json:"credential,omitempty" doc:"The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a delete, and a connection whose scheme does not name its tokens."`
+	Credential   *ConnectorAuditCredential `json:"credential,omitempty" doc:"The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a user's erasure, a connector's delete, and a connection whose scheme does not name its tokens. A connection delete's row names the tokens it ended."`
 }
 
 // ConnectorAuditCredential is a grant row's tokens by fingerprint (store.ConnectorAuditCredential).

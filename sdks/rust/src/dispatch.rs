@@ -34,6 +34,9 @@ pub struct InboundCall {
     /// The Stream call the caller is already in, which is the one to join.
     pub call_id: String,
     pub call_type: String,
+    /// The session to open for the call, with voice: the call is named for it. Empty for a
+    /// number attached before calls were, which has to be attached again.
+    pub session_id: String,
     /// The number they rang, which is what the agent acts from and can transfer on.
     pub called_number: String,
     /// The number they rang from, where the vendor passed it on.
@@ -49,6 +52,7 @@ impl InboundCall {
         InboundCall {
             call_id: frame.text("call_id").into(),
             call_type: or(frame.text("call_type"), "default"),
+            session_id: frame.text("session_id").into(),
             called_number: frame.text("called_number").into(),
             caller_number: frame.text("caller_number").into(),
             custom: frame
@@ -87,8 +91,8 @@ pub struct InboundMessage {
     /// The running session it was written to, when its agent leaves text to dispatch.
     /// Nothing has answered it: [`Dispatch::answer`] has the model do so.
     pub session_id: String,
-    /// The durable command it was sent as, which the answer is created on. May be empty.
-    pub command_id: String,
+    /// The request it was sent as, which the answer is created on. May be empty.
+    pub request_id: String,
     pub text: String,
     pub message_id: String,
     pub user_id: String,
@@ -104,7 +108,7 @@ impl InboundMessage {
             agent_id: frame.text("agent_id").into(),
             config_id: frame.text("config_id").into(),
             session_id: frame.text("session_id").into(),
-            command_id: frame.text("command_id").into(),
+            request_id: frame.text("request_id").into(),
             text: frame.text("text").into(),
             message_id: frame.text("message_id").into(),
             user_id: frame.text("user_id").into(),
@@ -314,7 +318,7 @@ impl Dispatch {
     ///
     /// The response is created with this worker's own credential acting for whoever wrote
     /// the message, so it reaches their conversation and goes to the model rather than back
-    /// to a worker. It carries the message's command, so the answer lands on it.
+    /// to a worker. It carries the message's request id, so the answer lands on it.
     pub async fn answer(&self, message: &InboundMessage) -> Result<AgentResponse> {
         if message.session_id.is_empty() {
             return Err(Error::configuration(
@@ -325,11 +329,13 @@ impl Dispatch {
             self.inner.client.acting_for(&message.user_id),
             &message.session_id,
         )
-        .create_with(&types::CreateResponseRequest {
-            text: message.text.clone(),
-            command_id: (!message.command_id.is_empty()).then(|| message.command_id.clone()),
-            ..Default::default()
-        })
+        .create_answering(
+            &types::CreateResponseRequest {
+                text: message.text.clone(),
+                ..Default::default()
+            },
+            (!message.request_id.is_empty()).then(|| message.request_id.clone()),
+        )
         .await
     }
 

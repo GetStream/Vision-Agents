@@ -54,9 +54,7 @@ class ConnectionCredentials:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.connection_credentials_values import (
-            ConnectionCredentialsValues,
-        )
+        from ..models.connection_credentials_values import ConnectionCredentialsValues
 
         d = dict(src_dict)
         expected_revision = d.pop("expected_revision")

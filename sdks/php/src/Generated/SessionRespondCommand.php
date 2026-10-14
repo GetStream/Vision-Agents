@@ -13,10 +13,10 @@ final readonly class SessionRespondCommand
     public function __construct(
         public string $text,
         public string $type,
-        // Required for personal persistent text conversations; reuse on retries. Text only when present.
-        public ?string $commandId = null,
         /** @var list<ImageSource>|null */
         public ?array $images = null,
+        // Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persis...
+        public ?string $requestId = null,
     ) {
     }
 
@@ -28,8 +28,8 @@ final readonly class SessionRespondCommand
         return new self(
             text: Json::string($data, 'text'),
             type: Json::string($data, 'type'),
-            commandId: array_key_exists('command_id', $data) && $data['command_id'] !== null ? Json::string($data, 'command_id') : null,
             images: array_key_exists('images', $data) && $data['images'] !== null ? array_map(ImageSource::fromArray(...), Json::objects($data, 'images')) : null,
+            requestId: array_key_exists('request_id', $data) && $data['request_id'] !== null ? Json::string($data, 'request_id') : null,
         );
     }
 
@@ -43,11 +43,11 @@ final readonly class SessionRespondCommand
         $out = [];
         $out['text'] = $this->text;
         $out['type'] = $this->type;
-        if ($this->commandId !== null) {
-            $out['command_id'] = $this->commandId;
-        }
         if ($this->images !== null) {
             $out['images'] = array_map(static fn (ImageSource $each): array => $each->toArray(), $this->images);
+        }
+        if ($this->requestId !== null) {
+            $out['request_id'] = $this->requestId;
         }
         return $out;
     }

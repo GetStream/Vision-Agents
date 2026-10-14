@@ -27,12 +27,13 @@ final readonly class Sessions
     }
 
     /**
-     * Opens a conversation, held in writing unless a call is named.
+     * Opens a conversation, held in writing unless `startVoice` has the agent join the
+     * session's own call, `agent:<session id>`.
      *
      * A field left null is left out, so the config decides it.
      *
-     * @param ?string $id a UUID to hold the session by; null lets the router generate one, and
-     *     one already taken is refused with 409
+     * @param ?string $id up to 64 letters, digits, - and _ to hold the session by; null lets the
+     *     router generate one, and one already taken is refused with 409
      * @param array<string, mixed>|null $custom anything of the caller's own a later query can match on
      */
     public function create(
@@ -41,17 +42,14 @@ final readonly class Sessions
         ?string $projectId = null,
         ?array $custom = null,
         ?bool $incognito = null,
-        ?string $conversationId = null,
         ?ModelOverwrites $modelOverwrites = null,
-        ?string $callId = null,
+        ?bool $startVoice = null,
         ?string $userId = null,
         ?string $id = null,
     ): Session {
         $request = new CreateSessionRequest(
             id: $id,
-            conversationId: $conversationId,
-            callId: $callId,
-            text: $callId === null ? true : null,
+            startVoice: $startVoice,
             agent: $this->agent,
             incognito: $incognito,
             title: $title,
@@ -116,8 +114,8 @@ final readonly class Sessions
 
     /**
      * Changes one conversation, whether or not it is still being held, and returns it as it
-     * now is. One that ended takes only a title, description and custom labels; instructions,
-     * models and voice need it running, and apply from its next turn. A field left null is
+     * now is. One that ended takes only a title, description and custom labels; models and
+     * voice need it running, and apply from its next turn. A field left null is
      * left as it is; an empty `sts` makes the session a cascade again and an empty `voice`
      * returns to the provider's default.
      *
@@ -128,7 +126,6 @@ final readonly class Sessions
         ?string $title = null,
         ?string $description = null,
         ?array $custom = null,
-        ?string $instructions = null,
         ?string $llm = null,
         ?string $stt = null,
         ?string $tts = null,
@@ -142,7 +139,6 @@ final readonly class Sessions
         $request = new UpdateSessionRequest(
             custom: $custom,
             description: $description,
-            instructions: $instructions,
             llm: $llm,
             maxOutputTokens: $maxOutputTokens,
             sts: $sts,

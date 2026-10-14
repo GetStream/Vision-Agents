@@ -18,7 +18,7 @@ final readonly class ConnectionRequest
         // A built-in, such as slack, or one of the app's own.
         public string $connectorId,
         public ConnectionOwner $owner,
-        // One of the connector's schemes. Omitted is its only one; a connector with several needs it named.
+        // One of the connector's schemes. Omitted is its only one, or else its only one that is not a static token or...
         public ?string $authScheme = null,
         // Values for the connector's inputs, such as a region. One without a default is required, and each must match...
         /** @var array<string, string>|null */

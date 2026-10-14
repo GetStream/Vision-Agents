@@ -193,7 +193,6 @@ redis:
 auth:
   mode: api_key
   kek: a-passphrase
-cors_origins: [https://agents.example.com]
 data_move:
   retention: 48h
 `), 0o600))
@@ -206,7 +205,6 @@ data_move:
 	s.Equal("postgres://db/self_hosted", config.Postgres.DSN)
 	s.Equal("redis:6379", config.Redis.Addr)
 	s.Equal("api_key", config.Auth.Mode)
-	s.Equal([]string{"https://agents.example.com"}, config.CORSOrigins)
 	s.Equal(48*time.Hour, config.DataMove.Retention)
 	s.EqualValues(200, config.RateLimit.MessagesPerDay, "a file that says nothing keeps the default")
 }
@@ -429,6 +427,23 @@ func (s *ConfigSuite) TestConnectorsAreOffUnlessAskedFor() {
 	s.True(config.Connectors.Enabled)
 }
 
+// TestDirectCallsAreCappedAtSixtyAMinuteUnlessAskedOtherwise: the default, the variable that
+// changes it, 0 that turns it off, and a negative cap refused (AI-958).
+func (s *ConfigSuite) TestDirectCallsAreCappedAtSixtyAMinuteUnlessAskedOtherwise() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.EqualValues(60, config.Connectors.ProxyCallsPerMinute)
+
+	s.T().Setenv("ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Connectors.ProxyCallsPerMinute)
+
+	s.T().Setenv("ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE", "-1")
+	_, _, err = Load("")
+	s.ErrorContains(err, "connectors.proxy_calls_per_minute")
+}
+
 func (s *ConfigSuite) TestAnEpisodeIsIdleAfterAnHourUnlessAskedFor() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
@@ -490,9 +505,19 @@ func (s *ConfigSuite) TestAppModeIsRefusedWithoutPostgres() {
 	s.ErrorContains(err, "postgres.dsn")
 }
 
-func (s *ConfigSuite) TestAppModeRefusesAUserTokenInTheEnvironment() {
+// behindTheGateway sets what app mode needs: Postgres, a proxy that declares kinds, and the
+// gateway's mint endpoint.
+func (s *ConfigSuite) behindTheGateway() {
 	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
 	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
+	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "true")
+	s.T().Setenv("ROUTER_STREAM_MINT_URL", "http://gateway-internal:8082")
+	s.T().Setenv("ROUTER_STREAM_MINT_TOKEN", "the-routers-bearer")
+}
+
+func (s *ConfigSuite) TestAppModeRefusesAUserTokenInTheEnvironment() {
+	s.behindTheGateway()
 	s.T().Setenv("STREAM_USER_TOKEN", "one-apps-token")
 
 	_, _, err := Load("")
@@ -501,46 +526,45 @@ func (s *ConfigSuite) TestAppModeRefusesAUserTokenInTheEnvironment() {
 	s.NotContains(err.Error(), "one-apps-token")
 }
 
-func (s *ConfigSuite) TestAppModeStartsWithPostgresAndNoUserToken() {
-	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
-	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
+func (s *ConfigSuite) TestAppModeStartsBehindTheGateway() {
+	s.behindTheGateway()
 
 	config, _, err := Load("")
 
 	s.Require().NoError(err)
 	s.Equal(TenancyApp, config.Stream.Tenancy)
+	s.Equal("http://gateway-internal:8082", config.Stream.MintURL)
 }
 
-func (s *ConfigSuite) TestAppModeRefusesNoAuth() {
-	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
-	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
-	s.T().Setenv("ROUTER_AUTH_MODE", "noauth")
+func (s *ConfigSuite) TestAppModeRefusesAnythingButAProxy() {
+	for _, mode := range []string{"noauth", "api_key"} {
+		s.Run(mode, func() {
+			s.behindTheGateway()
+			s.T().Setenv("ROUTER_AUTH_MODE", mode)
 
-	_, _, err := Load("")
+			_, _, err := Load("")
 
-	s.ErrorContains(err, "auth.mode=noauth")
+			s.ErrorContains(err, "auth.mode=proxy")
+		})
+	}
 }
 
 func (s *ConfigSuite) TestAppModeRefusesAProxyThatDeclaresNoKind() {
-	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
-	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
-	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
+	s.behindTheGateway()
+	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "false")
 
 	_, _, err := Load("")
 
 	s.ErrorContains(err, "auth.proxy_declares_kind")
 }
 
-func (s *ConfigSuite) TestAppModeStartsBehindAProxyThatDeclaresKinds() {
-	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
-	s.T().Setenv("ROUTER_POSTGRES_DSN", "postgres://localhost/router")
-	s.T().Setenv("ROUTER_AUTH_MODE", "proxy")
-	s.T().Setenv("ROUTER_AUTH_PROXY_DECLARES_KIND", "true")
+func (s *ConfigSuite) TestAppModeRefusesToStartWithoutTheMintEndpoint() {
+	s.behindTheGateway()
+	s.T().Setenv("ROUTER_STREAM_MINT_TOKEN", "")
 
-	config, _, err := Load("")
+	_, _, err := Load("")
 
-	s.Require().NoError(err)
-	s.Equal(TenancyApp, config.Stream.Tenancy)
+	s.ErrorContains(err, "stream.mint_url")
 }
 
 func (s *ConfigSuite) TestStreamFallbackDefaultsToRefuseInAppMode() {
@@ -589,20 +613,6 @@ func (s *ConfigSuite) TestALimitThatIsNotANumberIsRefused() {
 	s.Error(err)
 }
 
-func (s *ConfigSuite) TestRegistrationSettingsAreOffAndEmptyUnlessSet() {
-	config, _, err := Load("")
-	s.Require().NoError(err)
-	s.False(config.Stream.TrustAPIKeyHeader)
-	s.Empty(config.Stream.DenyRegistration)
-
-	s.T().Setenv("ROUTER_STREAM_TRUST_API_KEY_HEADER", "true")
-	s.T().Setenv("ROUTER_STREAM_DENY_REGISTRATION", "11,22")
-	config, _, err = Load("")
-	s.Require().NoError(err)
-	s.True(config.Stream.TrustAPIKeyHeader)
-	s.Equal([]string{"11", "22"}, config.Stream.DenyRegistration)
-}
-
 func (s *ConfigSuite) TestChatTimingsAreOffUnlessTurnedOn() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
@@ -613,4 +623,29 @@ func (s *ConfigSuite) TestChatTimingsAreOffUnlessTurnedOn() {
 	s.Require().NoError(err)
 	s.True(config.Agent.ChatTimings)
 	s.Equal("true", os.Getenv("ROUTER_CHAT_TIMINGS"), "what is exported says the same")
+}
+
+func (s *ConfigSuite) TestTelnyxSettingsAreReadFromTheEnvironment() {
+	s.T().Setenv("TELNYX_API_KEY", "KEY123")
+	s.T().Setenv("TELNYX_CONNECTION_ID", "conn-1")
+	s.T().Setenv("TELNYX_PUBLIC_KEY", "cHVibGlj")
+
+	config, _, err := Load("")
+	s.Require().NoError(err)
+
+	s.Equal(Telnyx{APIKey: "KEY123", ConnectionID: "conn-1", PublicKey: "cHVibGlj"}, config.Telnyx)
+}
+
+// The Telnyx provider reads its own variables, so settings from a file have to reach them.
+func (s *ConfigSuite) TestTelnyxSettingsInAFileReachTheEnvironment() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte(
+		"telnyx:\n  api_key: KEY123\n  connection_id: conn-1\n  public_key: cHVibGlj\n"), 0o600))
+
+	_, _, err := Load(path)
+	s.Require().NoError(err)
+
+	s.Equal("KEY123", os.Getenv("TELNYX_API_KEY"))
+	s.Equal("conn-1", os.Getenv("TELNYX_CONNECTION_ID"))
+	s.Equal("cHVibGlj", os.Getenv("TELNYX_PUBLIC_KEY"))
 }

@@ -57,7 +57,7 @@ class TestClient < LocalRouterTest
     slow_down = LocalRouter.failure("rate_limited", "rate_limited", "slow down")
     @router.on(:post, "/v1/agents/sessions", status: 429, body: slow_down, headers: { "Retry-After" => "3" })
 
-    error = assert_raises(VA::RouterError) { client.post("/v1/agents/sessions", body: { text: true }) }
+    error = assert_raises(VA::RouterError) { client.post("/v1/agents/sessions", body: { start_voice: true }) }
 
     assert_equal 429, error.status
     assert_equal "createSession", error.operation

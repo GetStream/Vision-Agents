@@ -11,14 +11,12 @@ use GetStream\VisionAgents\Json;
 final readonly class TransferCallRequest
 {
     public function __construct(
-        // The Stream call the caller and the agent are already on.
-        public string $callId,
         // The customer's number the human is dialled from, which is what they see.
         public string $from,
+        // The session whose call the caller and the agent are on. The human is brought into it.
+        public string $sessionId,
         // The human being brought onto the call.
         public string $to,
-        // The Stream call type. Omit for "agent".
-        public ?string $callType = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
     ) {
@@ -30,10 +28,9 @@ final readonly class TransferCallRequest
     public static function fromArray(array $data): self
     {
         return new self(
-            callId: Json::string($data, 'call_id'),
             from: Json::string($data, 'from'),
+            sessionId: Json::string($data, 'session_id'),
             to: Json::string($data, 'to'),
-            callType: array_key_exists('call_type', $data) && $data['call_type'] !== null ? Json::string($data, 'call_type') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
         );
     }
@@ -46,12 +43,9 @@ final readonly class TransferCallRequest
     public function toArray(): array
     {
         $out = [];
-        $out['call_id'] = $this->callId;
         $out['from'] = $this->from;
+        $out['session_id'] = $this->sessionId;
         $out['to'] = $this->to;
-        if ($this->callType !== null) {
-            $out['call_type'] = $this->callType;
-        }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
         }

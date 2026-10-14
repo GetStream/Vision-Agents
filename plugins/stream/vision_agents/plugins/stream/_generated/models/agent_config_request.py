@@ -51,9 +51,9 @@ class AgentConfigRequest:
             a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session
             runs as it always did. Left out on an update, the stored setting stays.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
-        guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then
-            the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty
-            means every turn is answered.
+        guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or
+            llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the
+            model. Empty means every turn is answered.
         harness (Harness | Unset): Which harness the agent's sessions run: what hands work to the subagent, loads
             skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the
             default, the only one there is.
@@ -68,14 +68,15 @@ class AgentConfigRequest:
         mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
             what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
             speech target and a session created from it needs no call to join.
-        plugin_events (list[PluginEvent] | Unset): MCP events the agent subscribes to on the plugins it names, with
-            every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login
-            it came through.
-        plugins (list[PluginWithOptions | str] | Unset): Hosted MCP servers this agent may reach, named from the built-
-            in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and
-            the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then
-            each end user connects it with their own account, and the agent asks for the login in the conversation, as a
-            plugin_authorization attachment, the first time it needs one.
+        plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors. MCP
+            events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that
+            arrives opens a text conversation of its own, as whoever's login it came through.
+        plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector. Hosted
+            MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how
+            it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each
+            once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and
+            the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs
+            one.
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.
@@ -92,7 +93,10 @@ class AgentConfigRequest:
         subagent (str | Unset): The slower model a voice agent hands its skills to, while the voice model keeps talking.
             Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the
             default subagent.
-        tags (AgentConfigRequestTags | Unset): Cost labels, carried onto every request a session using it makes.
+        tags (AgentConfigRequestTags | Unset): Cost labels, carried onto every request a session using it makes. A
+            config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel
+            connection and subscribes to no event, which stay with the live config, and it may bind a channel connection
+            another config binds.
         tools (AgentTools | Unset): How an agent is offered its plugin, MCP server and connector tools.
         tts (str | Unset):
         video (SessionVideo | Unset):
@@ -315,12 +319,8 @@ class AgentConfigRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_channels import AgentChannels
-        from ..models.agent_config_request_tags import (
-            AgentConfigRequestTags,
-        )
-        from ..models.agent_connector_binding import (
-            AgentConnectorBinding,
-        )
+        from ..models.agent_config_request_tags import AgentConfigRequestTags
+        from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_tools import AgentTools
         from ..models.greeting import Greeting

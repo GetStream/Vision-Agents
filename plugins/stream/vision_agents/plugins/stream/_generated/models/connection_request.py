@@ -71,9 +71,7 @@ class ConnectionRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.connection_owner import ConnectionOwner
-        from ..models.connection_request_inputs import (
-            ConnectionRequestInputs,
-        )
+        from ..models.connection_request_inputs import ConnectionRequestInputs
 
         d = dict(src_dict)
         connector_id = d.pop("connector_id")

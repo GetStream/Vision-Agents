@@ -37,7 +37,7 @@ class InboundMessage:
         at: When it arrived.
         session_id: The running session it was written to, set when its agent leaves text
             to dispatch. Nothing has answered it yet; a response on this session does.
-        command_id: The durable command it was sent as, for that response to land on.
+        request_id: The request it was sent as, for that response to land on.
     """
 
     channel_id: str
@@ -50,7 +50,7 @@ class InboundMessage:
     user_name: str = ""
     at: Optional[datetime] = None
     session_id: str = ""
-    command_id: str = ""
+    request_id: str = ""
 
     @property
     def agent_id(self) -> str:

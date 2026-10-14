@@ -74,8 +74,7 @@ def sync_detailed(
     The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional
     `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the
     records. A `text` session is refused, because the socket carries audio. A field that `createSession`
-    refuses from an end user's device is refused here too: `history` and `instructions` are server-side
-    only.
+    refuses from an end user's device is refused here too: `history` is server-side only.
     The server answers `session`, with the `Session` and the `sample_rate` in use. Then binary frames
     are PCM16 mono at that rate in both directions: the caller's audio in, and the agent's speech out at
     the pace it would be heard on a call. A `cleared` frame says speech already sent was thrown away
@@ -115,8 +114,7 @@ def sync(
     The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional
     `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the
     records. A `text` session is refused, because the socket carries audio. A field that `createSession`
-    refuses from an end user's device is refused here too: `history` and `instructions` are server-side
-    only.
+    refuses from an end user's device is refused here too: `history` is server-side only.
     The server answers `session`, with the `Session` and the `sample_rate` in use. Then binary frames
     are PCM16 mono at that rate in both directions: the caller's audio in, and the agent's speech out at
     the pace it would be heard on a call. A `cleared` frame says speech already sent was thrown away
@@ -152,8 +150,7 @@ async def asyncio_detailed(
     The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional
     `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the
     records. A `text` session is refused, because the socket carries audio. A field that `createSession`
-    refuses from an end user's device is refused here too: `history` and `instructions` are server-side
-    only.
+    refuses from an end user's device is refused here too: `history` is server-side only.
     The server answers `session`, with the `Session` and the `sample_rate` in use. Then binary frames
     are PCM16 mono at that rate in both directions: the caller's audio in, and the agent's speech out at
     the pace it would be heard on a call. A `cleared` frame says speech already sent was thrown away
@@ -191,8 +188,7 @@ async def asyncio(
     The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional
     `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the
     records. A `text` session is refused, because the socket carries audio. A field that `createSession`
-    refuses from an end user's device is refused here too: `history` and `instructions` are server-side
-    only.
+    refuses from an end user's device is refused here too: `history` is server-side only.
     The server answers `session`, with the `Session` and the `sample_rate` in use. Then binary frames
     are PCM16 mono at that rate in both directions: the caller's audio in, and the agent's speech out at
     the pace it would be heard on a call. A `cleared` frame says speech already sent was thrown away

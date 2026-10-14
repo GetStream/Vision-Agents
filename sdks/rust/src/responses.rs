@@ -40,13 +40,32 @@ impl Responses {
     }
 
     /// [`Responses::create`], with images or anything else the request carries.
+    ///
+    /// The request's `request_id` is not the caller's to set: a question that is text only is
+    /// sent with a fresh one, and one with images or videos with none.
     pub async fn create_with(
         &self,
         request: &types::CreateResponseRequest,
     ) -> Result<AgentResponse> {
+        self.create_answering(request, None).await
+    }
+
+    /// `answering` is the request id of the inbound message being answered, sent in place of a
+    /// fresh one.
+    pub(crate) async fn create_answering(
+        &self,
+        request: &types::CreateResponseRequest,
+        answering: Option<String>,
+    ) -> Result<AgentResponse> {
+        let text_only = request.images.as_ref().is_none_or(Vec::is_empty)
+            && request.videos.as_ref().is_none_or(Vec::is_empty);
+        let request = types::CreateResponseRequest {
+            request_id: text_only.then(|| answering.unwrap_or_else(new_request_id)),
+            ..request.clone()
+        };
         let created = self
             .client
-            .create_response(&self.session_id, request)
+            .create_response(&self.session_id, &request)
             .await?;
         Ok(AgentResponse {
             items: Items::new(self.client.clone(), &created.session_id, &created.id),
@@ -153,6 +172,11 @@ impl Items {
             }
         }
     }
+}
+
+fn new_request_id() -> String {
+    let bytes: [u8; 16] = rand::random();
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Anything that names a response: its id, the response, or any item of one.

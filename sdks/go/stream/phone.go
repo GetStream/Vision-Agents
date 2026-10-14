@@ -153,18 +153,13 @@ func (p *Phone) ReadyVendor(ctx context.Context) (string, error) {
 	return "", errors.New("stream: no telephony vendor is configured with the credentials it needs")
 }
 
-// Attach points a number at a call, which is what turns a bought number into one that
-// reaches an agent.
-func (p *Phone) Attach(ctx context.Context, number, callID, callType string) (acceleration.AttachedNumber, error) {
+// Attach points a number at the agent, which is what turns a bought number into one that
+// reaches it. Every caller lands in a call of their own, agent:<session id>, handed to a
+// worker as an InboundCall naming the session to open.
+func (p *Phone) Attach(ctx context.Context, number string) (acceleration.AttachedNumber, error) {
 	var attached acceleration.AttachedNumber
 
 	request := acceleration.AttachNumberRequest{}
-	if callID != "" {
-		request.CallId = &callID
-	}
-	if callType != "" {
-		request.CallType = &callType
-	}
 
 	pointed, err := p.client.AttachPhoneNumberWithResponse(ctx, number, request)
 	if err != nil {
@@ -183,11 +178,9 @@ type OutboundCall struct {
 	From string
 	// To is who to call.
 	To string
-	// CallID is the Stream call the answered leg joins, and so the one the agent has to
-	// be in. Empty has one named after this call.
-	CallID string
-	// CallType is the Stream call type. Empty means "default".
-	CallType string
+	// SessionID is the session that holds the call: the answered leg is routed into its
+	// call, agent:<session id>. Empty has the router choose one, returned on PlacedCall.
+	SessionID string
 	// RingTimeout is how long to ring before giving up. Zero leaves the vendor's default,
 	// which is long enough to reach voicemail.
 	RingTimeout time.Duration
@@ -206,17 +199,14 @@ type OutboundCall struct {
 // Place rings somebody and bridges the answered leg into a Stream call.
 //
 // Stream's SIP is inbound only, so the vendor originates the call rather than Stream
-// dialling out. What comes back names the Stream call the answered leg is routed into, and
-// an agent that is not in it hears nothing when the person picks up.
+// dialling out. What comes back names the session whose call the answered leg is routed
+// into: open it with voice, or the person hears nothing when they pick up.
 func (p *Phone) Place(ctx context.Context, call OutboundCall) (acceleration.PlacedCall, error) {
 	var placed acceleration.PlacedCall
 
 	request := acceleration.PlaceCallRequest{From: call.From, To: call.To}
-	if call.CallID != "" {
-		request.CallId = &call.CallID
-	}
-	if call.CallType != "" {
-		request.CallType = &call.CallType
+	if call.SessionID != "" {
+		request.SessionId = &call.SessionID
 	}
 	if call.RingTimeout > 0 {
 		seconds := int(call.RingTimeout.Seconds())

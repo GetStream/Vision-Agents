@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"time"
@@ -132,6 +133,49 @@ func (s *Server) forwardedMessage(r *http.Request, body []byte, event messageEve
 	case answer.GetStatus() != http.StatusOK:
 		s.logger.Warn("the node answering in a channel would not take a message",
 			"node", address, "channel", event.ChannelID, "status", answer.GetStatus())
+	}
+
+	return true
+}
+
+// forwardedToWorkers hands a hook to another node with a worker waiting for the customer,
+// reporting whether this node is not the one to answer it.
+//
+// A worker waits on whichever node its socket landed on, and Stream's hook lands wherever
+// the load balancer sends it, so without this a call rings out on a node with nobody
+// connected while a worker sits idle on the next one. A worker connected here is always
+// asked first, which costs nothing and is most of the time.
+//
+// Handed over whole, signature and all, for the same reason as forwardedMessage.
+func (s *Server) forwardedToWorkers(r *http.Request, body []byte, customerID string) bool {
+	if s.directory == nil || s.forwarder == nil || r.Header.Get(node.ForwardedHeader) != "" {
+		return false
+	}
+	if len(s.dispatch.Workers(customerID)) > 0 {
+		return false
+	}
+
+	addresses, err := s.directory.Waiting(r.Context(), customerID)
+	if err != nil {
+		s.logger.Warn("could not find out which nodes have a customer's workers",
+			"customer", customerID, "error", err)
+		return false
+	}
+	if len(addresses) == 0 {
+		return false
+	}
+	address := addresses[rand.IntN(len(addresses))]
+
+	ctx, cancel := context.WithTimeout(r.Context(), forwardTimeout)
+	defer cancel()
+	answer, err := s.forwarder.Ask(ctx, address, r, body)
+	switch {
+	case err != nil:
+		s.logger.Error("could not reach the node with a customer's workers",
+			"node", address, "customer", customerID, "error", err)
+	case answer.GetStatus() != http.StatusOK:
+		s.logger.Warn("the node with a customer's workers would not take a hook",
+			"node", address, "customer", customerID, "status", answer.GetStatus())
 	}
 
 	return true

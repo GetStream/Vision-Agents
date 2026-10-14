@@ -12,6 +12,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -67,6 +68,9 @@ func (s *Server) verifyHook(w http.ResponseWriter, r *http.Request, payload []by
 	if s.stream == nil || !s.stream.PerApp() {
 		return s.verifyDeploymentHook(w, r, payload, signature, pathApp, what)
 	}
+	if origin, vouched := s.vouchedHook(r, pathApp); vouched {
+		return origin, true
+	}
 
 	verifiers, err := s.stream.Verifiers(r.Context(), strings.TrimSpace(r.Header.Get(auth.APIKeyHeader)), pathApp)
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
@@ -83,15 +87,32 @@ func (s *Server) verifyHook(w http.ResponseWriter, r *http.Request, payload []by
 		if !getstream.VerifySignature(payload, signature, verifier.Secret.Reveal()) {
 			continue
 		}
-		if !verifier.Deployment {
-			s.touchWebhook(r.Context(), verifier.APIKey)
-		}
-		return hookOrigin{customer: verifier.CustomerID, app: verifier.StreamApp, deployment: verifier.Deployment,
+		return hookOrigin{app: verifier.StreamApp, deployment: verifier.Deployment,
 			apiKey: verifier.APIKey}, true
 	}
 	s.logger.Warn("rejected a "+what+" with a bad signature", "bytes", len(payload), "app", pathApp)
 	writeError(w, unauthenticated("that is not a "+what+" from Stream"))
 	return hookOrigin{}, false
+}
+
+// vouchedHook is a hook the proxy checked the signature of with its app's secret, which the
+// router acting with forwarded tokens holds none of. The token the proxy forwarded beside it
+// is kept, so the hook's work is done with it. The deployment's own app is still checked
+// here, with the secret the router holds for it.
+func (s *Server) vouchedHook(r *http.Request, pathApp int64) (hookOrigin, bool) {
+	if _, forwarded := s.stream.Forwarded(); !forwarded || s.authMode != auth.Proxy || !s.proxyDeclaresKind {
+		return hookOrigin{}, false
+	}
+	app, ok := streamapp.ParseAppID(strings.TrimSpace(r.Header.Get(auth.HookAppHeader)))
+	if !ok || (pathApp != 0 && pathApp != app) || app == s.stream.DeploymentApp() {
+		return hookOrigin{}, false
+	}
+	customer := streamapp.CustomerOf(app)
+	apiKey := strings.TrimSpace(r.Header.Get(auth.ServerTokenKeyHeader))
+	if err := s.stream.KeepToken(r.Context(), customer, apiKey, strings.TrimSpace(r.Header.Get(auth.ServerTokenHeader))); err != nil {
+		s.logger.Warn("stream: could not keep the server token the proxy forwarded with a hook", "stream_app", app, "error", err)
+	}
+	return hookOrigin{customer: customer, app: app, apiKey: apiKey}, true
 }
 
 // verifyDeploymentHook checks a hook in deployment mode, where every hook is the
@@ -183,6 +204,10 @@ func (s *Server) acting(ctx context.Context, origin hookOrigin, eventType string
 		s.logger.Info("ignoring a stale hook", "type", eventType)
 		return false
 	}
+	// The node that handed it over recorded the delivery, so this one is not the second.
+	if node.Forwarded(ctx) {
+		return true
+	}
 	if !s.firstDelivery(ctx, origin, eventType, stamp) {
 		s.logger.Debug("ignoring a hook delivered again", "type", eventType)
 		return false
@@ -215,24 +240,4 @@ func (s *Server) mayWrite(ctx context.Context, origin hookOrigin, customer strin
 	}
 	_, err := s.stream.ForApp(ctx, customer, origin.app)
 	return err == nil
-}
-
-// webhookTouchEvery is the least time between two records that a key signed a hook, kept
-// here as well as in the store so a busy app's hooks do not each make a round trip to say
-// what was said a moment ago.
-const webhookTouchEvery = time.Minute
-
-// touchWebhook records that a key signed a hook, at most once a minute per key.
-func (s *Server) touchWebhook(ctx context.Context, apiKey string) {
-	if s.store == nil {
-		return
-	}
-	now := time.Now()
-	if last, ok := s.touched.Load(apiKey); ok && now.Sub(last.(time.Time)) < webhookTouchEvery {
-		return
-	}
-	s.touched.Store(apiKey, now)
-	if err := s.store.TouchStreamAppWebhook(ctx, apiKey, now); err != nil {
-		s.logger.Warn("could not record a hook a key signed", "api_key", apiKey, "error", err)
-	}
 }

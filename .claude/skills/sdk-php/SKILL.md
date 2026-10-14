@@ -86,7 +86,7 @@ tests/Unit tests/Live tests/Support tests/server/router.php
   on the handshake, never credentials in the query string.
 - **No reconnect.** A dropped socket ends the iterator or `run()`; the owner decides. A frame
   that is not a JSON object, or of an unknown type, is skipped, never fatal.
-- **Tool results repeat `command_id` and `turn_id`** from the `tool_call` when present, or a
+- **Tool results repeat `request_id` and `turn_id`** from the `tool_call` when present, or a
   durable command's result is refused. Tools run in their own fiber; a `tool_cancel` drops
   the answer (a PHP callable cannot be interrupted).
 - **Dispatch** sends `active` and `handles` on the handshake, answers every call and message
@@ -102,6 +102,10 @@ tests/Unit tests/Live tests/Support tests/server/router.php
   in `FolderTest`; if it moves, the port is wrong, not the pin. `.agent_sync` is
   `{"hash","synced_at":"...+00:00"}`; a matching stamp reads the stored config instead of
   syncing. Unknown `agent.yaml` keys are refused.
+- **`connectors:` is read like Go's** (`Folder/Connector.php`): a string is a session binding,
+  an object `{name, connector, tools, connection, required}`; absent sends nothing, `[]` clears.
+  A fixed `connection` is resolved through `GET /v1/agents/connections` (every page) at sync
+  time. `plugins` still sync and warn through `Agent`'s PSR-3 `logger`.
 - **Rewind takes a response `id`**, never a `turn_id`, and answers 204. Fork takes
   `responseId` in `ForkSessionRequest`. A persisted conversation refuses rewind with 400.
 - **`responses->create()` returns while the response is `running`.** It does not wait; the
@@ -146,8 +150,9 @@ Docker VM disk was full; do not prune shared images or volumes to make room.
 1. `php bin/generate.php ../../acceleration/api/openapi.yaml` and review the diff.
 2. Hand-written resources only change for a new behaviour, not a new field.
 3. Unit tests, PHPStan, then the live suite once.
-4. Copy `.claude/skills/sdk/SKILL.md` and `acceleration/api/openapi.yaml` byte for byte into
-   `sdks/php/.sdk_update_log/`, so the next update can diff what changed since.
+4. Write the git blob ids of `acceleration/api/openapi.yaml` and `.claude/skills/sdk/SKILL.md`
+   to `sdks/php/.sdk_update_log`, as the sdk skill's SDK updates section says, so the next
+   update can diff what changed since.
 
 ## Review checklist
 

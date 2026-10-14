@@ -23,6 +23,7 @@
 
 package io.getstream.visionagents.core.generated
 
+import io.getstream.visionagents.core.generated.CallUsage
 import io.getstream.visionagents.core.generated.ModelOverwrites
 import io.getstream.visionagents.core.generated.SessionModality
 import io.getstream.visionagents.core.generated.SessionMode
@@ -42,7 +43,7 @@ import kotlinx.serialization.encoding.Encoder
  * 
  *
  * @param agentId 
- * @param callId Empty for a text session, which joins no call.
+ * @param callId The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing.
  * @param callType 
  * @param createdAt 
  * @param id 
@@ -53,7 +54,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param closedAt When the session ended. Absent while it is still running.
  * @param configId The agent config the session ran under, empty for one that spelled itself out.
  * @param contextTruncated Older history was omitted from the model context.
- * @param conversationId Stream Chat CID to resume; returned for persistent text sessions.
+ * @param conversationId The Stream Chat channel the conversation is kept in, typed and spoken. Absent for an incognito session.
  * @param custom 
  * @param description 
  * @param forkedFrom The session this one continued from, empty for one opened fresh.
@@ -64,12 +65,16 @@ import kotlinx.serialization.encoding.Encoder
  * @param mode 
  * @param modelOverwrites 
  * @param projectId 
+ * @param reviewNotes Why the review scored the conversation as it did. Read by a backend only.
+ * @param reviewScore How well the agent handled the conversation, from 1 to 5, written a few seconds after it ended. Read by a backend only.
  * @param sts The provider and model holding a native conversation, once routing has picked one.
  * @param stt The provider and model transcribing, once somebody has been heard.
+ * @param subagent The provider and model delegated work runs on.
+ * @param summary What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only.
  * @param text The conversation is held in writing rather than on a call.
- * @param thinkingLlm The provider and model delegated work runs on.
  * @param title 
  * @param tts The provider and model speaking.
+ * @param usage 
  * @param video 
  * @param voice The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
  */
@@ -80,7 +85,7 @@ internal data class Session (
     @SerialName(value = "agent_id")
     val agentId: kotlin.String,
 
-    /* Empty for a text session, which joins no call. */
+    /* The call the agent is on, the session's id, while voice is started. Empty while the conversation is held in writing. */
     @SerialName(value = "call_id")
     val callId: kotlin.String,
 
@@ -118,7 +123,7 @@ internal data class Session (
     @SerialName(value = "context_truncated")
     val contextTruncated: kotlin.Boolean? = null,
 
-    /* Stream Chat CID to resume; returned for persistent text sessions. */
+    /* The Stream Chat channel the conversation is kept in, typed and spoken. Absent for an incognito session. */
     @SerialName(value = "conversation_id")
     val conversationId: kotlin.String? = null,
 
@@ -156,6 +161,14 @@ internal data class Session (
     @SerialName(value = "project_id")
     val projectId: kotlin.String? = null,
 
+    /* Why the review scored the conversation as it did. Read by a backend only. */
+    @SerialName(value = "review_notes")
+    val reviewNotes: kotlin.String? = null,
+
+    /* How well the agent handled the conversation, from 1 to 5, written a few seconds after it ended. Read by a backend only. */
+    @SerialName(value = "review_score")
+    val reviewScore: kotlin.Long? = null,
+
     /* The provider and model holding a native conversation, once routing has picked one. */
     @SerialName(value = "sts")
     val sts: kotlin.String? = null,
@@ -164,13 +177,17 @@ internal data class Session (
     @SerialName(value = "stt")
     val stt: kotlin.String? = null,
 
+    /* The provider and model delegated work runs on. */
+    @SerialName(value = "subagent")
+    val subagent: kotlin.String? = null,
+
+    /* What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only. */
+    @SerialName(value = "summary")
+    val summary: kotlin.String? = null,
+
     /* The conversation is held in writing rather than on a call. */
     @SerialName(value = "text")
     val text: kotlin.Boolean? = null,
-
-    /* The provider and model delegated work runs on. */
-    @SerialName(value = "thinking_llm")
-    val thinkingLlm: kotlin.String? = null,
 
     @SerialName(value = "title")
     val title: kotlin.String? = null,
@@ -178,6 +195,9 @@ internal data class Session (
     /* The provider and model speaking. */
     @SerialName(value = "tts")
     val tts: kotlin.String? = null,
+
+    @SerialName(value = "usage")
+    val usage: CallUsage? = null,
 
     @SerialName(value = "video")
     val video: SessionVideo? = null,

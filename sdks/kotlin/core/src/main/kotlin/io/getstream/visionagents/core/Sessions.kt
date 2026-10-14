@@ -26,14 +26,13 @@ public class Sessions internal constructor(
     /**
      * Opens a session without following it, for a caller building its own state layer.
      *
-     * It returns once the router is holding the conversation. Without a [callId] it is held
-     * in writing: nothing is joined, transcribed or spoken.
+     * It returns once the router is holding the conversation. Without
+     * [SessionOptions.startVoice] it is held in writing: nothing is joined, transcribed or spoken.
      */
-    public suspend fun create(options: SessionOptions = SessionOptions(), callId: String? = null): Session {
+    public suspend fun create(options: SessionOptions = SessionOptions()): Session {
         val request = CreateSessionRequest(
             id = options.id?.ifEmpty { null },
-            callId = callId,
-            text = if (callId == null) true else null,
+            startVoice = if (options.startVoice) true else null,
             agent = (options.agent ?: agent)?.ifEmpty { null },
             configId = options.configId?.ifEmpty { null },
             title = options.title,
@@ -41,10 +40,8 @@ public class Sessions internal constructor(
             projectId = options.projectId,
             custom = options.custom,
             incognito = options.incognito,
-            conversationId = options.conversationId,
             modelOverwrites = options.modelOverwrites?.schema,
-            instructions = options.instructions,
-            greeting = options.greeting,
+            greeting = options.greeting?.schema,
             llm = options.llm,
             stt = options.stt,
             tts = options.tts,
@@ -105,6 +102,22 @@ public class Sessions internal constructor(
     }
 
     /**
+     * Has the agent join a session's call, `agent:<session id>`, and carry the conversation on
+     * there, and returns the session on it. Starting voice that is already on does nothing.
+     */
+    public suspend fun startVoice(id: String): Session = Session.of(
+        backend.send(HttpMethod.Post, listOf("v1", "agents", "sessions", id, "voice"), SessionSchema.serializer())!!,
+    )
+
+    /**
+     * Takes the agent off a session's call and carries the conversation on in writing. Stopping
+     * voice that is off does nothing.
+     */
+    public suspend fun stopVoice(id: String): Session = Session.of(
+        backend.send(HttpMethod.Delete, listOf("v1", "agents", "sessions", id, "voice"), SessionSchema.serializer())!!,
+    )
+
+    /**
      * Stops a session, which is how the agent leaves. What it recorded and remembered is kept;
      * [delete] takes it away.
      */
@@ -121,7 +134,7 @@ public class Sessions internal constructor(
     }
 
     /**
-     * Continues a conversation as a new session, leaving the parent as it was.
+     * Continues a conversation as a new session held in writing, leaving the parent as it was.
      *
      * Follow the fork the way any session is followed, with [VisionAgents.attach].
      */
@@ -134,11 +147,9 @@ public class Sessions internal constructor(
             projectId = options.projectId,
             custom = options.custom,
             modelOverwrites = options.modelOverwrites?.schema,
-            instructions = options.instructions,
             incognito = options.incognito,
             messages = if (options.withoutHistory) false else null,
             responseId = options.responseId?.ifEmpty { null },
-            callId = options.callId,
         )
         val forked = backend.post(
             listOf("v1", "agents", "sessions", id, "fork"),

@@ -1,4 +1,4 @@
-# @stream-io/vision-agents
+# @stream-io/calypso
 
 The JavaScript client for the Stream acceleration backend. One package for both ends: a
 Node process that runs agents, and a browser that holds a conversation with one.
@@ -8,7 +8,7 @@ answers and speaks. What arrives here are the events saying so, and what stays h
 function calling — because the functions are here.
 
 ```bash
-npm install @stream-io/vision-agents
+npm install @stream-io/calypso
 ```
 
 Node 22 or newer, or any browser. No runtime dependencies: `fetch`, `WebSocket` and Web
@@ -25,7 +25,7 @@ Which one a deployment uses is a property of the deployment rather than a choice
 | `apiKey` + `token` | A browser | the conversations that user owns |
 
 ```ts
-import { Client } from "@stream-io/vision-agents";
+import { Client } from "@stream-io/calypso";
 
 // On your own server, with STREAM_API_KEY and STREAM_API_SECRET in the environment.
 const api = new Client();
@@ -87,16 +87,19 @@ heard it.
 ```ts
 const support = api.agent("support");
 const session = await support.sessions.create({ agent_id: "ana-support" });
-// Keep session.conversationId. It is the channel, and the way back to what was said.
+// Keep session.id. It is the way back to what was said.
 await session.responses.create("Where is my order?");
 
 // Later: ana's conversations still running, without paging through every one that ended.
 const live = await support.sessions.query({ agentId: "ana-support", state: "live" });
+
+// Carry one on, running or ended, by the id of the session it was held in.
+const again = await support.sessions.resume(session.id);
 ```
 
-The channel is the backend's to name: a first open takes no `conversation_id`, and every
-later one takes the one the first was given. Come back as the same `agent_id` too; the
-backend checks a conversation is reopened by whoever held it.
+The channel is the backend's to name, so a conversation is carried on by its session id
+rather than by its channel. A session id may also be one the caller picks, up to 64 of
+`A-Za-z0-9_-`, passed as `id` when it is created.
 
 `session.close()` stops a conversation and keeps everything it recorded and remembered, so
 a conversation in writing is usually left running. `session.delete()`, or
@@ -106,7 +109,7 @@ memory.
 ## An agent
 
 ```ts
-import { Agent } from "@stream-io/vision-agents";
+import { Agent } from "@stream-io/calypso";
 
 const agent = new Agent({
   name: "John",
@@ -129,9 +132,12 @@ for await (const event of session.events()) {
 }
 ```
 
-`join` creates a Stream call and has the backend join it. `chat` holds the same
-conversation in writing instead — the same instructions, the same skills, the same
-knowledge, with nothing transcribed and nothing spoken.
+`join` opens a session with voice on, and the backend joins the session's own call,
+`agent:<session id>`. `chat` holds the same conversation in writing instead — the same
+instructions, the same skills, the same knowledge, with nothing transcribed and nothing
+spoken. `session.voice.stop()` carries a conversation on in writing and
+`session.voice.start()` puts the agent back on the call. Instructions reach the backend
+with `agent.sync()`: a session runs on the stored config's.
 
 The model asks for a tool over the session socket, this process runs it, and the answer
 goes back the same way. A tool that throws is reported to the model, because the model is
@@ -145,7 +151,7 @@ and waits, and the router pushes work down the connection as it arrives — noth
 has to be publicly reachable.
 
 ```ts
-import { Agent, Dispatch } from "@stream-io/vision-agents";
+import { Agent, Dispatch } from "@stream-io/calypso";
 
 const dispatch = new Dispatch({ capacity: 4 });
 
@@ -177,7 +183,7 @@ an agent that is already running is answered by the router from that session, be
 agent is the one that knows what has been said. `sessionFor` keeps one conversation per
 channel for the same reason. The exception is an agent whose agent.yaml says
 `dispatch: {text: enabled}`: what its end users write comes here with the `sessionId` it was
-written to and a `commandId`, unanswered, and `dispatch.answer(message)` has the model answer
+written to and a `requestId`, unanswered, and `dispatch.answer(message)` has the model answer
 it, with this worker's credential acting for the user who wrote it.
 
 A worker can also host tools for every session opened under an agent id, including one a
@@ -203,16 +209,20 @@ const session = await agent.startCall("+15551234567", "+15557654321");
 ```
 
 The agent is told it is navigating, so recordings are let finish and menus are answered
-rather than talked over.
+rather than talked over. Every caller to an attached number gets a session of their own:
+`agent.answer(call)` joins the one the router names, and `agent.waitForCall(number)` waits
+for the next one without a worker of your own.
 
 ## An agent written down as a directory
 
 ```
 agents/jean/
-  agent.yaml            required: the name and what it runs on (llm, stt, tts, harness, tags, ...)
+  agent.yaml            required: the name and what it runs on (llm, stt, tts, greeting, harness, tags, ...)
   instructions.md
   guardrail.md
   skills/think.md
+  skills/pdf/SKILL.md   a skill as a folder: SKILL.md plus the text files it brings
+  skills/pdf/scripts/fill.py
   knowledge/pricing.md
   knowledge/urls.yaml   pages to read, each optionally with refresh_hours
   simulations/lunch.yaml
@@ -220,8 +230,8 @@ agents/jean/
 ```
 
 ```ts
-import { Agent } from "@stream-io/vision-agents";
-import { loadFolder } from "@stream-io/vision-agents/node";
+import { Agent } from "@stream-io/calypso";
+import { loadFolder } from "@stream-io/calypso/node";
 
 const agent = new Agent({ folder: await loadFolder("agents/jean") });
 await agent.sync();
@@ -269,7 +279,7 @@ events socket, the dispatch socket and the four modality sockets are written rat
 generated.
 
 ```ts
-import { Socket } from "@stream-io/vision-agents";
+import { Socket } from "@stream-io/calypso";
 
 const socket = await Socket.open(api.backend, await api.backend.socketURL("/v1/stt/stream"));
 socket.send({ type: "start", options: { language: "en" } });
@@ -297,6 +307,7 @@ npm run types                          # regenerate src/generated/api.ts from th
 npm test                               # typecheck, then the suite
 npm run test:local                     # against a router running on this machine
 npm run test:qa                        # against the hosted deployments
+npm run test:integration               # device posture and one Stream connection, see below
 npm run build                          # dist/, what gets published
 npm run example build/examples/voice.js
 ```
@@ -319,7 +330,53 @@ the claims above are checked against a real backend rather than against a test o
 is worth running before trusting any of them: three of them are `todo` there today, each
 naming what the deployment does instead.
 
+`test:integration` checks the two promises a client SDK makes. A device holding a user's token
+is refused every server-side operation (minting a call or chat token, claiming a guest,
+configs, sync, simulations, memories, the dispatch socket) with a 403 `server_side_only`. And
+however many sessions ask, there is one Stream Chat and one Stream Video socket for the user,
+none at all beside a `StreamChat` the app handed over with `client.use`, nobody left online
+after `client.disconnect()`, and no push device but the app's own. Sockets are counted off
+Node's diagnostics channels, so they are the connections that actually left the process.
+
+The posture half needs a router that verifies credentials, which the Docker one in proxy mode
+does not. Mint a key against its Postgres and run a second router in `api_key` mode beside it:
+
+```bash
+cd acceleration && set -a && source ../.env && set +a
+export ROUTER_POSTGRES_DSN='postgres://postgres:postgres@localhost:55432/model_router?sslmode=disable' ROUTER_REDIS_ADDR=localhost:56379
+go run ./cmd/router keys create --app-name sdk-suite      # prints the key and secret once
+ROUTER_ADDR=:8099 ROUTER_AUTH_MODE=api_key ROUTER_PUBLIC_URL=http://localhost:8099 go run ./cmd/router
+```
+
+Then `INTEGRATION_ROUTER_KEY=vak_live_… INTEGRATION_ROUTER_SECRET=vas_live_… npm run
+test:integration` (`INTEGRATION_ROUTER_URL` defaults to `http://localhost:8099`). The Stream
+half wants the Docker router on `STREAM_ACCELERATION_URL` with `STREAM_ACCELERATION_CUSTOMER_ID`,
+`STREAM_API_KEY` and `STREAM_API_SECRET`, all read from `.env`. Each half skips without its own.
+Run it from a shell without `.env` sourced, or `npm test` reads the same variables and fails.
+
 They hold real conversations, so they spend the app's daily token allowance, and run often
 enough they will spend all of it. A test that finds it gone skips saying so rather than
 reporting the deployment broken — worth recognising in the output, because everything else
 still passes and only the one test that needed an answer steps aside.
+
+### Releasing
+
+The **Release JS SDK** workflow publishes to npm, run by hand from the `accelerate` branch.
+semantic-release (`release.config.mjs`) reads the commits since the last `sdk-js-v*` tag and
+counts only those scoped `sdk-js`: `feat(sdk-js):` moves the minor, `fix(sdk-js):` and
+`perf(sdk-js):` the patch, and while the package is 0.x a breaking change moves the minor too.
+A commit with any other scope, or none, ships nothing, whatever it touches. The workflow runs
+as a dry run unless that box is unticked, printing the version and notes it would publish.
+
+It publishes with npm trusted publishing, so there is no token, and npm only lets a package
+trust a workflow once the package exists. The first version is therefore published by hand:
+
+```bash
+npm publish                               # 0.2.0, as package.json says
+git tag sdk-js-v0.2.0 && git push origin sdk-js-v0.2.0
+```
+
+then on npmjs.com, under the package's settings, add GitHub Actions as a trusted publisher:
+`GetStream/Vision-Agents`, workflow `release-sdk-js.yml`. From then on the version in
+`package.json` is not maintained: semantic-release writes the next one into the package it
+publishes and nothing is committed back.

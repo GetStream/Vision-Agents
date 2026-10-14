@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
-	"strings"
+	"net/url"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -16,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -33,29 +35,44 @@ const pingEvery = 30 * time.Second
 // than the ping interval so one lost ping is not a disconnection.
 const pongWait = 90 * time.Second
 
-// newUpgrader accepts the origins the deployment named, and any request that names none.
+// newUpgrader accepts the origins originAllowed accepts, and any request that names none.
 //
 // A request without an Origin header did not come from a browser, so there is no session
 // for another site to ride on and nothing for this check to protect. One that does carry
-// an origin is held to the same list as an ordinary cross-origin request: a socket that
-// accepted every origin would be the way around the check the rest of the API makes.
-func newUpgrader(allowed []string) websocket.Upgrader {
-	permitted := make(map[string]struct{}, len(allowed))
-	for _, origin := range allowed {
-		permitted[strings.TrimSpace(origin)] = struct{}{}
-	}
-	_, anywhere := permitted["*"]
-
+// an origin is held to the same rule as an ordinary cross-origin request: a socket with a
+// looser one would be the way around the check the rest of the API makes.
+func newUpgrader(mode auth.Mode) websocket.Upgrader {
 	return websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
-			if origin == "" || anywhere {
-				return true
-			}
-			_, named := permitted[origin]
-			return named
+			return origin == "" || originAllowed(mode, origin)
 		},
 	}
+}
+
+// originAllowed reports whether a page on origin may call this API from the browser.
+//
+// Any origin may where the caller proves who it is, which is every mode but NoAuth: the
+// credential is an API key and a token in a header or the query string, which a page can
+// only send if it already holds them, and no cookie is a credential here. So a customer's
+// own website calls the router the way their servers do, with no list of sites to keep.
+//
+// NoAuth believes the tenant a request names, so any site open in the developer's browser
+// could name one. It answers pages served from this machine only.
+func originAllowed(mode auth.Mode, origin string) bool {
+	if mode != auth.NoAuth {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // frame is one message in either direction. The type names the event and the rest of the
@@ -79,14 +96,29 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	found, ok := s.sessions.Get(id, OwnerFrom(r.Context()))
-	if !ok || !canReadSession(r.Context(), found.Spec()) {
-		// A session this node is not running may still be running on another one, and a
-		// browser reconnecting has no reason to land back where it was. The relay asks
-		// the rest of the deployment for it; without one, this node is the deployment.
-		if !ok && s.relayed != nil {
-			s.watchRemoteSession(w, r, id, OwnerFrom(r.Context()))
+	// A session this node is not running may still be running on another one, and a
+	// browser reconnecting has no reason to land back where it was. The relay asks the rest
+	// of the deployment for it; without one, this node is the deployment.
+	if !ok && s.relayed != nil && s.watchRemoteSession(w, r, id, OwnerFrom(r.Context())) {
+		return
+	}
+	// A text conversation that ended is carried on under the same id, as a message to it
+	// is, so watching it again is how a client resumes it.
+	if !ok || found.State() == session.Ended {
+		reopened, sent, err := s.sessionToAnswer(r.Context(), id)
+		var failure APIError
+		if errors.As(err, &failure) {
+			writeError(w, failure)
 			return
 		}
+		if err != nil {
+			writeFailure(w, r, err)
+			return
+		}
+		sent()
+		found, ok = reopened, true
+	}
+	if !canReadSession(r.Context(), found.Spec()) {
 		writeError(w, errUnknownSession)
 		return
 	}
@@ -208,8 +240,11 @@ type watcherCommand struct {
 	Type string `json:"type"`
 	// ToolCallID names the call a tool_result answers.
 	ToolCallID string `json:"tool_call_id"`
-	CommandID  string `json:"command_id"`
-	TurnID     string `json:"turn_id"`
+	CommandID  string `json:"request_id"`
+	// LegacyCommandID is request_id under its name before v0.6.35, which clients built
+	// against an older SDK (the getstream.io Ask panel among them) still send.
+	LegacyCommandID string `json:"command_id"`
+	TurnID          string `json:"turn_id"`
 	// Output is a string or a parts array, which is what a tool that returns an
 	// image sends.
 	Output json.RawMessage `json:"output"`
@@ -223,8 +258,6 @@ type watcherCommand struct {
 	Text string `json:"text"`
 	// Images attach to a respond command, and become image parts on that turn.
 	Images []wireImage `json:"images"`
-	// Instructions carries the instructions command.
-	Instructions string `json:"instructions"`
 }
 
 // readCommands applies what the caller sends, which is tool results and the handful of
@@ -261,6 +294,9 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 // from the other direction: the frame came off a socket on another node and was carried
 // here on the bus, and a watcher on either node must be able to do the same things.
 func (s *Server) applyCommand(found *session.Session, owner session.Owner, command watcherCommand) bool {
+	if command.CommandID == "" {
+		command.CommandID = command.LegacyCommandID
+	}
 	switch command.Type {
 	case "tool_result":
 		parts, err := parseToolOutput(command.Output)
@@ -305,12 +341,12 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, comma
 			}
 			return true
 		}
-		if command.CommandID != "" {
+		if command.CommandID != "" && found.Durable() {
 			if len(command.Images) > 0 {
 				found.Report(fmt.Errorf("durable commands currently support text only"), "llm")
 				return true
 			}
-			if _, _, err := found.RespondCommand(context.Background(), command.CommandID, command.Text, ""); err != nil {
+			if _, _, err := found.RespondCommand(context.Background(), command.CommandID, command.Text, "", options.LLM{}); err != nil {
 				found.Report(err, "llm")
 			}
 			return true
@@ -320,7 +356,7 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, comma
 			found.Report(err, "llm")
 			return true
 		}
-		if _, err := found.Respond(context.Background(), command.Text, images); err != nil {
+		if _, err := found.Respond(context.Background(), command.Text, images, options.LLM{}); err != nil {
 			found.Report(err, "llm")
 		}
 
@@ -335,15 +371,6 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, comma
 			return true
 		}
 		found.Interrupt()
-
-	case "instructions":
-		// Refused from a device as on createSession and updateSession. The owner's kind is
-		// what a relayed command carries too, and only a backend's is KindServer.
-		if owner.Kind != auth.KindServer {
-			found.Report(errDeviceInstructions, "command")
-			return true
-		}
-		found.SetInstructions(command.Instructions)
 
 	case "close":
 		// Through the manager rather than found.Close(), which ends the conversation
@@ -384,14 +411,14 @@ func frameOf(event session.Event) (frame, bool) {
 	switch typed := event.(type) {
 	case session.ToolCall:
 		if typed.Cancel {
-			return frame{"type": "tool_cancel", "id": typed.ID, "command_id": typed.CommandID, "turn_id": typed.TurnID}, true
+			return frame{"type": "tool_cancel", "id": typed.ID, "request_id": typed.CommandID, "turn_id": typed.TurnID}, true
 		}
 		return frame{
 			"type":       "tool_call",
 			"id":         typed.ID,
 			"name":       typed.Name,
 			"arguments":  typed.Arguments,
-			"command_id": typed.CommandID,
+			"request_id": typed.CommandID,
 			"turn_id":    typed.TurnID,
 		}, true
 

@@ -35,12 +35,13 @@ SPEC = ROOT / "acceleration" / "api" / "openapi.yaml"
 TARGET = SWIFT / "core" / "Sources" / "VisionAgentsCore"
 GENERATED = TARGET / "Generated"
 
-# What a client is allowed to reach: opening a conversation, finding and ending one, and
-# looking something up. Everything else about an agent — what it is configured as, what it
+# What a client is allowed to reach: opening a conversation, finding and ending one, a guest
+# to do it as, and looking something up. Everything else about an agent — what it is configured as, what it
 # has said before, a token to join a call with, and the routed modalities on their own — is
 # the app's own backend to ask for and to hand down. Holding the conversation is driven over
 # the session socket, which is hand-written rather than generated.
 OPERATIONS = [
+    "createGuestUser",
     "createResponse",
     "createSession",
     "deleteSession",
@@ -51,7 +52,9 @@ OPERATIONS = [
     "querySessions",
     "rewindSession",
     "search",
+    "startSessionVoice",
     "stopSession",
+    "stopSessionVoice",
     "updateSession",
 ]
 

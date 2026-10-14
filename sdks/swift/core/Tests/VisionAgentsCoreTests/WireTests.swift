@@ -48,6 +48,52 @@ import Testing
         #expect(call.argumentValues["full"]?.boolValue == true)
     }
 
+    @Test func aToolCallNamesTheRequestAndTurnItsResultAnswers() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self,
+            from: Data(
+                #"{"type":"tool_call","id":"c1","name":"now","arguments":"{}","request_id":"r1","turn_id":"t1"}"#
+                    .utf8))
+
+        let call = try #require(event.toolCall)
+        #expect(call.requestID == "r1")
+        #expect(call.turnID == "t1")
+    }
+
+    @Test func aTextQuestionCarriesAFreshRequestID() throws {
+        let first = try JSONEncoder().encode(Responses.body("Where is order 1042?", images: []))
+        let second = try JSONEncoder().encode(Responses.body("Where is order 1042?", images: []))
+
+        let ids = try [first, second].map {
+            try #require(JSONDecoder().decode(JSONValue.self, from: $0).objectValue["request_id"]).stringValue
+        }
+        #expect(ids.allSatisfy { $0.wholeMatch(of: /[A-Za-z0-9_-]{1,128}/) != nil })
+        #expect(ids[0] != ids[1])
+    }
+
+    @Test func aQuestionWithImagesCarriesNoRequestID() throws {
+        let body = try JSONEncoder().encode(
+            Responses.body("What is this?", images: [ImageSource(url: "https://example.com/a.png")]))
+
+        #expect(try JSONDecoder().decode(JSONValue.self, from: body).objectValue["request_id"] == nil)
+    }
+
+    @Test func oneAnswerCanBeCappedAndToldHowLongToThinkAndNeitherIsSentUnasked() throws {
+        let tuned = try JSONDecoder().decode(
+            JSONValue.self,
+            from: JSONEncoder().encode(
+                Responses.body("Think hard", images: [], maxOutputTokens: 512, reasoningEffort: "high"))
+        ).objectValue
+        let plain = try JSONDecoder().decode(
+            JSONValue.self, from: JSONEncoder().encode(Responses.body("Plain", images: []))
+        ).objectValue
+
+        #expect(tuned["max_output_tokens"] == .number(512))
+        #expect(tuned["reasoning_effort"] == .string("high"))
+        #expect(tuned["request_id"] != nil)
+        #expect(Set(plain.keys) == ["request_id", "text"])
+    }
+
     @Test func aToolCallWhoseArgumentsAreNotAnObjectYieldsNoArguments() throws {
         let event = try JSONDecoder().decode(
             AgentEvent.self,
@@ -64,12 +110,38 @@ import Testing
         #expect(event.toolCall == nil)
     }
 
+    @Test func aStepUpFrameReadsAsTheStepUp() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self,
+            from: Data(
+                #"{"type":"connector_scope_required","name":"crm","connector_id":"custom_crm","connection_id":"conn-1","scopes":["files:read","files:write"],"authorization_id":"attempt-1","launch_url":"https://router.example/v1/agents/connectors/oauth/launch/attempt-1","handoff_token":"handoff","expires_at":"2026-10-07T12:00:00Z"}"#
+                    .utf8))
+
+        let asked = try #require(event.connectorScopeRequired)
+
+        #expect(event.kind == .connectorScopeRequired)
+        #expect(asked.name == "crm")
+        #expect(asked.connectorID == "custom_crm")
+        #expect(asked.connectionID == "conn-1")
+        #expect(asked.scopes == ["files:read", "files:write"])
+        #expect(asked.authorizationID == "attempt-1")
+        #expect(asked.launchURL == "https://router.example/v1/agents/connectors/oauth/launch/attempt-1")
+        #expect(asked.handoffToken == "handoff")
+        #expect(asked.expiresAt == Date(timeIntervalSince1970: 1_791_374_400))
+    }
+
+    @Test func anotherKindIsNotAStepUp() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self, from: Data(#"{"type":"tool_ran","tool":"lookup_order"}"#.utf8))
+
+        #expect(event.connectorScopeRequired == nil)
+    }
+
     /// The router reads one flat struct, so a command has to put its fields at the top level
     /// under the names in `readCommands`.
     @Test(arguments: [
         (Command.say("welcome"), #"{"text":"welcome","type":"say"}"#),
         (Command.interrupt, #"{"type":"interrupt"}"#),
-        (Command.instructions("be brief"), #"{"instructions":"be brief","type":"instructions"}"#),
         (Command.close, #"{"type":"close"}"#),
         (
             Command.toolResult(id: "c1", output: "20 degrees", error: nil),
@@ -80,8 +152,16 @@ import Testing
             #"{"error":"no such order","output":"","tool_call_id":"c1","type":"tool_result"}"#
         ),
         (
-            Command.toolResult(id: "c1", output: "ok", error: nil, commandID: "m1", turnID: "t1"),
-            #"{"command_id":"m1","error":"","output":"ok","tool_call_id":"c1","turn_id":"t1","type":"tool_result"}"#
+            Command.toolResult(id: "c1", output: "ok", error: nil, requestID: "m1", turnID: "t1"),
+            #"{"error":"","output":"ok","request_id":"m1","tool_call_id":"c1","turn_id":"t1","type":"tool_result"}"#
+        ),
+        (
+            Command.toolApproval(id: "c1", allowed: true, requestID: "m1", turnID: "t1"),
+            #"{"allowed":true,"request_id":"m1","tool_call_id":"c1","turn_id":"t1","type":"tool_approval"}"#
+        ),
+        (
+            Command.toolApproval(id: "c1", allowed: false, summary: "Kept the card"),
+            #"{"allowed":false,"summary":"Kept the card","tool_call_id":"c1","type":"tool_approval"}"#
         ),
     ])
     func aCommandEncodesToWhatTheRouterReads(command: Command, expected: String) throws {
@@ -173,6 +253,18 @@ import Testing
         let url = backend.socketURL(path: "/v1/agents/sessions/s1/events")
 
         #expect(url.absoluteString == "wss://accelerate.gcp.stream-io-api.com/v1/agents/sessions/s1/events?api_key=key")
+    }
+
+    @Test func aKeyBesideACustomerIsStreamsAlone() async throws {
+        let backend = Backend(url: URL(string: "http://localhost:8080")!, customerID: "acme", apiKey: "key")
+        backend.setUser(User(id: "jlahey"), token: "t1")
+
+        let headers = try await backend.headers()
+        #expect(headers["X-Customer-Id"] == "acme")
+        #expect(headers["X-Stream-User-Id"] == "jlahey")
+        #expect(headers["Authorization"] == nil)
+        #expect(backend.socketURL(path: "/v1/agents/sessions/s1/events").query == "customer_id=acme")
+        #expect(try await backend.streamCredentials() == StreamCredentials(apiKey: "key", user: User(id: "jlahey"), token: "t1"))
     }
 
     @Test func aSecureRouterGetsASecureSocket() {

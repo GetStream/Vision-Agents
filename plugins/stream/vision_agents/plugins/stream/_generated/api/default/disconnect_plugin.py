@@ -83,7 +83,8 @@ def sync_detailed(
 ) -> Response[Any | ErrorResponse]:
     """Drop a plugin login
 
-     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+     Deprecated: use deleteConnection.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -118,7 +119,8 @@ def sync(
 ) -> Any | ErrorResponse | None:
     """Drop a plugin login
 
-     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+     Deprecated: use deleteConnection.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -148,7 +150,8 @@ async def asyncio_detailed(
 ) -> Response[Any | ErrorResponse]:
     """Drop a plugin login
 
-     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+     Deprecated: use deleteConnection.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -181,7 +184,8 @@ async def asyncio(
 ) -> Any | ErrorResponse | None:
     """Drop a plugin login
 
-     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+     Deprecated: use deleteConnection.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.

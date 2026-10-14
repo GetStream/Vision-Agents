@@ -15,13 +15,13 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/report"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/run"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/slack"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/synth"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 func main() {
@@ -119,6 +119,7 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	skipJudge := fs.Bool("skip-judge", false, "skip LLM judge (fails the trial)")
 	frozen := fs.Bool("frozen", false, "run only the frozen scenario set used for the trend line")
 	short := fs.Bool("short", false, "run only the short scenario set, for quick iteration")
+	supershort := fs.Bool("supershort", false, "run only the supershort scenario set, one scenario a pack")
 	extended := fs.Bool("extended", false, "run only the extended scenario set, outside the frozen one")
 	storeBaseline := fs.Bool("store-baseline", false, "copy summary.json and manifest.json to baselines/<target>/<commit>/")
 	if err := fs.Parse(args); err != nil {
@@ -153,6 +154,7 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 		SkipJudge:         *skipJudge,
 		Frozen:            *frozen,
 		Short:             *short,
+		Supershort:        *supershort,
 		Extended:          *extended,
 		Logger:            slog.Default(),
 		Progress:          os.Stderr,
@@ -344,10 +346,16 @@ func cmdDigest(ctx context.Context, root string, args []string) error {
 		return fmt.Errorf("digest: need at least one run directory")
 	}
 	var runs []report.LabeledRun
+	var stt []report.STTSummary
 	for _, dir := range fs.Args() {
 		sum, err := report.LoadSummary(dir)
 		if err != nil {
 			return fmt.Errorf("digest: %s: %w", dir, err)
+		}
+		// A speech-to-text bench on the same caller lines is reported beside the calls.
+		if sum.Kind == report.KindSTT {
+			stt = append(stt, sum.STT...)
+			continue
 		}
 		label := sum.System
 		if label == "" {
@@ -362,8 +370,12 @@ func cmdDigest(ctx context.Context, root string, args []string) error {
 		}
 		runs = append(runs, report.LabeledRun{Label: label, Summary: sum})
 	}
+	if len(runs) == 0 {
+		return fmt.Errorf("digest: need at least one run of calls beside the speech-to-text bench")
+	}
 	runs = report.MergeRuns(runs)
 	digest := report.BuildDigest(runs)
+	digest.STT = stt
 	digest.Scenarios = map[string]scenario.Scenario{}
 	for _, pack := range scenario.Packs() {
 		scenarios, err := scenario.LoadPack(filepath.Join(root, "scenarios", pack))

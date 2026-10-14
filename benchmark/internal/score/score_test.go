@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/caller"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/world"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 func TestPercentileAndPassK(t *testing.T) {
@@ -50,8 +50,8 @@ func TestBargeInStopMSUnmeasured(t *testing.T) {
 		Kind:       scenario.TriggerBargeIn,
 		RecStartMs: 400,
 	}}
-	if got := BargeInStopMS(rec); got != -1 {
-		t.Fatalf("no straddle: %d", got)
+	if got := BargeInStopMS(rec); got != BargeInIntoSilence {
+		t.Fatalf("the agent was silent when the caller barged in: %d", got)
 	}
 }
 
@@ -125,6 +125,11 @@ func TestApplyGatesBargeIn(t *testing.T) {
 	ApplyGates(&m, scenario.Scenario{Turns: []scenario.Turn{{Trigger: scenario.Trigger{Kind: scenario.TriggerBargeIn}}}})
 	if m.Passed {
 		t.Fatal("expected unmeasured barge_in fail")
+	}
+	m = Metrics{SelectivityHold: true, HoldThroughOverlap: true, BargeInStopMS: BargeInIntoSilence}
+	ApplyGates(&m, scenario.Scenario{Turns: []scenario.Turn{{Trigger: scenario.Trigger{Kind: scenario.TriggerBargeIn}}}})
+	if !m.Passed {
+		t.Fatalf("a barge-in while the agent was silent had nothing to stop: %v", m.GateNotes)
 	}
 }
 
@@ -206,6 +211,37 @@ func TestScoreFiller(t *testing.T) {
 	}
 }
 
+func TestAFillerSaidAsTheToolStartsCounts(t *testing.T) {
+	// Word timings run a little early: "One" is stamped 40 ms before the tool it announces.
+	words := []TranscriptWord{
+		{Text: "One", StartMS: 960, EndMS: 1280},
+		{Text: "moment", StartMS: 1280, EndMS: 1600},
+	}
+	if !containsTimedFiller(words, 1000, 4000) {
+		t.Fatal("a filler still being spoken when the tool starts is said during it")
+	}
+	if containsTimedFiller(words, 1700, 4000) {
+		t.Fatal("a filler finished before the tool started was not said during it")
+	}
+}
+
+func TestAQuietSentenceIsStillTheAgentTalking(t *testing.T) {
+	// "Just a moment" loud, "while I see if we can" rendered far quieter, then loud again,
+	// with a side talker across the quiet part.
+	rate := audio.Rate
+	rec := caller.Result{
+		Agent: audio.Concat(audio.Tone(rate, 220, 12000), audio.Tone(rate*2, 220, 300), audio.Tone(rate, 220, 12000)),
+		Rate:  rate,
+		Events: []caller.Event{
+			{TurnID: "talker", Kind: scenario.TriggerDuringAgent, RecStartMs: 1400, RecEndMs: 2600, OverlapSound: "talker"},
+		},
+	}
+	checks := ScoreOverlaps(rec)
+	if !HoldThroughOverlap(checks) || !SelectivityHold(checks) {
+		t.Fatalf("the agent talked straight through the talker: %+v", checks)
+	}
+}
+
 func TestHoldThroughOverlap(t *testing.T) {
 	rate := audio.Rate
 	agent := audio.Concat(audio.Silence(rate/10), audio.Tone(rate, 220, 12000))
@@ -225,6 +261,29 @@ func TestHoldThroughOverlap(t *testing.T) {
 	rec.Agent = audio.Concat(audio.Tone(rate/5, 220, 12000), audio.Silence(rate))
 	if HoldThroughOverlap(ScoreOverlaps(rec)) {
 		t.Fatal("agent stopped at cough")
+	}
+}
+
+func TestAPauseBetweenTwoSentencesIsNotANewTurnOnTheOverlap(t *testing.T) {
+	// "One moment." then "Checking", 350 ms apart, with another table talking across the gap.
+	rate := audio.Rate
+	rec := caller.Result{
+		Agent: audio.Concat(audio.Tone(rate, 220, 12000), audio.Silence(rate*35/100), audio.Tone(rate, 220, 12000)),
+		Rate:  rate,
+		Events: []caller.Event{
+			{TurnID: "talker", Kind: scenario.TriggerDuringAgent, RecStartMs: 700, RecEndMs: 1500, OverlapSound: "talker"},
+		},
+	}
+	checks := ScoreOverlaps(rec)
+	if !SelectivityHold(checks) || !HoldThroughOverlap(checks) {
+		t.Fatalf("the agent went straight on through the talker: %+v", checks)
+	}
+
+	// An agent that stopped for the talker and came back to answer it leaves a longer gap.
+	rec.Agent = audio.Concat(audio.Tone(rate, 220, 12000), audio.Silence(rate*12/10), audio.Tone(rate, 220, 12000))
+	rec.Events[0].RecEndMs = 2300
+	if SelectivityHold(ScoreOverlaps(rec)) {
+		t.Fatal("a reply started after the agent stopped for the talker is a new turn")
 	}
 }
 

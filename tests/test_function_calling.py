@@ -78,6 +78,17 @@ class TestFunctionRegistry:
         with pytest.raises(TypeError):
             await registry.call_function("test_func", {"x": 5})
 
+    async def test_call_function_drops_arguments_it_does_not_take(self):
+        registry = FunctionRegistry()
+
+        @registry.register(description="Check for an area outage")
+        async def check_outage() -> dict:
+            return {"outage": False}
+
+        assert await registry.call_function("check_outage", {"query": "x"}) == {
+            "outage": False
+        }
+
     async def test_get_tool_schemas(self):
         """Test getting tool schemas."""
         registry = FunctionRegistry()

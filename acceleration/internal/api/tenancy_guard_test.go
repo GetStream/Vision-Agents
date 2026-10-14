@@ -15,8 +15,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// TenancyGuardSuite runs a router in app mode with the fallback off and two customers who
-// registered apps of their own, drives what a customer does in Stream through every path the
+// TenancyGuardSuite runs a router in app mode with the fallback off and two customers the
+// gateway forwarded server tokens for, drives what a customer does in Stream through every path the
 // router offers, and watches what is written with which key. Stream here is one server that
 // answers as the deployment's app or as either customer's by the key it is asked with.
 type TenancyGuardSuite struct {
@@ -34,25 +34,18 @@ func (s *TenancyGuardSuite) SetupSuite() {
 
 // tenant is one customer with an app of its own.
 type tenant struct {
-	app            testApp
-	id             int64
-	apiKey, secret string
+	app    testApp
+	id     int64
+	apiKey string
 }
 
-// tenantWithApp makes a customer and registers its own app, which mints guests.
+// tenantWithApp makes a customer the gateway forwarded a server token for, for its own app.
 func (s *TenancyGuardSuite) tenantWithApp() tenant {
 	id := streamAppID()
-	made := tenant{app: s.numberedApp(id), id: id,
-		apiKey: "key-" + strconv.FormatInt(id, 10), secret: "secret-" + s.utils.uuid()}
-	s.chat.SetAppFor(made.apiKey, chattest.App{
-		ID:           id,
-		ChannelTypes: map[string]map[string][]string{"agent": {"channel_member": {"read-channel", "create-message"}}},
-		CallTypes:    []string{"agent"},
-	})
+	made := tenant{app: s.numberedApp(id), id: id, apiKey: "key-" + strconv.FormatInt(id, 10)}
+	s.answerAs(made.apiKey, id)
 	s.useApp(made.app)
-	var settings AppSettings
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/settings/app/stream/credentials",
-		map[string]any{"keys": []keyInput{key(made.apiKey, made.secret)}, "expected_revision": 0, "allow_guests": true}, &settings))
+	s.forwarded(made.apiKey)
 	return made
 }
 
@@ -81,7 +74,8 @@ func (s *TenancyGuardSuite) drive(customer tenant) {
 	body := fmt.Sprintf(`{"type": "message.new", "channel_id": %q, "channel_type": "agent", "created_at": %q,
   "channel_custom": {%q: %q}, "message": {"id": %q, "text": "hello", "user": {"id": "sam"}}}`,
 		"chat-"+s.utils.uuid(), time.Now().UTC().Format(time.RFC3339Nano), ConfigField, config.ID, "message-"+s.utils.uuid())
-	request := s.request("/v1/chat/hooks/stream/"+strconv.FormatInt(customer.id, 10), body, sign(body, customer.secret))
+	request := s.request("/v1/chat/hooks/stream/"+strconv.FormatInt(customer.id, 10), body, sign(body, ownAppSecret))
+	vouched(request, customer.id, customer.apiKey)
 	response, err := s.server.Client().Do(request)
 	s.Require().NoError(err)
 	s.Require().NoError(response.Body.Close())
@@ -117,7 +111,7 @@ func (s *TenancyGuardSuite) TestACustomerWithNoAppIsWrittenNowhereWhenTheFallbac
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "register this app's Stream keys")
+	s.Contains(failure, "call through the gateway with this app's own Stream keys")
 	s.Len(s.chat.Requests(suiteStreamKey), before, "nothing was asked of the deployment's app on its behalf")
 }
 
@@ -146,15 +140,12 @@ func (s *TenancyGuardSuite) TestTheDeploymentAppsHooksStartNothingForACustomerOn
 	}
 }
 
-func (s *TenancyGuardSuite) TestASessionWithNoStreamAppIsPinnedToNone() {
-	// A call needs no conversation kept, so a customer with no app can still hold one.
+func (s *TenancyGuardSuite) TestAVoiceSessionForACustomerWithNoAppIsRefusedToo() {
 	s.useApp(s.numberedApp(streamAppID()))
-	call := s.utils.callID()
 
-	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call})
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions",
+		CreateSessionRequest{StartVoice: pointerTo(true)})
 
-	s.Require().Eventually(func() bool {
-		stored, err := s.store.StoredSession(context.Background(), s.customerID(), created.Id)
-		return err == nil && stored.StreamAppPK == store.ForeignStreamApp
-	}, settleFor, 10*time.Millisecond, "the session is not left reading as the deployment app's")
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "call through the gateway with this app's own Stream keys")
 }

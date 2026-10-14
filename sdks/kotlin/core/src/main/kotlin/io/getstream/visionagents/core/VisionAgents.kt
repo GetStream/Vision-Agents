@@ -14,6 +14,10 @@ import okhttp3.OkHttpClient
  * ending it is the whole of what is here, because it is the whole of what the router lets a
  * device do. Configuring an agent and minting a token to join a call are server-side only: they
  * belong to a backend, which has the Go, Python or Node SDK and hands down what the app needs.
+ *
+ * Stream is set up once: the key, and the user and token [setUser] is given, are what the router,
+ * Stream Chat (`vision-agents-chat`) and Stream Video (`vision-agents-rtc`) all connect with, and
+ * every session shares one client of each.
  */
 public class VisionAgents(public val backend: Backend) : AutoCloseable {
     public constructor(
@@ -49,22 +53,23 @@ public class VisionAgents(public val backend: Backend) : AutoCloseable {
      * socket open, so the tools are already being answered.
      */
     public suspend fun chat(options: SessionOptions = SessionOptions()): AgentSession =
-        follow(sessions.create(checked(options)), options.tools)
+        follow(sessions.create(checked(options.copy(startVoice = false))), options.tools)
 
     /**
-     * Puts an agent on a call and follows it.
+     * Puts an agent on the session's own call, `agent:<session id>`, and follows it.
      *
      * The agent joins as soon as this returns. Joining the same call from this device is what
      * the rtc module is for; this only starts the agent and gives you the state.
      */
-    public suspend fun voice(callId: String, options: SessionOptions = SessionOptions()): AgentSession =
-        follow(sessions.create(checked(options), callId), options.tools)
+    public suspend fun voice(options: SessionOptions = SessionOptions()): AgentSession =
+        follow(sessions.create(checked(options.copy(startVoice = true))), options.tools)
 
     /**
      * Follows a session this caller already has open, without creating one.
      *
-     * Use this after a relaunch, on another screen, or for a fork. A session opened by somebody
-     * else is not found, because reading one is reading a conversation.
+     * Use this after a relaunch, on another screen, or for a fork: it is how a conversation is
+     * carried on. A session opened by somebody else is not found, because reading one is
+     * reading a conversation.
      */
     public suspend fun attach(sessionId: String, tools: List<AgentTool> = emptyList()): AgentSession =
         follow(sessions.get(sessionId), tools)
@@ -73,7 +78,9 @@ public class VisionAgents(public val backend: Backend) : AutoCloseable {
      * Gets or creates a guest, so somebody can talk to an agent before they sign up.
      *
      * Remembered in [store] where there is one, so the next launch is the same guest and not a
-     * second one with an empty history. Pass it to [setUser] to act as them. Moving a guest's
+     * second one with an empty history. Pass it to [setUser] to act as them. With no user set it
+     * is asked for anonymously, which a router must admit; one that does not is answered with a
+     * guest your backend mints instead. Moving a guest's
      * conversations onto the account they turn out to be is server-side only: it is the backend
      * that just authenticated them that knows which guest they were.
      */
@@ -84,6 +91,15 @@ public class VisionAgents(public val backend: Backend) : AutoCloseable {
     public fun forgetGuest(store: GuestStore) {
         store.clear()
         backend.clearUser()
+    }
+
+    /**
+     * Disconnects the Stream Chat and Video clients built for the app's sessions. Clients the
+     * app handed over with `use` are its own and stay connected; closing or leaving a session
+     * disconnects nothing.
+     */
+    public suspend fun disconnect() {
+        backend.disconnectStream()
     }
 
     override fun close() {
@@ -120,7 +136,7 @@ public class Agent internal constructor(private val agents: VisionAgents, public
     public suspend fun chat(vararg tools: AgentTool): AgentSession =
         chat(SessionOptions(tools = tools.toList()))
 
-    /** Puts this agent on a call and follows it. See [VisionAgents.voice]. */
-    public suspend fun voice(callId: String, options: SessionOptions = SessionOptions()): AgentSession =
-        agents.voice(callId, options.copy(agent = options.agent ?: name))
+    /** Puts this agent on the session's own call and follows it. See [VisionAgents.voice]. */
+    public suspend fun voice(options: SessionOptions = SessionOptions()): AgentSession =
+        agents.voice(options.copy(agent = options.agent ?: name))
 }

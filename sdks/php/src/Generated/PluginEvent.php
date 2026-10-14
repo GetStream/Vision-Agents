@@ -18,7 +18,7 @@ final readonly class PluginEvent
     public function __construct(
         // The event's name, as the server's events/list gives it, such as comment.created.
         public string $event,
-        // A catalog plugin the config names under agent_plugins or user_plugins.
+        // A catalog plugin the config names under plugins.
         public string $plugin,
         // The event's filters, as its inputSchema describes them.
         /** @var array<string, mixed>|null */

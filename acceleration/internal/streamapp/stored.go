@@ -4,12 +4,10 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -20,37 +18,39 @@ const (
 	fallbackRecordEvery = time.Minute
 )
 
-// StoredOptions configures Stored. Store, Sealer and Deployment are required.
+// StoredOptions configures Stored. Store and Deployment are required.
 type StoredOptions struct {
-	// Store holds the apps customers registered and their sealed keys.
+	// Store records the uses of the fallback.
 	Store *store.Store
-	// Sealer opens those keys.
-	Sealer *auth.Sealer
 	// Deployment is the deployment's own app.
 	Deployment *Deployment
-	// FallbackToDeployment writes a customer that registered no app into the deployment's
-	// own, as deployment mode always did. Without it such a customer is written nowhere.
+	// FallbackToDeployment writes a customer with no token for an app of its own into the
+	// deployment's, as deployment mode always did. Without it such a customer is written
+	// nowhere.
 	FallbackToDeployment bool
-	Logger               *slog.Logger
+	// Forwarded acts in a customer's own app with the token the gateway forwarded for it.
+	// Without it every customer but the deployment's own has only the fallback.
+	Forwarded *Forwarded
+	Logger    *slog.Logger
 	// Now is the clock, for tests.
 	Now func() time.Time
 }
 
-// Stored is app mode: each customer acts in the app it registered, with its own keys.
+// Stored is app mode: each customer acts in its own app, with the server token the gateway
+// forwarded for it.
 //
-// A customer with a registered app acts there whatever state the app is in, and never in
-// the deployment's: a disconnected or blocked app is written nowhere. The deployment's own
-// customer, whose id is the deployment app's, acts in it with the deployment's key. Anybody
-// else acts wherever the fallback says.
+// The deployment's own customer, whose id is the deployment app's, acts in it with the
+// deployment's key. A customer with a token acts in its own app. Anybody else acts wherever
+// the fallback says.
 //
 // Work already written is finished in the app it was pinned to. Work written into the
 // deployment's own app before a customer had an app of its own can still be read there, and
 // is written to only while the fallback allows it.
 type Stored struct {
 	store      *store.Store
-	sealer     *auth.Sealer
 	deployment *Deployment
 	fallback   bool
+	forwarded  *Forwarded
 	logger     *slog.Logger
 	now        func() time.Time
 
@@ -101,19 +101,20 @@ type tally struct {
 
 // NewStored returns app mode's Source.
 func NewStored(options StoredOptions) (*Stored, error) {
-	if options.Store == nil || options.Sealer == nil || options.Deployment == nil {
-		return nil, errors.New("streamapp: app mode needs the store, the keyring and the deployment's own app")
+	if options.Store == nil || options.Deployment == nil {
+		return nil, errors.New("streamapp: app mode needs the store and the deployment's own app")
 	}
 	now := options.Now
 	if now == nil {
 		now = time.Now
 	}
 	return &Stored{
-		store: options.Store, sealer: options.Sealer, deployment: options.Deployment,
+		store: options.Store, deployment: options.Deployment,
 		fallback: options.FallbackToDeployment,
 		logger:   cmp.Or(options.Logger, slog.Default()),
 		now:      now,
 		warned:   map[string]time.Time{}, fallbacks: map[string]*tally{},
+		forwarded: options.Forwarded,
 	}, nil
 }
 
@@ -131,13 +132,6 @@ func (s *Stored) learn(ctx context.Context, clients *Clients) (int64, error) {
 
 // For is the identity new work for a customer is done with.
 func (s *Stored) For(ctx context.Context, customer string) (Identity, error) {
-	registered, err := s.store.StreamApp(ctx, customer)
-	if err == nil {
-		return s.registered(ctx, registered)
-	}
-	if !errors.Is(err, store.ErrNoStreamApp) {
-		return Identity{}, err
-	}
 	deployment := s.deployment.App()
 	if s.ownsDeploymentApp(customer, deployment) {
 		return s.inDeploymentApp(ctx, customer, deployment)
@@ -145,6 +139,9 @@ func (s *Stored) For(ctx context.Context, customer string) (Identity, error) {
 	if s.waitsFor(customer) {
 		// Until the deployment's own app is known, this may be its customer.
 		return Identity{}, ErrDeploymentAppUnknown
+	}
+	if identity, ok, err := s.inForwardedApp(ctx, customer); ok {
+		return identity, err
 	}
 	if !s.fallsBack(ctx, customer) {
 		return Identity{}, ErrNoIdentity
@@ -183,18 +180,30 @@ func (s *Stored) forApp(ctx context.Context, customer string, app int64) (Identi
 	if app == 0 || app == deployment {
 		return s.legacy(ctx, customer, app, deployment)
 	}
-	registered, err := s.store.StreamApp(ctx, customer)
-	switch {
-	case err == nil && registered.StreamAppPK == app:
-		identity, err := s.registered(ctx, registered)
-		return identity, false, err
-	case err != nil && !errors.Is(err, store.ErrNoStreamApp):
-		return Identity{}, false, err
-	case s.deployment.pending():
+	if customer == CustomerOf(app) {
+		if identity, ok, err := s.inForwardedApp(ctx, customer); ok {
+			return identity, false, err
+		}
+	}
+	if s.deployment.pending() {
 		// The pin may be the deployment's own app, which is not known yet.
 		return Identity{}, false, ErrDeploymentAppUnknown
 	}
 	return Identity{}, false, ErrStreamAppMoved
+}
+
+// inForwardedApp is a customer's own app acted in with the token the gateway forwarded for
+// it, and false when there is no such token to act with.
+func (s *Stored) inForwardedApp(ctx context.Context, customer string) (Identity, bool, error) {
+	app, couldBe := ParseAppID(customer)
+	if s.forwarded == nil || !couldBe {
+		return Identity{}, false, nil
+	}
+	identity, err := s.forwarded.identity(ctx, customer, app)
+	if errors.Is(err, ErrNoIdentity) {
+		return Identity{}, false, nil
+	}
+	return identity, true, err
 }
 
 // legacy is work written into the deployment's own app: unpinned, from before apps had
@@ -232,55 +241,6 @@ func (s *Stored) inDeploymentApp(ctx context.Context, customer string, app int64
 	}
 	identity.StreamApp = app
 	return identity, nil
-}
-
-// registered is the identity a registered app is acted in with: its primary key while
-// Stream accepts it, its oldest accepted key otherwise.
-func (s *Stored) registered(ctx context.Context, app store.StreamApp) (Identity, error) {
-	if app.State != store.StreamAppConnected {
-		return Identity{}, ErrStreamAppDisconnected
-	}
-	key, ok := activeKey(app)
-	if !ok {
-		return Identity{}, ErrStreamAppDisconnected
-	}
-	secret, stale, err := OpenKey(s.sealer, app, key)
-	if err != nil {
-		return Identity{}, fmt.Errorf("streamapp: opening key %s of the app registered for %s: %w", key.APIKey, app.CustomerID, err)
-	}
-	if stale {
-		if _, err := s.rewrap(ctx, app, key, secret); err != nil {
-			// A chore, not a condition of using the key: the old seal still opens.
-			s.logger.Warn("stream: could not seal a key again under the current key version",
-				"customer_id", app.CustomerID, "api_key", key.APIKey, "error", err)
-		}
-	}
-	return Identity{
-		CustomerID: app.CustomerID, StreamApp: app.StreamAppPK, APIKey: key.APIKey, Secret: secret,
-		BaseURL: s.deployment.identity.BaseURL, Registered: true, AllowGuests: app.AllowGuests,
-	}, nil
-}
-
-func activeKey(app store.StreamApp) (store.StreamAppKey, bool) {
-	if primary, ok := app.Key(app.PrimaryKey); ok && primary.Status == store.StreamAppKeyActive {
-		return primary, true
-	}
-	for _, key := range app.Keys {
-		if key.Status == store.StreamAppKeyActive {
-			return key, true
-		}
-	}
-	return store.StreamAppKey{}, false
-}
-
-// rewrap seals a key again under the keyring's current version, and reports whether it
-// replaced the seal: a key replaced meanwhile is left as it now is.
-func (s *Stored) rewrap(ctx context.Context, app store.StreamApp, key store.StreamAppKey, secret Secret) (bool, error) {
-	sealed, err := SealKey(s.sealer, app.CustomerID, app.StreamAppPK, key.APIKey, secret.Reveal())
-	if err != nil {
-		return false, err
-	}
-	return s.store.RewrapStreamAppKey(ctx, app.CustomerID, key.APIKey, key.Sealed, sealed.Sealed, sealed.KEKVersion)
 }
 
 // fellBack notes that a customer was written into the deployment's app for want of one of

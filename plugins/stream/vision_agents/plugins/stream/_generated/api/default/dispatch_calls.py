@@ -104,8 +104,8 @@ def sync_detailed(
     Work goes to whichever of a customer's workers is holding the least of what it said it can hold, so
     a worker that never reports `done` is one the router cannot tell is busy.
     A `message` written to a running session whose agent sets `dispatch.text` carries that `session_id`,
-    and a `command_id` when it was sent as a durable command. The model has not answered it: the worker
-    does, by creating a response on that session with a server-side credential and the same `command_id`
+    and a `request_id` when it was sent as a durable command. The model has not answered it: the worker
+    does, by creating a response on that session with a server-side credential and the same `request_id`
     and text.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
     This is the clearest case of why: a worker is offered other people's callers, so anything that can
@@ -158,8 +158,8 @@ def sync(
     Work goes to whichever of a customer's workers is holding the least of what it said it can hold, so
     a worker that never reports `done` is one the router cannot tell is busy.
     A `message` written to a running session whose agent sets `dispatch.text` carries that `session_id`,
-    and a `command_id` when it was sent as a durable command. The model has not answered it: the worker
-    does, by creating a response on that session with a server-side credential and the same `command_id`
+    and a `request_id` when it was sent as a durable command. The model has not answered it: the worker
+    does, by creating a response on that session with a server-side credential and the same `request_id`
     and text.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
     This is the clearest case of why: a worker is offered other people's callers, so anything that can
@@ -207,8 +207,8 @@ async def asyncio_detailed(
     Work goes to whichever of a customer's workers is holding the least of what it said it can hold, so
     a worker that never reports `done` is one the router cannot tell is busy.
     A `message` written to a running session whose agent sets `dispatch.text` carries that `session_id`,
-    and a `command_id` when it was sent as a durable command. The model has not answered it: the worker
-    does, by creating a response on that session with a server-side credential and the same `command_id`
+    and a `request_id` when it was sent as a durable command. The model has not answered it: the worker
+    does, by creating a response on that session with a server-side credential and the same `request_id`
     and text.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
     This is the clearest case of why: a worker is offered other people's callers, so anything that can
@@ -259,8 +259,8 @@ async def asyncio(
     Work goes to whichever of a customer's workers is holding the least of what it said it can hold, so
     a worker that never reports `done` is one the router cannot tell is busy.
     A `message` written to a running session whose agent sets `dispatch.text` carries that `session_id`,
-    and a `command_id` when it was sent as a durable command. The model has not answered it: the worker
-    does, by creating a response on that session with a server-side credential and the same `command_id`
+    and a `request_id` when it was sent as a durable command. The model has not answered it: the worker
+    does, by creating a response on that session with a server-side credential and the same `request_id`
     and text.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
     This is the clearest case of why: a worker is offered other people's callers, so anything that can

@@ -7,7 +7,7 @@
  * conversations that user owns and nothing about how an agent is configured.
  *
  * Reading an agent directory needs a filesystem, so `loadFolder` lives in
- * `@stream-io/vision-agents/node`.
+ * `@stream-io/calypso/node`.
  */
 
 export {
@@ -88,10 +88,15 @@ export {
   type Message,
 } from "./socket.js";
 
-export { Tools, render, type ParameterSchema, type Tool } from "./tools.js";
+export { Tools, render, type ParameterSchema, type Tool, type ToolApproval } from "./tools.js";
+
+export { LiveReasoning } from "./reasoning.js";
+
+export type { ChatClient, StreamClients, VideoClient } from "./stream.js";
 
 export {
   Session,
+  Voice,
   eventOf,
   type ForkOptions,
   type Participant,
@@ -99,6 +104,7 @@ export {
   type SessionEvent,
   type SessionOptions,
   type SessionVideo,
+  type ToolApprovalRequest,
 } from "./session.js";
 
 export {
@@ -108,6 +114,7 @@ export {
   userIdOf,
   type AgentOptions,
   type ChatOptions,
+  type ConnectorDeclaration,
   type Declaration,
   type Folder,
   type Harness,

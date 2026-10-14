@@ -236,13 +236,13 @@ func TestWhatASupersededSessionSaysIsDropped(t *testing.T) {
 
 func TestASessionThatEndsSaysHowToGetBackToIt(t *testing.T) {
 	m := newModel(t, Options{})
-	m.conversationID, m.busy = "agent:support-9", true
+	m.sessionID, m.busy = "session-9", true
 
 	m.Update(received{generation: m.generation, ok: false})
 	if m.busy {
 		t.Error("the conversation is still waiting on a session that ended")
 	}
-	if !strings.Contains(m.status, "/resume agent:support-9") {
+	if !strings.Contains(m.status, "/resume session-9") {
 		t.Errorf("a session that ended says %q", m.status)
 	}
 }
@@ -316,9 +316,9 @@ func TestTheStateIsWhatTheApplicationNeedsToKnow(t *testing.T) {
 		t.Errorf("a conversation with no session reports session %q", state.SessionID)
 	}
 
-	attach(t, m, backend.session(t, "agent:support-9"), stream.ConversationPage{})
+	attach(t, m, backend.session(t, "session-9"), stream.ConversationPage{})
 	state := m.State()
-	if state.ConversationID != "agent:support-9" || state.SessionID != "session-1" {
+	if state.ConversationID != "agent:session-9" || state.SessionID != "session-9" {
 		t.Errorf("the state is %+v", state)
 	}
 }

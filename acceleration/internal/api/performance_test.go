@@ -143,7 +143,7 @@ func (s *PerformanceSuite) ask(sessionID string) time.Duration {
 	spent := timed(func() {
 		status, body := s.serverClient.call(http.MethodPost,
 			"/v1/agents/sessions/"+sessionID+"/responses",
-			CreateResponseRequest{CommandId: &command, Text: "What is the capital of France?"})
+			CreateResponseRequest{RequestId: &command, Text: "What is the capital of France?"})
 		s.Require().Equal(http.StatusAccepted, status, string(body))
 	})
 	s.Require().Eventually(func() bool {

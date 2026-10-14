@@ -93,6 +93,8 @@ channel:
 type ConnectorEventsSuite struct {
 	RouterSuite
 	delivered *deliveries
+	// logged is what the router logged, at debug and up.
+	logged *lockedLog
 }
 
 func TestConnectorEventsSuite(t *testing.T) {
@@ -115,6 +117,8 @@ func (s *ConnectorEventsSuite) SetupSuite() {
 	s.eventSecrets = ConnectorEventSecrets(func(name string) string { return environment[name] })
 	s.delivered = &deliveries{}
 	s.bridge = s.delivered
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(),
@@ -131,10 +135,12 @@ func (s *ConnectorEventsSuite) TestAValidRevocationMovesTheUsersConnectionAndThe
 	bob := s.connected("slack", team, "UBOB")
 	_, err := s.resolver.Resolve(context.Background(), alice, core.CredentialRequest{})
 	s.Require().ErrorContains(err, "a named scheme does not connect", "a connected row goes to its scheme")
+	before := len(s.logged.String())
 
 	status, _, _ := s.deliver("slack", s.signed(revocation(team, "UALICE"), time.Now()))
 
 	s.Equal(http.StatusOK, status)
+	s.NotContains(s.logged.String()[before:], "carried no message", "a revocation is a signal the manifest reads")
 	s.Equal(store.ConnectionNeedsReauthorization, s.status(alice))
 	s.Equal(store.ConnectionConnected, s.status(bob), "only the user Slack named")
 	_, err = s.resolver.Resolve(context.Background(), alice, core.CredentialRequest{})

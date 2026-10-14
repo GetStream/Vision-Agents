@@ -1,6 +1,7 @@
 package io.getstream.visionagents.core
 
 import io.getstream.visionagents.core.generated.SessionTool
+import io.getstream.visionagents.core.generated.SessionToolApproval
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
@@ -30,6 +31,11 @@ public class AgentTool(
      */
     public val displayTitle: String? = null,
     /**
+     * What a person is asked before each call runs, or null to run every call straight away.
+     * A call that asks waits in [AgentSession.approvals] until [AgentSession.decide] answers it.
+     */
+    public val approval: Approval? = null,
+    /**
      * Runs the tool. What it returns is given to the model as the result; throwing tells the
      * model the tool failed and why. It is cancelled when the router gives up on the call.
      */
@@ -46,6 +52,30 @@ public class AgentTool(
         Client,
     }
 
+    /**
+     * A tool's question to the person whose message a call answers.
+     *
+     * In a conversation kept in Stream Chat the call's step carries it as `awaiting_approval`,
+     * and every channel member can read it: keep anything private out of it. A client tool is
+     * asked about only once the router knows the install to address it to; until then, declare
+     * it with [Executor.Server].
+     */
+    public data class Approval(
+        /** The question, such as "Share your location?". At most 80 characters. */
+        val title: String,
+        /** What allowing it shares or does, such as "Only your city is shared." */
+        val message: String? = null,
+        /**
+         * The string argument in which the model says why it wants the call, shown beside the
+         * question. Declare it in `parameters` so the model fills it in.
+         */
+        val reasonArgument: String? = null,
+        /** The label of the button that allows the call. */
+        val allowTitle: String? = null,
+        /** The label of the button that declines it. */
+        val declineTitle: String? = null,
+    )
+
     internal val schema: SessionTool
         get() = SessionTool(
             name = name,
@@ -57,6 +87,15 @@ public class AgentTool(
                 null -> null
             },
             displayTitle = displayTitle,
+            approval = approval?.let {
+                SessionToolApproval(
+                    title = it.title,
+                    message = it.message,
+                    reasonArgument = it.reasonArgument,
+                    allowTitle = it.allowTitle,
+                    declineTitle = it.declineTitle,
+                )
+            },
         )
 
     public companion object {

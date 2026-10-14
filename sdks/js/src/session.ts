@@ -2,7 +2,8 @@ import type { Client, Schemas } from "./client.js";
 import { ConfigurationError } from "./errors.js";
 import { Responses } from "./responses.js";
 import { Socket, type Frame, flag, nested, text } from "./socket.js";
-import type { Tools } from "./tools.js";
+import type { ChatClient, VideoClient } from "./stream.js";
+import type { ToolApproval, Tools } from "./tools.js";
 
 /**
  * How many events are held for a caller that is not reading them yet.
@@ -12,6 +13,23 @@ import type { Tools } from "./tools.js";
  * rather than by whoever is iterating, so dropping an event never drops a turn.
  */
 const BUFFERED_EVENTS = 256;
+
+/** A call of one of the caller's functions, waiting for the person to allow it. */
+export interface ToolApprovalRequest {
+  /** The call's id, which `decide` answers it by. */
+  readonly id: string;
+  /** The function the model wants run. */
+  readonly name: string;
+  /** The arguments as the model wrote them, a JSON object encoded as a string. */
+  readonly arguments: string;
+  /** The question the function asks. */
+  readonly approval: ToolApproval;
+  /**
+   * The model's own words for why it wants the call, from the argument the approval names,
+   * or the empty string.
+   */
+  readonly reason: string;
+}
 
 /** Somebody on the call, as the backend reports them. */
 export interface Participant {
@@ -26,7 +44,8 @@ export interface Participant {
  * `kind` is the backend's own name for it: joined, hearing, heard, decision, responding,
  * response_delta, responded, blocked, spoke, turn, delegated, task_settled, task_cancelled,
  * tool_started, tool_ran, transferred, pressed, looked_up, backchannel, interrupted,
- * overlap_decided, conversation_compacted, conversation_updated, error and left. The fields
+ * overlap_decided, conversation_compacted, conversation_updated, error and left, and
+ * tool_call for a call waiting in `session.approvals`. The fields
  * below are filled from whichever of those carry them, and `frame` is the whole thing for
  * anything they do not cover.
  */
@@ -54,8 +73,8 @@ export interface SessionOptions {
    * what the agent is doing word by word. A page on a hosted deployment can watch one too:
    * the socket carries the credential in its query, where the proxy reads it. Off, the
    * conversation is opened and read over HTTP instead — `responses.create()` asks,
-   * `responses.items` reads the turn back — and `say`, `interrupt`,
-   * `setInstructions` and `events` have nothing to send to.
+   * `responses.items` reads the turn back — and `say`, `interrupt` and `events` have
+   * nothing to send to.
    */
   watch?: boolean;
 }
@@ -91,51 +110,6 @@ export interface SessionVideo {
   call: unknown;
 }
 
-interface ChatClient {
-  channel(type: string, id: string): unknown;
-  connectUser(user: { id: string }, token: string): Promise<unknown>;
-  disconnectUser(): Promise<unknown>;
-}
-
-interface VideoClient {
-  call(type: string, id: string): unknown;
-  disconnectUser(): Promise<unknown>;
-}
-
-interface ChatModule {
-  StreamChat: new (apiKey: string) => ChatClient;
-}
-
-interface VideoModule {
-  StreamVideoClient: new (options: {
-    apiKey: string;
-    user: { id: string };
-    token: string;
-  }) => VideoClient;
-}
-
-/**
- * Imports an optional peer dependency, or says which one is missing.
- *
- * Dynamic rather than a top-level import so a caller who never touches chat or video
- * installs neither and bundles neither: this package has no dependencies, and adding two
- * large ones to make two getters work would be paid for by everybody.
- *
- * The specifier goes through a variable because a bundler that can see a literal will try to
- * resolve it at build time and fail the build over a package the caller deliberately did not
- * install.
- */
-async function peer<T>(name: string, what: string): Promise<T> {
-  try {
-    return (await import(/* @vite-ignore */ /* webpackIgnore: true */ name)) as T;
-  } catch (cause) {
-    throw new ConfigurationError(
-      `${what} needs ${name}, which is an optional peer dependency: install it with ` +
-        `npm install ${name} (${String(cause)})`,
-    );
-  }
-}
-
 /**
  * One conversation, held in the acceleration backend.
  *
@@ -148,6 +122,8 @@ export class Session {
   readonly created: Schemas["Session"];
   /** This conversation's turns, and what each of them was made of. */
   readonly responses: Responses;
+  /** Starts and stops the agent talking on the session's call. */
+  readonly voice: Voice;
 
   /**
    * Undefined for a conversation that is read and written to over HTTP rather than watched
@@ -163,6 +139,7 @@ export class Session {
   private readonly buffered: SessionEvent[] = [];
   private readonly waiting: ((next: IteratorResult<SessionEvent>) => void)[] = [];
   private readonly running = new Map<string, AbortController>();
+  private readonly asking = new Map<string, { request: ToolApprovalRequest; frame: Frame }>();
   private readonly finished: Promise<void>;
   private ended = false;
 
@@ -176,16 +153,17 @@ export class Session {
     this.created = created;
     this.socket = socket;
     this.tools = tools;
-    this.responses = new Responses(client, created.id, Boolean(created.conversation_id));
+    this.responses = new Responses(client, created.id);
+    this.voice = new Voice(client, created.id, Boolean(created.call_id));
     this.finished = socket ? this.watch() : Promise.resolve();
   }
 
   /**
    * Creates the session and starts watching it.
    *
-   * It resolves once the backend is in the call, so a session that has opened is one that
-   * is already listening. A request with no `call_id` and `text: true` holds the
-   * conversation in writing instead.
+   * With `start_voice` it resolves once the backend is in the session's call, so a session
+   * that has opened is one that is already listening. Without it the conversation is held
+   * in writing.
    */
   static async open(
     client: Client,
@@ -259,6 +237,53 @@ export class Session {
   }
 
   /**
+   * Calls of functions that ask first, waiting for the person to answer with `decide`,
+   * oldest first. Each also arrives through `events` as a `tool_call`.
+   */
+  get approvals(): readonly ToolApprovalRequest[] {
+    return [...this.asking.values()].map(({ request }) => request);
+  }
+
+  /**
+   * Answers a call waiting in `approvals`.
+   *
+   * Allowed, the function runs and its result goes back as it would have. Declined, it never
+   * runs: the model is told the person declined, and the call's step shows `summary`. A call
+   * that is not waiting is left alone, so answering twice does nothing. If the answer cannot
+   * be sent, the call goes on waiting.
+   */
+  decide(id: string, answer: { allowed: boolean; summary?: string }): void {
+    const waiting = this.asking.get(id);
+    if (!waiting) {
+      return;
+    }
+    const ids: Record<string, string> = {};
+    for (const key of ["request_id", "turn_id"]) {
+      if (text(waiting.frame, key)) {
+        ids[key] = text(waiting.frame, key);
+      }
+    }
+    this.held().send({
+      type: "tool_approval",
+      tool_call_id: id,
+      allowed: answer.allowed,
+      ...(answer.summary ? { summary: answer.summary } : {}),
+      ...ids,
+    });
+    this.asking.delete(id);
+    if (answer.allowed) {
+      void this.runTool(waiting.frame);
+    } else {
+      this.held().send({
+        type: "tool_result",
+        tool_call_id: id,
+        ...ids,
+        error: "The person declined this call.",
+      });
+    }
+  }
+
+  /**
    * Yields what the backend did until the conversation ends.
    *
    * There is one stream: two loops over it would take half the events each.
@@ -291,22 +316,16 @@ export class Session {
     this.held().send({ type: "say", text: said });
   }
 
-  /** Abandons the reply being spoken, or with `commandId` the one answering that command. */
-  interrupt(options: { commandId?: string } = {}): void {
+  /** Abandons the reply being spoken, or with `requestId` the one answering that request. */
+  interrupt(options: { requestId?: string } = {}): void {
     this.held().send({
       type: "interrupt",
-      ...(options.commandId ? { command_id: options.commandId } : {}),
+      ...(options.requestId ? { request_id: options.requestId } : {}),
     });
   }
 
-  /** Changes what the agent is told to be, from the next turn. */
-  setInstructions(instructions: string): void {
-    this.held().send({ type: "instructions", instructions });
-  }
-
   /**
-   * Changes this session alone: its title, description, custom labels, instructions, models
-   * or voice.
+   * Changes this session alone: its title, description, custom labels, models or voice.
    *
    * Server side only. The agent config it started from is untouched and a field left out is
    * left as it is. A session that ended can still be renamed and relabelled; the rest needs
@@ -376,25 +395,26 @@ export class Session {
   /**
    * The Stream Chat channel this conversation is written into.
    *
-   * `stream-chat` is an optional peer dependency and is imported on first use, so a caller
-   * who never touches chat installs nothing and ships nothing. A caller who does and has not
-   * installed it gets told that rather than a module-not-found from inside this package.
+   * `stream-chat` is an optional peer dependency, opted into by importing
+   * `@stream-io/calypso/chat` once, so a caller who never touches chat installs nothing
+   * and ships nothing. A caller who forgot the import is told which one.
    *
-   * It needs a credential of its own: the channel is Stream Chat, not this router, so a
-   * client reached by customer id has nothing to connect with. A caller already holding a
-   * connected `StreamChat` passes it as `client`, and the channel is opened on that one
-   * rather than on a second connection.
+   * It opens on the `StreamChat` handed over with `client.use`, or else on one connected as
+   * the user `setUser` named, with the Stream key the client was given, which every session
+   * of this client shares.
    */
-  chat(options: { client?: ChatClient } = {}): Promise<SessionChat> {
-    this.chatPeer ??= this.openChat(options.client);
+  chat(): Promise<SessionChat> {
+    this.chatPeer ??= this.openChat();
     return this.chatPeer;
   }
 
   /**
-   * The Stream video call the agent is on.
+   * The Stream video call the agent is on, `agent:<session id>`.
    *
    * The same arrangement as chat: `@stream-io/video-client` is an optional peer dependency,
-   * imported on first use. A session held in writing has no call, and asking for one says so.
+   * opted into by importing `@stream-io/calypso/video` once, and the client handed over
+   * with `client.use` is used when there is one. A session held in writing has no call, and
+   * asking for one says so.
    */
   video(): Promise<SessionVideo> {
     this.videoPeer ??= this.openVideo();
@@ -454,17 +474,25 @@ export class Session {
         }
 
         if (message.type === "tool_call") {
-          void this.runTool(message);
+          const approval = this.tools?.approval(text(message, "name"));
+          if (approval) {
+            this.hold(message, approval);
+            this.deliver(eventOf(message));
+          } else {
+            void this.runTool(message);
+          }
           continue;
         }
         if (message.type === "tool_cancel") {
           this.running.get(text(message, "id"))?.abort();
+          this.asking.delete(text(message, "id"));
           continue;
         }
         this.deliver(eventOf(message));
       }
     } finally {
       this.ended = true;
+      this.asking.clear();
       for (const cancel of this.running.values()) {
         cancel.abort();
       }
@@ -472,6 +500,24 @@ export class Session {
         resolve({ done: true, value: undefined });
       }
     }
+  }
+
+  private hold(frame: Frame, approval: ToolApproval): void {
+    let reason = "";
+    if (approval.reasonArgument) {
+      try {
+        const args: unknown = JSON.parse(text(frame, "arguments") || "{}");
+        const said = (args as Record<string, unknown> | null)?.[approval.reasonArgument];
+        reason = typeof said === "string" ? said : "";
+      } catch {
+        // Arguments the model garbled carry no reason; the call itself still waits.
+      }
+    }
+    const id = text(frame, "id");
+    this.asking.set(id, {
+      request: { id, name: text(frame, "name"), arguments: text(frame, "arguments"), approval, reason },
+      frame,
+    });
   }
 
   /**
@@ -485,8 +531,8 @@ export class Session {
     const id = text(frame, "id");
     const name = text(frame, "name");
     const result: Record<string, unknown> = { type: "tool_result", tool_call_id: id };
-    // A durable command's result is only accepted back with the command and turn it names.
-    for (const key of ["command_id", "turn_id"]) {
+    // A durable request's result is only accepted back with the request and turn it names.
+    for (const key of ["request_id", "turn_id"]) {
       if (text(frame, key)) {
         result[key] = text(frame, key);
       }
@@ -510,7 +556,7 @@ export class Session {
     }
   }
 
-  private async openChat(client?: ChatClient): Promise<SessionChat> {
+  private async openChat(): Promise<SessionChat> {
     const channel = this.created.conversation_id ?? "";
     if (!channel) {
       throw new ConfigurationError(
@@ -522,51 +568,19 @@ export class Session {
     // conversation. Splitting it here keeps that spelling out of the caller's way.
     const [type, ...rest] = channel.split(":");
 
-    // A page that already holds a connected client has no second connection to make.
-    if (client) {
-      return { client, channel: client.channel(type ?? "agent", rest.join(":")) };
-    }
-
-    const credentials = await this.client.backend.streamCredentials();
-    if (!credentials) {
-      throw new ConfigurationError(
-        "chat connects to Stream rather than to this router, so it needs an apiKey and a " +
-          "user: call setUser, or pass apiKey with apiSecret and userId",
-      );
-    }
-
-    const chat = await peer<ChatModule>("stream-chat", "chat");
-    const connected = new chat.StreamChat(credentials.apiKey);
-    await connected.connectUser(credentials.user, credentials.token);
+    const connected = await this.client.peers.chat();
     return { client: connected, channel: connected.channel(type ?? "agent", rest.join(":")) };
   }
 
   private async openVideo(): Promise<SessionVideo> {
-    const callId = this.created.call_id ?? "";
-    if (!callId) {
+    if (!this.voice.started) {
       throw new ConfigurationError(
         "this conversation is held in writing, so there is no call to join",
       );
     }
 
-    const credentials = await this.client.backend.streamCredentials();
-    if (!credentials) {
-      throw new ConfigurationError(
-        "video connects to Stream rather than to this router, so it needs an apiKey and a " +
-          "user: call setUser, or pass apiKey with apiSecret and userId",
-      );
-    }
-
-    const video = await peer<VideoModule>("@stream-io/video-client", "video");
-    const connected = new video.StreamVideoClient({
-      apiKey: credentials.apiKey,
-      user: credentials.user,
-      token: credentials.token,
-    });
-    return {
-      client: connected,
-      call: connected.call(this.created.call_type ?? "agent", callId),
-    };
+    const connected = await this.client.peers.video();
+    return { client: connected, call: connected.call("agent", this.id) };
   }
 
   private deliver(event: SessionEvent): void {
@@ -579,6 +593,47 @@ export class Session {
     if (this.buffered.length > BUFFERED_EVENTS) {
       this.buffered.shift();
     }
+  }
+}
+
+/**
+ * The agent talking on a session's call, `agent:<session id>`.
+ *
+ * Typed and spoken turns are one conversation, with one history and one channel, whether
+ * voice is on or not.
+ */
+export class Voice {
+  private readonly client: Client;
+  private readonly sessionId: string;
+  private on: boolean;
+
+  constructor(client: Client, sessionId: string, on: boolean) {
+    this.client = client;
+    this.sessionId = sessionId;
+    this.on = on;
+  }
+
+  /** Whether the agent is on the call, as far as this process knows. */
+  get started(): boolean {
+    return this.on;
+  }
+
+  /** Has the agent join the call and carry the conversation on there. Already on does nothing. */
+  async start(): Promise<Schemas["Session"]> {
+    const started = await this.client.post("/v1/agents/sessions/{id}/voice", {
+      path: { id: this.sessionId },
+    });
+    this.on = true;
+    return started;
+  }
+
+  /** Takes the agent off the call and carries the conversation on in writing. Already off does nothing. */
+  async stop(): Promise<Schemas["Session"]> {
+    const stopped = await this.client.delete("/v1/agents/sessions/{id}/voice", {
+      path: { id: this.sessionId },
+    });
+    this.on = false;
+    return stopped;
   }
 }
 

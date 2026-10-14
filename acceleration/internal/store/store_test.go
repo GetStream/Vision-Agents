@@ -72,12 +72,12 @@ func (s *StoreSuite) SetupTest() {
 			" turns, turn_stats_hourly, turn_stats_daily, calls, call_events, phone_numbers, sip_trunks,"+
 			" voices, agent_sessions, agent_responses, agent_response_items, users,"+
 			" policies, app_organizations, call_resources, organizations, agent_configs,"+
-			" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, stream_apps, connector_definitions, connector_broken_revisions,"+
+			" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, connector_definitions, connector_broken_revisions,"+
 			" connector_connections, connector_authorization_attempts, connector_oauth_clients,"+
 			" connector_config_tokens, channel_threads, channel_thread_messages, channel_thread_waiting,"+
 			" connector_event_destinations, connector_event_deliveries, contact_map, episodes,"+
 			" connection_event_subscriptions, connection_event_deliveries,"+
-			" connector_invocations, connector_audit CASCADE",
+			" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases CASCADE",
 	)
 	s.Require().NoError(err)
 }
@@ -759,6 +759,77 @@ func (s *StoreSuite) TestAReleasedNumbersCallIsNotAttributedToItsFormerHolder() 
 	_, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "default", "phone-+15125551234")
 
 	s.ErrorContains(err, "no number reaches call")
+}
+
+// attachWithBridge holds a number of the vendor for acme and attaches it with trunk
+// credentials.
+func (s *StoreSuite) attachWithBridge(vendor, e164 string) {
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &PhoneNumber{
+		E164: e164, Vendor: vendor, Country: "US", CustomerID: "acme", PurchasedAt: s.base,
+	}))
+	s.Require().NoError(s.store.AttachNumber(s.ctx, "acme", e164, NumberAttachment{
+		TrunkID: "trunk-7", CallType: "agent", CallID: "{{uuid}}",
+		BridgeURI: "sip:" + e164 + "@sip.example.test", BridgeUsername: "trunk-user",
+		BridgePasswordSealed: []byte("sealed"), BridgePasswordKEKVersion: 3,
+	}))
+}
+
+func (s *StoreSuite) TestAnAttachedNumberKeepsItsTrunkCredentials() {
+	s.attachWithBridge("telnyx", "+15125551234")
+
+	bridge, err := s.store.AttachedBridge(s.ctx, "telnyx", "+15125551234")
+
+	s.Require().NoError(err)
+	s.Equal(AttachedBridge{
+		CustomerID: "acme", URI: "sip:+15125551234@sip.example.test", Username: "trunk-user",
+		PasswordSealed: []byte("sealed"), KEKVersion: 3,
+	}, bridge)
+}
+
+func (s *StoreSuite) TestAReleasedNumbersTrunkCredentialsAreGone() {
+	s.attachWithBridge("telnyx", "+15125551234")
+	s.Require().NoError(s.store.ReleaseNumber(s.ctx, "acme", "+15125551234", s.base.Add(time.Hour)))
+
+	_, err := s.store.AttachedBridge(s.ctx, "telnyx", "+15125551234")
+	s.ErrorIs(err, ErrNoNumber)
+
+	var held PhoneNumber
+	s.Require().NoError(s.store.db.NewSelect().Model(&held).Where("e164 = ?", "+15125551234").Scan(s.ctx))
+	s.Empty(held.BridgeURI)
+	s.Empty(held.BridgeUsername)
+	s.Empty(held.BridgePasswordSealed, "a released number does not keep a password")
+	s.Zero(held.BridgePasswordKEKVersion)
+}
+
+func (s *StoreSuite) TestAnotherVendorsNumberHasNoTrunkCredentials() {
+	s.attachWithBridge("twilio", "+15125551234")
+
+	_, err := s.store.AttachedBridge(s.ctx, "telnyx", "+15125551234")
+
+	s.ErrorIs(err, ErrNoNumber)
+}
+
+func (s *StoreSuite) TestANumberAttachedWithoutCredentialsHasNoTrunkCredentials() {
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15125551234", Vendor: "telnyx", Country: "US", CustomerID: "acme", PurchasedAt: s.base,
+	}))
+	s.Require().NoError(s.store.AttachNumber(
+		s.ctx, "acme", "+15125551234", NumberAttachment{TrunkID: "trunk-7", CallType: "agent", CallID: "{{uuid}}"}))
+
+	_, err := s.store.AttachedBridge(s.ctx, "telnyx", "+15125551234")
+
+	s.ErrorIs(err, ErrNoStoredBridge, "attaching it again keeps them")
+	s.NotErrorIs(err, ErrNoNumber, "it is held and attached, so it is not an unknown number")
+}
+
+func (s *StoreSuite) TestANumberThatIsHeldButNotAttachedHasNoTrunkCredentials() {
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15125551234", Vendor: "telnyx", Country: "US", CustomerID: "acme", PurchasedAt: s.base,
+	}))
+
+	_, err := s.store.AttachedBridge(s.ctx, "telnyx", "+15125551234")
+
+	s.ErrorIs(err, ErrNoNumber)
 }
 
 func (s *StoreSuite) TestTheSameNumberCanBeBoughtAgainAfterBeingReleased() {

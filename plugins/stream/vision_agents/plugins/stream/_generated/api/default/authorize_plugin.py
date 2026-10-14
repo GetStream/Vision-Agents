@@ -96,8 +96,10 @@ def sync_detailed(
 ) -> Response[ErrorResponse | PluginAuthorization]:
     """Start a plugin login
 
-     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify
-    needs an instance url, because it has no single global host.
+     Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server
+    named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth
+    endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has
+    no single global host.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -136,8 +138,10 @@ def sync(
 ) -> ErrorResponse | PluginAuthorization | None:
     """Start a plugin login
 
-     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify
-    needs an instance url, because it has no single global host.
+     Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server
+    named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth
+    endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has
+    no single global host.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -171,8 +175,10 @@ async def asyncio_detailed(
 ) -> Response[ErrorResponse | PluginAuthorization]:
     """Start a plugin login
 
-     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify
-    needs an instance url, because it has no single global host.
+     Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server
+    named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth
+    endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has
+    no single global host.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -209,8 +215,10 @@ async def asyncio(
 ) -> ErrorResponse | PluginAuthorization | None:
     """Start a plugin login
 
-     Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify
-    needs an instance url, because it has no single global host.
+     Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server
+    named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth
+    endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has
+    no single global host.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:

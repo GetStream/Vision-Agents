@@ -38,7 +38,6 @@ import kotlinx.serialization.encoding.Encoder
  *
  * @param custom Replaces the caller's labels whole. An empty object clears them.
  * @param description 
- * @param instructions What the agent is told to be, from the next turn.
  * @param llm The conversation model, a provider/model or a capability shortcut.
  * @param maxOutputTokens 
  * @param sts A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
@@ -60,10 +59,6 @@ internal data class UpdateSessionRequest (
 
     @SerialName(value = "description")
     val description: kotlin.String? = null,
-
-    /* What the agent is told to be, from the next turn. */
-    @SerialName(value = "instructions")
-    val instructions: kotlin.String? = null,
 
     /* The conversation model, a provider/model or a capability shortcut. */
     @SerialName(value = "llm")

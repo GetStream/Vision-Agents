@@ -1,6 +1,7 @@
 package io.getstream.visionagents.core
 
 import kotlin.test.Test
+import kotlin.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
@@ -35,15 +36,39 @@ class WireTest {
     fun `a tool call carries what its answer has to repeat`() {
         val event = assertNotNull(
             AgentEvent.decode(
-                """{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"{\"order_id\":\"A-1042\"}","command_id":"cmd","turn_id":"t1"}""",
+                """{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"{\"order_id\":\"A-1042\"}","request_id":"cmd","turn_id":"t1"}""",
             ),
         )
 
         val call = assertNotNull(event.toolCall)
         assertEquals("lookup_order", call.name)
         assertEquals("A-1042", call.argumentValues["order_id"]?.jsonPrimitive?.content)
-        assertEquals("cmd", call.commandId)
+        assertEquals("cmd", call.requestId)
         assertEquals("t1", call.turnId)
+    }
+
+    @Test
+    fun `a step-up frame reads as the step-up`() {
+        val event = assertNotNull(
+            AgentEvent.decode(
+                """{"type":"connector_scope_required","name":"crm","connector_id":"custom_crm","connection_id":"conn-1","scopes":["files:read","files:write"],"authorization_id":"attempt-1","launch_url":"https://router.example/v1/agents/connectors/oauth/launch/attempt-1","handoff_token":"handoff","expires_at":"2026-10-07T12:00:00Z"}""",
+            ),
+        )
+
+        assertEquals(
+            AgentEvent.ConnectorScopeRequired(
+                name = "crm",
+                connectorId = "custom_crm",
+                connectionId = "conn-1",
+                scopes = listOf("files:read", "files:write"),
+                authorizationId = "attempt-1",
+                launchUrl = "https://router.example/v1/agents/connectors/oauth/launch/attempt-1",
+                handoffToken = "handoff",
+                expiresAt = Instant.parse("2026-10-07T12:00:00Z"),
+            ),
+            event.connectorScopeRequired,
+        )
+        assertNull(assertNotNull(AgentEvent.decode("""{"type":"tool_ran"}""")).connectorScopeRequired)
     }
 
     @Test
@@ -58,17 +83,16 @@ class WireTest {
         fun frame(command: Command) = Json.parseToJsonElement(command.encode()).jsonObject
 
         assertEquals("""{"type":"interrupt"}""", Command.Interrupt().encode())
-        assertEquals("""{"type":"interrupt","command_id":"cmd-1"}""", Command.Interrupt("cmd-1").encode())
+        assertEquals("""{"type":"interrupt","request_id":"cmd-1"}""", Command.Interrupt("cmd-1").encode())
         assertEquals("""{"type":"close"}""", Command.Close.encode())
         assertEquals("""{"type":"say","text":"one moment"}""", Command.Say("one moment").encode())
-        assertEquals("""{"type":"instructions","instructions":"be brief"}""", Command.Instructions("be brief").encode())
 
         val result = frame(Command.ToolResult("c1", output = "done", turnId = "t1"))
         assertEquals(JsonPrimitive("tool_result"), result["type"])
         assertEquals(JsonPrimitive("c1"), result["tool_call_id"])
         assertEquals(JsonPrimitive("done"), result["output"])
         assertEquals(JsonPrimitive("t1"), result["turn_id"])
-        assertNull(result["command_id"])
+        assertNull(result["request_id"])
     }
 
     @Test

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'wire.dart';
+
 /// Who said something.
 final class Participant {
   const Participant({this.id = '', this.userId = '', this.name = ''});
@@ -54,6 +56,7 @@ enum AgentEventKind {
   overlapDecided('overlap_decided'),
   conversationCompacted('conversation_compacted'),
   conversationUpdated('conversation_updated'),
+  connectorScopeRequired('connector_scope_required'),
   commandAccepted('command_accepted'),
   commandStopped('command_stopped'),
   modelsChanged('models_changed'),
@@ -129,13 +132,62 @@ final class AgentEvent {
           id: _text(fields['id']),
           name: _text(fields['name']),
           arguments: _text(fields['arguments']),
-          commandId: _text(fields['command_id']),
+          requestId: _text(fields['request_id']),
           turnId: turnId,
+        )
+      : null;
+
+  /// A connector tool call the provider refused because the person's own connection lacks
+  /// access it asked for, and the step-up consent the router began for it, or null when this
+  /// event is not one. The old grant keeps working until the step-up succeeds, and the same
+  /// call works afterwards in the same session.
+  ///
+  /// An app cannot finish the step-up yet: `launchUrl` takes `handoffToken` only from a page on
+  /// the dashboard's origin, as for a `connector_authorization` attachment.
+  ConnectorScopeRequired? get connectorScopeRequired =>
+      kind == AgentEventKind.connectorScopeRequired
+      ? ConnectorScopeRequired(
+          name: _text(fields['name']),
+          connectorId: _text(fields['connector_id']),
+          connectionId: _text(fields['connection_id']),
+          scopes: [
+            if (fields['scopes'] case final List<Object?> scopes) ...scopes.whereType<String>(),
+          ],
+          authorizationId: _text(fields['authorization_id']),
+          launchUrl: _text(fields['launch_url']),
+          handoffToken: _text(fields['handoff_token']),
+          expiresAt: parseRouterDate(_text(fields['expires_at'])),
         )
       : null;
 
   @override
   String toString() => 'AgentEvent($type)';
+}
+
+/// The access a connector tool call needs, and where the person grants it.
+final class ConnectorScopeRequired {
+  const ConnectorScopeRequired({
+    required this.name,
+    required this.connectorId,
+    required this.connectionId,
+    required this.scopes,
+    required this.authorizationId,
+    required this.launchUrl,
+    required this.handoffToken,
+    this.expiresAt,
+  });
+
+  /// The binding's alias.
+  final String name;
+  final String connectorId;
+  final String connectionId;
+
+  /// What the provider asked for, empty for a claims challenge.
+  final List<String> scopes;
+  final String authorizationId;
+  final String launchUrl;
+  final String handoffToken;
+  final DateTime? expiresAt;
 }
 
 /// A request from the model to run one of the caller's functions.
@@ -144,7 +196,7 @@ final class ToolCall {
     required this.id,
     required this.name,
     required this.arguments,
-    this.commandId = '',
+    this.requestId = '',
     this.turnId = '',
   });
 
@@ -154,9 +206,9 @@ final class ToolCall {
   /// The arguments as the model wrote them, which is a JSON object encoded as a string.
   final String arguments;
 
-  /// The durable command that made this call, which its result has to repeat. Empty for
+  /// The request that made this call, which its result has to repeat. Empty for
   /// most calls.
-  final String commandId;
+  final String requestId;
   final String turnId;
 
   /// The arguments decoded, or an empty map if the model wrote something else.

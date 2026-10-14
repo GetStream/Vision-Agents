@@ -3,6 +3,8 @@ package streamapp
 import (
 	"container/list"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"sync"
@@ -184,25 +186,34 @@ func (c *Clients) ForAppReading(ctx context.Context, customer string, app int64)
 	return c.bind(identity)
 }
 
-// Stored is app mode's source, for registering and checking customers' apps, and false in
-// deployment mode.
+// Stored is app mode's source, and false in deployment mode.
 func (c *Clients) Stored() (*Stored, bool) {
 	stored, ok := c.source.(*Stored)
 	return stored, ok
 }
 
-// WithKey is a bound identity acting with another of its app's keys, when the app holds
-// that key and Stream accepts it; otherwise the bound identity as it was.
-func (c *Clients) WithKey(ctx context.Context, bound Bound, apiKey string) (Bound, error) {
+// Forwarded is the source of the gateway's tokens, false when customers' apps are not
+// acted in with them.
+func (c *Clients) Forwarded() (*Forwarded, bool) {
 	stored, ok := c.Stored()
+	if !ok || stored.forwarded == nil {
+		return nil, false
+	}
+	return stored.forwarded, true
+}
+
+// KeepToken holds a server token the gateway forwarded for a customer's own app, so the
+// customer is acted in with it from then on.
+func (c *Clients) KeepToken(ctx context.Context, customer, apiKey, token string) error {
+	forwarded, ok := c.Forwarded()
 	if !ok {
-		return bound, nil
+		return nil
 	}
-	identity := stored.ForKey(ctx, bound.Identity, apiKey)
-	if identity.APIKey == bound.Identity.APIKey {
-		return bound, nil
+	kept, err := forwarded.Keep(ctx, customer, apiKey, token)
+	if kept {
+		c.Invalidate(customer)
 	}
-	return c.bind(identity)
+	return err
 }
 
 // PerApp reports whether customers act in apps of their own, which is app mode.
@@ -327,5 +338,14 @@ func newStreamClient(identity Identity, httpClient *http.Client) (*getstream.Str
 	if httpClient != nil {
 		options = append(options, getstream.WithHTTPClient(httpClient))
 	}
-	return getstream.NewClient(identity.APIKey, identity.Secret.Reveal(), options...)
+	secret := identity.Secret.Reveal()
+	if secret == "" && !identity.Token.Empty() {
+		// The SDK refuses to be built without a secret. A random one signs nothing Stream
+		// accepts, so a token minted on this client by mistake fails rather than passes.
+		placeholder := make([]byte, 32)
+		_, _ = rand.Read(placeholder)
+		secret = hex.EncodeToString(placeholder)
+		options = append(options, getstream.WithAuthToken(identity.Token.Reveal()))
+	}
+	return getstream.NewClient(identity.APIKey, secret, options...)
 }

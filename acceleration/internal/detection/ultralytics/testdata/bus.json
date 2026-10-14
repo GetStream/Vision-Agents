@@ -1,0 +1,1 @@
+{"images":[{"shape":[1080,810],"results":[{"name":"bus","class":5,"confidence":0.88,"box":{"x1":0,"y1":0.21,"x2":0.99,"y2":0.69}},{"name":"person","class":0,"confidence":0.87,"box":{"x1":0.06,"y1":0.36,"x2":0.29,"y2":0.83}}]}],"metadata":{"task":"detect"}}

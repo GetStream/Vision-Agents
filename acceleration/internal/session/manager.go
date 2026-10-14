@@ -279,6 +279,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if err != nil {
 			return nil, stack.Wrap(err)
 		}
+		// A session's channel is named after it, and a thread channel's id is taken by the
+		// external thread it holds. Compared case-folded, as threadConversation does.
+		if folded := strings.ToLower(spec.ID); !taken && strings.HasPrefix(folded, persistent.ThreadChannelPrefix) {
+			_, err := m.options.Store.ChannelThread(ctx, folded)
+			if err != nil && !errors.Is(err, store.ErrNoChannelThread) {
+				return nil, stack.Wrap(err)
+			}
+			taken = err == nil
+		}
 		if taken {
 			return nil, stack.Wrap(ErrSessionExists)
 		}
@@ -293,6 +302,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	spec.StreamApp = stream.Identity.StreamApp
 	if err := m.keepable(ctx, spec, stream); err != nil {
 		return nil, err
+	}
+	if err := m.callable(ctx, spec, stream); err != nil {
+		return nil, stack.Wrap(err)
 	}
 	// In app mode a session with no Stream app at all is pinned to none, rather than left
 	// unpinned, which reads as the deployment's own app and would let that app's hooks and
@@ -310,10 +322,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 
 	opened := false
-	// A new text conversation is kept in Stream Chat by default, but a deployment without Chat
+	// A new conversation is kept in Stream Chat by default, but a deployment without Chat
 	// credentials still holds it: what was said is worth keeping, not worth refusing the
 	// conversation for. Resuming or forking one needs the channel, so those still fail.
-	if spec.PersistConversation && spec.Text && spec.ConversationID == "" && spec.Recall == nil {
+	if spec.PersistConversation && spec.ConversationID == "" && spec.Recall == nil {
 		if _, err := m.Conversations(); err != nil {
 			m.logger.Warn("not keeping the conversation in Stream Chat", "error", err)
 			spec.PersistConversation = false
@@ -322,20 +334,23 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	var conv *persistent.Conversation
 	var previous []llm.Message
 	if spec.PersistConversation {
-		if !spec.Text {
-			return nil, stack.Wrap(errors.New("persistent conversations require text mode"))
-		}
 		service, err := m.Conversations()
 		if err != nil {
 			return nil, stack.Wrap(err)
 		}
 		// A channel OpenInApp refuses, such as a thread channel a request named, takes over
 		// no session that holds it.
-		if spec.ConversationID != "" && persistent.Openable(ctx, spec.ConversationID) {
-			m.takeOver(spec.CustomerID, spec.ConversationID)
+		if spec.ConversationID != "" && persistent.Openable(spec.ConversationID) {
+			m.takeOver(spec.CustomerID, spec.ConversationID, spec.Thread)
 		}
 		var truncated bool
-		conv, previous, truncated, err = service.OpenInApp(ctx, spec.StreamApp, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		open := service.OpenInApp
+		cid := spec.ConversationID
+		// A new conversation is held on a channel named after its session.
+		if cid == "" {
+			open, cid = service.CreateInApp, streamapp.AgentChannelType+":"+spec.ID
+		}
+		conv, previous, truncated, err = open(ctx, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if errors.Is(err, streamapp.ErrReadOnly) {
 			return nil, ErrConversationReadOnly
 		}
@@ -443,20 +458,6 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, stack.Wrap(err)
 	}
 
-	// A text session joins nothing, so no edge is opened for it. Everything downstream
-	// treats a missing edge as the conversation having no call rather than as a failure.
-	var edge agent.Edge
-	switch {
-	case spec.Text:
-	case spec.Edge != nil:
-		edge = spec.Edge
-	default:
-		edge, err = m.options.Edge(ctx, spec, stream, m.logger)
-		if err != nil {
-			return nil, stack.Wrap(err)
-		}
-	}
-
 	line, err := m.line(spec)
 	if err != nil {
 		return nil, stack.Wrap(err)
@@ -561,74 +562,95 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			}
 		})
 	}
-	created.voiceAgent, err = agent.New(agent.Options{
-		OnToolStarted: toolStarted,
-		ToolPolicy:    toolPolicy,
-		Edge:          edge,
-		Text:          spec.Text,
-		Instructions:  spec.prompt(),
-		CustomerID:    spec.CustomerID,
-		Caller:        spec.Caller,
-		AgentID:       spec.AgentID,
-		ConfigID:      spec.ConfigID,
-		CallID:        spec.CallID,
-		Tags:          spec.Tags,
-		LLM:           m.options.LLM,
-		LLMTarget:     spec.LLMTarget,
-		STT:           m.options.STT,
-		STTTarget:     spec.STTTarget,
-		TTS:           m.options.TTS,
-		TTSTarget:     spec.TTSTarget,
-		// Every router the deployment has is handed over, whichever pipeline the session
-		// starts on, so it can be moved onto the other one mid-call.
-		STS:                m.options.STS,
-		EOT:                m.options.EOT,
-		EOTMode:            m.options.EOTMode,
-		EOTThreshold:       m.options.EOTThreshold,
-		STSTarget:          spec.STSTarget,
-		SubagentTarget:     spec.SubagentTarget,
-		ControllerTarget:   spec.ControllerTarget,
-		Skills:             skills,
-		Telephony:          line,
-		ToolRunner:         runner,
-		Tools:              harness.Tools{Tools: tools},
-		Sandbox:            box,
-		Publish:            publisher(conv),
-		Tasks:              spec.Tasks,
-		Duplex:             spec.duplex(),
-		VideoSource:        spec.VideoSource,
-		VideoMaxFrames:     spec.VideoMaxFrames,
-		Voice:              spec.Voice,
-		LanguageHints:      spec.LanguageHints,
-		Keyterms:           spec.Keyterms,
-		MaxTokens:          spec.MaxTokens,
-		Overwrites:         spec.LLMOverwrites(),
-		Memory:             remembering,
-		Knowledge:          m.options.Knowledge,
-		KnowledgeNamespace: spec.KnowledgeNamespace,
-		Search:             m.options.Search,
-		SearchTarget:       spec.SearchTarget,
-		Guardrail:          screening,
-		SpeculativeReplies: m.options.SpeculativeReplies,
-		ReplySilence:       m.options.ReplySilence,
-		ReplySilenceMax:    m.options.ReplySilenceMax,
-		PreviewDebounce:    m.options.PreviewDebounce,
-		PreviewQuiet:       m.options.PreviewQuiet,
-		AppID:              spec.Memory.AppID,
-		SessionID:          spec.ID,
-		Incognito:          spec.Incognito,
-		MemoryUserID:       spec.Memory.UserID,
-		MemoryFilter:       spec.Memory.Filter,
-		Store:              m.options.Store,
-		Live:               m.options.Live,
-		Logger:             m.logger,
-
-		ReplySilenceConfident: m.options.ReplySilenceConfident,
-		ReplyConfidentScore:   m.options.ReplyConfidentScore,
-	})
+	// The agent is built again whenever voice starts or stops, with everything wired up
+	// here. A text session joins nothing, so no edge is opened for it: everything downstream
+	// treats a missing edge as the conversation having no call rather than as a failure.
+	created.build = func(ctx context.Context, spec Spec) (*agent.Agent, error) {
+		var edge agent.Edge
+		switch {
+		case spec.Text:
+		case spec.Edge != nil:
+			edge = spec.Edge
+		default:
+			if err := m.callable(ctx, spec, stream); err != nil {
+				return nil, stack.Wrap(err)
+			}
+			opened, err := m.options.Edge(ctx, spec, stream, m.logger)
+			if err != nil {
+				return nil, stack.Wrap(err)
+			}
+			edge = opened
+		}
+		return agent.New(agent.Options{
+			OnToolStarted: toolStarted,
+			ToolPolicy:    toolPolicy,
+			Edge:          edge,
+			Text:          spec.Text,
+			Instructions:  spec.prompt(),
+			CustomerID:    spec.CustomerID,
+			Caller:        spec.Caller,
+			AgentID:       spec.AgentID,
+			ConfigID:      spec.ConfigID,
+			CallID:        spec.CallID,
+			Tags:          spec.Tags,
+			LLM:           m.options.LLM,
+			LLMTarget:     spec.LLMTarget,
+			STT:           m.options.STT,
+			STTTarget:     spec.STTTarget,
+			TTS:           m.options.TTS,
+			TTSTarget:     spec.TTSTarget,
+			// Every router the deployment has is handed over, whichever pipeline the session
+			// starts on, so it can be moved onto the other one mid-call.
+			STS:                   m.options.STS,
+			EOT:                   m.options.EOT,
+			EOTMode:               m.options.EOTMode,
+			EOTThreshold:          m.options.EOTThreshold,
+			STSTarget:             spec.STSTarget,
+			SubagentTarget:        spec.SubagentTarget,
+			ControllerTarget:      spec.ControllerTarget,
+			Skills:                skills,
+			Telephony:             line,
+			ToolRunner:            runner,
+			Tools:                 harness.Tools{Tools: tools},
+			Sandbox:               box,
+			Publish:               publisher(conv),
+			Tasks:                 spec.Tasks,
+			Duplex:                spec.duplex(),
+			VideoSource:           spec.VideoSource,
+			VideoMaxFrames:        spec.VideoMaxFrames,
+			Voice:                 spec.Voice,
+			LanguageHints:         spec.LanguageHints,
+			Keyterms:              spec.Keyterms,
+			MaxTokens:             spec.MaxTokens,
+			Overwrites:            spec.LLMOverwrites(),
+			Memory:                remembering,
+			Knowledge:             m.options.Knowledge,
+			KnowledgeNamespace:    spec.KnowledgeNamespace,
+			Search:                m.options.Search,
+			SearchTarget:          spec.SearchTarget,
+			Guardrail:             screening,
+			SpeculativeReplies:    m.options.SpeculativeReplies,
+			ReplySilence:          m.options.ReplySilence,
+			ReplySilenceMax:       m.options.ReplySilenceMax,
+			ReplySilenceConfident: m.options.ReplySilenceConfident,
+			ReplyConfidentScore:   m.options.ReplyConfidentScore,
+			PreviewDebounce:       m.options.PreviewDebounce,
+			PreviewQuiet:          m.options.PreviewQuiet,
+			AppID:                 spec.Memory.AppID,
+			SessionID:             spec.ID,
+			Incognito:             spec.Incognito,
+			MemoryUserID:          spec.Memory.UserID,
+			MemoryFilter:          spec.Memory.Filter,
+			Store:                 m.options.Store,
+			Live:                  m.options.Live,
+			Logger:                m.logger,
+		})
+	}
+	built, err := created.build(ctx, spec)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
+	created.held.Store(built)
 
 	if box != nil {
 		created.closers = append(created.closers, func() {
@@ -650,19 +672,25 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if !persistent.Barred(ctx, written) {
 		created.transcribedInto = spec.TranscriptChannel()
 	}
-	if m.options.Transcript != nil && conv == nil && !spec.Incognito && !persistent.Barred(ctx, written) {
+	if m.options.Transcript != nil && !spec.Incognito && !persistent.Barred(ctx, written) {
 		// A transcript that cannot be opened is not a reason to refuse the call. What was
 		// said is worth keeping; it is not worth not having the conversation for.
-		transcript, err := m.options.Transcript(ctx, spec, stream, m.logger)
-		if err != nil {
-			m.logger.Warn("not storing the transcript", "call", spec.CallID, "error", err)
-		} else if err := transcript.Start(ctx); err != nil {
-			m.logger.Warn("not storing the transcript", "call", spec.CallID, "error", err)
-			transcript.Close()
-		} else {
-			created.transcript = transcript
-			created.closers = append(created.closers, transcript.Close)
+		created.transcribe = func(ctx context.Context, spec Spec) Transcript {
+			transcript, err := m.options.Transcript(ctx, spec, stream, m.logger)
+			if err != nil {
+				m.logger.Warn("not storing the transcript", "call", spec.CallID, "error", err)
+				return nil
+			}
+			if err := transcript.Start(ctx); err != nil {
+				m.logger.Warn("not storing the transcript", "call", spec.CallID, "error", err)
+				transcript.Close()
+				return nil
+			}
+			return transcript
 		}
+	}
+	if !spec.Text && created.transcribe != nil {
+		created.transcript = created.transcribe(ctx, spec)
 	}
 
 	if conv == nil && spec.ConversationID != "" {
@@ -674,7 +702,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// history, and only to the model: not to the title, the review or the reopened summary.
 	cards := m.cards.read(ctx, spec, stream)
 	created.carded = len(cards) > 0
-	created.voiceAgent.RestoreHistory(append(cards, previous...))
+	built.RestoreHistory(append(cards, previous...))
 	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
 	if !spec.Reopened.IsZero() {
 		earlier := spokenOf(previous)
@@ -693,18 +721,18 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// The fan-out starts before joining so nothing said between joining and the first
 	// watcher attaching is lost to a channel nobody is reading.
 	created.running.Add(1)
-	go created.consume()
+	go created.consume(built, created.transcript)
 
 	// Join takes the background rather than the request's context: the conversation
 	// outlives the HTTP call that asked for it, and a session cancelled when the request
 	// returned would hang up on the caller immediately.
-	if err := created.voiceAgent.Join(context.WithoutCancel(ctx)); err != nil {
+	if err := built.Join(context.WithoutCancel(ctx)); err != nil {
 		created.Close()
 		return nil, stack.Wrap(err)
 	}
 
 	if spec.Greeting != "" {
-		if err := created.voiceAgent.Greet(ctx, spec.Greeting, spec.VaryGreeting); err != nil {
+		if err := built.Greet(ctx, spec.Greeting, spec.VaryGreeting); err != nil {
 			created.Close()
 			return nil, stack.Wrap(fmt.Errorf("session: greet: %w", err))
 		}
@@ -720,7 +748,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			// The review runs on a model rather than in this closer, so it is started
 			// here and lands on the row whenever it comes back.
 			if !spec.NoReview {
-				m.reviews.Review(row(created), spec.SubagentTarget, created.conversation())
+				m.reviews.Review(row(created), spec.reviewTarget(), created.conversation())
 			}
 		})
 		m.calls.Started(row(created))
@@ -804,12 +832,13 @@ func (m *Manager) supersede(spec Spec) {
 
 // takeOver ends the session holding the persistent conversation cid when nobody is
 // watching it, so reopening the conversation does not wait out that session's grace: the
-// client reopening it is most likely the one that stopped watching, after a crash.
-func (m *Manager) takeOver(customer, cid string) {
+// client reopening it is most likely the one that stopped watching, after a crash. Only the
+// Router opening a thread channel (thread) takes over a session held on one.
+func (m *Manager) takeOver(customer, cid string, thread bool) {
 	m.mu.Lock()
 	var left []*Session
 	for id, found := range m.sessions {
-		if found.spec.CustomerID == customer && found.unwatchedFor(cid) {
+		if found.spec.CustomerID == customer && found.spec.Thread == thread && found.unwatchedFor(cid) {
 			left = append(left, found)
 			delete(m.sessions, id)
 		}
@@ -1188,30 +1217,6 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	return true, found.Close()
 }
 
-// EndPinned ends every session acting in one of a customer's Stream apps, which is what
-// the router does once it stops acting there: the app disconnected, blocked, or the key it
-// was opened with dropped. Each closes its call, transcript and guardrail with it. It
-// reports how many it ended.
-func (m *Manager) EndPinned(customer string, app int64) int {
-	m.mu.Lock()
-	var pinned []*Session
-	for id, found := range m.sessions {
-		if spec := found.Spec(); spec.CustomerID == customer && spec.StreamApp == app {
-			pinned = append(pinned, found)
-			delete(m.sessions, id)
-		}
-	}
-	m.mu.Unlock()
-
-	for _, found := range pinned {
-		if err := found.Close(); err != nil {
-			m.logger.Warn("a session pinned to a Stream app the router stopped acting in did not close cleanly",
-				"session", found.ID(), "customer_id", customer, "error", err)
-		}
-	}
-	return len(pinned)
-}
-
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a
 // claim that is not taken back expires on its own.
 const releaseTimeout = 2 * time.Second
@@ -1470,7 +1475,7 @@ func (m *Manager) hookPin(spec Spec) (int64, bool) {
 // ErrNoStreamApp is a conversation in writing asked to be kept by an app that has no Stream
 // app to keep it in.
 var ErrNoStreamApp = errors.New("session: this app has no Stream app to keep the conversation in: " +
-	"register this app's Stream keys, or open an incognito session")
+	"call through the gateway with this app's own Stream keys, or open an incognito session")
 
 // ErrConversationReadOnly is a conversation kept in the router's shared Stream app, which its
 // customer may read and no longer add to.
@@ -1482,13 +1487,13 @@ var ErrConversationReadOnly = errors.New("session: this conversation is kept in 
 var ErrConversationElsewhere = errors.New("session: this conversation is kept in another Stream app " +
 	"than this call is made in: fork it to carry on")
 
-// keepable refuses a conversation in writing that has nowhere safe to be kept. In app mode
-// an app that registered no Stream app has nowhere at all, which used to mean a
-// conversation quietly not kept; and a registered app whose agent channel type lets a
+// keepable refuses a conversation that has nowhere safe to be kept. In app mode
+// an app the router holds no token for has nowhere at all, which used to mean a
+// conversation quietly not kept; and an app of its own whose agent channel type lets a
 // client make, change or join a conversation's channel would keep it where anybody could
 // rewrite whose it is.
 func (m *Manager) keepable(ctx context.Context, spec Spec, stream streamapp.Bound) error {
-	if m.options.Stream == nil || !m.options.Stream.PerApp() || !spec.PersistConversation || !spec.Text {
+	if m.options.Stream == nil || !m.options.Stream.PerApp() || !spec.PersistConversation {
 		return nil
 	}
 	if stream.Client == nil {
@@ -1509,6 +1514,32 @@ func (m *Manager) keepable(ctx context.Context, spec Spec, stream streamapp.Boun
 	case streamapp.TypeUnsafe:
 		return fmt.Errorf("session: this app's Stream app lets clients make, change or join %s channels, "+
 			"so a conversation kept there could be rewritten by anybody: restrict the channel type's grants", streamapp.AgentChannelType)
+	}
+	return nil
+}
+
+// ErrNoAgentCallType is a session that would join an agent call in a Stream app of the
+// customer's own that has no agent call type, which Stream refuses the call for.
+var ErrNoAgentCallType = fmt.Errorf("session: this app's Stream app has no %s call type to make the agent's call in: "+
+	`create it with getstream api CreateCallType --request '{"name":"%s"}'`, streamapp.AgentCallType, streamapp.AgentCallType)
+
+// callable refuses a session that would join a Stream call of the agent call type in an
+// app of the customer's own that Stream says has none. Only a definite answer refuses: an
+// app that could not be asked is left to the call, as before.
+func (m *Manager) callable(ctx context.Context, spec Spec, stream streamapp.Bound) error {
+	if spec.Text || spec.Edge != nil || spec.CallType != streamapp.AgentCallType {
+		return nil
+	}
+	if m.options.Stream == nil || stream.Client == nil || !stream.Identity.Registered {
+		return nil
+	}
+	readiness, err := m.options.Stream.Readiness(ctx, stream)
+	if err != nil {
+		m.logger.Warn("could not check the Stream app a call is made in", "customer_id", spec.CustomerID, "error", err)
+		return nil
+	}
+	if readiness.CallType == streamapp.TypeMissing {
+		return ErrNoAgentCallType
 	}
 	return nil
 }

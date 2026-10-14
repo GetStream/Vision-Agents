@@ -36,6 +36,11 @@ type Skill struct {
 	// Deadline is how long the work may run before it is abandoned. Zero leaves the
 	// backend's default.
 	Deadline time.Duration
+	// Files are the rest of a skill folder beside its SKILL.md, each file's text by its
+	// slash path relative to the folder. The model reads them one at a time when it needs
+	// them. One that is not .md, .mdx or .txt is a script, run in the sandbox, so the
+	// router refuses the skill for an agent without one.
+	Files map[string]string
 }
 
 // Harness is what stands between what a caller said and the model that answers them.

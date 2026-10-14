@@ -53,13 +53,6 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 	if !mintable {
 		return nil, errNoStreamKeys
 	}
-	// An app that registered its own Stream app decides whether guests are made in it.
-	if !bound.Identity.MintsGuests() {
-		return nil, forbidden("this app does not admit guests")
-	}
-	if bound, err = s.minting(ctx, bound); err != nil {
-		return nil, err
-	}
 
 	body := GuestUserRequest{}
 	if request.Body != nil {
@@ -117,7 +110,7 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 	}
 
 	expiresAt := time.Now().UTC().Add(guestTokenValidity)
-	token, err := client.CreateToken(userID, getstream.WithExpiration(guestTokenValidity))
+	token, err := s.stream.MintUserToken(ctx, bound, userID, guestTokenValidity)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}

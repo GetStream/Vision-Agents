@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -11,6 +12,7 @@ use crate::client::{Client, segment};
 use crate::error::{Error, Result};
 use crate::responses::Responses;
 use crate::socket::{Frame, Incoming, SocketReceiver, SocketSender};
+use crate::stream::{Call, DEFAULT_CALL_TYPE};
 use crate::tools::Tools;
 use crate::types;
 
@@ -105,13 +107,15 @@ pub struct Session {
     ended: watch::Receiver<bool>,
     cancel: CancellationToken,
     watcher: Mutex<Option<JoinHandle<()>>>,
+    voice: AtomicBool,
 }
 
 impl Session {
     /// Creates a session and starts watching it.
     ///
-    /// It returns once the backend is in the call, so a session that has opened is already
-    /// listening. The tools are declared on the request so the model is offered them.
+    /// It returns once the backend is holding it, so a session that has opened is already
+    /// listening. Without `start_voice` it is held in writing. The tools are declared on the
+    /// request so the model is offered them.
     pub async fn open(
         client: &Client,
         mut request: types::CreateSessionRequest,
@@ -169,6 +173,7 @@ impl Session {
 
         Ok(Session {
             responses: Responses::new(client.clone(), &created.id),
+            voice: AtomicBool::new(!created.call_id.is_empty()),
             created,
             client: client.clone(),
             tools,
@@ -188,6 +193,36 @@ impl Session {
     /// The Stream Chat channel replies are written into, empty for one that keeps none.
     pub fn conversation_id(&self) -> &str {
         self.created.conversation_id.as_deref().unwrap_or("")
+    }
+
+    /// The Stream call the conversation is on while voice is started, named after the
+    /// session.
+    pub fn call(&self) -> Call {
+        Call {
+            id: self.id().into(),
+            kind: DEFAULT_CALL_TYPE.into(),
+        }
+    }
+
+    /// Has the agent join the session's call and carry the conversation on there. Starting
+    /// voice that is already on does nothing.
+    pub async fn start_voice(&self) -> Result<types::Session> {
+        let started = self.client.start_session_voice(self.id()).await?;
+        self.voice.store(true, Ordering::Relaxed);
+        Ok(started)
+    }
+
+    /// Takes the agent off the call and carries the conversation on in writing. Stopping
+    /// voice that is off does nothing.
+    pub async fn stop_voice(&self) -> Result<types::Session> {
+        let stopped = self.client.stop_session_voice(self.id()).await?;
+        self.voice.store(false, Ordering::Relaxed);
+        Ok(stopped)
+    }
+
+    /// Whether the agent is on the call, as this process last saw it.
+    pub fn voice_started(&self) -> bool {
+        self.voice.load(Ordering::Relaxed)
     }
 
     /// Whether the conversation is still being held.
@@ -248,14 +283,8 @@ impl Session {
         self.command(json!({"type": "interrupt"})).await
     }
 
-    /// Changes what the agent is told to be, from the next turn.
-    pub async fn set_instructions(&self, instructions: &str) -> Result<()> {
-        self.command(json!({"type": "instructions", "instructions": instructions}))
-            .await
-    }
-
-    /// Changes this session: its title, description, custom labels, instructions, models or
-    /// voice, from the next turn. A field left `None` is left as it is. Returns the session
+    /// Changes this session: its title, description, custom labels, models or voice, from
+    /// the next turn. A field left `None` is left as it is. Returns the session
     /// as it now is.
     pub async fn update(&self, update: &types::UpdateSessionRequest) -> Result<types::Session> {
         self.client.update_session(self.id(), update).await
@@ -322,7 +351,7 @@ impl Session {
     ///
     /// ```no_run
     /// # async fn example(agent: vision_agents::Agent) -> vision_agents::Result<()> {
-    /// agent.join("my-call").await?.within(async |session| {
+    /// agent.join().await?.within(async |session| {
     ///     session.responses.create("greet the user in one short sentence").await?;
     ///     Ok(())
     /// }).await
@@ -426,8 +455,8 @@ async fn watch_socket(
 fn run_tool(frame: Frame, sender: &SocketSender, shared: &Arc<Shared>, tools: &Tools) {
     let id = frame.text("id").to_string();
     let mut result = json!({"type": "tool_result", "tool_call_id": id});
-    // A durable command's result is only accepted back with the command and turn it names.
-    for key in ["command_id", "turn_id"] {
+    // A durable command's result is only accepted back with the request and turn it names.
+    for key in ["request_id", "turn_id"] {
         if !frame.text(key).is_empty() {
             result[key] = json!(frame.text(key));
         }

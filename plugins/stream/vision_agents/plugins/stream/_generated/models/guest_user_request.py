@@ -55,9 +55,7 @@ class GuestUserRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.guest_user_request_custom import (
-            GuestUserRequestCustom,
-        )
+        from ..models.guest_user_request_custom import GuestUserRequestCustom
 
         d = dict(src_dict)
         _custom = d.pop("custom", UNSET)

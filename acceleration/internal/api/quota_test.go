@@ -89,7 +89,7 @@ func (s *QuotaSuite) spendTheDay() string {
 	command := s.utils.uuid()
 	status, failure := s.backend.failure(http.MethodPost,
 		"/v1/agents/sessions/"+opened.Id+"/respond",
-		RespondRequest{Text: "how much does a call cost", CommandId: &command})
+		RespondRequest{Text: "how much does a call cost", RequestId: &command})
 	s.Require().Equal(http.StatusOK, status, failure)
 
 	s.Require().Eventually(func() bool {

@@ -19,13 +19,14 @@ class RespondRequest:
         text (str):
         client_id (str | Unset): The install the command came from. It is written on the person's message as client_id,
             and a client tool called while answering is addressed to it.
-        command_id (str | Unset): Required for personal persistent text conversations. Reuse this ID and identical text
-            for retries; duplicate acceptance does not restart inference.
+        request_id (str | Unset): Generated and sent by the SDKs, one per question, so a retry is answered once.
+            Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry
+            with the same id and text does not restart inference.
     """
 
     text: str
     client_id: str | Unset = UNSET
-    command_id: str | Unset = UNSET
+    request_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -33,7 +34,7 @@ class RespondRequest:
 
         client_id = self.client_id
 
-        command_id = self.command_id
+        request_id = self.request_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -44,8 +45,8 @@ class RespondRequest:
         )
         if client_id is not UNSET:
             field_dict["client_id"] = client_id
-        if command_id is not UNSET:
-            field_dict["command_id"] = command_id
+        if request_id is not UNSET:
+            field_dict["request_id"] = request_id
 
         return field_dict
 
@@ -56,12 +57,12 @@ class RespondRequest:
 
         client_id = d.pop("client_id", UNSET)
 
-        command_id = d.pop("command_id", UNSET)
+        request_id = d.pop("request_id", UNSET)
 
         respond_request = cls(
             text=text,
             client_id=client_id,
-            command_id=command_id,
+            request_id=request_id,
         )
 
         respond_request.additional_properties = d

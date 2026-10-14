@@ -84,7 +84,7 @@ Everything that is not a provider credential is one YAML file, read by `internal
 go run ./cmd/router --config /etc/router.yaml
 ```
 
-Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`, `cors_origins`,
+Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`,
 `trusted_proxies`, `routing_config`, `phone_config`, `voices_bucket_url`, and the nested
 `postgres.dsn`, `redis.{addr,username,password}`, `node.advertise`, `auth.{mode,kek}`,
 `rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled` and
@@ -106,18 +106,19 @@ the other commands that read them there.
 | `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
-| `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless a browser app calls this deployment. The same list decides which origins may open a socket. A deployment reached through Stream's proxy needs the proxy to let a preflight through as well, since a browser cannot authenticate one |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
 | `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>` that is set still opens its rows, so moving this back to an older version is safe |
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
+| `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off |
 | `ROUTER_SPECULATIVE_REPLIES` | Enable reply previews, on by default. See [voice timing](#why-a-ready-reply-may-wait) for silence, preview and hedge settings |
-| `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies are hedged, a preview among them, and not the flow controller, the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off |
 | `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long each stage of its turn took, and the same stages as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
+| `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies are hedged, a preview among them, not the flow controller, guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off. `cmd/agent` takes it as `-reply-hedge` |
+| `ROUTER_MOCK_PROVIDERS` | `true` adds `mock/mock-stt`, `mock/mock-tts` and `mock/mock-llm`, which answer from nothing, reach no vendor and bill nothing, for load testing the router itself (see `performance_benchmark/`). No capability alias routes to one, so a session only gets a mock by naming it. Off by default |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
 | `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
@@ -131,7 +132,8 @@ the other commands that read them there.
 | `TWILIO_ACCOUNT_SID`    | Twilio credentials, for buying and operating numbers       |
 | `TWILIO_AUTH_TOKEN`     | Twilio credentials                                         |
 | `TELNYX_API_KEY`        | Telnyx credentials                                         |
-| `TELNYX_CONNECTION_ID`  | The Telnyx SIP connection numbers are routed over          |
+| `TELNYX_CONNECTION_ID`  | The Telnyx TeXML application numbers and calls are on. Calls to the webhook from any other application are hung up |
+| `TELNYX_PUBLIC_KEY`     | Telnyx's public key (base64), to check the calls it sends to `/v1/phone/hooks/telnyx`. Without it Telnyx numbers are not answered. Telnyx numbers also need `ROUTER_AUTH_KEK`: without a keyring they cannot be attached |
 | `DEEPGRAM_API_KEY`      | Deepgram Flux credentials                                  |
 | `CARTESIA_API_KEY`      | Cartesia credentials, used by Sonic and the Ink 2 transcriber |
 | `CARTESIA_VOICE_ID`     | Optional default voice; a built-in one is used when unset  |
@@ -452,6 +454,7 @@ Which models those shortcuts reach for LLM, and what each is billed at per milli
 | `openai/gpt-6-sol`                | high-quality | $2.00  | $0.20   | $10.00  |
 | `openai/gpt-6.1-sol`              | high-quality | $2.00  | $0.10   | $10.00  |
 | `openai/gpt-6-astra`              | high-quality | $10.00 | $1.00   | $50.00  |
+| `gemini/gemini-4-argon`          | high-quality | $2.00  | $0.10   | $10.00  |
 
 Gemma is self-hosted, so its rates are an estimate of what the deployment costs rather than
 a published price: Baseten's H100 rate divided by an assumed throughput. Cached prompt tokens
@@ -463,15 +466,53 @@ chat template, since that is the wrong trade for a live conversation; `Options.T
 turns it back on and the reasoning then arrives as `ReasoningDelta` events, separate from
 the answer.
 
-Speech to speech has two shortcuts of its own. `sts-fast` is the model quickest to answer,
-pinned to `gemini/gemini-3.8-live`, and `sts-vision` is a conversation the
-model can watch as well as hear, pinned to `openai/gpt-realtime-2` the way `vlm` is. A
-speech-to-speech model is the transcriber, the turn detector and the voice at once, so a
-session asks for one target rather than three, and the terms it can be asked for are its
-own: `semantic_turns` for a turn detector that reads the words, which only OpenAI has;
+Speech to speech has three shortcuts of its own. `sts-fast` is the model quickest to answer,
+pinned to `gemini/gemini-3.8-live`; `sts-vision` is a conversation the model can watch as
+well as hear, pinned to `openai/gpt-realtime-2`; and `sts-duplex` requires a model that can
+listen while producing audio. Realtime transport, barge-in or asynchronous tools alone do
+not establish full duplex. A native speech model owns transcription, turn-taking and speech,
+so it takes the place of the separate STT, conversation LLM and TTS pipeline. A session asks
+for one target rather than three, and the terms it can be asked for are its own:
+`semantic_turns` for a turn detector that reads the words, which only OpenAI has;
 `tools` and `text`, which Qwen lacks; `endpointing` for a silence timer whose length can be
 set; and the two transcripts. Frames are an input modality, gated by `input_modalities`,
 not a term. Which models the shortcuts reach, and what each is billed at:
+
+Set a managed voice agent's speech target and optional skills subagent in `agent.yaml`:
+
+```yaml
+sts: sts-duplex
+subagent: gemini/gemini-3.8-flash
+```
+
+The subagent is an independent LLM router target for delegated reasoning and skills; it can
+name another configured provider/model or alias. It does not choose the speech provider's
+own reasoning backend. GPT-Live uses OpenAI's Responses backend, which defaults to
+`gpt-5.6-terra`.
+
+A named STS router config sets defaults for direct router clients. For example, `routers/duplex.yaml`:
+
+```yaml
+name: duplex
+sts:
+  target: sts-duplex
+  overwrites:
+    openai:
+      backend_model: gpt-5.6-terra
+```
+
+Sync the directory first with `client.SyncRouters(ctx, "routers")`, then open that config with
+`client.Router("duplex").STS().Realtime(ctx, nil, nil)`.
+This named router config does not configure a managed agent; its `agent.yaml` independently
+chooses `sts` and the optional `subagent`. For a direct `/v1/sts/stream` start frame, pass
+provider-specific settings in `sts.overwrites`:
+
+```json
+{"target":"openai/gpt-live-1","sts":{"overwrites":{"openai":{"backend_model":"gpt-5.6-sol"}}}}
+```
+
+`backend_model` is an OpenAI model ID for the Responses backend, not a provider/model routing
+target. The agent's `llm` field and its optional `subagent` do not select that backend.
 
 | Model                                     | Tier         | Billed by                                   |
 | ----------------------------------------- | ------------ | ------------------------------------------- |
@@ -1006,14 +1047,18 @@ curl -s localhost:8080/v1/agents/sessions -H 'X-Customer-Id: acme' \
 ```
 
 Everything between hearing a question and answering it is unchanged, which is the point. A
-text session has the same instructions, the same skills handed to the same slower model and
-the same knowledge base as a call would have had, so an agent can be built and argued with
-in writing before anybody rings it, and a documentation agent or a support chat is the voice
-agent with the voice left off.
+text session has the same instructions, the same skills and the same knowledge base as a call
+would have had, so an agent can be built and argued with in writing before anybody rings it,
+and a documentation agent or a support chat is the voice agent with the voice left off. The
+one difference is who runs a skill: nobody is waiting on a voice, so the model holding the
+conversation loads the skills its config names itself, with `load_skill`, and keeps every
+tool while it follows one. It takes answers from a matching skill first, then the knowledge
+base (`lookup`), then the web (`search`). A text agent with a sandbox still hands its skills
+to a subagent, since only a subagent runs code.
 
 It is driven over the session's own socket: `respond` goes in, `response_delta` and
-`responded` come back, along with `looked_up`, `delegated` and `task_settled` as the agent
-works. `say` and `interrupt` do nothing useful here, since there is nothing being spoken to
+`responded` come back, along with `looked_up`, `tool_ran`, `delegated` and `task_settled` as
+the agent works. `say` and `interrupt` do nothing useful here, since there is nothing being spoken to
 interrupt.
 
 ### Conversations held over a socket
@@ -1426,7 +1471,7 @@ minute.
 | --- | --- |
 | `ring_timeout_seconds` | Everyone but Bird and Sinch |
 | `initial_digits` | Twilio, Telnyx, Bandwidth, Sinch |
-| `headers` | Telnyx only |
+| `headers` | Nobody yet: Telnyx's TeXML call is not known to put them on the SIP leg |
 
 Getting past the trunk splits the vendors in two. Twilio, Telnyx and Plivo can name SIP
 digest credentials in their call plans, so the trunk's own password is enough. Vonage, Bird,
@@ -1530,9 +1575,15 @@ go test ./...
 
 # Integration tests hit real providers, Postgres and Redis
 go test -tags integration ./...
+
+# Manual live full-duplex proof for GPT-Live (requires OPENAI_API_KEY and ffmpeg)
+go test -tags integration -count=1 -v -run '^TestOpenAILiveIntegrationSuite/TestTheModelHearsAndAnswersWhileTheCallerIsStillSpeaking$' ./internal/sts/openailive
 ```
 
 Integration tests skip themselves when the credentials or services they need are absent.
+CI checks caller-audio forwarding against a fake Live socket and compiles the shared STS
+integration suite without calling providers. The full-duplex proof is manual; providers that
+do not declare `FullDuplex` or the needed transcript capabilities skip it.
 
 `internal/agent/conversation_test.go` is the conversation-quality suite: a synthesised caller
 is played into a real agent at the rate a real call delivers audio, in silence, in a noisy

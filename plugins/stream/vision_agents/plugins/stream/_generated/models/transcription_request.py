@@ -90,9 +90,7 @@ class TranscriptionRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.recording_source import RecordingSource
         from ..models.stt_options import SttOptions
-        from ..models.transcription_request_tags import (
-            TranscriptionRequestTags,
-        )
+        from ..models.transcription_request_tags import TranscriptionRequestTags
 
         d = dict(src_dict)
         source = RecordingSource.from_dict(d.pop("source"))

@@ -47,11 +47,36 @@ void main() {
       keyed.close();
 
       final request = router.last('GET /v1/agents/sessions/s1');
-      expect(request.header('X-Api-Key'), 'key');
+      expect(request.query['api_key'], 'key');
+      expect(request.header('X-Api-Key'), isNull);
       expect(request.header('Authorization'), 'Bearer token-2');
       expect(request.header('Stream-Auth-Type'), 'jwt');
       expect(request.header('X-Customer-Id'), isNull);
     });
+
+    test(
+      "a key beside a customer id is Stream's, and the router is reached by customer id",
+      () async {
+        router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+        final local = VisionAgents(
+          url: router.url,
+          customerId: 'acme',
+          apiKey: 'stream-key',
+          userId: 'jlahey',
+          token: () async => 'token-for-jlahey',
+        );
+
+        await local.sessions.get('s1');
+        local.close();
+
+        final request = router.last('GET /v1/agents/sessions/s1');
+        expect(request.header('X-Customer-Id'), 'acme');
+        expect(request.header('X-Stream-User-Id'), 'jlahey');
+        expect(request.query['api_key'], isNull);
+        expect(request.header('Authorization'), isNull);
+        expect((await local.backend.streamCredentials()).apiKey, 'stream-key');
+      },
+    );
 
     test('goes to the hosted router when no url is named', () {
       final backend = Backend(apiKey: 'key', token: () async => 'token');
@@ -60,8 +85,13 @@ void main() {
       expect(backend.url.toString(), 'https://accelerate.gcp.stream-io-api.com');
     });
 
-    test('refuses an api key with no token before sending anything', () {
-      expect(() => Backend(url: Uri.parse('http://x'), apiKey: 'key'), throwsArgumentError);
+    test('an api key with no token asks for nothing but a guest', () async {
+      final keyed = VisionAgents(url: router.url, apiKey: 'key');
+
+      await expectLater(keyed.sessions.get('s1'), throwsArgumentError);
+      keyed.close();
+
+      expect(router.arrived, isEmpty);
       expect(() => Backend(url: Uri.parse('http://x')), throwsArgumentError);
     });
 
@@ -85,8 +115,9 @@ void main() {
 
       final session = await agents.sessions.create(
         const SessionOptions(
-          id: '0199a3f2-7c1e-7d4a-9b2e-5f6a7b8c9d0e',
+          id: 'order-1042',
           agent: 'docs',
+          greeting: Greeting('Hello.', mode: GreetingMode.variation),
           title: 'Billing',
           projectId: 'Health',
           modelOverwrites: ModelOverwrites(thinking: Thinking.high),
@@ -94,9 +125,9 @@ void main() {
       );
 
       expect(router.last('POST /v1/agents/sessions').json, {
-        'id': '0199a3f2-7c1e-7d4a-9b2e-5f6a7b8c9d0e',
-        'text': true,
+        'id': 'order-1042',
         'agent': 'docs',
+        'greeting': {'text': 'Hello.', 'mode': 'variation'},
         'title': 'Billing',
         'project_id': 'Health',
         'model_overwrites': {'thinking': 'high'},
@@ -108,15 +139,43 @@ void main() {
       expect(session.createdAt, DateTime.utc(2026, 9, 24, 15, 54, 56, 38, 55));
     });
 
-    test('a voice session names its call and is not marked text', () async {
-      router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+    test('a voice session asks to start voice and is on its own call', () async {
+      router.answer(
+        'POST /v1/agents/sessions',
+        Answer(201, {...sessionJson(), 'call_id': 's1', 'text': false}),
+      );
 
-      await agents.sessions.create(const SessionOptions(configId: 'c1'), 'call-1');
+      final session = await agents.sessions.create(
+        const SessionOptions(configId: 'c1', startVoice: true),
+      );
 
       expect(router.last('POST /v1/agents/sessions').json, {
-        'call_id': 'call-1',
         'config_id': 'c1',
+        'start_voice': true,
       });
+      expect(session.callId, 's1');
+      expect(session.callType, 'agent');
+      expect(session.isText, isFalse);
+    });
+
+    test('starting and stopping voice moves a session onto its call and off it', () async {
+      router
+        ..answer(
+          'POST /v1/agents/sessions/s1/voice',
+          Answer(200, {...sessionJson(), 'call_id': 's1', 'text': false}),
+        )
+        ..answer('DELETE /v1/agents/sessions/s1/voice', Answer(200, sessionJson()));
+
+      final started = await agents.sessions.startVoice('s1');
+      final stopped = await agents.sessions.stopVoice('s1');
+
+      expect(router.arrived.map((request) => '${request.method} ${request.path}'), [
+        'POST /v1/agents/sessions/s1/voice',
+        'DELETE /v1/agents/sessions/s1/voice',
+      ]);
+      expect(started.callId, 's1');
+      expect(stopped.callId, isEmpty);
+      expect(stopped.isText, isTrue);
     });
 
     test('declares tools by name, description and schema, and never their handler', () async {
@@ -174,7 +233,7 @@ void main() {
         ),
       );
 
-      expect(router.last('POST /v1/agents/sessions').json, {'text': true, 'agent': 'docs'});
+      expect(router.last('POST /v1/agents/sessions').json, {'agent': 'docs'});
       expect(router.last('POST /v1/agents/sessions/query').json, {
         'filter': {'agent': 'docs', 'agent_id': 'a1', 'modality': 'voice', 'state': 'ended'},
         'limit': 10,
@@ -200,7 +259,7 @@ void main() {
 
       await agents.agent('docs').sessions.create(const SessionOptions(configId: 'c2'));
 
-      expect(router.last('POST /v1/agents/sessions').json, {'text': true, 'config_id': 'c2'});
+      expect(router.last('POST /v1/agents/sessions').json, {'config_id': 'c2'});
     });
 
     test('searches by the words a conversation was titled with', () async {
@@ -455,17 +514,35 @@ void main() {
       });
     });
 
-    test('names a question with the command id it was given', () async {
+    test('names a text question with a request id it generates', () async {
       router.answer(
         'POST /v1/agents/sessions/s1/responses',
         Answer(202, responseJson('r1', status: 'running')),
       );
 
-      await agents.sessions.responses('s1').create('Hello', commandId: 'cmd-1');
+      await agents.sessions.responses('s1').create('Hello');
 
       expect(router.last('POST /v1/agents/sessions/s1/responses').json, {
-        'command_id': 'cmd-1',
+        'request_id': matches(RegExp(r'^[0-9a-f]{32}$')),
         'text': 'Hello',
+      });
+    });
+
+    test('caps one answer and sets how long it thinks, still as a text question', () async {
+      router.answer(
+        'POST /v1/agents/sessions/s1/responses',
+        Answer(202, responseJson('r1', status: 'running')),
+      );
+
+      await agents.sessions
+          .responses('s1')
+          .create('Think hard', maxOutputTokens: 512, reasoningEffort: 'high');
+
+      expect(router.last('POST /v1/agents/sessions/s1/responses').json, {
+        'max_output_tokens': 512,
+        'reasoning_effort': 'high',
+        'request_id': matches(RegExp(r'^[0-9a-f]{32}$')),
+        'text': 'Think hard',
       });
     });
 
@@ -600,6 +677,38 @@ void main() {
       await store.write('{truncated');
 
       expect((await agents.guestUser(store: store)).id, 'guest-3');
+    });
+
+    test('a device with only the app key asks for a guest anonymously', () async {
+      router.answer('POST /v1/agents/guests', Answer(201, guest('guest-1')));
+      final keyed = VisionAgents(url: router.url, apiKey: 'key');
+
+      final minted = await keyed.guestUser();
+      keyed.close();
+
+      expect(minted.id, 'guest-1');
+      final request = router.last('POST /v1/agents/guests');
+      expect(request.header('Stream-Auth-Type'), 'anonymous');
+      expect(request.header('Authorization'), isNull);
+      expect(request.query['api_key'], 'key');
+    });
+
+    test('a router admitting no anonymous callers says to mint the guest on the backend', () async {
+      router.answer(
+        'POST /v1/agents/guests',
+        const Answer(401, {
+          'code': 2,
+          'message': 'anonymous access is not available on the acceleration api',
+          'StatusCode': 401,
+        }),
+      );
+      final keyed = VisionAgents(url: router.url, apiKey: 'key');
+
+      await expectLater(
+        keyed.guestUser(),
+        throwsA(isA<StateError>().having((e) => e.message, 'message', contains('withGuest'))),
+      );
+      keyed.close();
     });
 
     test('asks as the guest afterwards', () async {

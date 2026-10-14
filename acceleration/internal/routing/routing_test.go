@@ -80,14 +80,18 @@ func (s *RoutingSuite) newRouter() *Router[*stubProvider] {
 }
 
 func (s *RoutingSuite) newRouterWith(factory Factory[*stubProvider]) *Router[*stubProvider] {
+	return s.newRouterWithConfig(s.config(), factory)
+}
+
+func (s *RoutingSuite) newRouterWithConfig(config ModalityConfig, factory Factory[*stubProvider]) *Router[*stubProvider] {
 	registry := NewRegistry[*stubProvider]()
-	for _, provider := range []string{"quick", "lush", "batchy"} {
-		registry.Register(provider, factory)
+	for _, provider := range config.Providers {
+		registry.Register(provider.Provider, factory)
 	}
 
 	router, err := New(Options[*stubProvider]{
 		Modality: STT,
-		Config:   s.config(),
+		Config:   config,
 		Registry: registry,
 		Logger:   slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
 	})
@@ -327,6 +331,14 @@ func (s *RoutingSuite) TestDefaultConfigPricesBilledProviders() {
 			if provider.Provider == "audioturn" {
 				continue
 			}
+			if provider.Provider == "mock" {
+				// The load benchmark stand-ins reach no vendor, so nothing is what they cost.
+				continue
+			}
+			if modality == Detection && provider.Provider == "ultralytics" {
+				// Its shared API bills nothing; a dedicated endpoint is billed by the hour.
+				continue
+			}
 			s.NotZerof(provider.Price, "%s/%s has no price, so its cost would report as zero",
 				modality, provider.Name())
 		}
@@ -440,6 +452,81 @@ func (s *RoutingSuite) TestConfigRejectsAnAliasNoProviderCanServe() {
 	config.Aliases["klingon-best"] = Alias{Languages: []string{"tlh"}}
 
 	s.ErrorContains(config.Validate(), "alias klingon-best matches no provider")
+}
+
+func (s *RoutingSuite) TestAliasRequiresEveryTermFromAnyConfiguredProvider() {
+	config := ModalityConfig{
+		Providers: []ProviderConfig{
+			{Provider: "alpha", Model: "one", Languages: []string{"en"}, Terms: []options.Term{options.FullDuplex, options.TextInput}},
+			{Provider: "beta", Model: "two", Languages: []string{"en"}, Terms: []options.Term{options.FullDuplex}},
+			{Provider: "gamma", Model: "three", Languages: []string{"en"}, Terms: []options.Term{options.FullDuplex, options.TextInput}},
+		},
+		Aliases: map[string]Alias{
+			"duplex": {RequireTerms: []options.Term{options.FullDuplex, options.TextInput}},
+		},
+	}
+	router := s.newRouterWithConfig(config, func(spec Spec) (*stubProvider, error) {
+		return &stubProvider{model: spec.Model}, nil
+	})
+
+	candidates, err := router.Resolve(s.ctx, "duplex", nil)
+	s.Require().NoError(err)
+	s.Equal([]string{"alpha/one", "gamma/three"}, names(candidates))
+}
+
+func (s *RoutingSuite) TestConfigRejectsAnAliasNoProviderCanExpressEveryTerm() {
+	config := ModalityConfig{
+		Providers: []ProviderConfig{
+			{Provider: "alpha", Model: "one", Languages: []string{"en"}, Terms: []options.Term{options.FullDuplex}},
+			{Provider: "beta", Model: "two", Languages: []string{"en"}, Terms: []options.Term{options.TextInput}},
+		},
+		Aliases: map[string]Alias{
+			"duplex": {RequireTerms: []options.Term{options.FullDuplex, options.TextInput}},
+		},
+	}
+
+	s.ErrorContains(config.Validate(), "alias duplex matches no provider")
+}
+
+func (s *RoutingSuite) TestConfigRejectsAPreferredAliasModelMissingARequiredTerm() {
+	config := s.config()
+	config.Providers[0].Terms = []options.Term{options.FullDuplex, options.TextInput}
+	config.Providers[1].Terms = []options.Term{options.FullDuplex}
+	config.Aliases["duplex"] = Alias{
+		RequireTerms: []options.Term{options.FullDuplex, options.TextInput},
+		Prefer:       "quick/multi",
+	}
+
+	s.ErrorContains(config.Validate(), "alias duplex prefers quick/multi, which does not meet its own requirements")
+}
+
+func (s *RoutingSuite) TestAliasFailsOverOnlyToCandidatesThatMeetEveryTerm() {
+	config := s.config()
+	config.Providers[0].Terms = []options.Term{options.FullDuplex}
+	config.Providers[1].Terms = []options.Term{options.FullDuplex}
+	config.Providers[2].Model = "quality"
+	config.Aliases["duplex"] = Alias{RequireTerms: []options.Term{options.FullDuplex}}
+	factory := func(spec Spec) (*stubProvider, error) {
+		if spec.Model == "en" {
+			return &stubProvider{model: spec.Model, startErr: errors.New("upstream is down")}, nil
+		}
+		return &stubProvider{model: spec.Model}, nil
+	}
+
+	_, selected, err := s.newRouterWithConfig(config, factory).Select(s.ctx, Request{CustomerID: "acme", Target: "duplex"})
+	s.Require().NoError(err)
+	s.Equal("quick/multi", selected.Name())
+
+	_, _, err = s.newRouterWithConfig(config, func(spec Spec) (*stubProvider, error) {
+		if spec.Model != "en" && spec.Model != "multi" {
+			return &stubProvider{model: spec.Model}, nil
+		}
+		return &stubProvider{model: spec.Model, startErr: errors.New("upstream is down")}, nil
+	}).Select(s.ctx, Request{CustomerID: "acme", Target: "duplex"})
+	s.Require().Error(err)
+	s.ErrorContains(err, "quick/en: upstream is down")
+	s.ErrorContains(err, "quick/multi: upstream is down")
+	s.NotContains(err.Error(), "lush/quality", "an ineligible model must not receive a downgraded request")
 }
 
 func (s *RoutingSuite) TestConfigRejectsAPreferredModelThatIsNotDeclared() {
@@ -1179,12 +1266,12 @@ func (s *RoutingSuite) TestSeeingDropsModelsThatCannotTakeAnImage() {
 	s.ErrorContains(err, "no provider accepts image input")
 }
 
-func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMetaAndXAI() {
+func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMetaXAIAndMoondream() {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
 
 	for _, provider := range config[LLM].Providers {
-		if provider.Provider == "openai" || provider.Provider == "gemini" || provider.Provider == "anthropic" || provider.Provider == "meta" || provider.Provider == "xai" {
+		if provider.Provider == "openai" || provider.Provider == "gemini" || provider.Provider == "anthropic" || provider.Provider == "meta" || provider.Provider == "xai" || provider.Provider == "moondream" {
 			s.Containsf(provider.InputModalities, "image", "%s should accept images", provider.Name())
 			continue
 		}

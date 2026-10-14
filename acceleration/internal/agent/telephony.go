@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -254,7 +255,14 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 				a.mu.Lock()
 				a.nativeAwaiting = false
 				a.mu.Unlock()
-				a.fail(err, "sts")
+				capabilities := model.Capabilities()
+				if a.switching.Load() {
+					a.logger.Warn("could not deliver a tool result while the speech session was being replaced", "error", err)
+				} else if !capabilities.Resumable && capabilities.Tools {
+					a.loseNativeWrite(model, err)
+				} else {
+					a.fail(err, "sts")
+				}
 			}
 		}
 		if left {
@@ -352,6 +360,11 @@ func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 		return llm.TextParts(result), left, err
 	}
 
+	if call.Name == harness.LoadSkillTool && a.loadsSkills() {
+		result, err := a.loadSkill(ctx, call)
+		return llm.TextParts(result), false, err
+	}
+
 	if a.options.ToolRunner == nil {
 		return nil, false, fmt.Errorf("agent: %s is not a tool this agent can run", call.Name)
 	}
@@ -380,7 +393,52 @@ func (a *Agent) availableTools() harness.Tools {
 			available.Tools = append(available.Tools, tool)
 		}
 	}
+	if a.loadsSkills() {
+		available.Tools = append(available.Tools, a.options.Skills.LoadTool())
+	}
 	return available
+}
+
+// loadsSkills reports whether this agent's skills are read by the model holding the
+// conversation rather than handed to a subagent: a written conversation with skills and no
+// subagent. A tool of the caller's own by the same name keeps the name.
+func (a *Agent) loadsSkills() bool {
+	if !a.options.Text || a.options.SubagentTarget != "" || len(a.options.Skills.Skills) == 0 {
+		return false
+	}
+	_, declared := a.options.Tools.Lookup(harness.LoadSkillTool)
+	return !declared
+}
+
+// loadSkill hands the model a skill's instructions to follow itself, or with a path one of
+// the files the skill brought, so it reads only the ones it needs.
+func (a *Agent) loadSkill(ctx context.Context, call llm.ToolCall) (string, error) {
+	var arguments struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
+		return "", fmt.Errorf("agent: could not read the load_skill arguments: %w", err)
+	}
+	name := strings.TrimSpace(arguments.Name)
+	if file := strings.TrimSpace(arguments.Path); file != "" {
+		content, err := a.options.Skills.File(ctx, name, file)
+		if err != nil {
+			return "", err
+		}
+		result, err := json.Marshal(map[string]string{"name": name, "path": file, "content": content})
+		return string(result), err
+	}
+	loaded, err := a.options.Skills.Read(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	instructions := loaded.Instructions
+	if len(loaded.Files) > 0 {
+		instructions += "\n\n" + harness.Listing(name, slices.Sorted(maps.Keys(loaded.Files)), false)
+	}
+	result, err := json.Marshal(map[string]string{"name": name, "instructions": instructions})
+	return string(result), err
 }
 
 // Tools names what the agent may do rather than say on this call.

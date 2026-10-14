@@ -55,8 +55,7 @@ type Config struct {
 	PublicURL string `koanf:"public_url"`
 	LogLevel  string `koanf:"log_level"`
 	// DashboardURL is where a finished plugin login sends the browser.
-	DashboardURL string   `koanf:"dashboard_url"`
-	CORSOrigins  []string `koanf:"cors_origins"`
+	DashboardURL string `koanf:"dashboard_url"`
 	// TrustedProxies are the CIDR ranges this deployment's own proxies sit in, and they
 	// decide how much of X-Forwarded-For is believed. Empty means none of it is.
 	TrustedProxies []string `koanf:"trusted_proxies"`
@@ -65,19 +64,35 @@ type Config struct {
 	RoutingConfig string `koanf:"routing_config"`
 	PhoneConfig   string `koanf:"phone_config"`
 	// VoicesBucketURL is where the recordings behind a customer's own voice are kept.
-	VoicesBucketURL string     `koanf:"voices_bucket_url"`
-	Postgres        Postgres   `koanf:"postgres"`
-	Redis           Redis      `koanf:"redis"`
-	Node            Node       `koanf:"node"`
-	Auth            Auth       `koanf:"auth"`
-	RateLimit       RateLimit  `koanf:"rate_limit"`
-	DataMove        DataMove   `koanf:"data_move"`
-	Stream          Stream     `koanf:"stream"`
-	EOT             EOT        `koanf:"eot"`
-	Agent           Agent      `koanf:"agent"`
-	Connectors      Connectors `koanf:"connectors"`
-	Episodes        Episodes   `koanf:"episodes"`
-	Sandbox         Sandbox    `koanf:"sandbox"`
+	VoicesBucketURL string `koanf:"voices_bucket_url"`
+	// MockProviders builds the mock/* speech, voice and language models the load
+	// benchmark runs against. They reach no vendor, recognise nothing and say nothing, so
+	// a thousand conversations cost what one does. Off by default: with it off the
+	// catalogue still declares them and nothing can be built for them, which is what a
+	// deployment carrying real traffic wants.
+	MockProviders bool       `koanf:"mock_providers"`
+	Postgres      Postgres   `koanf:"postgres"`
+	Redis         Redis      `koanf:"redis"`
+	Node          Node       `koanf:"node"`
+	Auth          Auth       `koanf:"auth"`
+	RateLimit     RateLimit  `koanf:"rate_limit"`
+	DataMove      DataMove   `koanf:"data_move"`
+	Stream        Stream     `koanf:"stream"`
+	EOT           EOT        `koanf:"eot"`
+	Agent         Agent      `koanf:"agent"`
+	Connectors    Connectors `koanf:"connectors"`
+	Episodes      Episodes   `koanf:"episodes"`
+	Sandbox       Sandbox    `koanf:"sandbox"`
+	Models        Models     `koanf:"models"`
+	Telnyx        Telnyx     `koanf:"telnyx"`
+}
+
+// Models are the language models a customer serves themselves, named custom/<name>.
+type Models struct {
+	// PrivateEndpoints lets one be served from a private address or over plain http, such
+	// as a vLLM server beside a self-hosted router. Off by default, and never on for a
+	// router tenants share: there a tenant's endpoint would be a way into its network.
+	PrivateEndpoints bool `koanf:"private_endpoints"`
 }
 
 // Postgres is where everything worth keeping is written. An empty DSN is a router that
@@ -150,22 +165,19 @@ type Stream struct {
 	BaseURL string `koanf:"base_url"`
 	// Tenancy says whose app the router acts in. deployment, the default, is the
 	// deployment's own app for every customer, as it always was. app is each customer's
-	// own, registered with its keys.
+	// own, acted in with the server token the gateway in front forwards for it.
 	Tenancy string `koanf:"tenancy"`
-	// Fallback is what app mode does for a customer that registered no app: deployment
+	// Fallback is what app mode does for a customer with no token for its own app: deployment
 	// writes it into the deployment's own app, as before, and refuse writes it nowhere.
 	// Unset is refuse. Deployment mode never reads it.
 	Fallback string `koanf:"fallback"`
 	// AppID is the deployment's own app's id, which Stream is asked for when it is not
 	// set. A pin naming it is finished with the deployment's own key, in either mode.
 	AppID int64 `koanf:"app_id"`
-	// TrustAPIKeyHeader lets the X-Stream-Api-Key a gateway forwards choose which of the
-	// calling app's registered keys mints its tokens. Off, the primary key always does.
-	// Only a gateway that writes that header itself, rather than passing a caller's on,
-	// may have it on.
-	TrustAPIKeyHeader bool `koanf:"trust_api_key_header"`
-	// DenyRegistration are Stream app ids that may never be registered as a customer's own.
-	DenyRegistration []string `koanf:"deny_registration"`
+	// MintURL is the gateway's internal mint endpoint, which signs the tokens a forwarded
+	// server token cannot, and MintToken the bearer it expects.
+	MintURL   string `koanf:"mint_url"`
+	MintToken string `koanf:"mint_token"`
 }
 
 // What Stream.Tenancy holds.
@@ -243,6 +255,11 @@ type Connectors struct {
 	// Enabled builds the versioned key encryption keyring that seals connector
 	// credentials, in every auth mode, and refuses to start without one. Off by default.
 	Enabled bool `koanf:"enabled"`
+	// ProxyCallsPerMinute caps the direct calls one customer sends to one connector through
+	// the connection proxy in a minute, counted in Redis across every router (AI-958): all
+	// customers share the router's egress, so one customer's calls could otherwise spend a
+	// provider's limit for everyone. 0 turns it off; so does a deployment with no Redis.
+	ProxyCallsPerMinute int64 `koanf:"proxy_calls_per_minute"`
 }
 
 // Episodes is how a person's episodes close (T55, AI-884; omnichannel.Closer).
@@ -275,6 +292,16 @@ type EOT struct {
 	Threshold   float64 `koanf:"threshold"`
 }
 
+// Telnyx is the account Telnyx numbers are bought on and the TeXML application they answer
+// on. The Telnyx provider still reads its own variables, which export writes back.
+type Telnyx struct {
+	APIKey string `koanf:"api_key"`
+	// ConnectionID is the TeXML application. A call webhook for any other is hung up.
+	ConnectionID string `koanf:"connection_id"`
+	// PublicKey is Telnyx's base64 key, which checks the calls it sends to the webhook.
+	PublicKey string `koanf:"public_key"`
+}
+
 // variables maps each setting to the environment variable that has always carried it.
 // Both directions are read from here: the variable wins over the file on the way in, and
 // the effective value is written back to it on the way out.
@@ -283,11 +310,11 @@ var variables = map[string]string{
 	"public_url":          "ROUTER_PUBLIC_URL",
 	"log_level":           "ROUTER_LOG_LEVEL",
 	"dashboard_url":       "DASHBOARD_BASE_URL",
-	"cors_origins":        "ROUTER_CORS_ORIGINS",
 	"trusted_proxies":     "ROUTER_TRUSTED_PROXIES",
 	"routing_config":      "ROUTER_CONFIG",
 	"phone_config":        "ROUTER_PHONE_CONFIG",
 	"voices_bucket_url":   "ROUTER_VOICES_BUCKET_URL",
+	"mock_providers":      "ROUTER_MOCK_PROVIDERS",
 	"postgres.dsn":        "ROUTER_POSTGRES_DSN",
 	"redis.addr":          "ROUTER_REDIS_ADDR",
 	"redis.username":      "ROUTER_REDIS_USERNAME",
@@ -305,8 +332,8 @@ var variables = map[string]string{
 	"stream.fallback":     "ROUTER_STREAM_FALLBACK",
 	"stream.app_id":       "ROUTER_STREAM_APP_ID",
 
-	"stream.trust_api_key_header": "ROUTER_STREAM_TRUST_API_KEY_HEADER",
-	"stream.deny_registration":    "ROUTER_STREAM_DENY_REGISTRATION",
+	"stream.mint_url":   "ROUTER_STREAM_MINT_URL",
+	"stream.mint_token": "ROUTER_STREAM_MINT_TOKEN",
 
 	"eot.mode":          "ROUTER_EOT_MODE",
 	"eot.endpoint":      "ROUTER_EOT_URL",
@@ -328,15 +355,22 @@ var variables = map[string]string{
 	"auth.proxy_declares_kind":      "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":            "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":           "ROUTER_EPISODES_IDLE_AFTER",
+	"models.private_endpoints":      "ROUTER_MODELS_PRIVATE_ENDPOINTS",
+
+	"connectors.proxy_calls_per_minute": "ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE",
 
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
 	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
 	"sandbox.messages_per_day":      "ROUTER_SANDBOX_MESSAGES_PER_DAY",
 	"sandbox.audio_minutes_per_day": "ROUTER_SANDBOX_AUDIO_MINUTES_PER_DAY",
+
+	"telnyx.api_key":       "TELNYX_API_KEY",
+	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
+	"telnyx.public_key":    "TELNYX_PUBLIC_KEY",
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
-var lists = map[string]bool{"cors_origins": true, "trusted_proxies": true, "stream.deny_registration": true}
+var lists = map[string]bool{"trusted_proxies": true}
 
 // Defaults are what a deployment gets for saying nothing at all.
 func Defaults() Config {
@@ -364,6 +398,14 @@ func Defaults() Config {
 		// unverified against any traffic. The only external bound is maxEpisodeIdle.
 		Episodes: Episodes{IdleAfter: time.Hour},
 		Sandbox:  Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
+		// Slack's rate limits page (https://docs.slack.dev/apis/web-api/rate-limits, opened
+		// 2026-10-09): «we do recommend you design your apps with a limit of 1 request per
+		// second for any given API call». slack_bot is the only built-in with an api_base, so
+		// the only one the proxy reaches, and that page names no limit per IP address. One a
+		// second is the rate Slack tells an app to design for. Whether Slack keeps a limit per
+		// egress address, and so whether 60 keeps one customer from spending it for the others,
+		// is not on that page. # unverified
+		Connectors: Connectors{ProxyCallsPerMinute: 60},
 	}
 }
 
@@ -468,6 +510,9 @@ func environment() *env.Env {
 
 // validate refuses settings that would otherwise be found out from a customer.
 func (c Config) validate() error {
+	if c.Connectors.ProxyCallsPerMinute < 0 {
+		return fmt.Errorf("config: connectors.proxy_calls_per_minute cannot be negative, got %d", c.Connectors.ProxyCallsPerMinute)
+	}
 	if c.RateLimit.MessagesPerDay < 0 || c.RateLimit.TokensPerDay < 0 {
 		return fmt.Errorf("config: a daily limit cannot be negative, got %d messages and %d tokens",
 			c.RateLimit.MessagesPerDay, c.RateLimit.TokensPerDay)
@@ -536,9 +581,6 @@ func (c Config) validate() error {
 		return fmt.Errorf("config: episodes.idle_after is more than zero and less than %s, got %s",
 			maxEpisodeIdle, c.Episodes.IdleAfter)
 	}
-	if c.Agent.ReplyHedge < 0 {
-		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)
-	}
 	return nil
 }
 
@@ -550,19 +592,15 @@ func (c Config) validate() error {
 // X-Customer-Id.
 func (c Config) validateAppTenancy() error {
 	if c.Postgres.DSN == "" {
-		return fmt.Errorf("config: stream.tenancy=%s keeps every app's keys in Postgres: set postgres.dsn", TenancyApp)
+		return fmt.Errorf("config: stream.tenancy=%s keeps every app's server token in Postgres: set postgres.dsn", TenancyApp)
 	}
-	switch strings.TrimSpace(c.Auth.Mode) {
-	case "noauth":
-		return fmt.Errorf("config: stream.tenancy=%s cannot use auth.mode=noauth, where a caller names "+
-			"its own customer and so whose Stream app it acts in: set auth.mode=api_key, or proxy with "+
-			"auth.proxy_declares_kind", TenancyApp)
-	case "proxy":
-		if !c.Auth.ProxyDeclaresKind {
-			return fmt.Errorf("config: stream.tenancy=%s cannot use auth.mode=proxy without "+
-				"auth.proxy_declares_kind, which reads a caller's own X-Customer-Id: set "+
-				"auth.proxy_declares_kind=true, or auth.mode=api_key", TenancyApp)
-		}
+	if strings.TrimSpace(c.Auth.Mode) != "proxy" || !c.Auth.ProxyDeclaresKind {
+		return fmt.Errorf("config: stream.tenancy=%s acts with the server tokens the gateway in front "+
+			"forwards: set auth.mode=proxy and auth.proxy_declares_kind=true", TenancyApp)
+	}
+	if c.Stream.MintURL == "" || c.Stream.MintToken == "" {
+		return fmt.Errorf("config: stream.tenancy=%s signs agents' and guests' tokens at the gateway: "+
+			"set stream.mint_url and stream.mint_token", TenancyApp)
 	}
 	if c.Stream.UserToken != "" {
 		return fmt.Errorf("config: stream.tenancy=%s cannot use stream.user_token, which is one "+
@@ -583,11 +621,11 @@ func (c Config) export() error {
 		"public_url":                    c.PublicURL,
 		"log_level":                     c.LogLevel,
 		"dashboard_url":                 c.DashboardURL,
-		"cors_origins":                  strings.Join(c.CORSOrigins, ","),
 		"trusted_proxies":               strings.Join(c.TrustedProxies, ","),
 		"routing_config":                c.RoutingConfig,
 		"phone_config":                  c.PhoneConfig,
 		"voices_bucket_url":             c.VoicesBucketURL,
+		"mock_providers":                fmt.Sprint(c.MockProviders),
 		"postgres.dsn":                  c.Postgres.DSN,
 		"redis.addr":                    c.Redis.Addr,
 		"redis.username":                c.Redis.Username,
@@ -604,8 +642,8 @@ func (c Config) export() error {
 		"stream.tenancy":                c.Stream.Tenancy,
 		"stream.fallback":               c.Stream.Fallback,
 		"stream.app_id":                 appID(c.Stream.AppID),
-		"stream.trust_api_key_header":   fmt.Sprint(c.Stream.TrustAPIKeyHeader),
-		"stream.deny_registration":      strings.Join(c.Stream.DenyRegistration, ","),
+		"stream.mint_url":               c.Stream.MintURL,
+		"stream.mint_token":             c.Stream.MintToken,
 		"eot.endpoint":                  c.EOT.Endpoint,
 		"eot.mode":                      c.EOT.Mode,
 		"eot.id_token_file":             c.EOT.IDTokenFile,
@@ -623,11 +661,18 @@ func (c Config) export() error {
 		"agent.reply_hedge":             c.Agent.ReplyHedge.String(),
 		"agent.chat_timings":            fmt.Sprint(c.Agent.ChatTimings),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
+		"models.private_endpoints":      fmt.Sprint(c.Models.PrivateEndpoints),
 		"episodes.idle_after":           c.Episodes.IdleAfter.String(),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),
 		"sandbox.recipients":            fmt.Sprint(c.Sandbox.Recipients),
 		"sandbox.messages_per_day":      fmt.Sprint(c.Sandbox.MessagesPerDay),
 		"sandbox.audio_minutes_per_day": fmt.Sprint(c.Sandbox.AudioMinutesPerDay),
+
+		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
+
+		"telnyx.api_key":       c.Telnyx.APIKey,
+		"telnyx.connection_id": c.Telnyx.ConnectionID,
+		"telnyx.public_key":    c.Telnyx.PublicKey,
 	}
 	for key, value := range values {
 		if value == "" && key != "eot.endpoint" {

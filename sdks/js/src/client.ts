@@ -1,7 +1,8 @@
 import { Backend, type BackendOptions, type StreamUser, type TokenSource } from "./backend.js";
-import { errorOf, RouterError } from "./errors.js";
+import { ConfigurationError, errorOf, RouterError } from "./errors.js";
 import type { components, paths } from "./generated/api.js";
 import {
+  ANONYMOUS_GUEST_REFUSED,
   claimGuestUser,
   forgetGuest,
   guestUser,
@@ -12,6 +13,7 @@ import {
 import { AgentHandle } from "./handle.js";
 import { Memories } from "./memories.js";
 import { Simulations } from "./simulations.js";
+import { StreamPeers, type StreamClients } from "./stream.js";
 
 /** The schemas from the spec, so callers can name a request or a response they build. */
 export type Schemas = components["schemas"];
@@ -113,11 +115,14 @@ export class Client {
   readonly memories: Memories;
   /** Conversations to test an agent with, and their runs. */
   readonly simulations: Simulations;
+  /** @internal The chat and video clients this client's sessions share. */
+  readonly peers: StreamPeers;
 
   constructor(backend: Backend | BackendOptions = {}) {
     this.backend = backend instanceof Backend ? backend : new Backend(backend);
     this.memories = new Memories(this);
     this.simulations = new Simulations(this);
+    this.peers = new StreamPeers(this.backend);
   }
 
   /**
@@ -135,6 +140,27 @@ export class Client {
    */
   setUser(user: StreamUser | string, token: TokenSource): Promise<void> {
     return this.backend.setUser(user, token);
+  }
+
+  /**
+   * Hands over the app's own `StreamChat` and `StreamVideoClient`, so every session opens on
+   * them rather than on second ones. Connecting them, as the user `setUser` named, stays the
+   * app's job, and `disconnect` leaves them alone.
+   *
+   * ```ts
+   * api.use({ chat: streamChat, video: videoClient });
+   * ```
+   */
+  use(clients: StreamClients): void {
+    this.peers.use(clients);
+  }
+
+  /**
+   * Disconnects the Stream chat and video clients `session.chat()` and `session.video()`
+   * built. Closing a session leaves them connected, since other sessions share them.
+   */
+  disconnect(): Promise<void> {
+    return this.peers.disconnect();
   }
 
   /**
@@ -228,6 +254,7 @@ export class Client {
     };
 
     const operation = `${method.toUpperCase()} ${template}`;
+    const anonymously = operation === "POST /v1/agents/guests" && this.backend.anonymous;
     const url = new URL(this.backend.url + fill(template, path));
     for (const [name, value] of Object.entries({ ...this.backend.query(), ...query })) {
       if (value === undefined || value === null) {
@@ -240,7 +267,7 @@ export class Client {
 
     const request: RequestInit = {
       method: method.toUpperCase(),
-      headers: { ...(await this.backend.headers()), ...headers },
+      headers: { ...(await this.backend.headers(anonymously)), ...headers },
     };
     if (body !== undefined) {
       request.headers = { ...request.headers, "Content-Type": "application/json" };
@@ -259,6 +286,9 @@ export class Client {
       throw new RouterError(0, operation, `could not reach the router: ${String(cause)}`);
     }
 
+    if (anonymously && response.status === 401) {
+      throw new ConfigurationError(ANONYMOUS_GUEST_REFUSED);
+    }
     if (!response.ok) {
       throw await errorOf(response, operation);
     }

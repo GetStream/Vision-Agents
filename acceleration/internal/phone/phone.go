@@ -30,7 +30,7 @@ import (
 )
 
 // maxInitialDigits is how many keys can be pressed when a call is answered. Twilio takes
-// 32 and Telnyx 64, so 32 is what can be promised everywhere.
+// 32, so 32 is what can be promised everywhere.
 const maxInitialDigits = 32
 
 // ErrNotImplemented is what a vendor returns when this service knows it exists but cannot
@@ -41,6 +41,31 @@ var ErrNotImplemented = errors.New("phone: not implemented for this vendor")
 // ErrAddressRequired is a number the vendor sells only with a verified address, which is not
 // supported: numbers outside the US and Canada.
 var ErrAddressRequired = errors.New("phone: this number needs a verified address")
+
+// ErrDestinationRefused is a number no call from here may reach, whoever asks: one billed to
+// the caller at a premium rate.
+var ErrDestinationRefused = errors.New("phone: calls to this number are refused")
+
+// ErrSuspended is an app Stream staff stopped from using the phone. Why stays with Stream.
+var ErrSuspended = errors.New("phone: this app's telephony is suspended; contact Stream support")
+
+// premiumPrefixes are the North American codes billed to the caller at a premium rate, which
+// is how toll fraud turns a stolen account into money.
+var premiumPrefixes = []string{"+1900", "+1976"}
+
+// Dialable reports whether a call may be placed to the number. Only a full E.164 number is,
+// which also keeps short codes such as 911, 112 or 988 from being dialled as they are.
+func Dialable(to string) error {
+	if !e164Pattern.MatchString(to) {
+		return stack.Wrap(fmt.Errorf("phone: %q is not a full number in E.164 form, such as +15125550123", to))
+	}
+	for _, prefix := range premiumPrefixes {
+		if strings.HasPrefix(to, prefix) {
+			return stack.Wrap(fmt.Errorf("%w: %s is a premium-rate number", ErrDestinationRefused, to))
+		}
+	}
+	return nil
+}
 
 // VendorError is a vendor's API refusing a request or not answering it. It carries what
 // debugging needs, so it is logged in full, and none of it is shown to a client: the path can
@@ -279,8 +304,8 @@ type Inbound struct {
 
 // CallFeature names one of the terms a call can be placed on.
 //
-// Vendors do not agree on which of these their call APIs can express: Telnyx takes custom
-// SIP headers on a dial, Twilio does not. A provider says which it speaks, so a call asking
+// Vendors do not agree on which of these their call APIs can express: Twilio takes a ring
+// timeout on a dial, Bird does not. A provider says which it speaks, so a call asking
 // for one it does not is refused rather than placed without it. Silently dropping a ring
 // timeout means a call that should have given up in fifteen seconds sits in somebody's
 // voicemail for a minute instead.
@@ -334,11 +359,21 @@ func (o Outbound) Features() []CallFeature {
 	return used
 }
 
+// DigitsPlayer is a provider that presses digits on answer but not every key a keypad has.
+type DigitsPlayer interface {
+	PlaysDigits(digits string) bool
+}
+
 // Unsupported are the terms this call is placed on that a provider cannot express.
 func (o Outbound) Unsupported(provider Provider) []CallFeature {
 	var missing []CallFeature
 	for _, feature := range o.Features() {
 		if !provider.Dials(feature) {
+			missing = append(missing, feature)
+			continue
+		}
+		if player, ok := provider.(DigitsPlayer); ok && feature == FeatureInitialDigits &&
+			!player.PlaysDigits(o.InitialDigits) {
 			missing = append(missing, feature)
 		}
 	}
@@ -349,6 +384,9 @@ func (o Outbound) Unsupported(provider Provider) []CallFeature {
 func (o Outbound) Validate() error {
 	if o.From == "" || o.To == "" {
 		return stack.Wrap(errors.New("phone: a call needs a from and a to"))
+	}
+	if err := Dialable(o.To); err != nil {
+		return err
 	}
 	if err := o.Bridge.Validate(); err != nil {
 		return err

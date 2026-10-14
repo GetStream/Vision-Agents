@@ -511,44 +511,6 @@ func (s *DataMoveSuite) TestARowPinnedWhileThisDeploymentsAppIsUnknownWaits() {
 	s.Equal(int64(1), *s.pinOnDestination(id))
 }
 
-func (s *DataMoveSuite) TestStreamAppsAreNeverExported() {
-	// A sealed key opens only under the keyring that sealed it, and registering an app is
-	// done again where the customer moves to.
-	_, err := s.source.DB().ExecContext(s.ctx, "TRUNCATE stream_apps CASCADE")
-	s.Require().NoError(err)
-	_, err = s.source.PutStreamApp(s.ctx, StreamAppRegistration{
-		CustomerID: "acme", StreamAppPK: 4242, PrimaryKey: "own-key", VerifiedAt: time.Now(),
-		Keys: []StreamAppKey{{APIKey: "own-key", Sealed: []byte("sealed"), KEKVersion: 1}},
-	})
-	s.Require().NoError(err)
-	s.pinnedSession("acme", 0)
-
-	exported := s.export("acme")
-
-	s.NotEmpty(exported.of("agent_sessions"))
-	s.Empty(exported.of("stream_apps"))
-	s.Empty(exported.of("stream_app_keys"))
-	s.NotContains(DataTables(), "stream_apps")
-	s.NotContains(DataTables(), "stream_app_keys")
-}
-
-func (s *DataMoveSuite) TestStreamAppsRecordNoDataChanges() {
-	_, err := s.source.DB().ExecContext(s.ctx, "TRUNCATE stream_apps CASCADE")
-	s.Require().NoError(err)
-	s.capture("acme")
-
-	_, err = s.source.PutStreamApp(s.ctx, StreamAppRegistration{
-		CustomerID: "acme", StreamAppPK: 4242, PrimaryKey: "own-key", VerifiedAt: time.Now(),
-		Keys: []StreamAppKey{{APIKey: "own-key", Sealed: []byte("sealed"), KEKVersion: 1}},
-	})
-	s.Require().NoError(err)
-
-	var recorded int
-	s.Require().NoError(s.source.DB().QueryRowContext(s.ctx,
-		"SELECT count(*) FROM data_changes WHERE table_name IN ('stream_apps', 'stream_app_keys')").Scan(&recorded))
-	s.Zero(recorded)
-}
-
 func (s *DataMoveSuite) TestBackfillPinsTheDeploymentAppsRows() {
 	unpinned, own := s.pinnedSession("acme", 0), s.pinnedSession("acme", 4242)
 
@@ -705,6 +667,47 @@ func (s *DataMoveSuite) TestAMovedSIPTrunkArrivesWithoutItsPassword() {
 	s.Empty(moved.PasswordSealed)
 	s.Equal(0, moved.PasswordKEKVersion)
 	s.Equal("trunk.example.com", moved.Host)
+}
+
+func (s *DataMoveSuite) TestAMovedNumberLeavesItsBridgePasswordBehind() {
+	s.capture("acme")
+	s.Require().NoError(s.source.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000110", Vendor: "telnyx", Country: "US", CustomerID: "acme",
+	}))
+	s.Require().NoError(s.source.AttachNumber(s.ctx, "acme", "+15550000110", NumberAttachment{
+		TrunkID: "trunk-1", CallType: "default", CallID: "call-1",
+		BridgeURI: "sip:trunk.example.com", BridgeUsername: "agent",
+		BridgePasswordSealed: []byte("sealed bridge"), BridgePasswordKEKVersion: 1,
+	}))
+
+	numbers := s.export("acme").of("phone_numbers")
+	s.Require().Len(numbers, 1)
+	s.NotContains(numbers[0], "bridge_password_sealed", "a sealed password is not part of a customer's data")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", 0, 100)
+	s.Require().NoError(err)
+	recorded := 0
+	for _, change := range changes {
+		if change.Table != "phone_numbers" {
+			continue
+		}
+		recorded++
+		s.NotContains(string(change.Payload), "bridge_password_sealed")
+	}
+	s.Equal(2, recorded, "the insert and the attach")
+
+	s.move("acme", "acme")
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
+
+	var sealed []byte
+	var version sql.NullInt64
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT bridge_password_sealed, bridge_password_kek_version FROM phone_numbers WHERE e164 = ?",
+		"+15550000110").Scan(&sealed, &version))
+	s.Empty(sealed)
+	s.False(version.Valid, "the source password's key version does not come along")
+	_, err = s.destination.AttachedBridge(s.ctx, "telnyx", "+15550000110")
+	s.ErrorIs(err, ErrNoStoredBridge, "it arrives needing to be attached again")
 }
 
 func (s *DataMoveSuite) TestAnImportedNumberCannotPointAtAnotherCustomersTrunk() {

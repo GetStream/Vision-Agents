@@ -156,12 +156,32 @@ void main() {
     test('a tool call decodes its arguments, which arrive as a JSON string', () {
       final call = frame(
         '{"type":"tool_call","id":"c1","name":"lookup_order",'
-        r'"arguments":"{\"order_id\":\"A-1042\"}","command_id":"","turn_id":"t1"}',
+        r'"arguments":"{\"order_id\":\"A-1042\"}","request_id":"","turn_id":"t1"}',
       ).toolCall!;
 
       expect(call.name, 'lookup_order');
       expect(call.argumentValues, {'order_id': 'A-1042'});
       expect(call.turnId, 't1');
+    });
+
+    test('a step-up frame reads as the step-up', () {
+      final asked = frame(
+        '{"type":"connector_scope_required","name":"crm","connector_id":"custom_crm",'
+        '"connection_id":"conn-1","scopes":["files:read","files:write"],'
+        '"authorization_id":"attempt-1",'
+        '"launch_url":"https://router.example/v1/agents/connectors/oauth/launch/attempt-1",'
+        '"handoff_token":"handoff","expires_at":"2026-10-07T12:00:00Z"}',
+      ).connectorScopeRequired!;
+
+      expect(asked.name, 'crm');
+      expect(asked.connectorId, 'custom_crm');
+      expect(asked.connectionId, 'conn-1');
+      expect(asked.scopes, ['files:read', 'files:write']);
+      expect(asked.authorizationId, 'attempt-1');
+      expect(asked.launchUrl, 'https://router.example/v1/agents/connectors/oauth/launch/attempt-1');
+      expect(asked.handoffToken, 'handoff');
+      expect(asked.expiresAt, DateTime.utc(2026, 10, 7, 12));
+      expect(frame('{"type":"tool_ran"}').connectorScopeRequired, isNull);
     });
 
     test('arguments that are not an object decode to nothing rather than throwing', () {

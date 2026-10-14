@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -17,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/danielgtaylor/huma/v2"
@@ -120,6 +123,7 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		Action: store.AuditCreated, Changes: auditDiff(nil, stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
+	s.warnPluginsSaved(config)
 	return &createAgentConfigResponse{Body: stored}, nil
 }
 
@@ -201,6 +205,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.storedSkillSandboxComplaint(ctx, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -213,6 +222,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		Action: store.AuditUpdated, Changes: auditDiff(agentConfigOf(existing), stored),
 	})
 	s.pluginEvents.Changed(customerID, config.ID)
+	s.warnPluginsSaved(config)
 	return &updateAgentConfigResponse{Body: stored}, nil
 }
 
@@ -279,8 +289,12 @@ func (s *Server) createSkill(ctx context.Context, request *createSkillRequest) (
 	if message, ok := skillComplaint(*request.Body); !ok {
 		return nil, invalidRequest(message)
 	}
-	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
+	config, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId)
+	if err != nil {
 		return nil, errUnknownConfig
+	}
+	if message, ok := skillSandboxComplaint([]SkillRequest{*request.Body}, config.Sandbox != ""); !ok {
+		return nil, invalidRequest(message)
 	}
 
 	skill := storedSkill(*request.Body, customerID)
@@ -327,8 +341,12 @@ func (s *Server) updateSkill(ctx context.Context, request *updateSkillRequest) (
 	if message, ok := skillComplaint(*request.Body); !ok {
 		return nil, invalidRequest(message)
 	}
-	if _, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
+	config, err := s.configs.AgentConfig(ctx, customerID, request.Body.ConfigId)
+	if err != nil {
 		return nil, errUnknownConfig
+	}
+	if message, ok := skillSandboxComplaint([]SkillRequest{*request.Body}, config.Sandbox != ""); !ok {
+		return nil, invalidRequest(message)
 	}
 
 	existing, err := s.store.Skill(ctx, customerID, request.Id)
@@ -401,18 +419,44 @@ var (
 	}
 )
 
+// errChannelConnectionTaken is a save that would have a second live agent config bind a
+// channel connection, such as a Slack bot's, as fixed: one agent answers each message that
+// comes in on it, so the connection belongs to the live config that bound it first (AI-1049).
+// A test copy is not refused, since it answers nothing. channelConnectionTaken names the
+// config that has it.
+var errChannelConnectionTaken = APIError{
+	Type: ErrorTypeConflict, Code: codeChannelConnectionTaken,
+	Message: "another agent already answers on this channel connection",
+}
+
+// channelConnectionTaken is errChannelConnectionTaken naming the binding, the connection and
+// the config that has the connection, and how to fix it.
+func channelConnectionTaken(taken *store.ChannelConnectionTakenError) APIError {
+	failure := errChannelConnectionTaken
+	failure.Message = fmt.Sprintf("connector binding %q names connection %q (%s), and agent config %q (%s) "+
+		"already answers its messages: one agent answers a channel connection. Remove the binding from %q, "+
+		"or bind this agent to another connection",
+		taken.Binding, taken.ConnectionID, taken.ConnectorID, taken.OwnerName, taken.OwnerID, taken.OwnerName)
+	return failure
+}
+
 // storeFailure answers err from storing an agent config, a skill, a router config or a
 // voice. A name that another live one of its kind has is taken, a 409 the caller fixes by
-// choosing another name. A record or a connection that is not there is the invalid request
-// it has always been answered with. Anything else is the database failing rather than the
+// choosing another name. A record, a connection or a custom connector that is not there, such
+// as one deleted after the request was checked, is the invalid request it has always been
+// answered with. A channel connection another live agent config binds is a 409 naming that
+// config. Anything else is the database failing rather than the
 // caller, so err goes back as it is, to be answered as a 500 and recorded with its stack.
 func storeFailure(err error, taken APIError) error {
+	if owned, ok := errors.AsType[*store.ChannelConnectionTakenError](err); ok {
+		return channelConnectionTaken(owned)
+	}
 	switch {
 	case errors.Is(err, store.ErrNameTaken):
 		return taken
 	case errors.Is(err, store.ErrNoAgentConfig), errors.Is(err, store.ErrNoSkill),
 		errors.Is(err, store.ErrNoRouterConfig), errors.Is(err, store.ErrNoVoice),
-		errors.Is(err, store.ErrNoConnectorConnection):
+		errors.Is(err, store.ErrNoConnectorConnection), errors.Is(err, store.ErrNoConnectorDefinition):
 		return invalidRequest(err.Error())
 	}
 	return err
@@ -517,12 +561,23 @@ func connectorBindingsComplaint(bindings *[]AgentConnectorBinding) (string, bool
 			if tools[tool.Name] {
 				return fmt.Sprintf("connector binding %q grants %q twice", alias, tool.Name), false
 			}
+			// A pattern binding lists no tools, so it never reaches this line: its digests are
+			// pinned per connection on first use, a fixed connection included (tool_patterns).
+			// A fixed binding that grants tools by name still needs each digest.
 			if tool.SchemaDigest == "" && binding.Connection.Type != AgentConnectorSelectionTypeSession {
 				return fmt.Sprintf("connector binding %q grants %q with no schema_digest, and only a session binding "+
 					"may: a fixed binding's connection is the app's own, so grant the digest GET "+
 					"/v1/agents/connections/{id}/tools lists for it", alias, tool.Name), false
 			}
 			tools[tool.Name] = true
+		}
+		if binding.ToolPatterns != nil && len(binding.Tools) > 0 {
+			return fmt.Sprintf("connector binding %q sets tool_patterns and tools, and a binding has one or the other", alias), false
+		}
+		if binding.ToolPatterns != nil {
+			if err := plugins.CheckToolPatterns(*binding.ToolPatterns); err != nil {
+				return fmt.Sprintf("connector binding %q has a tool_patterns entry that is not a tool name or pattern", alias), false
+			}
 		}
 	}
 	return "", true
@@ -627,11 +682,12 @@ func storedBindings(bindings []AgentConnectorBinding) []store.ConnectorBinding {
 				Type:         string(binding.Connection.Type),
 				ConnectionID: value(binding.Connection.ConnectionId),
 			},
-			Tools:     tools,
-			Required:  value(binding.Required),
-			TimeoutMs: value(binding.TimeoutMs),
-			Events:    bindingEventsOf(binding.Events),
-			Policy:    bindingPolicyOf(binding.Policy),
+			Tools:        tools,
+			ToolPatterns: copyPatterns(binding.ToolPatterns),
+			Required:     value(binding.Required),
+			TimeoutMs:    value(binding.TimeoutMs),
+			Events:       bindingEventsOf(binding.Events),
+			Policy:       bindingPolicyOf(binding.Policy),
 		})
 	}
 	return stored
@@ -648,6 +704,16 @@ func bindingPolicyOf(policy *ConnectorBindingPolicy) *store.BindingPolicy {
 		OnInterrupt: string(value(policy.OnInterrupt)),
 		Cancellable: policy.Cancellable,
 	}
+}
+
+// copyPatterns is patterns, copied, or nil when none were set, so a binding without
+// tool_patterns is read back without the field.
+func copyPatterns(patterns *[]string) *[]string {
+	if patterns == nil {
+		return nil
+	}
+	copied := append([]string(nil), (*patterns)...)
+	return &copied
 }
 
 // bindingEventsOf reads the events a caller declared on a binding, or nothing for none, so a
@@ -680,8 +746,9 @@ func bindingsOf(bindings []store.ConnectorBinding) []AgentConnectorBinding {
 				Type:         AgentConnectorSelectionType(binding.Connection.Type),
 				ConnectionId: optional(binding.Connection.ConnectionID),
 			},
-			Tools:    tools,
-			Required: &required,
+			Tools:        tools,
+			ToolPatterns: copyPatterns(binding.ToolPatterns),
+			Required:     &required,
 		}
 		if binding.TimeoutMs > 0 {
 			timeout := binding.TimeoutMs
@@ -883,6 +950,21 @@ func sandboxOptionsOf(config sandbox.Config) *SandboxOptions {
 		MemoryGb:  &config.MemoryGB,
 		DiskGb:    &config.DiskGB,
 	}
+}
+
+// warnPluginsSaved logs a config stored with plugins or plugin_events, which connectors
+// replace, so the configs still on them can be counted before the fields go. unbound is how
+// many plugin entries no binding replaces: a migrated config keeps its entries beside the
+// bindings that replaced them, and a session ignores those (session.UnboundPlugins), so only
+// an unbound entry is real use.
+func (s *Server) warnPluginsSaved(config store.AgentConfig) {
+	if len(config.Plugins) == 0 && len(config.PluginEvents) == 0 {
+		return
+	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathConfigSave,
+		"customer", config.CustomerID, "config", config.ID,
+		"plugin", store.PluginNames(config.Plugins), "unbound", len(session.UnboundPlugins(config)),
+		"plugin_events", len(config.PluginEvents))
 }
 
 // pluginEventsComplaint reports what is wrong with the events a config subscribes to, if
@@ -1238,7 +1320,57 @@ func skillComplaint(request SkillRequest) (string, bool) {
 	if strings.TrimSpace(request.Instructions) == "" {
 		return "a skill needs instructions, which is what the subagent answers under", false
 	}
+	files := value(request.Files)
+	if len(files) > maxSkillFiles {
+		return fmt.Sprintf("a skill may bring at most %d files", maxSkillFiles), false
+	}
+	size := 0
+	for name, content := range files {
+		if name == "" || path.IsAbs(name) || path.Clean(name) != name || name == ".." ||
+			strings.HasPrefix(name, "../") || strings.Contains(name, `\`) {
+			return fmt.Sprintf("skill file %q is not a path inside the skill's folder", name), false
+		}
+		size += len(content)
+	}
+	if size > maxSkillBytes {
+		return fmt.Sprintf("a skill's files may hold at most %d bytes in all", maxSkillBytes), false
+	}
 	return "", true
+}
+
+// maxSkillFiles and maxSkillBytes bound what one skill folder may bring with it.
+const (
+	maxSkillFiles = 64
+	maxSkillBytes = 1 << 20
+)
+
+// skillSandboxComplaint refuses skills that bring scripts to a config with nowhere to run
+// them.
+func skillSandboxComplaint(skills []SkillRequest, sandboxed bool) (string, bool) {
+	for _, skill := range skills {
+		if err := harness.NeedsSandbox(strings.TrimSpace(skill.Name), slices.Collect(maps.Keys(value(skill.Files))), sandboxed); err != nil {
+			return err.Error(), false
+		}
+	}
+	return "", true
+}
+
+// storedSkillSandboxComplaint is skillSandboxComplaint for the skills a config already holds
+// under the names it gives them.
+func (s *Server) storedSkillSandboxComplaint(ctx context.Context, config store.AgentConfig) (string, bool, error) {
+	if config.Sandbox != "" || config.ID == "" || len(config.Skills) == 0 {
+		return "", true, nil
+	}
+	stored, err := s.configs.SkillsNamed(ctx, config.CustomerID, config.ID, config.Skills)
+	if err != nil {
+		return "", false, err
+	}
+	for _, skill := range stored {
+		if err := harness.NeedsSandbox(skill.Name, slices.Collect(maps.Keys(skill.Files)), false); err != nil {
+			return err.Error(), false, nil
+		}
+	}
+	return "", true, nil
 }
 
 // storedConfig turns a request into a row. The customer comes from the trusted header
@@ -1327,6 +1459,7 @@ func storedSkill(request SkillRequest, customerID string) store.Skill {
 		Name:         strings.TrimSpace(request.Name),
 		Description:  request.Description,
 		Instructions: request.Instructions,
+		Files:        value(request.Files),
 		DeadlineMs:   value(request.DeadlineMs),
 		CaptureVideo: value(request.CaptureVideo),
 	}
@@ -1413,6 +1546,10 @@ func skillOf(skill store.Skill) Skill {
 		UpdatedAt:    skill.UpdatedAt,
 	}
 	rendered.CaptureVideo = &skill.CaptureVideo
+	if len(skill.Files) > 0 {
+		paths := slices.Sorted(maps.Keys(skill.Files))
+		rendered.FilePaths = &paths
+	}
 	if skill.DeadlineMs > 0 {
 		deadline := skill.DeadlineMs
 		rendered.DeadlineMs = &deadline
@@ -1622,8 +1759,8 @@ type AgentConfigRequest struct {
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
 	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty" doc:"Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" doc:"MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
+	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
+	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused."`
 	Channels           *AgentChannels           `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels."`
@@ -1633,7 +1770,7 @@ type AgentConfigRequest struct {
 	Skills             *[]string                `json:"skills,omitempty" doc:"Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set."`
 	Sts                *string                  `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
 	Stt                *string                  `json:"stt,omitempty" doc:"A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it."`
-	Tags               *map[string]string       `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes."`
+	Tags               *map[string]string       `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds."`
 	Subagent           *string                  `json:"subagent,omitempty" doc:"The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent."`
 	Tts                *string                  `json:"tts,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
@@ -1657,8 +1794,8 @@ type AgentConfig struct {
 	Mode               AgentMode                `json:"mode"`
 	Name               string                   `json:"name"`
 	Tools              *AgentTools              `json:"tools,omitempty"`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty"`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty"`
+	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
+	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty"`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The bindings exactly as they were written. Absent when there are none."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
@@ -1705,18 +1842,20 @@ func progressiveOf(stored bool, tools *AgentTools) bool {
 // and tool search are offered as a___search, and a cut at the first aliasSeparator reads alias
 // a and tool _search. A config holds at most 64 bindings (the maxItems on each connectors
 // field), the cap visible_tools already has, and 128 tools is the most OpenAI documents taking
-// in one request. Neither was measured for connectors, so both are unverified. The 30000 ms ceiling is the prototype's
+// in one request. tool_patterns has that same 128, and a session offers at most that many
+// matches. Neither was measured for connectors, so both are unverified. The 30000 ms ceiling is the prototype's
 // (internal/api/connectors.go:1176 at cf62af0d), and nothing there says why 30 seconds; it is
 // unverified.
 type AgentConnectorBinding struct {
-	Name        string                   `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place."`
-	ConnectorId string                   `json:"connector_id" doc:"A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_."`
-	Connection  AgentConnectorSelection  `json:"connection"`
-	Tools       []ConnectorToolGrant     `json:"tools" maxItems:"128" nullable:"false" doc:"The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use."`
-	Required    *bool                    `json:"required,omitempty" default:"false" doc:"Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it."`
-	TimeoutMs   *int                     `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
-	Events      *[]ConnectorBindingEvent `json:"events,omitempty" maxItems:"32" doc:"MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open."`
-	Policy      *ConnectorBindingPolicy  `json:"policy,omitempty" doc:"How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs."`
+	Name         string                   `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place."`
+	ConnectorId  string                   `json:"connector_id" doc:"A connector definition the app can see: a built-in, or one of its own, whose id starts with custom_."`
+	Connection   AgentConnectorSelection  `json:"connection"`
+	Tools        []ConnectorToolGrant     `json:"tools" maxItems:"128" nullable:"false" doc:"The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use. A binding that sets tool_patterns sends an empty list: the patterns are the grant instead."`
+	ToolPatterns *[]string                `json:"tool_patterns,omitempty" minItems:"1" maxItems:"128" doc:"Names or path.Match patterns of the tools this binding offers, such as search or linear_*. Set, they are the grant and tools is empty: a binding has one or the other, and these are refused together with a non-empty tools list. A session binding or a fixed one may set them. Each tool a connection lists that matches is pinned on that connection the first time, at the digest listed then, and a later session offers it only while that digest still matches. An empty list is refused. At most 128, the same cap as tools, which is also the most one session offers when more match."`
+	Required     *bool                    `json:"required,omitempty" default:"false" doc:"Whether a session needs this connector. A required one that cannot be opened fails the session; an optional one is left out of it."`
+	TimeoutMs    *int                     `json:"timeout_ms,omitempty" minimum:"1" maximum:"30000" doc:"How long one tool call may take, in milliseconds. Omitted, the session's default applies."`
+	Events       *[]ConnectorBindingEvent `json:"events,omitempty" maxItems:"32" doc:"MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open."`
+	Policy       *ConnectorBindingPolicy  `json:"policy,omitempty" doc:"How the binding's tool calls behave around speech and interruptions. Omitted, a call is cancelled at the provider when the turn is interrupted, and the agent picks its own words while it runs."`
 }
 
 // ConnectorBindingPolicy is a binding's policy envelope, read back as it was written.
@@ -1764,8 +1903,10 @@ func (*ConnectorBindingEvent) TransformSchema(_ huma.Registry, schema *huma.Sche
 
 func (*AgentConnectorBinding) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "A connector whose tools an agent config may call, under an alias. The binding is " +
-		"the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against, or " +
-		"for a tool a session binding grants by name alone, to the schema its connection first offered it with."
+		"the grant: the tools it lists, each pinned to the schema it was reviewed against, or for a tool a " +
+		"session binding grants by name alone, to the schema its connection first offered it with. Or " +
+		"tool_patterns, names or path.Match patterns, pinned per connection on first use, on a session " +
+		"binding or a fixed one. A binding has one or the other."
 	return schema
 }
 

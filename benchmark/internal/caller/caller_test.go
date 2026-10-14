@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/transport"
 )
 
 func TestPlayLoopback(t *testing.T) {
@@ -133,6 +133,70 @@ func TestMidReplyPauseDoesNotAdvanceTurn(t *testing.T) {
 	}
 }
 
+func TestAQuietPhraseIsStillTheAgentTalking(t *testing.T) {
+	// A voice can render a phrase 20 to 30 dB quieter than the one before it. A person hears
+	// it, so the caller must not take it for the end of the reply and talk over it.
+	loop := transport.NewLoopback()
+	defer loop.Close()
+
+	go func() {
+		heard := false
+		for frame := range loop.AgentRecv {
+			if heard || audio.FrameEnergy(frame.PCM) < audio.DefaultSpeechThreshold {
+				continue
+			}
+			heard = true
+			// The reply goes out as it is spoken, so the caller has the time to mistake the
+			// quiet phrase for silence: a 3 s sentence, a 1.5 s phrase at a twentieth of its
+			// level, then the rest.
+			speak := func(frames int, amp float64) {
+				for range frames {
+					_ = loop.SendAgent(audio.Tone(audio.Rate/50, 220, amp))
+					time.Sleep(20 * time.Millisecond)
+				}
+			}
+			speak(150, 10000)
+			speak(75, 300)
+			speak(25, 10000)
+		}
+	}()
+
+	first := "first turn"
+	second := "second turn"
+	eng := Engine{
+		Audio: map[string][]int16{
+			first:  audio.Tone(audio.Rate/4, 180, 10000),
+			second: audio.Tone(audio.Rate/4, 190, 10000),
+		},
+		TurnHangoverMS: 400,
+		ClosingGraceMS: 300,
+	}
+	sc := scenario.Scenario{
+		ID:   "quiet",
+		Pack: "restaurant",
+		Turns: []scenario.Turn{
+			{ID: "a", Text: first, Trigger: scenario.Trigger{Kind: scenario.TriggerImmediate}},
+			{ID: "b", Text: second, Trigger: scenario.Trigger{Kind: scenario.TriggerAfterAgent, DelayMS: 20}},
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	got, err := eng.Play(ctx, sc, loop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Events) != 2 {
+		t.Fatalf("events %d", len(got.Events))
+	}
+	spans := audio.DetectSpeech(got.Agent, got.Rate, audio.AgentSpeechThreshold, audio.DefaultHangoverMs)
+	if len(spans) == 0 {
+		t.Fatal("no agent speech recorded")
+	}
+	if replyEnd := spans[len(spans)-1].EndMs; got.Events[1].RecStartMs < replyEnd {
+		t.Fatalf("second turn started at %dms, inside the reply that ended at %dms", got.Events[1].RecStartMs, replyEnd)
+	}
+}
+
 func TestDuringAgentOverlapPlaysWhileAgentSpeaks(t *testing.T) {
 	loop := transport.NewLoopback()
 	defer loop.Close()
@@ -165,7 +229,7 @@ func TestDuringAgentOverlapPlaysWhileAgentSpeaks(t *testing.T) {
 	if len(got.Events) != 1 {
 		t.Fatalf("events %d", len(got.Events))
 	}
-	spans := audio.DetectSpeech(got.Agent, got.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
+	spans := audio.DetectSpeech(got.Agent, got.Rate, audio.AgentSpeechThreshold, audio.DefaultHangoverMs)
 	if len(spans) == 0 {
 		t.Fatal("expected agent speech")
 	}
@@ -221,7 +285,7 @@ func TestBargeInWaitsForAgentSpeech(t *testing.T) {
 	if len(got.Events) != 1 {
 		t.Fatalf("events %d", len(got.Events))
 	}
-	spans := audio.DetectSpeech(got.Agent, got.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
+	spans := audio.DetectSpeech(got.Agent, got.Rate, audio.AgentSpeechThreshold, audio.DefaultHangoverMs)
 	if len(spans) == 0 {
 		t.Fatal("expected agent speech")
 	}
@@ -273,7 +337,7 @@ func TestFinalWaitCapturesLateReply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spans := audio.DetectSpeech(got.Agent, got.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
+	spans := audio.DetectSpeech(got.Agent, got.Rate, audio.AgentSpeechThreshold, audio.DefaultHangoverMs)
 	if len(spans) < 2 {
 		t.Fatalf("expected greeting and late reply, spans=%d", len(spans))
 	}
@@ -321,7 +385,7 @@ func TestFinalWaitCapturesReplyAfterFiller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spans := audio.DetectSpeech(got.Agent, got.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
+	spans := audio.DetectSpeech(got.Agent, got.Rate, audio.AgentSpeechThreshold, audio.DefaultHangoverMs)
 	if len(spans) < 3 {
 		t.Fatalf("expected greeting, filler, and reply after the filler, spans=%d", len(spans))
 	}

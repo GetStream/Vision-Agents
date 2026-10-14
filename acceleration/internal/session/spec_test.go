@@ -107,6 +107,16 @@ func (s *SpecSuite) TestAVoiceSessionIsKeyedUnderTheAgentIDItNamesBeforeNormaliz
 	s.Equal(paddedKeyed, padded.AgentID)
 }
 
+// TestAVoiceSessionNamingNoCallJoinsTheAgentCallOfItsOwnID: the call is agent:<session id>.
+func (s *SpecSuite) TestAVoiceSessionNamingNoCallJoinsTheAgentCallOfItsOwnID() {
+	spec := Spec{CustomerID: "acme"}
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal("agent", spec.CallType)
+	s.Equal(spec.ID, spec.CallID)
+}
+
 // TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed: Normalize gives it a new id.
 func (s *SpecSuite) TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed() {
 	spec := Spec{CustomerID: "acme", Text: true}
@@ -166,9 +176,13 @@ func (s *SpecSuite) TestATranscriptGoesIntoTheConversationsAgentChannelElseTheAg
 }
 
 func (s *SpecSuite) TestAThreadChannelIsAConversationSeveralPeopleShare() {
-	s.True(Spec{ConversationID: "agent:" + persistent.ThreadChannelPrefix + "0199"}.Shared())
-	s.False(Spec{ConversationID: "agent:support-0199"}.Shared())
+	s.True(Spec{ConversationID: "agent:" + persistent.ThreadChannelPrefix + "0199", Thread: true}.Shared())
 	s.False(Spec{}.Shared())
+}
+
+// A session may be named thread-...: its channel is its own, not a thread channel.
+func (s *SpecSuite) TestASessionNamedLikeAThreadChannelIsNoThread() {
+	s.False(Spec{ConversationID: "agent:" + persistent.ThreadChannelPrefix + "0199"}.Shared())
 }
 
 func (s *SpecSuite) TestAConfigsSandboxBecomesTheSessions() {
@@ -302,6 +316,26 @@ func (s *SpecSuite) TestModelOverwritesBeatTheConfigsRoutes() {
 	s.Equal("stt-fast", spec.STTTarget, "a route nobody overwrote is still the config's")
 }
 
+func (s *SpecSuite) TestAConversationOnAMockDecidesOnTheMockToo() {
+	// What a load test measures is the router. A real flow controller would spend money
+	// and add a provider's wait to every turn of it.
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", LLM: "mock/mock-llm"})
+	spec.CallID = "call-1"
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal("mock/mock-llm", spec.ControllerTarget)
+}
+
+func (s *SpecSuite) TestAConversationOnARealModelDecidesOnTheFlowModel() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", LLM: "llm-fast"})
+	spec.CallID = "call-1"
+
+	s.Require().NoError(spec.Normalize())
+
+	s.Equal(defaultControllerTarget, spec.ControllerTarget)
+}
+
 func (s *SpecSuite) TestThinkingBecomesTheReasoningEffort() {
 	spec := s.spec(nil)
 	spec.ModelOverwrites = store.ModelOverwrites{Thinking: "high"}
@@ -313,12 +347,32 @@ func (s *SpecSuite) TestThinkingBecomesTheReasoningEffort() {
 	s.Equal("high", spec.LLMOverwrites().ReasoningEffort)
 }
 
-func (s *SpecSuite) TestATextSessionThinksOnItsOwnModel() {
+func (s *SpecSuite) TestATextSessionHasNoSubagent() {
+	// Its model loads the skills itself, keeping the tools a subagent would not have.
 	spec := Spec{CustomerID: "acme", Text: true, LLMTarget: "llm-fast", SubagentTarget: "llm-thinking"}
 
 	s.Require().NoError(spec.Normalize())
 
+	s.Empty(spec.SubagentTarget)
+	s.Equal("llm-fast", spec.reviewTarget(), "it is still reviewed on the model that held it")
+}
+
+func (s *SpecSuite) TestATextSessionWithASandboxThinksOnItsOwnModel() {
+	// Only a subagent is given the sandbox, so its skills are still handed over.
+	spec := Spec{CustomerID: "acme", Text: true, LLMTarget: "llm-fast", SubagentTarget: "llm-thinking", Sandbox: "daytona"}
+
+	s.Require().NoError(spec.Normalize())
+
 	s.Equal("llm-fast", spec.SubagentTarget)
+}
+
+func (s *SpecSuite) TestStoppingVoiceLeavesNoSubagentAndStartingItAgainRestoresIt() {
+	spec := Spec{CustomerID: "acme", CallID: "call", LLMTarget: "llm-fast", SubagentTarget: "llm-thinking"}
+	s.Require().NoError(spec.Normalize())
+
+	written := spec.Written()
+	s.Empty(written.SubagentTarget)
+	s.Equal("llm-thinking", written.Voiced().SubagentTarget)
 }
 
 func (s *SpecSuite) TestAVoiceSessionKeepsItsThinkingModel() {

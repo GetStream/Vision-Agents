@@ -104,6 +104,7 @@ from .connection_definition_status import ConnectionDefinitionStatus
 from .connection_inputs import ConnectionInputs
 from .connection_invocation import ConnectionInvocation
 from .connection_invocation_page import ConnectionInvocationPage
+from .connection_last_validation import ConnectionLastValidation
 from .connection_metadata import ConnectionMetadata
 from .connection_owner import ConnectionOwner
 from .connection_owner_type import ConnectionOwnerType
@@ -160,6 +161,10 @@ from .create_session_request_custom import CreateSessionRequestCustom
 from .create_session_request_tags import CreateSessionRequestTags
 from .create_sip_trunk_request import CreateSipTrunkRequest
 from .custom_connector_request import CustomConnectorRequest
+from .custom_model import CustomModel
+from .custom_model_page import CustomModelPage
+from .custom_model_request import CustomModelRequest
+from .custom_model_request_trains_on_data import CustomModelRequestTrainsOnData
 from .data_change import DataChange
 from .data_change_key import DataChangeKey
 from .data_change_op import DataChangeOp
@@ -169,6 +174,15 @@ from .data_import import DataImport
 from .data_import_tables import DataImportTables
 from .data_policy import DataPolicy
 from .decision_kind import DecisionKind
+from .detected_object import DetectedObject
+from .detection_box import DetectionBox
+from .detection_error_code import DetectionErrorCode
+from .detection_options import DetectionOptions
+from .detection_options_overwrites import DetectionOptionsOverwrites
+from .detection_request import DetectionRequest
+from .detection_request_tags import DetectionRequestTags
+from .detection_result import DetectionResult
+from .detection_status import DetectionStatus
 from .dispatch_setting import DispatchSetting
 from .endpointing import Endpointing
 from .equals_type_1 import EqualsType1
@@ -212,7 +226,6 @@ from .indexed_knowledge_document import IndexedKnowledgeDocument
 from .ingest_knowledge_request import IngestKnowledgeRequest
 from .ingested_knowledge import IngestedKnowledge
 from .input_parts import InputParts
-from .instructions_request import InstructionsRequest
 from .invocation_argument import InvocationArgument
 from .invocation_argument_type import InvocationArgumentType
 from .invocation_error_type import InvocationErrorType
@@ -351,6 +364,7 @@ from .sip_trunk import SipTrunk
 from .sip_trunk_transport import SipTrunkTransport
 from .skill import Skill
 from .skill_request import SkillRequest
+from .skill_request_files import SkillRequestFiles
 from .skipped_vendor import SkippedVendor
 from .speech import Speech
 from .speech_request import SpeechRequest
@@ -358,13 +372,6 @@ from .speech_request_tags import SpeechRequestTags
 from .spend_bucket import SpendBucket
 from .stats_bucket import StatsBucket
 from .stored_connector_o_auth_client import StoredConnectorOAuthClient
-from .stream_app_state import StreamAppState
-from .stream_check import StreamCheck
-from .stream_credentials import StreamCredentials
-from .stream_key_input import StreamKeyInput
-from .stream_key_state import StreamKeyState
-from .stream_key_state_signs_webhooks import StreamKeyStateSignsWebhooks
-from .stream_key_state_status import StreamKeyStateStatus
 from .stream_settings import StreamSettings
 from .stream_tenancy import StreamTenancy
 from .stream_type_state import StreamTypeState
@@ -531,6 +538,7 @@ __all__ = (
     "ConnectionInputs",
     "ConnectionInvocation",
     "ConnectionInvocationPage",
+    "ConnectionLastValidation",
     "ConnectionMetadata",
     "ConnectionOwner",
     "ConnectionOwnerType",
@@ -587,6 +595,10 @@ __all__ = (
     "CreateSessionRequestTags",
     "CreateSipTrunkRequest",
     "CustomConnectorRequest",
+    "CustomModel",
+    "CustomModelPage",
+    "CustomModelRequest",
+    "CustomModelRequestTrainsOnData",
     "DataChange",
     "DataChangeKey",
     "DataChangeOp",
@@ -596,6 +608,15 @@ __all__ = (
     "DataImportTables",
     "DataPolicy",
     "DecisionKind",
+    "DetectedObject",
+    "DetectionBox",
+    "DetectionErrorCode",
+    "DetectionOptions",
+    "DetectionOptionsOverwrites",
+    "DetectionRequest",
+    "DetectionRequestTags",
+    "DetectionResult",
+    "DetectionStatus",
     "DispatchSetting",
     "Endpointing",
     "EqualsType1",
@@ -637,7 +658,6 @@ __all__ = (
     "IngestKnowledgeRequest",
     "IngestedKnowledge",
     "InputParts",
-    "InstructionsRequest",
     "InvocationArgument",
     "InvocationArgumentType",
     "InvocationErrorType",
@@ -776,6 +796,7 @@ __all__ = (
     "SipTrunkTransport",
     "Skill",
     "SkillRequest",
+    "SkillRequestFiles",
     "SkippedVendor",
     "Speech",
     "SpeechRequest",
@@ -783,13 +804,6 @@ __all__ = (
     "SpendBucket",
     "StatsBucket",
     "StoredConnectorOAuthClient",
-    "StreamAppState",
-    "StreamCheck",
-    "StreamCredentials",
-    "StreamKeyInput",
-    "StreamKeyState",
-    "StreamKeyStateSignsWebhooks",
-    "StreamKeyStateStatus",
     "StreamSettings",
     "StreamTenancy",
     "StreamTypeState",

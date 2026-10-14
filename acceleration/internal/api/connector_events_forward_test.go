@@ -36,6 +36,8 @@ type EventForwardingSuite struct {
 	app       store.ConnectorOAuthClient
 	secret    string
 	workspace string
+	// logged is what the router logged, for the line a skipped message leaves.
+	logged *lockedLog
 }
 
 func TestEventForwardingSuite(t *testing.T) {
@@ -52,6 +54,8 @@ func (s *EventForwardingSuite) SetupSuite() {
 		Schemes:   map[string]core.Scheme{oauth2code.Name: code},
 		Verifiers: map[string]core.Verifier{verifier.Name(): verifier},
 	}
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.channelProvider = func() string { return strings.TrimPrefix(s.slack.URL, "https://") }
 	s.forwardHTTP = destinationClient()
 	s.RouterSuite.SetupSuite()
@@ -243,6 +247,30 @@ func (s *EventForwardingSuite) TestAMessageNoAgentAnswersIsUnhandled() {
 	s.deliver(body, 0)
 
 	s.Equal(body, s.forwardedTo(target, 1)[0].body)
+}
+
+// TestAMessageAnAppPostedIsSkippedAndLoggedAtInfo (AI-1053 F67): the manifest's skip_if_present
+// rule leaves a message out, and the line that says so names the connector, the provider app
+// and the rule, never the text.
+func (s *EventForwardingSuite) TestAMessageAnAppPostedIsSkippedAndLoggedAtInfo() {
+	s.connectedBot()
+	raw, err := json.Marshal(map[string]string{"type": "message", "channel": "C0000CHAN", "user": "U0000ALICE",
+		"text": botMention + "synthetic-text-never-logged", "ts": "1759740000.000100", "channel_type": "channel", "bot_id": "B0000APP"})
+	s.Require().NoError(err)
+
+	status, _ := s.deliver(s.event(string(raw)), 0)
+
+	s.Equal(http.StatusOK, status)
+	var line string
+	for _, l := range strings.Split(s.logged.String(), "\n") {
+		if strings.Contains(l, "skipped a connector event's message") && strings.Contains(l, s.app.ProviderAppID) {
+			line = l
+		}
+	}
+	s.Contains(line, "level=INFO")
+	s.Contains(line, "connector=slack_bot")
+	s.Contains(line, "$.event.bot_id")
+	s.NotContains(s.logged.String(), "synthetic-text-never-logged")
 }
 
 // https://docs.slack.dev/reference/events/url_verification: the handshake proves the router's

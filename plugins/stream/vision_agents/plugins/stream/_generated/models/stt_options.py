@@ -228,9 +228,7 @@ class SttOptions:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.data_policy import DataPolicy
-        from ..models.stt_options_overwrites import (
-            SttOptionsOverwrites,
-        )
+        from ..models.stt_options_overwrites import SttOptionsOverwrites
 
         d = dict(src_dict)
         channels = d.pop("channels", UNSET)

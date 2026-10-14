@@ -126,11 +126,17 @@ func (s *STTRouterSuite) TestGermanNarrowsToTheModelThatSpeaksIt() {
 func (s *STTRouterSuite) TestRegistryKnowsEveryConfiguredProvider() {
 	router := s.newRouter()
 	registry := DefaultRegistry()
+	RegisterMock(registry)
 
 	for _, provider := range router.Config().Providers {
 		s.Truef(registry.Has(provider.Provider),
 			"%s is configured but has no factory, so it can never serve a request", provider.Provider)
 	}
+}
+
+func (s *STTRouterSuite) TestTheMockIsBuiltOnlyWhereItWasAskedFor() {
+	s.False(DefaultRegistry().Has("mock"),
+		"a deployment that did not ask for mocks should fail to build one rather than route to it")
 }
 
 func (s *STTRouterSuite) TestRegistryPassesLanguageHintsOnlyToTheMultilingualModel() {

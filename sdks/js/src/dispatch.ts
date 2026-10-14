@@ -4,7 +4,7 @@ import { Client } from "./client.js";
 import { ConfigurationError, HostingRefusedError } from "./errors.js";
 import type { AgentHandle } from "./handle.js";
 import { callOf, messageOf, type InboundCall, type InboundMessage } from "./inbound.js";
-import { Responses, type AgentResponse } from "./responses.js";
+import { createResponse, type AgentResponse } from "./responses.js";
 import type { Session } from "./session.js";
 import { Socket, number as numberOf, text, type Frame } from "./socket.js";
 import type { Tools } from "./tools.js";
@@ -205,17 +205,14 @@ export class Dispatch {
    *
    * The response is created with this worker's own credential, acting for whoever wrote the
    * message, so it reaches a conversation that belongs to them and goes to the model rather
-   * than back to a worker. It carries the message's command, so the answer lands on it.
+   * than back to a worker. It carries the message's request id, so the answer lands on it.
    */
   async answer(message: InboundMessage): Promise<AgentResponse> {
     if (!message.sessionId) {
       throw new ConfigurationError("no session is holding this message; open one with sessionFor");
     }
     const acting = new Client(this.client.backend.actingFor(message.userId));
-    return new Responses(acting, message.sessionId).create(
-      message.text,
-      message.commandId ? { commandId: message.commandId } : {},
-    );
+    return createResponse(acting, message.sessionId, message.text, {}, message.requestId);
   }
 
   /**

@@ -9,8 +9,9 @@ namespace GetStream\VisionAgents\Generated;
 use GetStream\VisionAgents\Json;
 
 /**
- * One connector tool call a session ran through the connection: the binding, the tool, how
- * long it took and how it failed. What the call was asked and answered is never kept.
+ * One connector tool call a session ran through the connection: the binding, the tool, the
+ * shape of its arguments, how long it took and how it failed. No value the call was asked, and
+ * nothing it answered, is kept.
  */
 final readonly class ConnectionInvocation
 {
@@ -27,6 +28,9 @@ final readonly class ConnectionInvocation
         public \DateTimeImmutable $startedAt,
         // The tool's name at the provider, without the alias.
         public string $tool,
+        // The shape of what the call was asked, sorted by name. Absent for a call asked with no arguments, for an inc...
+        /** @var list<InvocationArgument>|null */
+        public ?array $arguments = null,
         // How the call failed. Absent for a call that answered.
         public InvocationErrorType|string|null $errorType = null,
         // The session that called it. Absent for an incognito session, whose calls are tied to no conversation.
@@ -48,6 +52,7 @@ final readonly class ConnectionInvocation
             latencyMs: Json::int($data, 'latency_ms'),
             startedAt: Json::date($data, 'started_at'),
             tool: Json::string($data, 'tool'),
+            arguments: array_key_exists('arguments', $data) && $data['arguments'] !== null ? array_map(InvocationArgument::fromArray(...), Json::objects($data, 'arguments')) : null,
             errorType: array_key_exists('error_type', $data) && $data['error_type'] !== null ? Json::enum($data, 'error_type', InvocationErrorType::class) : null,
             sessionId: array_key_exists('session_id', $data) && $data['session_id'] !== null ? Json::string($data, 'session_id') : null,
         );
@@ -69,6 +74,9 @@ final readonly class ConnectionInvocation
         $out['latency_ms'] = $this->latencyMs;
         $out['started_at'] = Json::dateValue($this->startedAt);
         $out['tool'] = $this->tool;
+        if ($this->arguments !== null) {
+            $out['arguments'] = array_map(static fn (InvocationArgument $each): array => $each->toArray(), $this->arguments);
+        }
         if ($this->errorType !== null) {
             $out['error_type'] = Json::enumValue($this->errorType);
         }

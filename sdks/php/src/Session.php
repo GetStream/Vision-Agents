@@ -23,6 +23,7 @@ final class Session
 {
     public readonly Responses $responses;
     private bool $closed = false;
+    private bool $voice;
 
     /**
      * @param ?Agent $agent the agent that opened it, or null for one found by id
@@ -33,6 +34,7 @@ final class Session
         public readonly ?Agent $agent = null,
     ) {
         $this->responses = new Responses($client, $created->id);
+        $this->voice = $created->callId !== '';
     }
 
     /**
@@ -58,6 +60,44 @@ final class Session
     public function callId(): string
     {
         return $this->created->callId;
+    }
+
+    /**
+     * The Stream call the conversation is on while voice is started, named after the session.
+     */
+    public function call(): Call
+    {
+        return new Call($this->id());
+    }
+
+    /**
+     * Has the agent join the session's call and carry the conversation on there. Starting
+     * voice that is already on does nothing.
+     */
+    public function startVoice(): SessionRow
+    {
+        $started = SessionRow::fromArray(Json::asObject($this->client->post('/v1/agents/sessions/{id}/voice', ['id' => $this->id()])));
+        $this->voice = true;
+        return $started;
+    }
+
+    /**
+     * Takes the agent off the call and carries the conversation on in writing. Stopping voice
+     * that is off does nothing.
+     */
+    public function stopVoice(): SessionRow
+    {
+        $stopped = SessionRow::fromArray(Json::asObject($this->client->delete('/v1/agents/sessions/{id}/voice', ['id' => $this->id()])));
+        $this->voice = false;
+        return $stopped;
+    }
+
+    /**
+     * Whether the agent is on the call, as this process last saw it.
+     */
+    public function voiceStarted(): bool
+    {
+        return $this->voice;
     }
 
     /**
@@ -90,8 +130,7 @@ final class Session
     }
 
     /**
-     * Changes this session only: its title, description, custom labels, instructions, models
-     * or voice. The config it started from is untouched, and a target that does not route is
+     * Changes this session only: its title, description, custom labels, models or voice. The config it started from is untouched, and a target that does not route is
      * refused before anything changes. See `Sessions::update`.
      *
      * @param array<string, mixed>|null $custom
@@ -100,7 +139,6 @@ final class Session
         ?string $title = null,
         ?string $description = null,
         ?array $custom = null,
-        ?string $instructions = null,
         ?string $llm = null,
         ?string $stt = null,
         ?string $tts = null,
@@ -111,7 +149,7 @@ final class Session
         ?int $maxOutputTokens = null,
         ?string $verbosity = null,
     ): SessionRow {
-        return $this->sessions()->update($this->id(), $title, $description, $custom, $instructions, $llm, $stt, $tts, $sts, $voice, $thinking, $temperature, $maxOutputTokens, $verbosity);
+        return $this->sessions()->update($this->id(), $title, $description, $custom, $llm, $stt, $tts, $sts, $voice, $thinking, $temperature, $maxOutputTokens, $verbosity);
     }
 
     /**

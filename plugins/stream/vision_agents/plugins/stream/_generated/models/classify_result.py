@@ -56,9 +56,7 @@ class ClassifyResult:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.classify_result_answers import (
-            ClassifyResultAnswers,
-        )
+        from ..models.classify_result_answers import ClassifyResultAnswers
         from ..models.classify_usage import ClassifyUsage
 
         d = dict(src_dict)

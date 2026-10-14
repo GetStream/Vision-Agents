@@ -8,7 +8,11 @@
 //
 //	err := tui.Run(ctx, tui.Options{
 //		Open: func(ctx context.Context, id string) (tui.Session, error) {
-//			session, err := agent.Chat(ctx, agents.SessionOptions{ConversationID: id})
+//			resume := agent.Sessions.Resume
+//			if id == "" {
+//				resume = func(ctx context.Context, _ string) (*agents.Session, error) { return agent.Chat(ctx) }
+//			}
+//			session, err := resume(ctx, id)
 //			if err != nil {
 //				return nil, err
 //			}
@@ -57,8 +61,8 @@ type Options struct {
 	// that saved history is not available, which is the truth for a conversation that is
 	// not persisted.
 	History History
-	// ConversationID is the conversation to open on start. Empty starts a new one.
-	ConversationID string
+	// SessionID is the session to resume on start. Empty starts a new conversation.
+	SessionID string
 	// Branding names the agent and what it is for.
 	Branding Branding
 	// Theme is the palette. Its zero value is [DefaultTheme].
@@ -97,6 +101,7 @@ type Model struct {
 	// replaced is recognised and dropped.
 	generation     int
 	session        Session
+	sessionID      string
 	conversationID string
 	scope          string
 	messages       []stream.ConversationMessage
@@ -135,17 +140,17 @@ func New(ctx context.Context, options Options) (*Model, error) {
 		logger = slog.Default()
 	}
 	m := &Model{
-		options:        options,
-		branding:       branding,
-		styles:         appearance,
-		logger:         logger,
-		ctx:            ctx,
-		input:          composer(branding, appearance),
-		view:           viewport.New(80, 15),
-		cache:          map[string]string{},
-		renderers:      map[int]*glamour.TermRenderer{},
-		conversationID: options.ConversationID,
-		status:         "Starting…",
+		options:   options,
+		branding:  branding,
+		styles:    appearance,
+		logger:    logger,
+		ctx:       ctx,
+		input:     composer(branding, appearance),
+		view:      viewport.New(80, 15),
+		cache:     map[string]string{},
+		renderers: map[int]*glamour.TermRenderer{},
+		sessionID: options.SessionID,
+		status:    "Starting…",
 		// A size to draw at until the terminal says what it really is.
 		width:  80,
 		height: 24,
@@ -183,7 +188,7 @@ func (m *Model) State() State {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, beat(), m.open(m.options.ConversationID))
+	return tea.Batch(textarea.Blink, beat(), m.open(m.options.SessionID))
 }
 
 func (m *Model) View() string {
@@ -214,6 +219,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		m.session = msg.session
+		m.sessionID = msg.session.ID()
 		m.conversationID = msg.session.ConversationID()
 		m.truncated = msg.session.ContextTruncated()
 		m.messages = msg.page.Messages
@@ -234,7 +240,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !msg.ok {
 			m.busy = false
-			m.fail(fmt.Errorf("the session ended; /resume %s reopens the conversation", m.conversationID))
+			m.fail(fmt.Errorf("the session ended; /resume %s reopens the conversation", m.sessionID))
 			break
 		}
 		if updated, ok := msg.event.ConversationMessage(); ok {
@@ -402,13 +408,14 @@ func (m *Model) run(name string, args []string) []tea.Cmd {
 	return nil
 }
 
-// open opens a conversation, closing whatever was open before it. An empty id starts a
-// new conversation.
-func (m *Model) open(conversationID string) tea.Cmd {
+// open resumes the session of an id, closing whatever was open before it. An empty id
+// starts a new conversation.
+func (m *Model) open(sessionID string) tea.Cmd {
 	m.generation++
 	m.connecting = true
 	m.busy = false
-	m.conversationID = conversationID
+	m.sessionID = sessionID
+	m.conversationID = ""
 	m.scope = ""
 	m.notice = ""
 	m.messages = nil
@@ -424,7 +431,7 @@ func (m *Model) open(conversationID string) tea.Cmd {
 		if previous != nil {
 			m.close(previous)
 		}
-		session, err := open(ctx, conversationID)
+		session, err := open(ctx, sessionID)
 		if err != nil {
 			return opened{generation: generation, err: err}
 		}

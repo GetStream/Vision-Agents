@@ -111,9 +111,7 @@ class SimulationDeclaration:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.simulation_declaration_tags import (
-            SimulationDeclarationTags,
-        )
+        from ..models.simulation_declaration_tags import SimulationDeclarationTags
 
         d = dict(src_dict)
         assertion = d.pop("assertion")

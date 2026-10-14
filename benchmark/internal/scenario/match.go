@@ -76,7 +76,29 @@ func MatchStructuredValue(got, want string) bool {
 func sameMeaning(got, want string) bool {
 	g := canonicalToken(got)
 	w := canonicalToken(want)
+	if g != "" && (g == w || singular(g) == singular(w)) {
+		return true
+	}
+	g = canonicalToken(withoutAllergyWords(got))
+	w = canonicalToken(withoutAllergyWords(want))
 	return g != "" && (g == w || singular(g) == singular(w))
+}
+
+// allergyWords are what is said around an allergen: "severe peanut allergy" and
+// "gluten free" name peanut and gluten.
+var allergyWords = map[string]bool{
+	"severe": true, "mild": true, "allergy": true, "allergies": true, "allergic": true,
+	"free": true, "intolerance": true, "intolerant": true,
+}
+
+func withoutAllergyWords(s string) string {
+	var kept []string
+	for _, token := range tokens(s) {
+		if !allergyWords[token] {
+			kept = append(kept, token)
+		}
+	}
+	return strings.Join(kept, " ")
 }
 
 // singular drops a plain plural ending, so "peanuts" names the same allergen as "peanut".

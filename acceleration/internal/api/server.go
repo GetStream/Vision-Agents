@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,7 +21,6 @@ import (
 	"net/netip"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -133,6 +133,10 @@ type Options struct {
 	// only that node can answer is carried to it rather than answered with a 404. Absent
 	// when there is no Redis to keep it in, or no address this node's peers reach it at.
 	Directory *node.Directory
+	// Workers is the deployment's dispatch workers, wherever they are connected: told what
+	// the ones here host, and how a running session's text reaches one elsewhere. Absent
+	// when the Directory or the Relay is.
+	Workers *node.Workers
 	// Streams serves the per-modality sockets, for callers running their own pipeline.
 	// Absent when the deployment routes nothing itself.
 	Streams *Streams
@@ -141,14 +145,9 @@ type Options struct {
 	// has no Stream app at all, in which case those paths say so.
 	Stream *streamapp.Clients
 	// ProxyDeclaresKind is auth.proxy_declares_kind: the proxy in front says which kind of
-	// caller it verified. Registering a Stream app behind a proxy needs it, since without
-	// it every caller passes as a backend.
+	// caller it verified. The server tokens it forwards are trusted only with it, since
+	// without it every caller passes as a backend.
 	ProxyDeclaresKind bool
-	// TrustAPIKeyHeader lets X-Stream-Api-Key choose which of the calling app's registered
-	// keys mints its tokens.
-	TrustAPIKeyHeader bool
-	// DenyRegistration are Stream app ids that may never be registered.
-	DenyRegistration []string
 	// Campaigns rings lists of people. Absent without telephony or sessions, in which
 	// case a campaign can be written down but not run.
 	Campaigns *campaign.Runner
@@ -195,6 +194,13 @@ type Options struct {
 	// the hooks. Without it the hooks refuse every request, because an unsigned hook is
 	// anyone who found the URL.
 	HookSecret string
+	// TelnyxPublicKey checks that a call webhook came from Telnyx (TELNYX_PUBLIC_KEY).
+	// Without it the Telnyx call webhook answers nothing, since anyone could ask it for a
+	// number's trunk credentials.
+	TelnyxPublicKey ed25519.PublicKey
+	// TelnyxConnectionID is the TeXML application this router's Telnyx numbers are on
+	// (TELNYX_CONNECTION_ID). A call webhook for any other is hung up.
+	TelnyxConnectionID string
 	// CORSOrigins are the browser origins allowed to call this API directly, which is
 	// what a dashboard talking to the router without a proxy in between needs. Empty
 	// means no browser may, which is right for a deployment only servers reach.
@@ -203,6 +209,9 @@ type Options struct {
 	// Absent when the deployment has no key encryption key, in which case the paths that
 	// would store one say so rather than holding it in the clear.
 	Secrets *auth.Sealer
+	// PrivateModelEndpoints lets a customer's model sit on a private address or plain http,
+	// which only a router no other tenant shares should allow.
+	PrivateModelEndpoints bool
 	// PublicURL is where this process is reachable, which plugin OAuth callbacks need.
 	PublicURL string
 	// DashboardURL is where a finished plugin login sends the browser.
@@ -247,6 +256,10 @@ type Options struct {
 	// the Retry-After it asked for (core.Limiter). Absent, which it is with connectors off or
 	// without Redis, nothing is held and the provider limits alone.
 	ConnectorLimiter *core.Limiter
+	// ProxyCallsPerMinute caps one customer's direct calls to one connector in a minute,
+	// counted by ConnectorLimiter (config connectors.proxy_calls_per_minute). 0 caps nothing,
+	// and so does an absent ConnectorLimiter.
+	ProxyCallsPerMinute int64
 	// ConnectorEventSecrets finds the secret a connector's events are verified with
 	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
 	// endpoint takes no events.
@@ -285,47 +298,47 @@ type Options struct {
 
 // Server serves the router's HTTP API.
 type Server struct {
-	routers   map[routing.Modality]routing.Inspector
-	store     *store.Store
-	configs   *appconfig.Store
-	users     *users.Recorder
-	live      *live.Client
-	phone     *phone.Service
-	sessions  *session.Manager
-	relayed   *relayed
-	directory *node.Directory
-	forwarder *node.Forwarder
-	streams   *Streams
-	stream    *streamapp.Clients
-	// touched is when each key was last recorded as signing a hook.
-	touched           sync.Map
-	proxyDeclaresKind bool
-	trustAPIKeyHeader bool
-	denyRegistration  []string
-	hookSecret        string
-	campaigns         *campaign.Runner
-	simulations       *simulation.Runner
-	knowledge         knowledge.Writer
-	pages             *urls.Service
-	voices            *voices.Service
-	library           *voices.Catalogue
-	dispatch          *dispatch.Pool
-	secrets           *auth.Sealer
-	corsOrigins       []string
-	publicURL         string
-	dashboardURL      string
-	oauth             *plugins.Auth
-	pluginEvents      *pluginevents.Service
-	channels          *channels.Service
-	dlc               *dlc.Service
-	gate              *dlc.Gate
-	opsKey            string
-	authenticator     auth.Authenticator
-	authMode          auth.Mode
-	dataRetention     time.Duration
-	quota             *quota.Limiter
-	policies          *policy.Enforcer
-	connectors        core.Registry
+	routers            map[routing.Modality]routing.Inspector
+	store              *store.Store
+	configs            *appconfig.Store
+	users              *users.Recorder
+	live               *live.Client
+	phone              *phone.Service
+	sessions           *session.Manager
+	relayed            *relayed
+	directory          *node.Directory
+	workers            *node.Workers
+	forwarder          *node.Forwarder
+	streams            *Streams
+	stream             *streamapp.Clients
+	proxyDeclaresKind  bool
+	hookSecret         string
+	telnyxPublicKey    ed25519.PublicKey
+	telnyxConnectionID string
+	campaigns          *campaign.Runner
+	simulations        *simulation.Runner
+	knowledge          knowledge.Writer
+	pages              *urls.Service
+	voices             *voices.Service
+	library            *voices.Catalogue
+	dispatch           *dispatch.Pool
+	secrets            *auth.Sealer
+	privateModels      bool
+	corsOrigins        []string
+	publicURL          string
+	dashboardURL       string
+	oauth              *plugins.Auth
+	pluginEvents       *pluginevents.Service
+	channels           *channels.Service
+	dlc                *dlc.Service
+	gate               *dlc.Gate
+	opsKey             string
+	authenticator      auth.Authenticator
+	authMode           auth.Mode
+	dataRetention      time.Duration
+	quota              *quota.Limiter
+	policies           *policy.Enforcer
+	connectors         core.Registry
 	// connectorSecrets seals consent attempts; credentials stores what a consent got. Both
 	// are nil when connectors are off.
 	connectorSecrets *auth.Sealer
@@ -347,6 +360,8 @@ type Server struct {
 	connectorTransports *core.Transports
 	// connectorLimiter holds the proxy's calls after a provider's 429; nil holds none.
 	connectorLimiter *core.Limiter
+	// proxyCallsPerMinute caps one customer's direct calls to one connector; 0 caps nothing.
+	proxyCallsPerMinute int64
 
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -426,47 +441,49 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		}
 	}
 	server := &Server{
-		routers:           options.Routers,
-		store:             options.Store,
-		configs:           configs,
-		users:             recorder,
-		live:              options.Live,
-		phone:             options.Phone,
-		sessions:          options.Sessions,
-		directory:         options.Directory,
-		streams:           options.Streams,
-		stream:            options.Stream,
-		proxyDeclaresKind: options.ProxyDeclaresKind,
-		trustAPIKeyHeader: options.TrustAPIKeyHeader,
-		denyRegistration:  options.DenyRegistration,
-		hookSecret:        options.HookSecret,
-		campaigns:         options.Campaigns,
-		simulations:       options.Simulations,
-		knowledge:         options.Knowledge,
-		pages:             options.KnowledgeURLs,
-		voices:            options.Voices,
-		library:           options.VoiceLibrary,
-		dispatch:          options.Dispatch,
-		secrets:           options.Secrets,
-		corsOrigins:       options.CORSOrigins,
-		publicURL:         options.PublicURL,
-		dashboardURL:      options.DashboardURL,
-		authenticator:     authenticator,
-		authMode:          authMode,
-		dataRetention:     retention,
-		quota:             options.Quota,
-		policies:          options.Policies,
-		connectors:        options.Connectors,
-		connectorResolver: options.ConnectorResolver,
-		eventSecrets:      options.ConnectorEventSecrets,
-		channelBridge:     options.ChannelBridge,
-		eventForwarder:    options.EventForwarder,
-		mcpEvents:         options.MCPEvents,
-		episodes:          options.Episodes,
-		slackApps:         options.SlackApps,
-		operatorApps:      options.OperatorProviderApps,
-		trusted:           options.TrustedProxies,
-		upgrader:          newUpgrader(options.CORSOrigins),
+		routers:            options.Routers,
+		store:              options.Store,
+		configs:            configs,
+		users:              recorder,
+		live:               options.Live,
+		phone:              options.Phone,
+		sessions:           options.Sessions,
+		directory:          options.Directory,
+		workers:            options.Workers,
+		streams:            options.Streams,
+		stream:             options.Stream,
+		proxyDeclaresKind:  options.ProxyDeclaresKind,
+		hookSecret:         options.HookSecret,
+		telnyxPublicKey:    options.TelnyxPublicKey,
+		telnyxConnectionID: options.TelnyxConnectionID,
+		campaigns:          options.Campaigns,
+		simulations:        options.Simulations,
+		knowledge:          options.Knowledge,
+		pages:              options.KnowledgeURLs,
+		voices:             options.Voices,
+		library:            options.VoiceLibrary,
+		dispatch:           options.Dispatch,
+		secrets:            options.Secrets,
+		privateModels:      options.PrivateModelEndpoints,
+		corsOrigins:        options.CORSOrigins,
+		publicURL:          options.PublicURL,
+		dashboardURL:       options.DashboardURL,
+		authenticator:      authenticator,
+		authMode:           authMode,
+		dataRetention:      retention,
+		quota:              options.Quota,
+		policies:           options.Policies,
+		connectors:         options.Connectors,
+		connectorResolver:  options.ConnectorResolver,
+		eventSecrets:       options.ConnectorEventSecrets,
+		channelBridge:      options.ChannelBridge,
+		eventForwarder:     options.EventForwarder,
+		mcpEvents:          options.MCPEvents,
+		episodes:           options.Episodes,
+		slackApps:          options.SlackApps,
+		operatorApps:       options.OperatorProviderApps,
+		trusted:            options.TrustedProxies,
+		upgrader:           newUpgrader(authMode),
 		oauth: &plugins.Auth{
 			HTTP:         options.PluginHTTP,
 			PublicURL:    options.PublicURL,
@@ -490,6 +507,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	}
 	server.connectorTransports = options.ConnectorTransports
 	server.connectorLimiter = options.ConnectorLimiter
+	server.proxyCallsPerMinute = options.ProxyCallsPerMinute
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}
 	}
@@ -546,6 +564,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
+	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
@@ -585,7 +604,7 @@ func (s *Server) Handler() http.Handler {
 	// WaitForDelivery is false because most of what is served here is a long-
 	// lived socket; blocking the handler's return on event delivery would hold
 	// the connection open past its use. The flush in cmd/router covers shutdown.
-	served := withSentry(withRequestID(withTrace(withTiming(withCORS(s.corsOrigins,
+	served := withSentry(withRequestID(withTrace(withTiming(withCORS(s.authMode,
 		s.onOwningNode(s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))))))
 	if s.directory == nil {
 		return served
@@ -595,21 +614,12 @@ func (s *Server) Handler() http.Handler {
 	return node.Serve(served)
 }
 
-// withSentry reports what goes wrong serving a request to Sentry, except a request
-// carrying an app's Stream secrets: Sentry copies the body it is handed, and a secret in an
-// error report is a secret leaked.
+// withSentry reports what goes wrong serving a request to Sentry.
 func withSentry(handler http.Handler) http.Handler {
-	instrumented := sentryhttp.New(sentryhttp.Options{
+	return sentryhttp.New(sentryhttp.Options{
 		Repanic:         false,
 		WaitForDelivery: false,
 	}).Handle(handler)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, streamCredentialsPath) {
-			handler.ServeHTTP(w, r)
-			return
-		}
-		instrumented.ServeHTTP(w, r)
-	})
 }
 
 // withTiming reports how long the server itself spent, so a caller timing a call can tell
@@ -984,20 +994,34 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
 			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
-			if s.trustAPIKeyHeader {
-				ctx = context.WithValue(ctx, mintingKeyContextKey{}, strings.TrimSpace(r.Header.Get(mintingKeyHeader)))
-			}
 			ctx = context.WithValue(ctx, callerContextKey{}, routing.Caller{
 				UserID: principal.UserID,
-				IP:     clientIP(r, s.trusted),
+				IP:     s.callerIP(r, principal.UserID),
 			})
 			ctx = context.WithValue(ctx, actorContextKey{}, actorOf(r, principal.ServerSide))
 			r = r.WithContext(ctx)
 			s.policies.Join(principal.AppID, principal.OrganizationID)
 			s.recordUser(ctx, principal)
+			s.keepServerToken(ctx, r, principal.AppID)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// keepServerToken holds the server token the proxy forwarded for the caller's app. Only a
+// proxy that declares kinds is believed to write it, rather than pass on a caller's own.
+// A failure is logged: the request is served with whatever token was held before.
+func (s *Server) keepServerToken(ctx context.Context, r *http.Request, customer string) {
+	if s.stream == nil || s.authMode != auth.Proxy || !s.proxyDeclaresKind {
+		return
+	}
+	token := strings.TrimSpace(r.Header.Get(auth.ServerTokenHeader))
+	if token == "" {
+		return
+	}
+	if err := s.stream.KeepToken(ctx, customer, strings.TrimSpace(r.Header.Get(auth.ServerTokenKeyHeader)), token); err != nil {
+		s.logger.Warn("stream: could not keep the server token the proxy forwarded", "customer_id", customer, "error", err)
+	}
 }
 
 // recordUser writes down the end user a request is for, so an app can ask who its users
@@ -1051,25 +1075,16 @@ const corsRequestHeaders = "Authorization, " + auth.AuthTypeHeader + ", " + auth
 // instructions are replaced with one; PATCH does not, because the spec serves none.
 const corsMethods = "GET, POST, PUT, DELETE, OPTIONS"
 
-// withCORS lets a browser at the API from the origins the deployment named.
+// withCORS lets a browser at the API from the origins originAllowed accepts.
 //
-// It exists for a browser app that talks to the router directly rather than through a
-// server of its own: an extra hop would only be there to move a header, and the router is
-// already the thing that decides who may read a call.
-func withCORS(allowed []string, next http.Handler) http.Handler {
-	if len(allowed) == 0 {
-		return next
-	}
-	permitted := make(map[string]struct{}, len(allowed))
-	for _, origin := range allowed {
-		permitted[strings.TrimSpace(origin)] = struct{}{}
-	}
-	_, anywhere := permitted["*"]
-
+// It exists for a customer's website that talks to the router directly with its API key
+// and a user token, rather than through a server of its own: an extra hop would only be
+// there to move a header, and the router is already the thing that decides who may read a
+// call.
+func withCORS(mode auth.Mode, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		_, named := permitted[origin]
-		if origin != "" && (named || anywhere) {
+		if origin != "" && originAllowed(mode, origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", corsRequestHeaders)
@@ -1079,8 +1094,8 @@ func withCORS(allowed []string, next http.Handler) http.Handler {
 		}
 		// A preflight asks whether the real request would be allowed and carries nothing
 		// worth routing, so it is answered here rather than by a handler that would only
-		// report that nothing serves OPTIONS.
-		if r.Method == http.MethodOptions {
+		// report that nothing serves OPTIONS. Any other OPTIONS is routed like a request.
+		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -1582,6 +1597,51 @@ func (s *Server) getActivity(ctx context.Context, request *getActivityRequest) (
 	return &getActivityResponse{Body: activity}, nil
 }
 
+// getAgentStats returns how the calling customer's agents ran over a window.
+func (s *Server) getAgentStats(ctx context.Context, request *getAgentStatsRequest) (*getAgentStatsResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if !request.To.After(request.From) {
+		return nil, invalidRequest("to must be after from")
+	}
+	if s.store == nil {
+		return nil, invalidRequest("statistics are not available: no database configured")
+	}
+
+	peak, err := s.store.CustomerConcurrencyPeak(ctx, customerID, request.From, request.To)
+	if err != nil {
+		return nil, err
+	}
+	overall, tools, err := s.store.CustomerToolUsage(ctx, customerID, request.From, request.To)
+	if err != nil {
+		return nil, err
+	}
+
+	stats := AgentStats{
+		PeakConcurrentSessions: peak.Sessions,
+		PeakAt:                 peak.At,
+		ToolCalls:              toolStatsOf(overall),
+		Tools:                  make([]ToolStats, 0, len(tools)),
+	}
+	for _, tool := range tools {
+		stats.Tools = append(stats.Tools, toolStatsOf(tool))
+	}
+	return &getAgentStatsResponse{Body: stats}, nil
+}
+
+func toolStatsOf(usage store.ToolUsage) ToolStats {
+	return ToolStats{
+		Tool:      usage.Tool,
+		Calls:     usage.Calls,
+		Failed:    usage.Failed,
+		AvgTokens: usage.AvgTokens,
+		AvgMs:     usage.AvgMs,
+		P99Ms:     usage.P99Ms,
+	}
+}
+
 // runRollup aggregates request rows into a rollup table.
 func (s *Server) runRollup(ctx context.Context, request *runRollupRequest) (*runRollupResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
@@ -1848,6 +1908,20 @@ func (s *Server) registerServer(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
 	}, s.getActivity)
 	huma.Register(api, huma.Operation{
+		OperationID: "getAgentStats",
+		Method:      http.MethodGet,
+		Path:        "/v1/stats/agents",
+		Summary:     "How the calling customer's agents ran, across all of them",
+		Description: "The most agents that were running at once, and which tools they called: how often, " +
+			"how much each call put in front of the model and how long it took.\n" +
+			"One figure for the whole window rather than a row per bucket, because neither a peak nor " +
+			"a percentile can be summed out of smaller ones.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The window's figures"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.getAgentStats)
+	huma.Register(api, huma.Operation{
 		OperationID: "runRollup",
 		Method:      http.MethodPost,
 		Path:        "/v1/stats/rollup",
@@ -1953,6 +2027,33 @@ type getActivityRequest struct {
 
 type getActivityResponse struct {
 	Body []ActivityBucket `nullable:"false"`
+}
+
+type getAgentStatsRequest struct {
+	From time.Time `query:"from" doc:"Start of the window, inclusive." required:"true"`
+	To   time.Time `query:"to" doc:"End of the window, exclusive." required:"true"`
+}
+
+type getAgentStatsResponse struct {
+	Body AgentStats
+}
+
+// AgentStats is how a customer's agents ran over a window, across all of them.
+type AgentStats struct {
+	PeakConcurrentSessions int64       `json:"peak_concurrent_sessions" doc:"The most sessions open at the same time, each one an agent running. A session still open counts up to now."`
+	PeakAt                 *time.Time  `json:"peak_at" nullable:"true" doc:"When that peak was first reached. Null when no session was open in the window."`
+	ToolCalls              ToolStats   `json:"tool_calls" doc:"Every tool call in the window, as one. Its tool is empty."`
+	Tools                  []ToolStats `json:"tools" nullable:"false" doc:"One row per tool, most called first."`
+}
+
+// ToolStats is how often a tool ran and what it cost.
+type ToolStats struct {
+	Tool      string   `json:"tool"`
+	Calls     int64    `json:"calls"`
+	Failed    int64    `json:"failed" doc:"Calls that ended in an error."`
+	AvgTokens float64  `json:"avg_tokens" doc:"What a call put in front of the model, its arguments and its result, estimated at four characters a token."`
+	AvgMs     *float64 `json:"avg_ms" nullable:"true" doc:"From the call starting to its result. Null when none was timed."`
+	P99Ms     *float64 `json:"p99_ms" nullable:"true"`
 }
 
 type runRollupRequest struct {

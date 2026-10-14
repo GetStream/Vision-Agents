@@ -6,10 +6,10 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/caller"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/world"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 const (
@@ -17,6 +17,10 @@ const (
 	HumanBandMaxMS   = 700
 	MaxBargeInStopMS = 800
 )
+
+// BargeInIntoSilence is the barge-in stop of a call whose caller barged in while the agent
+// was silent: the agent had stopped, or never started, so there was nothing to stop.
+const BargeInIntoSilence = -2
 
 // Timing is one voice-to-voice gap.
 type Timing struct {
@@ -317,7 +321,8 @@ func Mean(samples []int) int {
 	return int(math.Round(float64(sum) / float64(len(samples))))
 }
 
-// BargeInStopMS is time from barge-in start until agent energy drops.
+// BargeInStopMS is time from barge-in start until agent energy drops, -1 when the caller
+// never barged in, and BargeInIntoSilence when the agent was not speaking as they did.
 func BargeInStopMS(rec caller.Result) int {
 	const alignmentToleranceMS = 120
 	var barge caller.Event
@@ -342,12 +347,19 @@ func BargeInStopMS(rec caller.Result) int {
 			return stop
 		}
 	}
-	return -1
+	return BargeInIntoSilence
 }
+
+// sentencePauseMs is the longest pause that still counts as one reply when scoring an
+// overlap. Speech detection splits at 250 ms, and a voice leaves 300-400 ms between two
+// sentences of the same reply: scored as is, an agent that went straight on through a
+// cough with "One moment." then "Checking" had started a turn on it. An agent that really
+// stops for the sound and answers it leaves a second or more.
+const sentencePauseMs = 600
 
 // ScoreOverlaps evaluates every non-directed sound in the script.
 func ScoreOverlaps(rec caller.Result) []OverlapCheck {
-	agent := audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
+	agent := joinPauses(audio.DetectSpeech(rec.Agent, rec.Rate, audio.AgentSpeechThreshold, audio.DefaultHangoverMs), sentencePauseMs)
 	var checks []OverlapCheck
 	for _, event := range rec.Events {
 		if event.OverlapSound == "" {
@@ -365,6 +377,19 @@ func ScoreOverlaps(rec caller.Result) []OverlapCheck {
 		checks = append(checks, check)
 	}
 	return checks
+}
+
+// joinPauses merges speech spans whose gap is shorter than gapMs.
+func joinPauses(spans []audio.Span, gapMs int) []audio.Span {
+	var out []audio.Span
+	for _, span := range spans {
+		if n := len(out); n > 0 && span.StartMs-out[n-1].EndMs < gapMs {
+			out[n-1].EndMs = max(out[n-1].EndMs, span.EndMs)
+			continue
+		}
+		out = append(out, span)
+	}
+	return out
 }
 
 // SelectivityHold is true when no overlap sound produced a new agent turn.
@@ -390,7 +415,7 @@ func HoldThroughOverlap(checks []OverlapCheck) bool {
 // FalseCutoff counts agent starts inside scripted, non-barge caller utterances.
 // Script intervals remain authoritative when the caller leg also contains a noise bed.
 func FalseCutoff(rec caller.Result) int {
-	agentSpans := audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
+	agentSpans := audio.DetectSpeech(rec.Agent, rec.Rate, audio.AgentSpeechThreshold, audio.DefaultHangoverMs)
 	n := 0
 	for _, agent := range agentSpans {
 		for _, event := range rec.Events {
@@ -426,7 +451,10 @@ func containsTimedFiller(words []TranscriptWord, startMS, endMS int) bool {
 	for _, phrase := range fillerPhrases {
 		parts := strings.Fields(phrase)
 		for i := 0; i+len(parts) <= len(words); i++ {
-			if words[i].StartMS < startMS || words[i].StartMS >= endMS {
+			// A filler said in the same breath as the tool call starts as the tool does, and word
+			// timings run a few tens of milliseconds early: it counts while its first word is
+			// still being spoken when the tool starts.
+			if words[i].EndMS <= startMS || words[i].StartMS >= endMS {
 				continue
 			}
 			matched := true
@@ -565,7 +593,7 @@ func ApplyGates(m *Metrics, sc scenario.Scenario) {
 	if len(m.FillerFail) > 0 {
 		notes = append(notes, "filler")
 	}
-	if sc.HasBargeIn() && m.BargeInStopMS < 0 {
+	if sc.HasBargeIn() && m.BargeInStopMS == -1 {
 		notes = append(notes, "barge_in")
 	} else if m.BargeInStopMS > MaxBargeInStopMS {
 		notes = append(notes, "barge_in")

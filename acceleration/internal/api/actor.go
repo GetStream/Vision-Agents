@@ -3,7 +3,10 @@ package api
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -51,8 +54,27 @@ func actorOf(r *http.Request, serverSide bool) Actor {
 	}
 	actor.Source = store.AuditSource(strings.ToLower(strings.TrimSpace(r.Header.Get(clientHeader))))
 	actor.ID = trimmedTo(r.Header.Get(actorIDHeader), actorNameLimit)
-	actor.Name = trimmedTo(r.Header.Get(actorNameHeader), actorNameLimit)
+	actor.Name = trimmedTo(headerText(r.Header.Get(actorNameHeader)), actorNameLimit)
 	return actor
+}
+
+// headerText reads a header that may carry text a header cannot: a browser refuses a header
+// value outside Latin-1, so a client percent-encodes a name such as "Łukasz" as UTF-8. A
+// value that is not a valid encoding of UTF-8 text is taken as it was sent. Control
+// characters are left out either way: an encoding can carry a newline a header never could,
+// and a name is shown on a line of its own.
+func headerText(value string) string {
+	if strings.Contains(value, "%") {
+		if decoded, err := url.PathUnescape(value); err == nil && utf8.ValidString(decoded) {
+			value = decoded
+		}
+	}
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, value)
 }
 
 // ActorFrom returns who the request says it is from. A request nobody named is the API
@@ -65,10 +87,16 @@ func ActorFrom(ctx context.Context) Actor {
 	return actor
 }
 
+// trimmedTo is value without the space around it, cut to no more than most bytes between two
+// characters: a decoded name is UTF-8, and half a character is not text Postgres will store.
 func trimmedTo(value string, most int) string {
 	trimmed := strings.TrimSpace(value)
-	if len(trimmed) > most {
-		return trimmed[:most]
+	if len(trimmed) <= most {
+		return trimmed
 	}
-	return trimmed
+	cut := most
+	for cut > 0 && !utf8.RuneStart(trimmed[cut]) {
+		cut--
+	}
+	return trimmed[:cut]
 }

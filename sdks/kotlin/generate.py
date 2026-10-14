@@ -24,6 +24,7 @@ Usage:
     uv run sdks/kotlin/generate.py --check
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -53,7 +54,9 @@ OPERATIONS = [
     "querySessions",
     "rewindSession",
     "search",
+    "startSessionVoice",
     "stopSession",
+    "stopSessionVoice",
     "updateSession",
 ]
 
@@ -191,6 +194,8 @@ def main(argv: list[str]) -> int:
             "--rm",
             "-v",
             f"{work}:/work",
+            "--user",
+            f"{os.getuid()}:{os.getgid()}",
             IMAGE,
             "generate",
             "-i",

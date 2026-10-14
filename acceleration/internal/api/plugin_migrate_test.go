@@ -94,7 +94,7 @@ func (s *PluginMigrateSuite) TestARealRunLeavesTheAgentsToolsWorkingWithNoNewLog
 	authorized, registered := s.provider.Hits(fakeprovider.PathAuthorize), s.provider.Hits(fakeprovider.PathRegister)
 
 	report := s.run(true)
-	opened := s.client.createSession(CreateSessionRequest{ConfigId: &config, Text: pointerTo(true)})
+	opened := s.client.createSession(CreateSessionRequest{ConfigId: &config})
 	ran := s.toolRan(s.serverClient.actingFor(s.client), opened.Id)
 
 	s.Zero(report.Count("", pluginmigrate.Skipped), "%v", report.Rows)
@@ -112,7 +112,7 @@ func (s *PluginMigrateSuite) TestAPersonsMovedLoginAnswersTheirSessionBinding() 
 
 	s.run(true)
 	chosen := []SessionConnectorBinding{{Name: movedPlugin, ConnectionId: pluginmigrate.MovedConnectionID(mine)}}
-	opened := s.client.createSession(CreateSessionRequest{ConfigId: &config, Text: pointerTo(true), ConnectorBindings: &chosen})
+	opened := s.client.createSession(CreateSessionRequest{ConfigId: &config, ConnectorBindings: &chosen})
 	ran := s.toolRan(s.serverClient.actingFor(s.client), opened.Id)
 
 	s.Equal(connectorEchoText, ran["result"])
@@ -541,7 +541,7 @@ func (s *PluginMigrateSuite) TestASessionBindingGrantsByNameAndAFixedOneByDigest
 
 	s.run(true)
 	chosen := []SessionConnectorBinding{{Name: movedPlugin, ConnectionId: pluginmigrate.MovedConnectionID(mine)}}
-	opened := s.client.createSession(CreateSessionRequest{ConfigId: &personal, Text: pointerTo(true), ConnectorBindings: &chosen})
+	opened := s.client.createSession(CreateSessionRequest{ConfigId: &personal, ConnectorBindings: &chosen})
 	ran := s.toolRan(s.serverClient.actingFor(s.client), opened.Id)
 
 	s.Equal(connectorEchoText, ran["result"])
@@ -709,7 +709,7 @@ func (s *PluginMigrateSuite) loginTo(config, user, plugin, client, tokenEndpoint
 func (s *PluginMigrateSuite) toolRan(as *testClient, id string) map[string]any {
 	events := s.client.opens("/v1/agents/sessions/" + id + "/events")
 	s.Require().Equal(http.StatusOK, as.do(http.MethodPost, "/v1/agents/sessions/"+id+"/respond",
-		RespondRequest{Text: "ask the crm", CommandId: pointerTo(s.utils.uuid())}, nil))
+		RespondRequest{Text: "ask the crm", RequestId: pointerTo(s.utils.uuid())}, nil))
 	return s.await(events, "tool_ran")
 }
 

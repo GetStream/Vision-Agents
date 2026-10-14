@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -53,19 +52,6 @@ func (a AppScope) clause() bun.Safe {
 // is acted on for nobody rather than for whichever came first.
 var ErrAmbiguousHook = errors.New("store: more than one customer holds what that hook names")
 
-// StreamAppByPK is the app registered for a Stream app id, with its keys.
-func (s *Store) StreamAppByPK(ctx context.Context, app int64) (StreamApp, error) {
-	var found StreamApp
-	err := s.db.NewSelect().Model(&found).Column("customer_id").Where("stream_app_pk = ?", app).Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return StreamApp{}, ErrNoStreamApp
-	}
-	if err != nil {
-		return StreamApp{}, fmt.Errorf("store: find stream app: %w", err)
-	}
-	return s.StreamApp(ctx, found.CustomerID)
-}
-
 // NumberByCallInApp finds the number whose lines reach a call, among the numbers attached
 // in one app. A routing rule names the call its callers are put in, which is what an
 // arriving call is recognised by; a number attached before its call was stored is found by
@@ -98,6 +84,24 @@ func (s *Store) NumberByCallInApp(ctx context.Context, scope AppScope, callType,
 	switch customers(held, func(n PhoneNumber) string { return n.CustomerID }) {
 	case 0:
 		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
+	case 1:
+		return held[0], nil
+	}
+	return PhoneNumber{}, ErrAmbiguousHook
+}
+
+// NumberRungInApp is the attached number an inbound call rang, among the numbers attached
+// in one app: the call is named for the session answering it, so it carries the number.
+func (s *Store) NumberRungInApp(ctx context.Context, scope AppScope, e164 string) (PhoneNumber, error) {
+	var held []PhoneNumber
+	if err := s.db.NewSelect().Model(&held).
+		Where("e164 = ?", e164).Where("stream_trunk_id IS NOT NULL").
+		Where("released_at IS NULL").ApplyQueryBuilder(scope.where).Limit(20).Scan(ctx); err != nil {
+		return PhoneNumber{}, fmt.Errorf("store: number rung: %w", err)
+	}
+	switch customers(held, func(n PhoneNumber) string { return n.CustomerID }) {
+	case 0:
+		return PhoneNumber{}, fmt.Errorf("store: no number %s is attached", e164)
 	case 1:
 		return held[0], nil
 	}

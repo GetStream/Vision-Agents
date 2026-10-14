@@ -208,7 +208,7 @@ func (s *MemorySuite) ask(as *testClient, opened Session, text string) string {
 	command := frame{"type": "respond", "text": text}
 	// A conversation kept in Stream Chat takes each message once, by the id it is sent with.
 	if value(opened.ConversationId) != "" {
-		command["command_id"] = s.utils.uuid()
+		command["request_id"] = s.utils.uuid()
 	}
 	s.Require().NoError(connection.WriteJSON(command))
 

@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 // Health grades for one clip, and for a target's share of healthy clips.

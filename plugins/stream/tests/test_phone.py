@@ -56,8 +56,7 @@ class Router:
                 "vendor_call_id": "CA123",
                 "status": "queued",
                 "vendor": "twilio",
-                "call_id": self.placed.get("call_id", "call-made-up"),
-                "call_type": self.placed.get("call_type", "default"),
+                "session_id": self.placed.get("session_id", "session-made-up"),
             },
         )
 
@@ -81,8 +80,7 @@ class Router:
                 "vendor_call_id": "CA456",
                 "status": "queued",
                 "vendor": "twilio",
-                "call_id": self.transferred["call_id"],
-                "call_type": self.transferred.get("call_type", "agent"),
+                "session_id": self.transferred["session_id"],
             },
         )
 
@@ -207,7 +205,6 @@ class TestPhone:
                 from_="+17195551234",
                 to="+13035559876",
                 call_id="support-line",
-                call_type="livestream",
                 ring_timeout=20.0,
                 initial_digits="ww1234#",
                 headers={"X-Ticket": "42"},
@@ -218,8 +215,7 @@ class TestPhone:
         assert router.placed is not None
         assert router.placed["from"] == "+17195551234"
         assert router.placed["to"] == "+13035559876"
-        assert router.placed["call_id"] == "support-line"
-        assert router.placed["call_type"] == "livestream"
+        assert router.placed["session_id"] == "support-line"
         assert router.placed["ring_timeout_seconds"] == 20
         assert router.placed["initial_digits"] == "ww1234#"
         assert router.placed["headers"] == {"X-Ticket": "42"}
@@ -234,6 +230,18 @@ class TestPhone:
         assert router.placed is not None
         assert set(router.placed) == {"from", "to"}
 
+    async def test_a_call_on_another_call_type_is_refused(
+        self, router: Router, phone: stream.Phone
+    ):
+        # A placed call lands in its session's own call, agent:<session id>.
+        with pytest.raises(ValueError, match="livestream"):
+            await phone.place(
+                OutboundCall(
+                    from_="+17195551234", to="+13035559876", call_type="livestream"
+                )
+            )
+        assert router.placed is None
+
     async def test_what_comes_back_names_the_call_the_agent_has_to_join(
         self, router: Router, phone: stream.Phone
     ):
@@ -247,7 +255,7 @@ class TestPhone:
         assert placed.status == "queued"
         assert placed.vendor == "twilio"
         assert placed.call_id == "support-line"
-        assert placed.call_type == "default"
+        assert placed.call_type == "agent"
 
     async def test_a_refused_call_says_why(self, router: Router, phone: stream.Phone):
         # A vendor that cannot express one of the terms refuses the call, and the reason
@@ -263,32 +271,19 @@ class TestPhone:
         self, router: Router, phone: stream.Phone
     ):
         placed = await phone.transfer(
-            from_="+17195551234",
-            to="+13035559876",
-            call_id="support-line",
-            call_type="livestream",
+            from_="+17195551234", to="+13035559876", session_id="session-1"
         )
 
-        assert router.transferred is not None
-        assert router.transferred["from"] == "+17195551234"
-        assert router.transferred["to"] == "+13035559876"
-        assert router.transferred["call_id"] == "support-line"
-        assert router.transferred["call_type"] == "livestream"
+        assert router.transferred == {
+            "from": "+17195551234",
+            "to": "+13035559876",
+            "session_id": "session-1",
+        }
         assert placed.vendor_call_id == "CA456"
         assert placed.status == "queued"
         assert placed.vendor == "twilio"
-        assert placed.call_id == "support-line"
-        assert placed.call_type == "livestream"
-
-    async def test_transfer_with_no_call_type_asks_for_none(
-        self, router: Router, phone: stream.Phone
-    ):
-        await phone.transfer(
-            from_="+17195551234", to="+13035559876", call_id="support-line"
-        )
-
-        assert router.transferred is not None
-        assert set(router.transferred) == {"from", "to", "call_id"}
+        assert placed.call_id == "session-1"
+        assert placed.call_type == "agent"
 
     async def test_a_refused_transfer_says_why(
         self, router: Router, phone: stream.Phone
@@ -297,7 +292,7 @@ class TestPhone:
 
         with pytest.raises(RuntimeError, match="cannot transfer"):
             await phone.transfer(
-                from_="+17195551234", to="+13035559876", call_id="support-line"
+                from_="+17195551234", to="+13035559876", session_id="session-1"
             )
 
     async def test_search_returns_both_offered_and_skipped_vendors(
@@ -332,15 +327,10 @@ class TestPhone:
     async def test_attach_returns_the_trunk_route_and_sip_uri(
         self, router: Router, phone: stream.Phone
     ):
-        attached = await phone.attach(
-            "+15125551234", call_id="support-line", call_type="livestream"
-        )
+        attached = await phone.attach("+15125551234", allowed_ips=["192.0.2.0/24"])
 
         assert router.attached_e164 == "+15125551234"
-        assert router.attached == {
-            "call_id": "support-line",
-            "call_type": "livestream",
-        }
+        assert router.attached == {"allowed_ips": ["192.0.2.0/24"]}
         assert attached.trunk_id == "trunk-1"
         assert attached.route_id == "route-1"
         assert attached.sip_uri == "sip:trunk@sip.stream-io-api.com"
@@ -348,7 +338,7 @@ class TestPhone:
     async def test_attach_with_only_e164_sends_no_body(
         self, router: Router, phone: stream.Phone
     ):
-        # No call_id/call_type/allowed_ips leaves the request body UNSET, so the router
+        # No allowed_ips leaves the request body UNSET, so the router
         # must never see a JSON body for this call.
         attached = await phone.attach("+15125551234")
 

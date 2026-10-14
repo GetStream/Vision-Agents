@@ -5,6 +5,7 @@ package core_test
 import (
 	"context"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -164,6 +165,79 @@ func (s *LimiterSuite) TestAnUnreachableRedisHoldsNothing() {
 
 	s.Zero(limiter.Block(s.ctx, s.key, 30*time.Second))
 	s.Zero(limiter.Wait(s.ctx, s.key))
+}
+
+// TestTheCallsUpToTheLimitGoAndTheNextWaitsForTheWindowToEnd: limit 3 a minute, from 12:00:35
+// (AI-958).
+func (s *LimiterSuite) TestTheCallsUpToTheLimitGoAndTheNextWaitsForTheWindowToEnd() {
+	s.clock.now = s.clock.now.Truncate(time.Minute).Add(35 * time.Second)
+	limiter := core.NewLimiter(s.redis, s.clock.Now)
+
+	for range 3 {
+		s.Zero(limiter.Take(s.ctx, s.key, 3, time.Minute))
+	}
+
+	s.Equal(25*time.Second, limiter.Take(s.ctx, s.key, 3, time.Minute))
+	s.clock.Add(20 * time.Second)
+	s.Equal(5*time.Second, limiter.Take(s.ctx, s.key, 3, time.Minute), "a refused call does not move the window")
+	s.clock.Add(5 * time.Second)
+	s.Zero(limiter.Take(s.ctx, s.key, 3, time.Minute), "the next window starts a new count")
+}
+
+// TestTwoRoutersOnOneRedisCountTheSameCalls: the count is in Redis, so a customer spreading
+// calls over routers gets the limit once.
+func (s *LimiterSuite) TestTwoRoutersOnOneRedisCountTheSameCalls() {
+	first := core.NewLimiter(s.redis, s.clock.Now)
+	second := core.NewLimiter(s.connect(os.Getenv("ROUTER_REDIS_ADDR")), s.clock.Now)
+	s.clock.now = s.clock.now.Truncate(time.Minute)
+
+	s.Zero(first.Take(s.ctx, s.key, 2, time.Minute))
+	s.Zero(second.Take(s.ctx, s.key, 2, time.Minute))
+
+	s.Positive(first.Take(s.ctx, s.key, 2, time.Minute))
+}
+
+func (s *LimiterSuite) TestAnotherKeyIsNotCounted() {
+	limiter := core.NewLimiter(s.redis, s.clock.Now)
+	s.Zero(limiter.Take(s.ctx, s.key, 1, time.Minute))
+	s.Require().Positive(limiter.Take(s.ctx, s.key, 1, time.Minute))
+
+	s.Zero(limiter.Take(s.ctx, s.key+":other", 1, time.Minute))
+}
+
+// TestACountLeavesRedisAfterTwoWindows: no count outlives the window after its own.
+func (s *LimiterSuite) TestACountLeavesRedisAfterTwoWindows() {
+	s.clock.now = s.clock.now.Truncate(time.Minute)
+	limiter := core.NewLimiter(s.redis, s.clock.Now)
+
+	s.Zero(limiter.Take(s.ctx, s.key, 1, time.Minute))
+
+	ttl, err := s.redis.Do(s.ctx, s.redis.B().Pttl().Key(s.key+":"+strconv.FormatInt(s.clock.now.UnixMilli(), 10)).Build()).AsInt64()
+	s.Require().NoError(err)
+	s.InDelta((2 * time.Minute).Milliseconds(), ttl, 1000)
+}
+
+// TestNoLimitNoKeyOrNoLimiterCountsNothing: each refuses no call, however many are sent.
+func (s *LimiterSuite) TestNoLimitNoKeyOrNoLimiterCountsNothing() {
+	limiter := core.NewLimiter(s.redis, s.clock.Now)
+	var absent *core.Limiter
+	for range 3 {
+		s.Zero(limiter.Take(s.ctx, s.key, 0, time.Minute))
+		s.Zero(limiter.Take(s.ctx, "", 1, time.Minute))
+		s.Zero(limiter.Take(s.ctx, s.key+":window", 1, 0))
+		s.Zero(absent.Take(s.ctx, s.key, 1, time.Minute))
+	}
+}
+
+// TestAnUnreachableRedisCountsNothing: Take fails open, as Wait does.
+func (s *LimiterSuite) TestAnUnreachableRedisCountsNothing() {
+	gone := s.connect(os.Getenv("ROUTER_REDIS_ADDR"))
+	gone.Close()
+	limiter := core.NewLimiter(gone, s.clock.Now)
+
+	for range 3 {
+		s.Zero(limiter.Take(s.ctx, s.key, 1, time.Minute))
+	}
 }
 
 // limiterClock is a clock a test moves.

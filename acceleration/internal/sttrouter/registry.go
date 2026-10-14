@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/grok"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/inworld"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/microsoft"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/muse"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/parakeet"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/togethernemotron"
@@ -261,6 +262,15 @@ func DefaultRegistry() *Registry {
 	})
 
 	return registry
+}
+
+// RegisterMock adds the load-test transcriber, which reaches no vendor and recognises
+// nothing. A deployment that has not asked for mocks never calls this, so mock/mock-stt
+// is a target nothing can be built for.
+func RegisterMock(registry *Registry) {
+	registry.Register(mock.ProviderName, func(spec routing.Spec) (stt.STT, error) {
+		return mock.New(mock.Options{Model: spec.Model, Logger: spec.Logger})
+	})
 }
 
 // microsoftSettings is the same wait as togetherNemotronSettings, for the same reason:

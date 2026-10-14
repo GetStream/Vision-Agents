@@ -303,9 +303,16 @@ func (s *Store) AppConnectionByAccount(ctx context.Context, customerID, connecto
 	return connection, nil
 }
 
+// bindsFixedConnection is the WHERE clause that finds the agent configs that bind a connection
+// as their fixed connection, matched as boundByConfig matches them.
+const bindsFixedConnection = "connectors @> jsonb_build_array(jsonb_build_object('connection', jsonb_build_object('type', 'fixed', 'connection_id', ?::text)))"
+
 // AgentConfigsBindingConnection returns the customer's live agent configs that bind the
 // connection as their fixed connection, oldest first: the agents that answer on the provider
-// unit the connection is, matched as boundByConfig matches them.
+// unit the connection is, matched as boundByConfig matches them. A test copy (DraftOfTag) is
+// left out: it answers no channel message and subscribes to no event (AI-1049, AI-1048). The
+// first is the connection's owner, which refuseSecondChannelAgent keeps the only one on a
+// channel connection.
 func (s *Store) AgentConfigsBindingConnection(ctx context.Context, customerID, connectionID string) ([]AgentConfig, error) {
 	if customerID == "" || connectionID == "" {
 		return nil, stack.Wrap(errors.New("store: a customer and a connection id are required"))
@@ -314,7 +321,8 @@ func (s *Store) AgentConfigsBindingConnection(ctx context.Context, customerID, c
 	err := s.db.NewSelect().Model(&configs).
 		Where("customer_id = ?", customerID).
 		Where("deleted_at IS NULL").
-		Where("connectors @> jsonb_build_array(jsonb_build_object('connection', jsonb_build_object('type', 'fixed', 'connection_id', ?::text)))", connectionID).
+		Where(notTestCopy).
+		Where(bindsFixedConnection, connectionID).
 		Order("created_at", "id").
 		Scan(ctx)
 	if err != nil {

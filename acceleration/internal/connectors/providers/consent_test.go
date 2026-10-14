@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 )
@@ -348,22 +349,25 @@ func (s *ConsentSuite) TestHubSpotWithoutAPreregisteredClientIsRefusedRatherThan
 	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
 }
 
-func (s *ConsentSuite) TestShopifyConnectsToTheShopWithTheCustomersClient() {
-	s.Equal("https://mystore.myshopify.com/api/mcp", s.resolve("shopify", map[string]string{"shop": "mystore.myshopify.com"}).Endpoints["mcp"])
-	srv := fakeprovider.New(s.T())
-	resolved := s.atFake(srv, s.resolve("shopify", map[string]string{"shop": "mystore.myshopify.com"}))
-	scheme := s.scheme(srv, s.preregistered(srv, core.ClientCustomer))
-
-	out := s.begin(scheme, resolved)
-	s.Equal(1, srv.Hits(fakeprovider.PathProtectedResource))
-	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
-	query := s.query(out.AuthorizeURL)
-	s.Equal(srv.ClientID, query.Get("client_id"))
-	s.NotContains(query, "scope")
-
-	stored, _, err := s.complete(srv, scheme, resolved, out)
+// The storefront answers without a credential (shopify.dev Policy and FAQs, opened
+// 2026-10-13), so connecting stores nothing and sends the browser nowhere.
+func (s *ConsentSuite) TestShopifyNeedsNoLogin() {
+	raw, err := fs.ReadFile(providers.FS, "shopify.yaml")
 	s.Require().NoError(err)
-	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
+	manifest, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
+	s.Equal([]string{none.Name}, manifest.Schemes)
+	s.Empty(manifest.Client.Registration)
+	s.Equal("A shop's policies and FAQs.", manifest.Description)
+	s.Equal("asked for an OAuth login; the storefront MCP at /api/mcp needs none", manifest.Broken()[1])
+	resolved, err := manifest.Resolve(none.Name, map[string]string{"shop": "mystore.myshopify.com"}, nil)
+	s.Require().NoError(err)
+	s.Equal("https://mystore.myshopify.com/api/mcp", resolved.Endpoints["mcp"])
+
+	out, err := none.New().Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved})
+	s.Require().NoError(err)
+	s.True(out.Done)
+	s.Empty(out.AuthorizeURL)
 }
 
 // The shop is put into the MCP endpoint's host, so only a myshopify.com host is taken.
@@ -373,7 +377,7 @@ func (s *ConsentSuite) TestShopifyRefusesAShopOutsideMyshopify() {
 	manifest, err := core.ParseManifest(raw)
 	s.Require().NoError(err)
 	for _, shop := range []string{"evil.example", "mystore.myshopify.com.evil.example", "127.0.0.1", "mystore.myshopify.com/x"} {
-		_, err := manifest.Resolve(oauth2code.Name, map[string]string{"shop": shop}, nil)
+		_, err := manifest.Resolve(none.Name, map[string]string{"shop": shop}, nil)
 		s.Error(err, shop)
 	}
 }
@@ -399,6 +403,8 @@ func (s *ConsentSuite) atFake(srv *fakeprovider.Server, m core.ResolvedManifest)
 		"revoke":    srv.URL + fakeprovider.PathRevoke,
 		"mcp":       srv.URL + fakeprovider.PathMCP,
 		"resource":  srv.URL + fakeprovider.PathMCP,
+		// No consent calls api_base: only the connection proxy's direct calls go there.
+		"api_base": srv.URL,
 	}
 	endpoints := map[string]string{}
 	for role := range m.Endpoints {

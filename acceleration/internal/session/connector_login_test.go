@@ -84,6 +84,7 @@ func (s *ConnectorLoginSuite) TestOnlyAnOptionalBindingOfTheCallersOwnWaitsForAL
 	optional := s.config(s.chosen("crm", "whoami"))
 	shared := s.persisted(s.spec(optional, "alice", nil))
 	shared.ConversationID = "agent:" + persistent.ThreadChannelPrefix + "0199"
+	shared.Thread = true
 	unverified := s.persisted(s.spec(optional, "", nil))
 	unverified.Caller, unverified.CallerKind = routing.Caller{}, auth.KindServer
 

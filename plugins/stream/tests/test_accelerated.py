@@ -179,8 +179,35 @@ class TestAccelerated:
         assert router.created["llm"] == "gemma4"
         assert router.created["stt"] == "realtime-best"
         assert router.created["tts"] == "sonic_36"
-        assert router.created["call_id"] == "call-1"
-        assert router.created["instructions"] == "be brief"
+
+    async def test_the_session_is_held_by_the_call_id_with_voice(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        # The session's call is agent:<session id>, the call the agent joined.
+        assert router.created is not None
+        assert router.created["id"] == "call-1"
+        assert router.created["start_voice"] is True
+        for field in ("call_id", "call_type", "instructions", "text"):
+            assert field not in router.created
+
+    async def test_a_greeting_is_sent_with_its_mode(
+        self, router: Router, call: RemoteCall
+    ):
+        llm = stream.Accelerated(
+            greeting="Hello.",
+            greeting_mode="variation",
+            url=router.url,
+            customer_id="acme",
+        )
+        await llm.join_remote(call)
+        try:
+            assert router.created is not None
+            assert router.created["greeting"] == {
+                "text": "Hello.",
+                "mode": "variation",
+            }
+        finally:
+            await llm.leave_remote()
 
     async def test_the_harness_is_left_to_the_agent_config(
         self, router: Router, joined: stream.Accelerated
@@ -406,7 +433,10 @@ class TestAccelerated:
         await joined.respond_remote("greet them", interrupt=False)
 
         assert await router.answered() == {"type": "say", "text": "one moment"}
-        assert await router.answered() == {"type": "respond", "text": "greet them"}
+        respond = await router.answered()
+        assert respond["type"] == "respond"
+        assert respond["text"] == "greet them"
+        assert len(respond["request_id"]) == 32
 
     async def test_responding_with_images_sends_them_on_the_socket(
         self, router: Router, joined: stream.Accelerated
@@ -655,8 +685,8 @@ class TestAccelerated:
         self, router: Router, writing: stream.Accelerated
     ):
         assert router.created is not None
-        assert router.created["text"] is True
-        assert "call_id" not in router.created
+        assert router.created.get("start_voice", False) is False
+        assert "id" not in router.created
 
     async def test_the_conversation_answered_in_is_the_one_the_agent_was_given(
         self, router: Router, writing: stream.Accelerated
@@ -859,12 +889,14 @@ class TestAccelerated:
         try:
             assert router.created_for == "alice"
 
-            # The router keeps an end user's conversation, and takes each message to it
-            # once, by its id.
+            # The router takes each message once, by its id.
             await llm.respond_remote("when am I free?", interrupt=False)
             command = await router.answered()
             assert command["type"] == "respond"
             assert command["text"] == "when am I free?"
-            assert command["command_id"]
+            await llm.respond_remote("and tomorrow?", interrupt=False)
+            again = await router.answered()
+            assert command["request_id"]
+            assert again["request_id"] != command["request_id"]
         finally:
             await llm.leave_remote()

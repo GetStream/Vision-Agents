@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /** How many events a slow [AgentSession.events] collector may fall behind before the oldest go. */
 private const val EVENT_BUFFER = 256
@@ -36,7 +38,8 @@ private const val EVENT_BUFFER = 256
  * `ViewModel` that holds one and closes it in `onCleared` is the usual home.
  */
 public class AgentSession internal constructor(
-    private val backend: Backend,
+    /** Where this conversation is held, and who is holding it. */
+    public val backend: Backend,
     session: Session,
     tools: List<AgentTool>,
     context: CoroutineContext = Dispatchers.Default,
@@ -56,6 +59,7 @@ public class AgentSession internal constructor(
     private val state = MutableStateFlow(Conversation())
     private val connected = MutableStateFlow(false)
     private val stoppedBy = MutableStateFlow<AgentsException?>(null)
+    private val held = MutableStateFlow<List<ToolApprovalRequest>>(emptyList())
     private val broadcast = MutableSharedFlow<AgentEvent>(
         extraBufferCapacity = EVENT_BUFFER,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -77,6 +81,9 @@ public class AgentSession internal constructor(
     /** Why the socket stopped, or null. A conversation that ended normally has none. */
     public val failure: StateFlow<AgentsException?> = stoppedBy.asStateFlow()
 
+    /** Calls of tools that ask first, waiting for the person to answer with [decide], oldest first. */
+    public val approvals: StateFlow<List<ToolApprovalRequest>> = held.asStateFlow()
+
     /**
      * The session's turns: asking, reading back and rewinding. What is asked here shows in
      * [conversation] at once, and the reply streams into it.
@@ -84,7 +91,6 @@ public class AgentSession internal constructor(
     public val responses: Responses = Responses(
         backend,
         session.id,
-        kept = session.conversationId.isNotEmpty(),
         asked = { text -> state.update { it.said(text) } },
     )
 
@@ -127,15 +133,49 @@ public class AgentSession internal constructor(
         socket.send(Command.Say(text))
     }
 
-    /** Abandons the reply in flight, or stops the durable command named. */
-    public suspend fun interrupt(commandId: String = "") {
-        socket.send(Command.Interrupt(commandId))
+    /** Abandons the reply in flight, or stops the request named. */
+    public suspend fun interrupt(requestId: String = "") {
+        socket.send(Command.Interrupt(requestId))
     }
 
-    /** Replaces the system prompt, from the next turn on. */
-    public suspend fun setInstructions(instructions: String) {
-        socket.send(Command.Instructions(instructions))
+    /**
+     * Answers a call waiting in [approvals].
+     *
+     * Allowed, the tool runs and its result goes back as it would have. Declined, it never runs:
+     * the model is told the person declined, and the call's step shows [summary]. A call that
+     * is not waiting is left alone, so answering twice does nothing. If the answer cannot be
+     * sent, the call waits again.
+     */
+    public suspend fun decide(toolCallId: String, allowed: Boolean, summary: String = "") {
+        var index = -1
+        var request: ToolApprovalRequest? = null
+        held.update { waiting ->
+            index = waiting.indexOfFirst { it.id == toolCallId }
+            request = waiting.getOrNull(index)
+            if (index < 0) waiting else waiting.filterIndexed { i, _ -> i != index }
+        }
+        val decided = request ?: return
+        val call = decided.call
+        try {
+            socket.send(Command.ToolApproval(call.id, allowed, summary, call.requestId, call.turnId))
+        } catch (e: AgentsException) {
+            held.update { it.toMutableList().apply { add(minOf(index, size), decided) } }
+            throw e
+        }
+        if (allowed) {
+            run(call, decided.tool)
+        } else {
+            socket.send(
+                Command.ToolResult(call.id, error = "The person declined this call.", requestId = call.requestId, turnId = call.turnId),
+            )
+        }
     }
+
+    /** Puts the agent on the session's call, `agent:<session id>`. See [Sessions.startVoice]. */
+    public suspend fun startVoice(): Session = Sessions(backend).startVoice(session.id).also { session = it }
+
+    /** Takes the agent off the call and carries on in writing. See [Sessions.stopVoice]. */
+    public suspend fun stopVoice(): Session = Sessions(backend).stopVoice(session.id).also { session = it }
 
     /** Renames this conversation or relabels it, and returns it as it now is. See [Sessions.update]. */
     public suspend fun update(
@@ -175,6 +215,7 @@ public class AgentSession internal constructor(
         socket.close()
         scope.cancel()
         connected.value = false
+        held.value = emptyList()
         state.update { it.copy(state = Conversation.State.Ended) }
     }
 
@@ -182,7 +223,11 @@ public class AgentSession internal constructor(
         state.update { it.reduce(event) }
         when (event.kind) {
             AgentEvent.Kind.ToolCall -> event.toolCall?.let(::answer)
-            AgentEvent.Kind.ToolCancel -> running.remove(event.string("id"))?.cancel()
+            AgentEvent.Kind.ToolCancel -> {
+                val id = event.string("id")
+                running.remove(id)?.cancel()
+                held.update { waiting -> waiting.filterNot { it.id == id } }
+            }
             else -> Unit
         }
         broadcast.tryEmit(event)
@@ -191,29 +236,40 @@ public class AgentSession internal constructor(
     private fun stopped(error: AgentsException?) {
         stoppedBy.value = error
         connected.value = false
+        held.value = emptyList()
         state.update { it.copy(state = Conversation.State.Ended) }
         running.values.forEach { it.cancel() }
     }
 
-    /**
-     * Runs a tool the model asked for and sends back what it returned.
-     *
-     * A coroutine of its own, so a slow tool holds up neither the transcript nor the read loop,
-     * which is also what delivers `tool_cancel`.
-     */
+    /** Runs a tool the model asked for, or holds the call for the person when the tool asks first. */
     private fun answer(call: AgentEvent.ToolCall) {
         // Session events go to every watcher, and another one may own this call. Answering a
         // tool this device never declared would resolve it before its owner could.
         val tool = tools[call.name] ?: return
+        val approval = tool.approval
+        if (approval != null) {
+            held.update { it + ToolApprovalRequest(call, approval, tool) }
+        } else {
+            run(call, tool)
+        }
+    }
+
+    /**
+     * Runs a tool and sends back what it returned.
+     *
+     * A coroutine of its own, so a slow tool holds up neither the transcript nor the read loop,
+     * which is also what delivers `tool_cancel`.
+     */
+    private fun run(call: AgentEvent.ToolCall, tool: AgentTool) {
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val result = try {
-                Command.ToolResult(call.id, output = tool.run(call.argumentValues), commandId = call.commandId, turnId = call.turnId)
+                Command.ToolResult(call.id, output = tool.run(call.argumentValues), requestId = call.requestId, turnId = call.turnId)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 // The model can only say something useful about a tool that did not work if
                 // it is told that it did not work.
-                Command.ToolResult(call.id, error = e.message ?: e.toString(), commandId = call.commandId, turnId = call.turnId)
+                Command.ToolResult(call.id, error = e.message ?: e.toString(), requestId = call.requestId, turnId = call.turnId)
             }
             try {
                 socket.send(result)
@@ -225,4 +281,18 @@ public class AgentSession internal constructor(
         job.invokeOnCompletion { running.remove(call.id, job) }
         job.start()
     }
+}
+
+/** A call of one of your tools, waiting for the person to allow it. */
+public class ToolApprovalRequest internal constructor(
+    public val call: AgentEvent.ToolCall,
+    /** The question the tool asks. */
+    public val approval: AgentTool.Approval,
+    internal val tool: AgentTool,
+) {
+    public val id: String get() = call.id
+
+    /** The model's own words for why it wants the call, from the argument the approval names, or the empty string. */
+    public val reason: String
+        get() = approval.reasonArgument?.let { (call.argumentValues[it] as? JsonPrimitive)?.contentOrNull }.orEmpty()
 }

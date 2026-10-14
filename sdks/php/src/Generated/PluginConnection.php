@@ -32,7 +32,7 @@ final readonly class PluginConnection
         public ?string $instanceHint = null,
         public ?bool $instanceRequired = null,
         public ?string $instanceUrl = null,
-        // True when the config names the plugin under user_plugins only: each end user connects their own account in...
+        // True when the config names the plugin with user: each end user connects their own account in the conversation.
         public ?bool $user = null,
     ) {
     }

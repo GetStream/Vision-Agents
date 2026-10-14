@@ -15,10 +15,12 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // Service is what the CLI and the HTTP API both talk to.
@@ -106,6 +108,22 @@ type Apps interface {
 
 // errNoStream is a service with no Stream app to make lines in.
 var errNoStream = errors.New("phone: no stream credentials")
+
+// Suspended returns ErrSuspended for an app Stream staff stopped from using the phone. A
+// suspension that cannot be read refuses too: it is there to stop fraud that costs money.
+func (s *Service) Suspended(ctx context.Context, customerID string) error {
+	if s.store == nil {
+		return nil
+	}
+	_, err := s.store.TelephonySuspension(ctx, customerID)
+	if errors.Is(err, store.ErrNotSuspended) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return stack.Wrap(ErrSuspended)
+}
 
 // streamFor is the app new lines for a customer are made in, and its pin.
 func (s *Service) streamFor(ctx context.Context, customer string) (*Stream, int64, error) {
@@ -307,6 +325,15 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	if purchase.Owner.CustomerID == "" {
 		return store.PhoneNumber{}, stack.Wrap(errors.New("phone: a number must belong to a customer"))
 	}
+	if err := s.Suspended(ctx, purchase.Owner.CustomerID); err != nil {
+		return store.PhoneNumber{}, err
+	}
+	// An app Stream blocked could not use a number, so it does not get to pay for one.
+	if s.apps != nil {
+		if _, _, err := s.apps.For(ctx, purchase.Owner.CustomerID); errors.Is(err, streamapp.ErrStreamAppDisconnected) {
+			return store.PhoneNumber{}, stack.Wrap(err)
+		}
+	}
 	provider, err := s.registry.Open(purchase.Vendor)
 	if err != nil {
 		return store.PhoneNumber{}, err
@@ -367,15 +394,11 @@ func (s *Service) Release(ctx context.Context, customerID, e164 string) error {
 	return s.store.ReleaseNumber(ctx, customerID, e164, time.Now().UTC())
 }
 
-// Attachment points a number at a Stream call.
+// Attachment points a number at the agent: every caller lands in a call of their own,
+// agent:<uuid>, and the session answering them is opened under that uuid.
 type Attachment struct {
 	CustomerID string
 	E164       string
-	// CallID is the call every caller joins. Empty gives each number its own call, named
-	// after the number that was rung.
-	CallID string
-	// CallType is the Stream call type. Empty means "default".
-	CallType string
 	// AllowedIPs are the vendor's signalling addresses. Empty accepts calls from anywhere
 	// that has the trunk password.
 	AllowedIPs []string
@@ -386,11 +409,18 @@ type Attached struct {
 	TrunkID string
 	RouteID string
 	Bridge  Bridge
-	// CallID and CallType are the call callers land in, resolved rather than templated,
-	// which is what an agent waiting for one has to be in.
-	CallID   string
-	CallType string
 }
+
+// inboundCallTemplate names the call each caller lands in: a fresh uuid, which is the id of
+// the session that answers them, so the call is agent:<session id> like any other.
+const inboundCallTemplate = "{{uuid}}"
+
+// NumberKey is the custom field an inbound call carries the number it rang under, which is
+// how the call that arrives is traced back to the number: its name is the session's.
+const NumberKey = "phone_number"
+
+// ErrNoSealer says this deployment has no keyring to seal or open a number's trunk password.
+var ErrNoSealer = errors.New("phone: no key to seal a number's trunk password: set ROUTER_AUTH_KEK")
 
 // Attach creates the Stream trunk and routing rule for a number and tells the vendor to
 // send calls there. This is what turns a bought number into one that reaches an agent.
@@ -418,6 +448,11 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		return Attached{}, stack.Wrap(err)
 	}
 	declared, _ := s.registry.Lookup(held.Vendor)
+	// Refused before anything is made: attached, the number would look fine and never answer.
+	if declared.AsksForTrunk && s.sealer == nil {
+		return Attached{}, stack.Wrap(fmt.Errorf("phone: %s numbers are answered with their stored trunk: %w",
+			held.Vendor, ErrNoSealer))
+	}
 
 	allowedIPs, err := trunkAllowlist(declared)
 	if err != nil {
@@ -445,26 +480,16 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		s.deleteLines(ctx, stream, routeID, trunkID, "rolling back a failed attach")
 	}()
 
-	// The rule serves one number, so the call is named outright rather than through the
-	// handlebars template CreateRoute would otherwise fall back to. The name has to be
-	// recorded, and a template is not a name until Stream renders it.
-	callType := attachment.CallType
-	if callType == "" {
-		callType = defaultCallType
-	}
-	callID := attachment.CallID
-	if callID == "" {
-		// Stream allows only a-z, 0-9, _ and - in a call id, so the + of the number cannot
-		// be part of it.
-		callID = "phone-" + strings.TrimPrefix(attachment.E164, "+")
-	}
-
+	// Every caller is a conversation of their own, so each lands in a call named for the
+	// session that answers them. The name is only known once Stream renders it, so the
+	// number is put on the call, where the hook announcing it finds it.
 	routeID, err = stream.CreateRoute(ctx, Route{
 		Name:          "phone-" + attachment.E164,
 		TrunkIDs:      []string{trunkID},
 		CalledNumbers: []string{attachment.E164},
-		CallID:        callID,
-		CallType:      callType,
+		CallID:        inboundCallTemplate,
+		CallType:      defaultCallType,
+		Custom:        map[string]string{NumberKey: attachment.E164},
 	})
 	if err != nil {
 		return Attached{}, stack.Wrap(err)
@@ -474,6 +499,19 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	if err != nil {
 		return Attached{}, stack.Wrap(err)
 	}
+	record := store.NumberAttachment{
+		TrunkID: trunkID, RouteID: routeID, StreamAppPK: pin, CallType: defaultCallType,
+	}
+	// Stream returns the password only now, and a vendor that asks per call where to send a
+	// caller needs it then. Without a key it is not kept, rather than kept in the clear.
+	if s.sealer != nil {
+		sealed, err := s.sealer.SealWithAAD(bridge.Password, bridgeAAD(attachment.CustomerID, attachment.E164))
+		if err != nil {
+			return Attached{}, stack.Wrap(err)
+		}
+		record.BridgeURI, record.BridgeUsername = bridge.URI, bridge.Username
+		record.BridgePasswordSealed, record.BridgePasswordKEKVersion = sealed, s.sealer.CurrentVersion()
+	}
 
 	err = provider.ConfigureInbound(ctx, Inbound{E164: attachment.E164, Bridge: bridge})
 	if err != nil {
@@ -482,9 +520,7 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	// The vendor has already been told to send calls to trunkID. There is no primitive to
 	// un-configure a provider's inbound routing, so a failure here leaves the vendor
 	// pointing at a trunk the defer above is about to delete.
-	if err := s.store.AttachNumber(ctx, attachment.CustomerID, attachment.E164, store.NumberAttachment{
-		TrunkID: trunkID, RouteID: routeID, StreamAppPK: pin, CallType: callType, CallID: callID,
-	}); err != nil {
+	if err := s.store.AttachNumber(ctx, attachment.CustomerID, attachment.E164, record); err != nil {
 		return Attached{}, stack.Wrap(err)
 	}
 
@@ -494,7 +530,30 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	if held.StreamTrunkID != "" && held.StreamTrunkID != trunkID {
 		s.unwire(ctx, attachment.CustomerID, held.StreamAppPK, held.StreamRouteID, held.StreamTrunkID, "re-attached a number")
 	}
-	return Attached{TrunkID: trunkID, RouteID: routeID, Bridge: bridge, CallID: callID, CallType: callType}, nil
+	return Attached{TrunkID: trunkID, RouteID: routeID, Bridge: bridge}, nil
+}
+
+// InboundBridge is the Stream trunk calls to an attached number of the vendor go to, with
+// its password opened.
+func (s *Service) InboundBridge(ctx context.Context, vendor, e164 string) (Bridge, error) {
+	if s.store == nil {
+		return Bridge{}, stack.Wrap(errors.New("phone: finding where a number's calls go needs a database"))
+	}
+	if s.sealer == nil {
+		return Bridge{}, stack.Wrap(ErrNoSealer)
+	}
+	stored, err := s.store.AttachedBridge(ctx, vendor, e164)
+	if err != nil {
+		return Bridge{}, err
+	}
+	if err := s.Suspended(ctx, stored.CustomerID); err != nil {
+		return Bridge{}, err
+	}
+	password, err := s.sealer.OpenWithAADVersion(stored.PasswordSealed, bridgeAAD(stored.CustomerID, e164), stored.KEKVersion)
+	if err != nil {
+		return Bridge{}, stack.Wrap(fmt.Errorf("phone: open the trunk password of %s: %w", e164, err))
+	}
+	return Bridge{URI: stored.URI, Username: stored.Username, Password: password}, nil
 }
 
 // CallRequest is a call to place from one of the customer's numbers.
@@ -504,12 +563,10 @@ type CallRequest struct {
 	From string
 	// To is who to call.
 	To string
-	// CallID is the Stream call the answered leg joins, and so the one the agent has to be
-	// in. Empty names a fresh call after this one, because two calls from the same number
+	// SessionID is the session that holds the call: the answered leg is routed into its
+	// call, agent:<session id>. Empty chooses one, because two calls from the same number
 	// are two conversations and must not land in the same place.
-	CallID string
-	// CallType is the Stream call type. Empty means "default".
-	CallType string
+	SessionID string
 	// RingTimeout is how long to ring before giving up. Zero leaves the vendor's default.
 	RingTimeout time.Duration
 	// InitialDigits are pressed once the person answers, for reaching an extension behind
@@ -531,8 +588,11 @@ type Placed struct {
 	Status string
 	// Vendor is who is placing it.
 	Vendor string
-	// CallID and CallType are the Stream call the answered leg is routed into. An agent
-	// that is not in it hears nothing when the person picks up.
+	// SessionID is the session to open on the call, with voice started: the answered leg
+	// is routed into agent:<session id>, and an agent that is not in it hears nothing when
+	// the person picks up.
+	SessionID string
+	// CallID and CallType are that call.
 	CallID   string
 	CallType string
 	// StreamApp is the app that call is in, which the agent has to join it in.
@@ -546,6 +606,14 @@ type Placed struct {
 // rule the answered leg arrives with nothing pointing it at a call, so this creates both and
 // pins the rule to the call the agent is waiting in, the way Transfer does.
 func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error) {
+	if err := s.Suspended(ctx, request.Owner.CustomerID); err != nil {
+		return Placed{}, err
+	}
+	if request.To != "" {
+		if err := Dialable(request.To); err != nil {
+			return Placed{}, err
+		}
+	}
 	if err := s.gate.Allow(ctx, request.Owner.CustomerID, dlc.Voice, request.To); err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
@@ -592,14 +660,15 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		return Placed{}, stack.Wrap(err)
 	}
 
-	callID := request.CallID
-	if callID == "" {
-		callID = "call-" + uuid.NewString()
+	sessionID := request.SessionID
+	if sessionID == "" {
+		sessionID = uuid.NewString()
+	} else if held, ok := conversation.SessionID(sessionID); ok {
+		sessionID = held
+	} else {
+		return Placed{}, stack.Wrap(fmt.Errorf("phone: the session id %q is not one a session can have", sessionID))
 	}
-	callType := request.CallType
-	if callType == "" {
-		callType = defaultCallType
-	}
+	callID, callType := sessionID, defaultCallType
 
 	trunkID, bridge, err := stream.CreateTrunk(ctx, Trunk{
 		Name:       "call-" + callID,
@@ -676,6 +745,7 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		VendorCallID: dialed.VendorCallID,
 		Status:       dialed.Status,
 		Vendor:       held.Vendor,
+		SessionID:    sessionID,
 		CallID:       callID,
 		CallType:     callType,
 		StreamApp:    pin,
@@ -876,6 +946,18 @@ type TransferRequest struct {
 // the trunk is made, and keeping SIP credentials to reuse later is a worse trade than
 // making a second trunk.
 func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed, error) {
+	if err := s.Suspended(ctx, request.Owner.CustomerID); err != nil {
+		return Dialed{}, err
+	}
+	if request.To != "" {
+		if err := Dialable(request.To); err != nil {
+			return Dialed{}, err
+		}
+	}
+	// A transfer dials someone as surely as a call does, so it answers to the same gate.
+	if err := s.gate.Allow(ctx, request.Owner.CustomerID, dlc.Voice, request.To); err != nil {
+		return Dialed{}, stack.Wrap(err)
+	}
 	// The human is routed into the call the agent is on, so the trunk is made in the app
 	// that call is in.
 	stream, err := s.streamForApp(ctx, request.Owner.CustomerID, request.StreamApp)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -41,8 +42,8 @@ type manager struct {
 	// retired are subagents a swap replaced, kept open for the tasks still running on them.
 	retired []*opening
 	capture func(context.Context, CaptureRequest) ([]llm.ContentPart, error)
-	// load reads the instructions of a skill that was offered by name alone.
-	load    func(context.Context, string) (string, error)
+	// load reads a skill that was offered by name alone.
+	load    func(context.Context, string) (Loaded, error)
 	ctx     context.Context
 	cancel  context.CancelFunc
 	warming sync.WaitGroup
@@ -72,6 +73,9 @@ type manager struct {
 	// bySkill is the live task for each skill, which is what makes a newer request for
 	// the same skill supersede the older one.
 	bySkill map[string]string
+	// written are the skill files already put into the sandbox, by skill, so a skill's
+	// scripts are written once per version rather than before every run.
+	written map[string]map[string]string
 	closed  bool
 
 	sequence  atomic.Int64
@@ -107,6 +111,9 @@ type task struct {
 	// can be followed by asking again with what the code said.
 	instructions string
 	messages     []llm.Message
+	// bundle is the rest of the skill's folder, by path, which the subagent reads one file
+	// at a time and whose scripts it runs in the sandbox.
+	bundle map[string]string
 	// rounds is how many times this task has run code.
 	rounds int
 	// broken is what went wrong with the last code it ran, empty once code runs cleanly.
@@ -138,6 +145,7 @@ func newManager(
 		results:    emit.New[Result](resultBuffer),
 		running:    map[string]*task{},
 		bySkill:    map[string]string{},
+		written:    map[string]map[string]string{},
 	}
 	if subagent != nil {
 		ready := make(chan struct{})
@@ -223,13 +231,17 @@ func (m *manager) Attached(skill, turnID string) bool {
 
 func (m *manager) start(created *task) {
 	if created.instructions == "" && m.load != nil {
-		instructions, err := m.load(created.ctx, created.skill)
+		loaded, err := m.load(created.ctx, created.skill)
 		if err != nil {
 			m.report(created, Result{State: Failed, Err: fmt.Errorf("harness: loading skill %s: %w", created.skill, err)})
 			m.drainers.Done()
 			return
 		}
-		created.instructions = instructions
+		created.instructions = loaded.Instructions
+		if len(loaded.Files) > 0 {
+			created.bundle = loaded.Files
+			created.instructions += "\n\n" + Listing(created.skill, slices.Sorted(maps.Keys(loaded.Files)), m.box != nil)
+		}
 	}
 	if created.capture && !llm.HasImage(created.messages) {
 		if m.capture == nil {
@@ -276,7 +288,7 @@ func (m *manager) ask(running *task, messages []llm.Message) (*llm.Stream, error
 	return model.Create(running.ctx, llm.ResponseParams{
 		ID: running.id, Purpose: "subagent", TurnID: running.turnID,
 		OnTiming:     m.onModelCall,
-		Instructions: running.instructions, Input: messages, Tools: m.tools(),
+		Instructions: running.instructions, Input: messages, Tools: m.tools(running),
 	}.Overwrite(overwrites))
 }
 
@@ -523,13 +535,17 @@ func (m *manager) consume(running *task, stream *llm.Stream) llm.Response {
 	return stream.Response()
 }
 
-// tools are what the subagent may do rather than say. Only running code is offered, and
-// only when there is somewhere to run it.
-func (m *manager) tools() []llm.Tool {
-	if m.box == nil {
-		return nil
+// tools are what the subagent may do rather than say: run code when there is somewhere to
+// run it, and read the skill's own files when it brought some.
+func (m *manager) tools(running *task) []llm.Tool {
+	var tools []llm.Tool
+	if m.box != nil {
+		tools = append(tools, sandbox.Tool())
 	}
-	return []llm.Tool{sandbox.Tool()}
+	if len(running.bundle) > 0 {
+		tools = append(tools, readFileTool(slices.Sorted(maps.Keys(running.bundle))))
+	}
+	return tools
 }
 
 // advance decides what a settled response means for its task: either the task runs the code
@@ -541,7 +557,7 @@ func (m *manager) advance(running *task, response llm.Response) (*llm.Stream, bo
 		m.mu.Unlock()
 		return nil, false
 	}
-	if m.box != nil && len(response.ToolCalls) > 0 && running.live() &&
+	if len(m.tools(running)) > 0 && len(response.ToolCalls) > 0 && running.live() &&
 		running.rounds < toolRounds {
 		running.rounds++
 		m.mu.Unlock()
@@ -662,7 +678,20 @@ func (m *manager) resume(running *task, response llm.Response) (*llm.Stream, boo
 // A failure is described rather than returned: the model asked for this mid-thought, and
 // it can only do something sensible about code that did not run if it is told so.
 func (m *manager) ran(running *task, call llm.ToolCall) string {
-	if call.Name != sandbox.ToolName {
+	if call.Name == ReadSkillFileTool && len(running.bundle) > 0 {
+		var arguments struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
+			return "Those arguments are not valid JSON: " + err.Error()
+		}
+		content, err := bundled(running.bundle, arguments.Path)
+		if err != nil {
+			return err.Error()
+		}
+		return content
+	}
+	if call.Name != sandbox.ToolName || m.box == nil {
 		return "There is no tool called " + call.Name + "."
 	}
 
@@ -674,6 +703,11 @@ func (m *manager) ran(running *task, call llm.ToolCall) string {
 		return "Those arguments are not valid JSON: " + err.Error()
 	}
 
+	if err := m.writeBundle(running); err != nil {
+		m.logger.Error("could not put the skill's files in the sandbox", "skill", running.skill, "error", err)
+		m.setBroken(running, "the skill's files could not be put in the sandbox: "+err.Error())
+		return "The skill's files could not be put in the sandbox: " + err.Error()
+	}
 	result, err := m.box.Run(running.ctx, arguments.Code, arguments.Files)
 	if err != nil {
 		m.logger.Error("could not run code", "error", err)
@@ -698,6 +732,29 @@ func (m *manager) ran(running *task, call llm.ToolCall) string {
 		said += "\n\nThese files were not written, or were too large to return: " + strings.Join(result.Missing, ", ")
 	}
 	return said
+}
+
+// writeBundle puts a skill's files into the sandbox under skills/<name>/, the first time one
+// of its tasks runs code and again whenever the skill has changed since.
+func (m *manager) writeBundle(running *task) error {
+	if len(Scripts(slices.Collect(maps.Keys(running.bundle)))) == 0 {
+		return nil
+	}
+	m.mu.Lock()
+	current := maps.Equal(m.written[running.skill], running.bundle)
+	m.mu.Unlock()
+	if current {
+		return nil
+	}
+	for _, name := range slices.Sorted(maps.Keys(running.bundle)) {
+		if err := m.box.Write(running.ctx, BundlePath(running.skill, name), []byte(running.bundle[name])); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	m.written[running.skill] = running.bundle
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *manager) setBroken(running *task, broken string) {

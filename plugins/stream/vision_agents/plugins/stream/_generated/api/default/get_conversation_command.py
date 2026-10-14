@@ -13,7 +13,7 @@ from ...types import UNSET, Response
 
 def _get_kwargs(
     cid: str,
-    command_id: str,
+    request_id: str,
     *,
     agent_id: str,
 ) -> dict[str, Any]:
@@ -26,9 +26,9 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/agents/conversations/{cid}/commands/{command_id}".format(
+        "url": "/v1/agents/conversations/{cid}/commands/{request_id}".format(
             cid=quote(str(cid), safe=""),
-            command_id=quote(str(command_id), safe=""),
+            request_id=quote(str(request_id), safe=""),
         ),
         "params": params,
     }
@@ -83,7 +83,7 @@ def _build_response(
 
 def sync_detailed(
     cid: str,
-    command_id: str,
+    request_id: str,
     *,
     client: AuthenticatedClient | Client,
     agent_id: str,
@@ -97,7 +97,7 @@ def sync_detailed(
 
     Args:
         cid (str):
-        command_id (str): The client's own command id, as sent when the command was submitted.
+        request_id (str): The request id the question was sent with.
         agent_id (str):
 
     Raises:
@@ -110,7 +110,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         cid=cid,
-        command_id=command_id,
+        request_id=request_id,
         agent_id=agent_id,
     )
 
@@ -123,7 +123,7 @@ def sync_detailed(
 
 def sync(
     cid: str,
-    command_id: str,
+    request_id: str,
     *,
     client: AuthenticatedClient | Client,
     agent_id: str,
@@ -137,7 +137,7 @@ def sync(
 
     Args:
         cid (str):
-        command_id (str): The client's own command id, as sent when the command was submitted.
+        request_id (str): The request id the question was sent with.
         agent_id (str):
 
     Raises:
@@ -150,7 +150,7 @@ def sync(
 
     return sync_detailed(
         cid=cid,
-        command_id=command_id,
+        request_id=request_id,
         client=client,
         agent_id=agent_id,
     ).parsed
@@ -158,7 +158,7 @@ def sync(
 
 async def asyncio_detailed(
     cid: str,
-    command_id: str,
+    request_id: str,
     *,
     client: AuthenticatedClient | Client,
     agent_id: str,
@@ -172,7 +172,7 @@ async def asyncio_detailed(
 
     Args:
         cid (str):
-        command_id (str): The client's own command id, as sent when the command was submitted.
+        request_id (str): The request id the question was sent with.
         agent_id (str):
 
     Raises:
@@ -185,7 +185,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         cid=cid,
-        command_id=command_id,
+        request_id=request_id,
         agent_id=agent_id,
     )
 
@@ -196,7 +196,7 @@ async def asyncio_detailed(
 
 async def asyncio(
     cid: str,
-    command_id: str,
+    request_id: str,
     *,
     client: AuthenticatedClient | Client,
     agent_id: str,
@@ -210,7 +210,7 @@ async def asyncio(
 
     Args:
         cid (str):
-        command_id (str): The client's own command id, as sent when the command was submitted.
+        request_id (str): The request id the question was sent with.
         agent_id (str):
 
     Raises:
@@ -224,7 +224,7 @@ async def asyncio(
     return (
         await asyncio_detailed(
             cid=cid,
-            command_id=command_id,
+            request_id=request_id,
             client=client,
             agent_id=agent_id,
         )

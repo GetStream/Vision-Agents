@@ -89,17 +89,11 @@ void main() {
 
       final created = router.bodies.single;
       expect(created['agent'], 'support');
-      expect('${created['call_id']}', matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(created['start_voice'], isTrue);
+      expect(created.containsKey('call_id'), isFalse);
       expect(created.containsKey('text'), isFalse);
       expect(voice.session.isConnected, isTrue);
       expect(voice.state.value.isJoined, isFalse);
-      await voice.end();
-    });
-
-    test('starting on a call that is named uses that call', () async {
-      final voice = await VoiceSession.start(agents, callId: 'front-door');
-
-      expect(router.bodies.single['call_id'], 'front-door');
       await voice.end();
     });
 
@@ -112,19 +106,29 @@ void main() {
       await voice.end();
     });
 
-    test('keeps why joining failed, having asked for credentials for this session', () async {
-      final voice = await VoiceSession.attach(agents, 'voice-1');
-      final asked = <String>[];
-
-      await voice.join(
-        credentials: (sessionId) async {
-          asked.add(sessionId);
-          throw const HttpException('backend unavailable');
-        },
+    test('keeps why joining failed when the token could not be had', () async {
+      final keyed = VisionAgents(
+        url: router.url,
+        customerId: 'acme',
+        apiKey: 'stream-key',
+        userId: 'ada',
+        token: () async => throw const HttpException('backend unavailable'),
       );
+      final voice = await VoiceSession.attach(keyed, 'voice-1');
 
-      expect(asked, ['voice-1']);
+      await voice.join();
+
       expect(voice.state.value.failure, isA<HttpException>());
+      expect(voice.call, isNull);
+      await voice.end();
+      keyed.close();
+    });
+
+    test('joining needs the Stream app\'s key, which a customer id alone is not', () async {
+      final voice = await VoiceSession.attach(agents, 'voice-1');
+
+      await expectLater(voice.join(), throwsArgumentError);
+
       expect(voice.call, isNull);
       await voice.end();
     });

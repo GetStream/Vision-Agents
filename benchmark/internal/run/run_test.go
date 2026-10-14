@@ -10,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/report"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/target"
 )
 
 func TestLoadRestaurantPack(t *testing.T) {
@@ -33,6 +34,20 @@ func TestWebRTCCallID(t *testing.T) {
 	}
 	got := webrtcCallID(Config{}, sc, 1)
 	if !strings.HasPrefix(got, "vb-restaurant-golden-1-") {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestWebRTCCallType(t *testing.T) {
+	for _, name := range []string{target.AccelerationName, target.AcceleratedName} {
+		if got := webrtcCallType(Config{TargetName: name, CallType: "default"}); got != "agent" {
+			t.Fatalf("%s: got %s, want agent: the router joins agent:<session id>", name, got)
+		}
+	}
+	if got := webrtcCallType(Config{TargetName: "python"}); got != "default" {
+		t.Fatalf("got %s", got)
+	}
+	if got := webrtcCallType(Config{TargetName: "python", CallType: "audio_room"}); got != "audio_room" {
 		t.Fatalf("got %s", got)
 	}
 }

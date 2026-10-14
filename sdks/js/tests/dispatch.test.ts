@@ -185,7 +185,7 @@ describe("Dispatch", () => {
       agent_id: "john",
       config_id: "cfg_1",
       session_id: "sess_1",
-      command_id: "cmd_1",
+      request_id: "req_1",
       text: "are you open today",
       message_id: "msg_1",
       user_id: "ana",
@@ -198,7 +198,7 @@ describe("Dispatch", () => {
     assert.equal(written[0]?.text, "are you open today");
     assert.equal(written[0]?.agentId, "john");
     assert.equal(written[0]?.sessionId, "sess_1");
-    assert.equal(written[0]?.commandId, "cmd_1");
+    assert.equal(written[0]?.requestId, "req_1");
 
     dispatch.stop();
     await running;
@@ -476,7 +476,7 @@ describe("Dispatch", () => {
       agentId: "john",
       configId: "cfg_1",
       sessionId: "",
-      commandId: "",
+      requestId: "",
       text: "hello",
       messageId: "msg_1",
       userId: "ana",
@@ -497,14 +497,12 @@ describe("Dispatch", () => {
     assert.equal(built, 1, "a second conversation was started on the same channel");
     assert.equal(again, session);
 
-    const body = router.received.find((one) => one.path === "/v1/agents/sessions")?.body as {
-      text: boolean;
-      conversation_id: string;
-      agent_id: string;
-    };
-    assert.equal(body.text, true);
-    assert.equal(body.conversation_id, "messaging:chan_1");
-    assert.equal(body.agent_id, "john");
+    const body = router.received.find((one) => one.path === "/v1/agents/sessions")?.body as Record<
+      string,
+      unknown
+    >;
+    assert.equal(body["start_voice"], undefined, "a message is answered in writing");
+    assert.equal(body["agent_id"], "john");
 
     connection.socket.close();
     await session.wait();
@@ -517,7 +515,7 @@ describe("Dispatch", () => {
       agentId: "john",
       configId: "cfg_1",
       sessionId: "sess_1",
-      commandId: "cmd_1",
+      requestId: "req_1",
       text: "are you open today",
       messageId: "",
       userId: "ana",
@@ -540,7 +538,7 @@ describe("Dispatch", () => {
       assert.equal(router.received.length, 0);
     });
 
-    it("is answered on that session as the server acting for whoever wrote it, under its command", async () => {
+    it("is answered on that session as the server acting for whoever wrote it, under its request", async () => {
       for (const authenticate of [false, true]) {
         router.serve("POST", "/v1/agents/sessions/sess_1/responses", {
           status: 202,
@@ -559,7 +557,7 @@ describe("Dispatch", () => {
         assert.equal(answered.id, "resp_1");
         const request = router.last;
         assert.equal(request.path, "/v1/agents/sessions/sess_1/responses");
-        assert.deepEqual(request.body, { text: "are you open today", command_id: "cmd_1" });
+        assert.deepEqual(request.body, { text: "are you open today", request_id: "req_1" });
         assert.equal(request.headers["x-stream-user-id"], "ana");
         const token = (request.headers["authorization"] ?? "").replace(/^Bearer /, "");
         assert.equal(
@@ -571,16 +569,18 @@ describe("Dispatch", () => {
       }
     });
 
-    it("names no command when the message was sent without one", async () => {
+    it("names a fresh request when the message was sent without one", async () => {
       router.serve("POST", "/v1/agents/sessions/sess_1/responses", {
         status: 202,
         body: { id: "resp_1", session_id: "sess_1", status: "running", created_at: "2026-01-01T00:00:00Z" },
       });
       const dispatch = new Dispatch({ client: api });
 
-      await dispatch.answer({ ...message, commandId: "" });
+      await dispatch.answer({ ...message, requestId: "" });
 
-      assert.deepEqual(router.last.body, { text: "are you open today" });
+      const body = router.last.body as Record<string, unknown>;
+      assert.equal(body["text"], "are you open today");
+      assert.match(String(body["request_id"]), /^[0-9a-f-]{36}$/);
     });
 
     it("refuses to answer one no session is holding", async () => {

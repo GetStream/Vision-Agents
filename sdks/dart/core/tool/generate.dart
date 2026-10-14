@@ -32,7 +32,9 @@ const operations = [
   'querySessions',
   'rewindSession',
   'search',
+  'startSessionVoice',
   'stopSession',
+  'stopSessionVoice',
   'updateSession',
 ];
 

@@ -110,9 +110,9 @@ func (s *EpisodeCardsSuite) TestTheSameNumberFromAnSMSAndACallIsOneOmniChannel()
 // A caller number that does not say it is international is not guessed at: no row, no card,
 // and the call goes on as the session it is.
 func (s *EpisodeCardsSuite) TestACallFromANumberWithoutItsPlusMakesNoCard() {
-	call := s.utils.callID()
+	call := s.utils.uuid()
 	s.chat.PutCall("agent", call, "sip-5550100100")
-	created := s.serverClient.createSession(CreateSessionRequest{CallId: &call, CallType: pointerTo("agent"), ConfigId: &s.config.Id})
+	created := s.serverClient.createSession(CreateSessionRequest{Id: &call, StartVoice: pointerTo(true), ConfigId: &s.config.Id})
 
 	s.Eventually(func() bool { return s.readCall(call) }, settleFor, 10*time.Millisecond)
 	s.Never(func() bool { return s.contacts() > 0 }, dropped, 20*time.Millisecond)
@@ -189,17 +189,17 @@ func (s *EpisodeCardsSuite) smsWithALine(number, text string) {
 
 // joined is the id of a session under the test's agent on a call the participant is on.
 func (s *EpisodeCardsSuite) joined(participant string) string {
-	call := s.utils.callID()
+	call := s.utils.uuid()
 	s.chat.PutCall("agent", call, participant)
-	return s.serverClient.createSession(CreateSessionRequest{CallId: &call, CallType: pointerTo("agent"), ConfigId: &s.config.Id}).Id
+	return s.serverClient.createSession(CreateSessionRequest{Id: &call, StartVoice: pointerTo(true), ConfigId: &s.config.Id}).Id
 }
 
 // called opens a session under the test's agent on a call whose session holds the
 // participants named, and returns the call's id.
 func (s *EpisodeCardsSuite) called(participants ...string) string {
-	call := s.utils.callID()
+	call := s.utils.uuid()
 	s.chat.PutCall("agent", call, participants...)
-	s.serverClient.createSession(CreateSessionRequest{CallId: &call, CallType: pointerTo("agent"), ConfigId: &s.config.Id})
+	s.serverClient.createSession(CreateSessionRequest{Id: &call, StartVoice: pointerTo(true), ConfigId: &s.config.Id})
 	return call
 }
 

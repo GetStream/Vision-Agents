@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/detectionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -61,6 +62,8 @@ type Streams struct {
 	Speech         *ttsrouter.Recordings
 	// Image draws pictures at /v1/image/generations.
 	Image *imagerouter.Router
+	// Detection finds objects in an image at /v1/detection.
+	Detection *detectionrouter.Router
 }
 
 // start is the first frame on every modality socket. It says what to route to and what to

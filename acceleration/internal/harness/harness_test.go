@@ -453,6 +453,23 @@ func (s *HarnessSuite) TestAReplyToAToolResultThinksAndACallerTurnDoesNot() {
 		"at none the model asks to book a free table instead of booking it")
 }
 
+func (s *HarnessSuite) TestWhatATurnAskedForWinsOverWhatTheHarnessWouldChoose() {
+	s.build(false)
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "high"}}
+	limit := 64
+
+	s.answer(Turn{
+		ID:        "tool-1",
+		History:   []llm.Message{{Role: llm.User, Content: "a table for four at 7:30"}},
+		AfterTool: true,
+		Asked:     llmoptions.LLM{ReasoningEffort: "none", MaxOutputTokens: &limit},
+	})
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.Equal("none", s.fast.requests()[0].Reasoning.Effort)
+	s.Equal(64, s.fast.requests()[0].MaxOutputTokens)
+}
+
 func (s *HarnessSuite) TestToolsAreOfferedToTheFastModel() {
 	s.tools = testTools()
 	s.build(false)
@@ -680,10 +697,10 @@ func (s *HarnessSuite) TestASkillOfferedByNameIsReadAsItIsWhenItIsUsed() {
 	stored := "refund within 30 days"
 	s.skills = Skills{
 		Skills: []Skill{{Name: "refund", Description: "what a caller is owed", Deadline: time.Minute}},
-		Load: func(_ context.Context, name string) (string, error) {
+		Load: func(_ context.Context, name string) (Loaded, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			return name + ": " + stored, nil
+			return Loaded{Instructions: name + ": " + stored}, nil
 		},
 	}
 	s.build(true)
@@ -707,8 +724,8 @@ func (s *HarnessSuite) TestASkillOfferedByNameIsReadAsItIsWhenItIsUsed() {
 func (s *HarnessSuite) TestASkillThatCannotBeReadFailsRatherThanRunningWithoutInstructions() {
 	s.skills = Skills{
 		Skills: []Skill{{Name: "refund", Description: "what a caller is owed", Deadline: time.Minute}},
-		Load: func(context.Context, string) (string, error) {
-			return "", errors.New("the skill was deleted")
+		Load: func(context.Context, string) (Loaded, error) {
+			return Loaded{}, errors.New("the skill was deleted")
 		},
 	}
 	s.build(true)
@@ -1153,6 +1170,26 @@ func (s *HarnessSuite) TestAWrittenReplyCarryingAColleaguesQuestionIsToldNothing
 	s.NotContains(s.fast.requests()[1].Instructions, usePolicy)
 }
 
+func (s *HarnessSuite) TestAWrittenConversationLoadingItsSkillsIsToldTheSourceOrder() {
+	// With no subagent there is no colleague to hand to, so the skills arrive as load_skill
+	// and the model is told to take a skill before the knowledge base and the web.
+	built, err := DefaultTools()
+	s.Require().NoError(err)
+	lookup, _ := built.Lookup("lookup")
+	search, _ := built.Lookup("search")
+	s.skills = Skills{Skills: []Skill{{Name: "sales", Description: "pricing", Instructions: "quote"}}}
+	s.tools = Tools{Tools: []Tool{lookup, search, s.skills.LoadTool()}}
+	s.build(false)
+	s.harness.options.Text = true
+
+	s.respond("turn-1", "how much does moderation cost")
+
+	s.Require().Len(s.fast.requests(), 1)
+	instructions := s.fast.requests()[0].Instructions
+	s.Contains(instructions, s.tools.SourceOrder())
+	s.NotContains(instructions, `<ask skill=`, "a skill is loaded, not handed to a colleague")
+}
+
 func (s *HarnessSuite) TestSomebodyListeningIsToldToFillThePauseBeforeACall() {
 	s.tools = testTools()
 	s.build(true)
@@ -1296,7 +1333,28 @@ func (s *HarnessSuite) TestASkillTheModelInventedIsIgnored() {
 	s.True(s.harness.Pending(), "the caller was told an answer was coming")
 
 	s.respond("turn-2", "")
-	s.Contains(s.fast.requests()[1].Instructions, "no skill named teleport")
+	follow := s.fast.requests()[1]
+	s.Contains(follow.Instructions, "no skill named teleport, so nothing was done")
+	last := follow.Input[len(follow.Input)-1]
+	s.NotContains(last.Content, "come back", "a turn after nothing ran is not told that work came back")
+}
+
+func (s *HarnessSuite) TestAMistakeRepeatedInTheFollowUpDoesNotEarnAnother() {
+	// Voicebench: Gemma answered each correction with the same skill tag, and every answer
+	// earned another turn, so the agent talked to itself for two minutes to a silent caller.
+	s.build(true)
+	s.respond("turn-1", "hello")
+	s.reply("turn-1", `One moment. <ask skill="teleport">do the thing</ask>`)
+	s.Require().True(s.harness.Pending())
+
+	s.respond("turn-2", "")
+	s.reply("turn-2", `Still on it. <ask skill="teleport">do the thing</ask>`)
+
+	s.False(s.harness.Pending(), "the follow-up already told the caller, so the repeat earns no turn")
+	s.respond("turn-3", "are you there")
+	s.Require().Len(s.fast.requests(), 3)
+	s.Contains(s.fast.requests()[2].Instructions, "no skill named teleport",
+		"the correction still reaches the next turn the caller asks for")
 }
 
 func (s *HarnessSuite) TestASkillThatNamesAToolIsAskedAsOne() {
@@ -1322,6 +1380,34 @@ func (s *HarnessSuite) TestASkillThatNamesAToolIsAskedAsOne() {
 	requested := s.awaitToolRequests(1)
 	s.Equal("press", requested[0].Call.Name)
 	s.JSONEq(`{"digits":"1"}`, requested[0].Call.Arguments)
+}
+
+func (s *HarnessSuite) TestAToolCallWrittenAsATagIsRun() {
+	// Gemma writes a call after the tags it has seen. Spoken, it books nothing while the
+	// reply says it did.
+	s.tools = testTools()
+	s.build(false)
+	s.respond("turn-1", "put me through to sales")
+
+	spoken := s.reply("turn-1", `Transferring you now. <call tool="transfer" to="sales"/>`)
+
+	s.Equal("Transferring you now. ", spoken)
+	asked := s.harness.TakeAsked()
+	s.Require().Len(asked, 1)
+	s.Equal("transfer", asked[0].Name)
+	s.JSONEq(`{"to":"sales"}`, asked[0].Arguments)
+}
+
+func (s *HarnessSuite) TestACallToAToolThatDoesNotExistIsNotRun() {
+	s.tools = testTools()
+	s.build(false)
+	s.respond("turn-1", "book it")
+
+	s.reply("turn-1", `All set. <call tool="book_table" party_size=4/>`)
+
+	s.Empty(s.harness.TakeAsked())
+	s.respond("turn-2", "")
+	s.Contains(s.fast.requests()[1].Instructions, "no tool named book_table, so nothing was done")
 }
 
 func (s *HarnessSuite) TestAnAbandonedReplyDoesNotKeepTheToolsItAskedFor() {

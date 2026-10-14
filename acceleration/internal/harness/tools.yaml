@@ -29,10 +29,11 @@ tools:
     description: >
       Look something up in the knowledge base, which is what this business has written
       down: prices, policies, opening hours, how a product works. Use it whenever the
-      caller asks something your instructions do not already answer, rather than guessing
-      or saying you cannot help. Look here before searching the web: what this business
-      wrote down is the answer it wants given, even where the web says otherwise. Say
-      something that fills the pause while you look.
+      caller asks something your instructions and any matching skill do not already
+      answer, rather than guessing or saying you cannot help. Look here after a matching
+      skill and before searching the web: what this business wrote down is the answer it
+      wants given, even where the web says otherwise. Say something that fills the pause
+      while you look.
     parameters:
       type: object
       properties:
@@ -48,8 +49,8 @@ tools:
       Find out something that is true right now and that no handbook records: traffic,
       weather, a score, whether a place is open, news. Use it whenever the answer depends
       on today rather than on what you know, instead of saying you cannot check. What you
-      remember about any of these is out of date. When you can also look things up in the
-      knowledge base, do that first and search only if it has nothing. Say something
+      remember about any of these is out of date. Search only when a matching skill and
+      the knowledge base have nothing: never before them or alongside them. Say something
       that fills the pause while you look.
     parameters:
       type: object

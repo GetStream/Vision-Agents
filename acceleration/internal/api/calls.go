@@ -46,12 +46,16 @@ func (s *Server) listCalls(ctx context.Context, request *listCallsRequest) (*lis
 	if s.store == nil {
 		return nil, errNoCalls
 	}
+	if score := request.MaxReviewScore.ptr(); score != nil && (*score < 1 || *score > 5) {
+		return nil, invalidRequest("max_review_score must be from 1 to 5")
+	}
 
 	filter := store.CallFilter{
 		AgentID:    value(request.AgentId.ptr()),
 		CampaignID: value(request.CampaignId.ptr()),
-		Running:    value(request.Running.ptr()),
-		Limit:      value(request.Limit.ptr()),
+		Running:        value(request.Running.ptr()),
+		MaxReviewScore: value(request.MaxReviewScore.ptr()),
+		Limit:          value(request.Limit.ptr()),
 	}
 	if request.From.ptr() != nil {
 		filter.From = *request.From.ptr()
@@ -270,12 +274,9 @@ func (s *Server) createCallToken(ctx context.Context, request *createCallTokenRe
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
-	if bound, err = s.minting(ctx, bound); err != nil {
-		return nil, err
-	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
-	token, err := bound.Client.CreateToken(userID, getstream.WithExpiration(listenerTokenValidity))
+	token, err := s.stream.MintUserToken(ctx, bound, userID, listenerTokenValidity)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -331,9 +332,6 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
-	if bound, err = s.minting(ctx, bound); err != nil {
-		return nil, err
-	}
 	client := bound.Client
 	if err := conversation.CreateMissingUsers(ctx, client, map[string]getstream.UserRequest{
 		agentID: {ID: agentID},
@@ -363,7 +361,7 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
-	token, err := client.CreateToken(userID, getstream.WithExpiration(listenerTokenValidity))
+	token, err := s.stream.MintUserToken(ctx, bound, userID, listenerTokenValidity)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -986,7 +984,8 @@ type listCallsRequest struct {
 	Running    optionalParam[bool]      `query:"running" doc:"Only calls that have not ended."`
 	From       optionalParam[time.Time] `query:"from" doc:"Only calls that started at or after this, inclusive."`
 	To         optionalParam[time.Time] `query:"to" doc:"Only calls that started before this, exclusive."`
-	Limit      optionalParam[int]       `query:"limit"`
+	MaxReviewScore optionalParam[int] `query:"max_review_score" doc:"Only reviewed calls scored at or below this, from 1 to 5."`
+	Limit          optionalParam[int] `query:"limit"`
 }
 
 type listCallsResponse struct {

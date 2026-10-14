@@ -13,10 +13,14 @@ final readonly class CreateResponseRequest
     public function __construct(
         // What to answer, as though it had been said.
         public string $text,
-        // Required for personal persistent text conversations, and text only. Reuse this ID and identical text for re...
-        public ?string $commandId = null,
         /** @var list<ImageSource>|null */
         public ?array $images = null,
+        // Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the ses...
+        public ?int $maxOutputTokens = null,
+        // How long the model may think before this answer, and the replies that finish it after its tools. One of the...
+        public ?string $reasoningEffort = null,
+        // Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Require...
+        public ?string $requestId = null,
         // Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the v...
         /** @var list<VideoSource>|null */
         public ?array $videos = null,
@@ -30,8 +34,10 @@ final readonly class CreateResponseRequest
     {
         return new self(
             text: Json::string($data, 'text'),
-            commandId: array_key_exists('command_id', $data) && $data['command_id'] !== null ? Json::string($data, 'command_id') : null,
             images: array_key_exists('images', $data) && $data['images'] !== null ? array_map(ImageSource::fromArray(...), Json::objects($data, 'images')) : null,
+            maxOutputTokens: array_key_exists('max_output_tokens', $data) && $data['max_output_tokens'] !== null ? Json::int($data, 'max_output_tokens') : null,
+            reasoningEffort: array_key_exists('reasoning_effort', $data) && $data['reasoning_effort'] !== null ? Json::string($data, 'reasoning_effort') : null,
+            requestId: array_key_exists('request_id', $data) && $data['request_id'] !== null ? Json::string($data, 'request_id') : null,
             videos: array_key_exists('videos', $data) && $data['videos'] !== null ? array_map(VideoSource::fromArray(...), Json::objects($data, 'videos')) : null,
         );
     }
@@ -45,11 +51,17 @@ final readonly class CreateResponseRequest
     {
         $out = [];
         $out['text'] = $this->text;
-        if ($this->commandId !== null) {
-            $out['command_id'] = $this->commandId;
-        }
         if ($this->images !== null) {
             $out['images'] = array_map(static fn (ImageSource $each): array => $each->toArray(), $this->images);
+        }
+        if ($this->maxOutputTokens !== null) {
+            $out['max_output_tokens'] = $this->maxOutputTokens;
+        }
+        if ($this->reasoningEffort !== null) {
+            $out['reasoning_effort'] = $this->reasoningEffort;
+        }
+        if ($this->requestId !== null) {
+            $out['request_id'] = $this->requestId;
         }
         if ($this->videos !== null) {
             $out['videos'] = array_map(static fn (VideoSource $each): array => $each->toArray(), $this->videos);

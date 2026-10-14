@@ -18,7 +18,8 @@ Assume Kotlin 2.4, JVM 17 bytecode, AGP 9, Gradle with the version catalogue in
 ```
 core  io.getstream:vision-agents-core  io.getstream.visionagents.core  plain JVM: HTTP, socket, state
 ui    io.getstream:vision-agents-ui    io.getstream.visionagents.ui    Compose views over it   -> core
-rtc   io.getstream:vision-agents-rtc   io.getstream.visionagents.rtc   Stream Video and Chat   -> core
+rtc   io.getstream:vision-agents-rtc   io.getstream.visionagents.rtc   Stream Video            -> core
+chat  io.getstream:vision-agents-chat  io.getstream.visionagents.chat  Stream Chat             -> core
 ```
 
 The sdk skill asks for `ai-kotlin-core` and `ai-kotlin-rtc`. The artifacts are named after the
@@ -38,9 +39,9 @@ apps and a bug report talk about "core" and "rtc" without saying which platform.
 - AGP 9 compiles Kotlin itself: apply `com.android.library` and the Compose plugin, never
   `org.jetbrains.kotlin.android`.
 - compileSdk 37 is Stream Video 1.34's floor; minSdk 24 is Stream's.
-- `rtc` declares Stream Chat because the sdk skill says both Stream SDKs come with it, so an app
-  that shows a call beside a channel gets versions that agree. Nothing here uses Chat yet; do
-  not grow a Chat wrapper without a feature that needs one.
+- Chat is its own module, `chat`, the way Swift's is its own package and JS's its own entry
+  point, so an app that only talks pays for no Chat SDK and one that only types pays for no
+  WebRTC.
 
 ## HTTP and the socket
 
@@ -118,13 +119,24 @@ upgrade's response, so `Backend` opens sockets through `Handshakes`, which reads
   only a new line.
 - Collect with `collectAsStateWithLifecycle`.
 
-## rtc
+## Stream clients: chat and rtc
 
-- Stream Video keeps one client per process and refuses a second. `VoiceSession` uses an
-  existing client signed in as the same user, builds one otherwise, and removes only a client
-  it built.
-- A `TokenProvider` that asks the app's backend again, never one fixed token: a call token
-  expires an hour in.
+Stream is set up once: the key, and the user and token `setUser` is given, are the one identity
+for the router, Stream Chat and Stream Video. There is no call token and no credentials object.
+
+- `Backend.shared(kind, open, disconnect)` builds one client per kind, key and user however many
+  sessions ask, keyed before any token is asked for, and forgets one that failed to open.
+  `give(kind, client)` records the app's own, handed over with `agents.use(...)`. Both are
+  `@StreamClients`, an opt-in annotation standing in for Swift's `@_spi(Stream)`: public so the
+  modules can reach them, not for apps.
+- `agents.disconnect()` closes only what was built. Leaving a call or closing a session
+  disconnects nothing; the next session reuses the client.
+- `ChatClient` and `StreamVideo` are one per process, and building another replaces the app's.
+  One the app built without handing it over is adopted if it is connected as the same user and
+  refused with `Configuration` otherwise. Each module remembers the last client it built so it
+  can tell its own instance from the app's.
+- A token provider that asks `backend.streamCredentials(refresh = true)` again, never one fixed
+  token: a token expires an hour in, and two clients refreshing at once fetch one.
 - Camera direction and state are set before joining, so no front-facing frame is published.
   Speakerphone on after joining, since a hands-free agent wants the speaker.
 - `RECORD_AUDIO` and `CAMERA` are the host's to request. The emulator does not test echo
@@ -139,9 +151,19 @@ JUnit 5 through `kotlin-test`. Never mock; assert on state and outputs, never on
 2. **A real loopback router.** `TestRouter` is a Ktor CIO server on `127.0.0.1:0` that records
    what arrived and answers what the test scripted, sockets included. That is how headers,
    bodies, error statuses, close codes and tool round trips are tested without a mock.
-3. **Live.** `LiveTest` is gated on `VISION_AGENTS_URL` (`@EnabledIfEnvironmentVariable`), the
-   Kotlin answer to `@pytest.mark.integration`.
-4. **Builds.** `ui` and `rtc` are assembled in `cimg/android`, not tested.
+3. **Sharing and posture.** `StreamClientsTest` proves a second Stream client is never built:
+   sessions asking at once share one, the app's own is used and left connected, `disconnect`
+   closes only what was built. `PostureTest` drives every operation the SDK has against
+   `TestRouter` and fails if one is not `x-client-accessible` in the spec. Add to both when a
+   new operation or a new Stream client appears.
+4. **Live.** `LiveTest` is gated on `VISION_AGENTS_URL` (`@EnabledIfEnvironmentVariable`), the
+   Kotlin answer to `@pytest.mark.integration`. `KeyedRouterPostureTest` is gated on
+   `INTEGRATION_ROUTER_KEY` and checks a device token's 403s against a router in `api_key` mode.
+5. **Builds.** `ui`, `rtc` and `chat` are assembled in `cimg/android`, not tested.
+
+CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on any change under
+`sdks/kotlin` or to the spec: `:core:test`, then `generate.py` again, failing if the generated
+models differ from what is committed, then the three Android modules assembled.
 
 Wait on a condition with a deadline (`until { ... }`), never a fixed delay. A collector that
 must see an event has to be subscribed before the frame is sent: start it with
@@ -161,4 +183,6 @@ Reject it if it:
 - catches `CancellationException`, or reports an HTTP status as a transport failure;
 - hand-edits generated code, or adds a method for an operation that is not client-accessible;
 - adds a theme object or navigation to `ui`;
+- builds a second Stream client, replaces the app's process-wide one, or disconnects one the
+  app gave;
 - mocks, or asserts that a method was called.

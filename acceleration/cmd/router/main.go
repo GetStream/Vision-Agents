@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -42,6 +43,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/standardwebhooks"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/detectionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
@@ -78,6 +80,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/audioturn"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/telnyxsig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
@@ -616,9 +619,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	streams := &api.Streams{}
 
 	if section, ok := capabilities[routing.STT]; ok {
+		transcribers := sttrouter.DefaultRegistry()
+		if settings.MockProviders {
+			sttrouter.RegisterMock(transcribers)
+		}
 		speech, err := sttrouter.New(sttrouter.Options{
 			Config:   section,
-			Registry: sttrouter.DefaultRegistry(),
+			Registry: transcribers,
 			Store:    pgStore,
 			Live:     liveClient,
 			Gate:     gate,
@@ -650,9 +657,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 
 	if section, ok := capabilities[routing.TTS]; ok {
+		speakers := ttsrouter.DefaultRegistry()
+		if settings.MockProviders {
+			ttsrouter.RegisterMock(speakers)
+		}
 		voice, err := ttsrouter.New(ttsrouter.Options{
 			Config:   section,
-			Registry: ttsrouter.DefaultRegistry(),
+			Registry: speakers,
 			Store:    pgStore,
 			Live:     liveClient,
 			Voices:   resolver,
@@ -709,13 +720,22 @@ func run(settings config.Config, logger *slog.Logger) error {
 		if policies != nil {
 			screen = policies.Screener(judging)
 		}
+		var models routing.ModelResolver
+		if configs != nil {
+			models = llmrouter.NewCustomModels(configs, secrets, settings.Models.PrivateEndpoints)
+		}
+		thinkers := llmrouter.DefaultRegistry()
+		if settings.MockProviders {
+			llmrouter.RegisterMock(thinkers)
+		}
 		chat, err := llmrouter.New(llmrouter.Options{
 			Config:     section,
-			Registry:   llmrouter.DefaultRegistry(),
+			Registry:   thinkers,
 			Store:      pgStore,
 			Live:       liveClient,
 			Quota:      limiter,
 			Gate:       gate,
+			Models:     models,
 			Screen:     screen,
 			ReplyHedge: settings.Agent.ReplyHedge,
 			Logger:     logger,
@@ -784,6 +804,25 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer imaging.Close()
 		routers[routing.Image] = imaging
 		streams.Image = imaging
+	}
+
+	// Detection is served the same way: a section in the config, and a provider with no
+	// key is a candidate that refuses to be built rather than a router that is missing.
+	if section, ok := capabilities[routing.Detection]; ok {
+		detecting, err := detectionrouter.New(detectionrouter.Options{
+			Config:   section,
+			Registry: detectionrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Gate:     gate,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer detecting.Close()
+		routers[routing.Detection] = detecting
+		streams.Detection = detecting
 	}
 
 	// Every Stream action taken for a customer, a call joined, a line made, a transcript
@@ -858,17 +897,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if sessions != nil {
 		defer sessions.Shutdown()
 	}
-	// In app mode every connected app is checked on, and what the router stops acting in
-	// takes the sessions pinned to it with it.
-	if stored, ok := streamClients.Source().(*streamapp.Stored); ok {
-		ended := func(customer string, app int64) {
-			if sessions != nil {
-				sessions.EndPinned(customer, app)
-			}
-		}
-		go stored.Watch(ctx, streamClients, streamapp.WatchEvery, ended)
-	}
-
 	// A campaign is a phone call, a conversation and a row, so it runs only where all
 	// three are configured. Elsewhere the campaign paths say so.
 	var campaigns *campaign.Runner
@@ -989,44 +1017,82 @@ func run(settings config.Config, logger *slog.Logger) error {
 			"setting", "redis.addr")
 	}
 
+	// A worker waits on whichever node its socket landed on, and a session needing it may be
+	// running on any other.
+	var everyWorker *node.Workers
+	if sessionRelay != nil && directory != nil {
+		everyWorker, err = node.NewWorkers(ctx, workers, directory, sessionRelay, logger)
+		if err != nil {
+			return err
+		}
+		if sessions != nil {
+			sessions.HostTools(everyWorker)
+		}
+	}
+
+	var telnyxPublicKey ed25519.PublicKey
+	if settings.Telnyx.PublicKey != "" {
+		telnyxPublicKey, err = telnyxsig.ParsePublicKey(settings.Telnyx.PublicKey)
+		if err != nil {
+			logger.Error("calls to telnyx numbers will not be answered", "error", err)
+		}
+	}
+	// Both gaps are silent otherwise: Telnyx just gets rejected responses.
+	if settings.Telnyx.APIKey != "" {
+		if telnyxPublicKey == nil {
+			logger.Warn("calls to telnyx numbers will not be answered until "+
+				telnyxsig.PublicKeyEnvVar+" is set to a valid key", "setting", telnyxsig.PublicKeyEnvVar)
+		}
+		// Attach refuses Telnyx numbers then, which an operator only finds out on attach.
+		if secrets == nil {
+			logger.Warn("telnyx numbers cannot be attached and calls to them will not be answered until "+
+				authKEKEnvVar+" is set", "setting", authKEKEnvVar)
+		}
+		if settings.Telnyx.ConnectionID == "" {
+			logger.Warn("telnyx numbers cannot be attached and calls to or from them will not work until "+
+				"TELNYX_CONNECTION_ID is set", "setting", "TELNYX_CONNECTION_ID")
+		}
+	}
+
 	options := api.Options{
-		Routers:           routers,
-		Voices:            voiceService,
-		VoiceLibrary:      buildLibrary(logger),
-		KnowledgeURLs:     pages,
-		Store:             pgStore,
-		Configs:           configs,
-		Users:             endUsers,
-		Live:              liveClient,
-		Phone:             telephony,
-		Sessions:          sessions,
-		Relay:             sessionRelay,
-		Directory:         directory,
-		Streams:           streams,
-		Stream:            streamClients,
-		ProxyDeclaresKind: settings.Auth.ProxyDeclaresKind,
-		TrustAPIKeyHeader: settings.Stream.TrustAPIKeyHeader,
-		DenyRegistration:  settings.Stream.DenyRegistration,
-		HookSecret:        settings.Stream.APISecret,
-		Campaigns:         campaigns,
-		Simulations:       simulations,
-		PluginEvents:      events,
-		DLC:               registrations,
-		Gate:              dlcGate,
-		OpsKey:            settings.Auth.OpsKey,
-		Dispatch:          workers,
-		Quota:             limiter,
-		Policies:          policies,
-		Connectors:        connectors,
-		ConnectorSecrets:  connectorSecrets,
-		TrustedProxies:    trustedProxies,
-		AuthMode:          authMode,
-		DataRetention:     settings.DataMove.Retention,
-		CORSOrigins:       settings.CORSOrigins,
-		PublicURL:         settings.PublicURL,
-		DashboardURL:      settings.DashboardURL,
-		Auth:              authenticator,
-		Logger:            logger,
+		Routers:               routers,
+		Voices:                voiceService,
+		VoiceLibrary:          buildLibrary(logger),
+		KnowledgeURLs:         pages,
+		Store:                 pgStore,
+		Configs:               configs,
+		Users:                 endUsers,
+		Live:                  liveClient,
+		Phone:                 telephony,
+		Sessions:              sessions,
+		Relay:                 sessionRelay,
+		Directory:             directory,
+		Workers:               everyWorker,
+		Streams:               streams,
+		Stream:                streamClients,
+		ProxyDeclaresKind:     settings.Auth.ProxyDeclaresKind,
+		HookSecret:            settings.Stream.APISecret,
+		TelnyxPublicKey:       telnyxPublicKey,
+		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
+		Campaigns:             campaigns,
+		Simulations:           simulations,
+		PluginEvents:          events,
+		DLC:                   registrations,
+		Gate:                  dlcGate,
+		OpsKey:                settings.Auth.OpsKey,
+		Dispatch:              workers,
+		Quota:                 limiter,
+		Policies:              policies,
+		Connectors:            connectors,
+		ConnectorSecrets:      connectorSecrets,
+		TrustedProxies:        trustedProxies,
+		AuthMode:              authMode,
+		DataRetention:         settings.DataMove.Retention,
+		PrivateModelEndpoints: settings.Models.PrivateEndpoints,
+		PublicURL:             settings.PublicURL,
+		DashboardURL:          settings.DashboardURL,
+		Auth:                  authenticator,
+		Logger:                logger,
 	}
 	// A nil *resolver.Resolver in the interface would not be a nil interface, so the absence
 	// stays absent, and the events endpoint takes no events without it.
@@ -1036,6 +1102,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		// The proxy holds a connection's direct calls after a provider's 429, as the session's
 		// dispatcher holds its tool calls.
 		options.ConnectorLimiter = connectorLimiter
+		options.ProxyCallsPerMinute = settings.Connectors.ProxyCallsPerMinute
 		options.ConnectorEventSecrets = api.ConnectorEventSecrets(os.Getenv)
 		// The events endpoint hands it a provider app's messages; the conversation held on a
 		// thread channel, the agent's finished replies to them. Its texts pass the gate
@@ -1164,6 +1231,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// App mode's counterpart of warnWithoutMessageHook: the Stream apps provider apps are
+	// pinned to, read once, within the one attempt's time the deployment's own check gets.
+	go func() {
+		attempt, cancel := context.WithTimeout(ctx, learnTimeout)
+		defer cancel()
+		server.WarnWithoutMessageHooks(attempt)
+	}()
 
 	address := settings.Addr
 

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -25,11 +26,12 @@ import (
 // belong to the agent and outlive it, which is what lets a session move onto other models
 // without leaving the call.
 type pipeline struct {
-	native     bool
-	ctx        context.Context
-	cancel     context.CancelFunc
-	running    sync.WaitGroup
-	eotResults chan eotResult
+	native      bool
+	ctx         context.Context
+	cancel      context.CancelFunc
+	running     sync.WaitGroup
+	eotResults  chan eotResult
+	writeFailed atomic.Bool
 }
 
 func newPipeline(parent context.Context, native bool) *pipeline {
@@ -226,7 +228,7 @@ func (a *Agent) prepare(current, next Settings, native, restart bool) (*prepared
 	}
 	if native {
 		if next.STSTarget != current.STSTarget || next.Voice != current.Voice {
-			if prep.sts, err = a.openSpeech(next, current.SubagentTarget != ""); err != nil {
+			if prep.sts, err = a.openSpeech(a.ctx, next, current.SubagentTarget != ""); err != nil {
 				return fail(err)
 			}
 		}
@@ -431,7 +433,7 @@ func (a *Agent) startNative(prep *prepared) {
 	events := make(chan sts.Event, sts.EmitterBuffer)
 	p.running.Add(3)
 	go a.receiveSTS(p, prep.sts.Events(), events)
-	go a.consumeSTS(p, events)
+	go a.consumeSTS(p, prep.sts, events)
 	go a.consumeNativePresence(p)
 }
 
@@ -585,7 +587,7 @@ func (a *Agent) openNative(s Settings) (*prepared, error) {
 		}
 	}
 	var err error
-	if prep.sts, err = a.openSpeech(s, prep.harness != nil); err != nil {
+	if prep.sts, err = a.openSpeech(a.ctx, s, prep.harness != nil); err != nil {
 		prep.close()
 		return nil, err
 	}
@@ -598,17 +600,17 @@ func (a *Agent) openNative(s Settings) (*prepared, error) {
 // Both transcripts are asked for, and asked for as terms: what the caller said and what
 // the model said back are what the history, the chat log, the review and memory are all
 // built on, so a model that cannot write them down is not a candidate.
-func (a *Agent) openSpeech(s Settings, delegating bool) (*stsrouter.Session, error) {
+func (a *Agent) openSpeech(ctx context.Context, s Settings, delegating bool) (*stsrouter.Session, error) {
 	tools, err := a.nativeTools(delegating)
 	if err != nil {
 		return nil, err
 	}
 	a.mu.Lock()
-	instructions := a.nativeInstructions(delegating) + transcript(a.history)
+	instructions := a.nativeInstructions(delegating) + transcript(a.history, a.nativeCalls)
 	a.mu.Unlock()
 
 	on := true
-	session, err := a.options.STS.Start(a.ctx, stsrouter.Request{
+	session, err := a.options.STS.Start(ctx, stsrouter.Request{
 		CustomerID:    a.options.CustomerID,
 		AgentID:       a.options.AgentID,
 		CallID:        a.options.CallID,
@@ -798,7 +800,7 @@ const (
 // transcript renders the conversation so far for a speech-to-speech model taking over
 // mid-call. Such a model takes no history, only instructions, so this is how it knows
 // what it is continuing. Empty when nothing has been said yet.
-func transcript(history []llm.Message) string {
+func transcript(history []llm.Message, calls map[string]llm.ToolCall) string {
 	var lines []string
 	length := 0
 	for i := len(history) - 1; i >= 0 && len(lines) < transcriptMessages; i-- {
@@ -813,6 +815,12 @@ func transcript(history []llm.Message) string {
 			speaker = "Caller"
 		case llm.Assistant:
 			speaker = "You"
+		case llm.ToolResult:
+			call, ok := calls[message.ToolCallID]
+			if !ok || strings.HasPrefix(text, stillRunning) {
+				continue
+			}
+			speaker = fmt.Sprintf("Completed tool %s(%s)", call.Name, call.Arguments)
 		default:
 			continue
 		}

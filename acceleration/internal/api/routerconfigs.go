@@ -217,6 +217,9 @@ func (s *Server) chainComplaint(modality routing.Modality, providers []string) (
 	}
 	config := routed.Config()
 	for _, target := range providers {
+		if _, own := routing.CustomName(target); own && modality == routing.LLM {
+			continue
+		}
 		if !config.Names(target) {
 			return fmt.Sprintf(
 				"%q is not a provider, a provider/model or a capability shortcut this deployment offers", target), false

@@ -13,6 +13,7 @@ export {
   KNOWLEDGE_URLS_FILE,
   SIMULATIONS_DIR,
   SKILLS_DIR,
+  SKILL_FILE,
   loadFolder,
   parseDeclaration,
   parsePages,

@@ -157,14 +157,15 @@ func (s *SessionOwnershipSuite) TestAServerTokenInASocketsQueryStringIsNotABacke
 	s.Equal(http.StatusNotFound, status)
 }
 
-func (s *SessionOwnershipSuite) TestTheAppsBackendReachesEveryCallItsUsersAreOn() {
-	// It runs the application, so cleaning up after a device that went away is its job.
-	alice := s.data.createUser().createSession(s.onACall())
-	bob := s.data.createUser().createSession(s.onACall())
+func (s *SessionOwnershipSuite) TestTheAppsBackendEndsAUsersCallWithoutReadingIt() {
+	// A call is kept like a conversation in writing: it is the user's to read, and the
+	// application's to clean up after a device that went away.
+	alice := s.data.createUser()
+	opened := alice.createSession(s.onACall())
 
-	s.assertReaches(s.serverClient, alice.Id)
-	s.assertReaches(s.serverClient, bob.Id)
-	s.serverClient.stopSession(alice.Id)
+	s.assertDoesNotReach(s.serverClient, opened.Id)
+	s.serverClient.deleteSession(opened.Id)
+	s.assertDoesNotReach(alice, opened.Id)
 }
 
 func (s *SessionOwnershipSuite) TestAnotherAppsUserReachesNothingEvenByTheSameName() {
@@ -189,8 +190,7 @@ func (s *SessionOwnershipSuite) TestASessionWithNoTokenAtAllIsRefusedBeforeItIsO
 
 // onACall is a session with an agent in a call, which records no conversation of its own.
 func (s *SessionOwnershipSuite) onACall() CreateSessionRequest {
-	call := s.utils.callID()
-	return CreateSessionRequest{CallId: &call}
+	return CreateSessionRequest{StartVoice: pointerTo(true)}
 }
 
 // guestNamed is a client holding a guest token that goes by name, for the collisions

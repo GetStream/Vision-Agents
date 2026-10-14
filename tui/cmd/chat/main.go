@@ -40,7 +40,7 @@ func run(ctx context.Context) error {
 	name := flag.String("name", "jean", "the agent to talk to, by the name its config is stored under")
 	model := flag.String("llm", "", "the model that answers; empty leaves the backend's default")
 	dir := flag.String("dir", "", "an agent directory to read instructions, skills and knowledge from")
-	resume := flag.String("conversation", "", "a saved conversation to resume")
+	resume := flag.String("session", "", "the session of a saved conversation to resume")
 	logs := flag.String("log", "", "a file to write logs to; empty throws them away")
 	flag.Parse()
 
@@ -75,15 +75,15 @@ func run(ctx context.Context) error {
 	}
 
 	return tui.Run(ctx, tui.Options{
-		Open: func(ctx context.Context, conversationID string) (tui.Session, error) {
-			session, err := agent.Chat(ctx, agents.SessionOptions{ConversationID: conversationID})
+		Open: func(ctx context.Context, sessionID string) (tui.Session, error) {
+			session, err := chat(ctx, agent, sessionID)
 			if err != nil {
 				return nil, err
 			}
 			return tui.Agent(session), nil
 		},
-		History:        tui.BackendHistory(stream.Backend{}, *name),
-		ConversationID: *resume,
+		History:   tui.BackendHistory(stream.Backend{}, *name),
+		SessionID: *resume,
 		Branding: tui.Branding{
 			Banner:      banner,
 			Title:       agent.Name(),
@@ -93,6 +93,14 @@ func run(ctx context.Context) error {
 		},
 		Logger: logger,
 	})
+}
+
+// chat resumes the session of an id, or starts a conversation when it is empty.
+func chat(ctx context.Context, agent *agents.Agent, sessionID string) (*agents.Session, error) {
+	if sessionID == "" {
+		return agent.Chat(ctx)
+	}
+	return agent.Sessions.Resume(ctx, sessionID)
 }
 
 // logging keeps the log off the screen: in a file if one was named, and nowhere if not.

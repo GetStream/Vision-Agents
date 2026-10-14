@@ -1,0 +1,73 @@
+name: Release JS SDK
+
+# Run by hand. semantic-release reads the `sdk-js` commits since the last `sdk-js-v*` tag,
+# publishes @stream-io/calypso to npm and tags the release. See sdks/js/release.config.mjs.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Work out the next version and its notes without publishing anything
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-sdk-js
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/accelerate'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push the tag and the GitHub release
+      issues: write     # open an issue when a release fails
+      id-token: write   # npm trusted publishing (OIDC), which also signs provenance
+    defaults:
+      run:
+        working-directory: sdks/js
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # semantic-release walks the history back to the last tag.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          # No dependency cache in a job that holds an OIDC token: a cache poisoned by
+          # another run would hand that token to whatever it planted.
+          package-manager-cache: false
+
+      - name: Install
+        run: npm ci
+
+      - name: Check the generated types are in step with the spec
+        run: npm run types -- --check
+
+      - name: Test
+        run: npm test
+
+      # Installed here rather than as dev dependencies, so the SDK's own lockfile carries
+      # none of the release tooling. The preset stays on 9: semantic-release's notes
+      # generator ships conventional-changelog-writer 8, which cannot render preset 10.
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: >
+          npx --yes
+          -p semantic-release@25.0.9
+          -p conventional-changelog-conventionalcommits@9.3.1
+          semantic-release $([ "$DRY_RUN" = "true" ] && echo --dry-run)
+
+      # The release is created as a draft so that publishing it can leave the repository's
+      # latest release where it is: the Python packages' `v*`.
+      - name: Publish the GitHub release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag=$(git tag --points-at HEAD --list 'sdk-js-v*')
+          if [ -n "$tag" ]; then
+            gh release edit "$tag" --draft=false --latest=false
+          fi

@@ -83,6 +83,10 @@ jobs:
         run: go test ./...
         working-directory: acceleration
 
+      - name: Compile STS integration tests
+        run: go test -tags integration -run '^$' -exec=true ./internal/sts/...
+        working-directory: acceleration
+
       - name: Vet the SDK
         run: go vet ./...
         working-directory: sdks/go
@@ -115,11 +119,11 @@ jobs:
       run:
         working-directory: sdks/js
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: sdks/js/package-lock.json
 
@@ -143,14 +147,14 @@ jobs:
       run:
         working-directory: dashboard
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check for dashboard
         id: dashboard
         working-directory: .
         run: echo "present=$([[ -f dashboard/package-lock.json ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.dashboard.outputs.present == 'true'
         with:
           node-version: 22

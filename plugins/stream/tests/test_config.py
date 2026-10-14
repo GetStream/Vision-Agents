@@ -36,12 +36,15 @@ class Router:
     def __init__(self):
         self.configs: dict[str, dict[str, Any]] = {}
         self.skills: dict[str, dict[str, Any]] = {}
-        self.knowledge: list[dict[str, Any]] = []
+        self.knowledge: list[list[dict[str, Any]]] = []
         self.pages: list[dict[str, Any]] = []
         # What the last sync declared as the config's simulations, None when it said
         # nothing about them.
         self.simulations: list[dict[str, Any]] | None = None
         self.syncs = 0
+        self.bodies: list[dict[str, Any]] = []
+        self.connection_pages: list[list[dict[str, Any]]] = [[]]
+        self.connection_queries: list[dict[str, str]] = []
         self.url = ""
         self._next = 0
 
@@ -54,6 +57,7 @@ class Router:
         app.router.add_post("/v1/agents/skills", self._create_skill)
         app.router.add_put("/v1/agents/skills/{id}", self._update_skill)
         app.router.add_post("/v1/agents/sync", self._sync)
+        app.router.add_get("/v1/agents/connections", self._list_connections)
         app.router.add_post("/v1/agents/knowledge/urls", self._add_page)
         app.router.add_get("/v1/agents/knowledge/urls/{id}", self._get_page)
         return app
@@ -95,6 +99,7 @@ class Router:
 
     async def _sync(self, request: web.Request) -> web.Response:
         body = await request.json()
+        self.bodies.append(body)
         self.syncs += 1
         self.simulations = body.get("simulations")
         existing_id = ""
@@ -134,6 +139,20 @@ class Router:
             existing_id,
         )
         return web.json_response({"unchanged": False, "config": stored})
+
+    async def _list_connections(self, request: web.Request) -> web.Response:
+        """Pages of the app's connections, the way the list endpoint pages."""
+        self.connection_queries.append(dict(request.query))
+        cursor = request.query.get("cursor", "")
+        index = int(cursor) if cursor else 0
+        items = (
+            self.connection_pages[index] if index < len(self.connection_pages) else []
+        )
+        has_more = index + 1 < len(self.connection_pages)
+        body: dict[str, Any] = {"has_more": has_more, "items": items}
+        if has_more:
+            body["next_cursor"] = str(index + 1)
+        return web.json_response(body)
 
     async def _add_page(self, request: web.Request) -> web.Response:
         """Queue a page to be read, which a router answers before reading it."""
@@ -524,7 +543,7 @@ class TestSyncAgent:
             "voice: nova\n"
             "harness: default\n"
             "search: search-fast\n"
-            "greeting: Hello.\n"
+            "greeting:\n  text: Hello.\n  mode: variation\n"
             "sandbox: daytona\n"
             "plugins:\n  - gmail\n  - name: google_calendar\n    user: true\n"
             "keyterms:\n  - Vision Agents\n"
@@ -542,9 +561,10 @@ class TestSyncAgent:
         assert stored["stt"] == "stt-fast"
         assert stored["tts"] == "tts-fast"
         assert stored["voice"] == "nova"
+        assert "speed" not in stored
         assert stored["harness"] == "default"
         assert stored["search"] == "search-fast"
-        assert stored["greeting"] == {"text": "Hello."}
+        assert stored["greeting"] == {"text": "Hello.", "mode": "variation"}
         assert stored["sandbox"] == "daytona"
         assert stored["plugins"] == ["gmail", {"name": "google_calendar", "user": True}]
         assert stored["keyterms"] == ["Vision Agents"]
@@ -742,3 +762,275 @@ class TestSyncAgent:
             is None
         )
         assert router.syncs == 0
+
+    @pytest.fixture
+    def bare_dir(self, tmp_path):
+        """The two files the base-sha probe synced, and nothing else."""
+        root = tmp_path / "support"
+        root.mkdir()
+        (root / "agent.yaml").write_text("name: support\n")
+        (root / "instructions.md").write_text("Be helpful.\n")
+        return root
+
+    async def test_a_directory_without_connectors_syncs_the_body_it_synced_on_base(
+        self, router: Router, bare_dir
+    ):
+        # Probed on 80773902 (connectors/tool-patterns) before this change: these two
+        # files, and nothing else, produced this body. A connectors key must not appear.
+        await stream.sync_agent(
+            "support", path=str(bare_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.bodies[-1] == {
+            "hash": "7c2ee5b1e886b6eb16792ffcdf426bc1",
+            "instructions": "Be helpful.",
+            "name": "support",
+        }
+
+    async def test_a_connector_named_by_its_id_is_a_session_binding_offering_every_tool(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n  - linear\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.connection_queries == []
+        assert router.configs[result.config.id]["connectors"] == [
+            {
+                "name": "linear",
+                "connector_id": "linear",
+                "connection": {"type": "session"},
+                "tools": [],
+                "tool_patterns": ["*"],
+            }
+        ]
+
+    @pytest.mark.parametrize("tools", ["", "    tools:\n"])
+    async def test_tools_left_out_or_null_offers_every_tool(
+        self, router: Router, support_dir, tools: str
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n  - name: github\n" + tools
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["connectors"] == [
+            {
+                "name": "github",
+                "connector_id": "github",
+                "connection": {"type": "session"},
+                "tools": [],
+                "tool_patterns": ["*"],
+            }
+        ]
+
+    async def test_an_object_name_is_kept_as_written_like_the_go_sdk(
+        self, router: Router, support_dir
+    ):
+        # Same yaml Go reads in sdks/go/agents/folder.go: the alias stays " github ",
+        # so the binding's connector_id is that string and not github's company account.
+        router.connection_pages = [[app_connection("co-1", "company", " github ")]]
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n"
+            '  - name: " github "\n    connection: company\n'
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.connection_queries[0]["connector_id"] == " github "
+        assert router.configs[result.config.id]["connectors"] == [
+            {
+                "name": " github ",
+                "connector_id": " github ",
+                "connection": {"type": "fixed", "connection_id": "co-1"},
+                "tools": [],
+                "tool_patterns": ["*"],
+            }
+        ]
+
+    async def test_an_object_connector_id_is_kept_as_written(
+        self, router: Router, support_dir
+    ):
+        router.connection_pages = [[app_connection("co-1", "company", " linear ")]]
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n"
+            '  - name: work\n    connector: " linear "\n    connection: company\n'
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.connection_queries[0]["connector_id"] == " linear "
+        binding = router.configs[result.config.id]["connectors"][0]
+        assert binding["name"] == "work"
+        assert binding["connector_id"] == " linear "
+        assert binding["connection"] == {"type": "fixed", "connection_id": "co-1"}
+
+    async def test_an_object_keeps_its_patterns_alias_and_required_flag(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n"
+            "  - name: issues\n    connector: linear\n"
+            "    tools: [list_*, get_issue]\n    required: true\n"
+            "  - name: mail\n    required: false\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["connectors"] == [
+            {
+                "name": "issues",
+                "connector_id": "linear",
+                "connection": {"type": "session"},
+                "tools": [],
+                "tool_patterns": ["list_*", "get_issue"],
+                "required": True,
+            },
+            {
+                "name": "mail",
+                "connector_id": "mail",
+                "connection": {"type": "session"},
+                "tools": [],
+                "tool_patterns": ["*"],
+                "required": False,
+            },
+        ]
+
+    async def test_an_empty_connectors_list_is_sent_so_the_stored_ones_are_removed(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text("name: support\nconnectors: []\n")
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["connectors"] == []
+
+    async def test_a_null_connectors_key_leaves_the_body_without_one(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text("name: support\nconnectors:\n")
+
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert "connectors" not in router.bodies[-1]
+
+    async def test_a_connection_id_on_a_later_page_wins_over_a_label(
+        self, router: Router, support_dir
+    ):
+        router.connection_pages = [
+            [app_connection("other", "desk")],
+            [app_connection("desk", "west")],
+        ]
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n"
+            "  - name: work\n    connector: linear\n    connection: desk\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert [query["owner_type"] for query in router.connection_queries] == [
+            "app",
+            "app",
+        ]
+        assert [query["connector_id"] for query in router.connection_queries] == [
+            "linear",
+            "linear",
+        ]
+        assert "limit" not in router.connection_queries[0]
+        assert "cursor" not in router.connection_queries[0]
+        assert router.connection_queries[1]["cursor"] == "1"
+        binding = router.configs[result.config.id]["connectors"][0]
+        assert binding["connection"] == {"type": "fixed", "connection_id": "desk"}
+
+    async def test_a_unique_label_on_a_later_page_is_the_fixed_connection(
+        self, router: Router, support_dir
+    ):
+        router.connection_pages = [
+            [app_connection("one", "east")],
+            [app_connection("two", "desk")],
+        ]
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n  - name: work\n    connection: desk\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert len(router.connection_queries) == 2
+        binding = router.configs[result.config.id]["connectors"][0]
+        assert binding["connector_id"] == "work"
+        assert binding["connection"] == {"type": "fixed", "connection_id": "two"}
+
+    async def test_no_matching_connection_names_the_entry(
+        self, router: Router, support_dir
+    ):
+        router.connection_pages = [[app_connection("one", "east")]]
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n  - name: work\n    connection: desk\n"
+        )
+
+        with pytest.raises(
+            ValueError,
+            match='agents: connector "work": no app connection with id or label "desk"',
+        ):
+            await stream.sync_agent(
+                "support", path=str(support_dir), url=router.url, customer_id="acme"
+            )
+
+    async def test_two_labels_name_the_entry(self, router: Router, support_dir):
+        router.connection_pages = [
+            [app_connection("one", "desk"), app_connection("two", "desk")]
+        ]
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nconnectors:\n  - name: work\n    connection: desk\n"
+        )
+
+        with pytest.raises(
+            ValueError,
+            match='agents: connector "work": "desk" matches 2 app connections',
+        ):
+            await stream.sync_agent(
+                "support", path=str(support_dir), url=router.url, customer_id="acme"
+            )
+
+
+def app_connection(id: str, label: str, connector_id: str = "linear") -> dict[str, Any]:
+    """One app connection, with the fields the generated client requires to read it."""
+    when = "2026-01-01T00:00:00+00:00"
+    return {
+        "auth_scheme": "oauth2_code",
+        "connector_id": connector_id,
+        "created_at": when,
+        "definition_revision": 1,
+        "definition_status": "current",
+        "granted_scopes": [],
+        "id": id,
+        "inputs": {},
+        "metadata": {},
+        "owner": {"type": "app"},
+        "revision": 1,
+        "status": "connected",
+        "updated_at": when,
+        "used_by": [],
+        "label": label,
+    }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -24,6 +25,8 @@ type ConfigsSuite struct {
 	// describing runs whenever the router asks a config's MCP server about itself, which a
 	// save does between checking the config and writing it. Nil runs nothing.
 	describing atomic.Pointer[func()]
+	// logged is what the router logged, for the tests of the deprecation it warns of.
+	logged *lockedLog
 }
 
 func TestConfigsSuite(t *testing.T) {
@@ -42,6 +45,8 @@ func (s *ConfigsSuite) SetupSuite() {
 		}
 		return nil, errors.New("tests reach no real MCP server")
 	})}
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -970,6 +975,137 @@ func (s *ConfigsSuite) TestAFixedBindingCannotGrantAToolByNameAlone() {
 	s.Contains(failure, `grants "search" with no schema_digest`)
 }
 
+// TestAnEmptyToolPatternsListIsRefused: tool_patterns [] is not a grant of every tool.
+// The field requires at least one pattern, on create, replace, patch and sync.
+func (s *ConfigsSuite) TestAnEmptyToolPatternsListIsRefused() {
+	binding := sessionSlack("inbox")
+	binding["tools"] = []map[string]any{}
+	binding["tool_patterns"] = []string{}
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("inbox")}})
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "patterned", "connectors": []map[string]any{binding}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "expected array length >= 1")
+
+	status, failure = s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "expected array length >= 1")
+
+	status, failure = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"connectors": []map[string]any{binding}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "expected array length >= 1")
+
+	status, failure = s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "synced", "hash": "v1", "connectors": []map[string]any{binding}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "expected array length >= 1")
+
+	kept := value(s.read(created.Id).Connectors)[0]
+	s.Nil(kept.ToolPatterns)
+	s.Equal([]ConnectorToolGrant{{Name: "search", SchemaDigest: toolDigest}}, kept.Tools)
+}
+
+func (s *ConfigsSuite) TestPatternsAndToolsTogetherAreRefused() {
+	binding := sessionSlack("inbox")
+	binding["tool_patterns"] = []string{"*"}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "one or the other")
+}
+
+func (s *ConfigsSuite) TestAToolPatternThatCannotMatchIsRefused() {
+	binding := sessionSlack("inbox")
+	binding["tools"] = []map[string]any{}
+	binding["tool_patterns"] = []string{"["}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "not a tool name or pattern")
+}
+
+func (s *ConfigsSuite) TestMoreThan128ToolPatternsAreRefused() {
+	patterns := make([]string, 129)
+	for index := range patterns {
+		patterns[index] = "search"
+	}
+	binding := sessionSlack("inbox")
+	binding["tools"] = []map[string]any{}
+	binding["tool_patterns"] = patterns
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "128")
+}
+
+func (s *ConfigsSuite) TestAFixedBindingWithPatternsAndNoDigestsIsAccepted() {
+	binding := fixedSlack("inbox", s.connection(""))
+	binding["tools"] = []map[string]any{}
+	binding["tool_patterns"] = []string{"search", "linear_*"}
+
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{binding}})
+
+	got := value(s.read(created.Id).Connectors)[0]
+	s.Empty(got.Tools)
+	s.Equal([]string{"search", "linear_*"}, value(got.ToolPatterns))
+}
+
+func (s *ConfigsSuite) TestGetAndListAnswerToolPatterns() {
+	binding := sessionSlack("inbox")
+	binding["tools"] = []map[string]any{}
+	binding["tool_patterns"] = []string{"*"}
+	created := s.createConfig(map[string]any{"name": "patterned", "connectors": []map[string]any{binding}})
+
+	s.Equal([]string{"*"}, value(value(s.read(created.Id).Connectors)[0].ToolPatterns))
+	var listed []AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs?name=patterned", nil, &listed))
+	s.Require().NotEmpty(listed)
+	s.Equal([]string{"*"}, value(value(listed[0].Connectors)[0].ToolPatterns))
+}
+
+func (s *ConfigsSuite) TestPutAndPatchStoreToolPatterns() {
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("inbox")}})
+	put := sessionSlack("inbox")
+	put["tools"] = []map[string]any{}
+	put["tool_patterns"] = []string{"search_*"}
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support", "connectors": []map[string]any{put}}, nil))
+	s.Equal([]string{"search_*"}, value(value(s.read(created.Id).Connectors)[0].ToolPatterns))
+
+	patched := sessionSlack("crm")
+	patched["tools"] = []map[string]any{}
+	patched["tool_patterns"] = []string{"*"}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"connectors": []map[string]any{patched}}, nil))
+
+	got := value(s.read(created.Id).Connectors)[0]
+	s.Equal("crm", got.Name)
+	s.Equal([]string{"*"}, value(got.ToolPatterns))
+}
+
+// TestABindingWithOnlyToolsIsAnsweredWithoutToolPatterns is the control for the answer.
+// On e70351d4 a tools-only binding's GET body has no tool_patterns key: the field did not
+// exist. A binding that still grants tools by name is answered the same way.
+func (s *ConfigsSuite) TestABindingWithOnlyToolsIsAnsweredWithoutToolPatterns() {
+	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("inbox")}})
+
+	status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/configs/"+created.Id, nil)
+
+	s.Require().Equal(http.StatusOK, status)
+	s.NotContains(string(raw), "tool_patterns")
+	s.Equal([]ConnectorToolGrant{{Name: "search", SchemaDigest: toolDigest}}, value(s.read(created.Id).Connectors)[0].Tools)
+}
+
 func (s *ConfigsSuite) TestThirtySecondsIsTheLongestATimeoutMayBe() {
 	binding := sessionSlack("inbox")
 	binding["timeout_ms"] = 30000
@@ -1217,6 +1353,28 @@ func (s *ConfigsSuite) TestABindingToThePluginsOwnConnectorIsCalledWhatThePlugin
 		read := s.read(created.Id)
 		s.Equal("Answer briefly.", value(read.Instructions), "user: %v", user)
 		s.Len(value(read.Connectors), 1, "user: %v", user)
+	}
+}
+
+// TestASavedPluginEntryABindingReplacesIsNotCountedAsUnbound: the deprecation warning is the
+// evidence for removing plugins, so an entry the session drops for a binding (a migrated
+// config's, with connectors on) is not real use, and an entry no binding replaces (linear, beside a slack binding) is.
+func (s *ConfigsSuite) TestASavedPluginEntryABindingReplacesIsNotCountedAsUnbound() {
+	migrated := s.createConfig(map[string]any{
+		"name":       "migrated-" + s.utils.uuid(),
+		"plugins":    []any{map[string]any{"name": "slack"}},
+		"connectors": []map[string]any{sessionSlack("slack")},
+	})
+	live := s.createConfig(map[string]any{
+		"name":       "live-" + s.utils.uuid(),
+		"plugins":    []any{map[string]any{"name": "slack"}, map[string]any{"name": "linear"}},
+		"connectors": []map[string]any{sessionSlack("inbox")},
+	})
+
+	for id, unbound := range map[string]string{migrated.Id: "unbound=0", live.Id: "unbound=1"} {
+		lines := deprecations(s.logged, plugins.PathConfigSave, id)
+		s.Require().Len(lines, 1, id)
+		s.Contains(lines[0], " "+unbound+" ", id)
 	}
 }
 

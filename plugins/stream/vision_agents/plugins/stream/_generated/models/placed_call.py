@@ -18,16 +18,14 @@ class PlacedCall:
     Attributes:
         status (str): The vendor's own word for where the call is, e.g. "queued".
         vendor_call_id (str):
-        call_id (str | Unset): The Stream call the answered leg is routed into. An agent that is not in it hears nothing
-            when the person picks up.
-        call_type (str | Unset):
+        session_id (str | Unset): The session to open, with start_voice, for the call: the answered leg is routed into
+            agent:<session id>, and an agent that is not in it hears nothing when the person picks up.
         vendor (str | Unset): Who is placing the call.
     """
 
     status: str
     vendor_call_id: str
-    call_id: str | Unset = UNSET
-    call_type: str | Unset = UNSET
+    session_id: str | Unset = UNSET
     vendor: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -36,9 +34,7 @@ class PlacedCall:
 
         vendor_call_id = self.vendor_call_id
 
-        call_id = self.call_id
-
-        call_type = self.call_type
+        session_id = self.session_id
 
         vendor = self.vendor
 
@@ -50,10 +46,8 @@ class PlacedCall:
                 "vendor_call_id": vendor_call_id,
             }
         )
-        if call_id is not UNSET:
-            field_dict["call_id"] = call_id
-        if call_type is not UNSET:
-            field_dict["call_type"] = call_type
+        if session_id is not UNSET:
+            field_dict["session_id"] = session_id
         if vendor is not UNSET:
             field_dict["vendor"] = vendor
 
@@ -66,17 +60,14 @@ class PlacedCall:
 
         vendor_call_id = d.pop("vendor_call_id")
 
-        call_id = d.pop("call_id", UNSET)
-
-        call_type = d.pop("call_type", UNSET)
+        session_id = d.pop("session_id", UNSET)
 
         vendor = d.pop("vendor", UNSET)
 
         placed_call = cls(
             status=status,
             vendor_call_id=vendor_call_id,
-            call_id=call_id,
-            call_type=call_type,
+            session_id=session_id,
             vendor=vendor,
         )
 

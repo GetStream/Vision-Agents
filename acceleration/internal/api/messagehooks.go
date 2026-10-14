@@ -113,7 +113,7 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 func addressed(event messageEvent) bool {
 	// This namespace belongs to durable session commands, even on older channels
 	// without trigger metadata or when a client omits/forges the source marker.
-	if conversation.SessionCommandChannel(event.ChannelType, event.ChannelID) {
+	if conversation.SessionCommandChannel(event.ChannelType, event.ChannelID, event.ChannelCustom) {
 		return false
 	}
 	if event.ChannelType != chatlog.ChannelType || event.ChannelID == "" {
@@ -194,6 +194,10 @@ func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, body [
 		return
 	}
 
+	if s.forwardedToWorkers(r, body, customerID) {
+		return
+	}
+
 	message := dispatch.Message{
 		ChannelType: event.ChannelType,
 		ChannelID:   event.ChannelID,
@@ -265,8 +269,15 @@ func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEv
 	} else {
 		config, err = s.store.AgentConfigOwner(ctx, declared)
 	}
+	// A config nobody in the app holds is no failure here: an app whose message hooks deliver
+	// to two routers, such as a local one and staging, sends each the other's channels too.
+	if errors.Is(err, store.ErrNoAgentConfig) {
+		s.logger.Info("an arriving message's channel names a config nobody in its app holds",
+			"channel", event.ChannelID, "config", declared, "stream_app", origin.app, "customer", origin.customer)
+		return "", "", false
+	}
 	if err != nil {
-		s.logger.Error("an arriving message's channel names a config nobody in its app holds",
+		s.logger.Error("could not read the config an arriving message's channel names",
 			"channel", event.ChannelID, "config", declared, "stream_app", origin.app, "error", err)
 		return "", "", false
 	}
@@ -315,7 +326,7 @@ func (s *Server) dispatchText(ctx context.Context, found *session.Session, messa
 	message.ConfigID = spec.ConfigID
 	message.SessionID = found.ID()
 	message.At = time.Now().UTC()
-	worker, err := s.dispatch.AssignMessage(spec.CustomerID, message)
+	workerID, err := s.assignMessage(ctx, spec.CustomerID, message)
 	if err != nil {
 		if message.CommandID != "" {
 			if _, stopped := found.InterruptCommand(message.CommandID); stopped != nil {
@@ -326,8 +337,21 @@ func (s *Server) dispatchText(ctx context.Context, found *session.Session, messa
 		return conversation.CommandReceipt{}, err
 	}
 	s.logger.Info("handed a message to a worker",
-		"session", found.ID(), "customer", spec.CustomerID, "worker", worker.ID)
+		"session", found.ID(), "customer", spec.CustomerID, "worker", workerID)
 	return receipt, nil
+}
+
+// assignMessage hands a message to one of the customer's workers, wherever in the
+// deployment it is connected, and names the worker it went to.
+func (s *Server) assignMessage(ctx context.Context, customerID string, message dispatch.Message) (string, error) {
+	if s.workers != nil {
+		return s.workers.AssignMessage(ctx, customerID, message)
+	}
+	worker, err := s.dispatch.AssignMessage(customerID, message)
+	if err != nil {
+		return "", err
+	}
+	return worker.ID, nil
 }
 
 // answerMessage answers from a session that is already running.

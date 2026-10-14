@@ -317,6 +317,22 @@ func (s *AuthorizationsSuite) TestAReconnectForTheSameAccountReplacesTheGrant() 
 	s.Equal(1, s.get(id).DefinitionRevision, "a connector with one revision is read as on base 89966e26")
 }
 
+// TestAReconnectHidesTheLastValidationOfTheOldGrant (R1.1 of PR #874): what a validate found of
+// one grant says nothing of the grant a reconnect stores, so GET shows no last validation
+// until the next validate.
+func (s *AuthorizationsSuite) TestAReconnectHidesTheLastValidationOfTheOldGrant() {
+	id := s.connection("")
+	s.connect(id)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil, nil))
+	s.Require().NotNil(s.get(id).LastValidation)
+
+	s.connect(id)
+
+	got := s.get(id)
+	s.Equal(3, got.Revision, "new credentials")
+	s.Nil(got.LastValidation)
+}
+
 // TestAReconnectRestoresTheEventSubscriptionsItsBindingsDeclare: a connection whose
 // subscription went (dropped while it was disconnected) gets it back when a consent connects it
 // again, with no validate. The connector offers no events source here, so the subscription
@@ -588,6 +604,60 @@ func (s *AuthorizationsSuite) TestTheClientMetadataDocumentNamesItsOwnURLAndTheC
 	s.Equal(consentPublicURL+ConnectorClientMetadataPath, document.ClientID, "CIMD section 4")
 	s.Equal([]string{consentPublicURL + ConnectorCallbackPath}, document.RedirectURIs)
 	s.Equal("none", document.TokenEndpointAuthMethod)
+}
+
+// TestAConnectorsRedirectURIIsTheOneItsConsentsSend (AI-1047): what a person registers with
+// the provider for the app's own OAuth client is the redirect_uri the router's authorize URL
+// carries, for a custom connector and a built-in alike, and a connector without oauth2_code
+// shows none.
+func (s *AuthorizationsSuite) TestAConnectorsRedirectURIIsTheOneItsConsentsSend() {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
+	connector := s.connector("")
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	authorize, err := url.Parse(s.browser().handOff(s.start(created.ID)))
+	s.Require().NoError(err)
+	sent := authorize.Query().Get("redirect_uri")
+	s.Require().NotEmpty(sent)
+
+	var shown Connector
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connectors/"+connector, nil, &shown))
+	s.Equal(sent, shown.RedirectURI)
+	var linear, telnyx Connector
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connectors/linear", nil, &linear))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connectors/telnyx", nil, &telnyx))
+	s.Equal(sent, linear.RedirectURI, "one callback for every connector")
+	s.Empty(telnyx.RedirectURI, "telnyx connects with a bearer token alone (providers/telnyx.yaml)")
+	var page ConnectorPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connectors?q="+connector, nil, &page))
+	s.Require().Len(page.Items, 1)
+	s.Equal(sent, page.Items[0].RedirectURI)
+}
+
+// TestAForcedConnectorDeleteRevokesItsConnectionsGrant (AI-1046): a connected connection goes
+// with its connector as a forced connection delete takes it: credentials dropped and the
+// revocation audited.
+func (s *AuthorizationsSuite) TestAForcedConnectorDeleteRevokesItsConnectionsGrant() {
+	connector := s.connectorRegistering("customer", "")
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	s.putClient(connector, s.provider.ClientSecret)
+	s.connect(created.ID)
+
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/connectors/"+connector+"?force=true", nil, nil))
+
+	var sealed []byte
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT credentials_sealed FROM connector_connections WHERE id = ?", created.ID).Scan(&sealed))
+	s.Empty(sealed)
+	rows := s.connectorAudit(created.ID)
+	s.Require().Len(rows, 2)
+	s.Equal(ConnectorAuditAction(store.AuditGrantRevoked), rows[0].Action, "newest first")
+	s.Equal(store.AuditReasonDeleted, rows[0].Reason)
+	var clients int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM connector_oauth_clients WHERE customer_id = ? AND connector_id = ?", s.customerID(), connector).Scan(&clients))
+	s.Zero(clients, "the client secret went with the connector")
 }
 
 func (s *AuthorizationsSuite) TestAConsentForAConnectorTakingTheAppsOwnClientUsesTheOneItPut() {
@@ -954,6 +1024,13 @@ func (s *AuthorizationsWithoutAPublicURLSuite) TestAConsentIsRefusedWhenItStarts
 	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
 		"SELECT count(*) FROM connector_authorization_attempts WHERE connection_id = ?", created.ID).Scan(&attempts))
 	s.Zero(attempts, "no attempt waits for a callback that could never arrive")
+}
+
+func (s *AuthorizationsWithoutAPublicURLSuite) TestAConnectorShowsNoRedirectURI() {
+	var linear Connector
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connectors/linear", nil, &linear))
+
+	s.Empty(linear.RedirectURI, "no consent can start, so there is nothing to register")
 }
 
 func (s *AuthorizationsWithoutAPublicURLSuite) TestThereIsNoClientMetadataDocument() {

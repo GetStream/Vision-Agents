@@ -78,9 +78,7 @@ class ClassifyQuestion:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.classify_question_options import (
-            ClassifyQuestionOptions,
-        )
+        from ..models.classify_question_options import ClassifyQuestionOptions
 
         d = dict(src_dict)
         instructions = d.pop("instructions")

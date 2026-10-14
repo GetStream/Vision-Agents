@@ -58,9 +58,9 @@ func (s *ToolsSuite) TestTheBuiltInSetIsUsable() {
 
 func (s *ToolsSuite) TestOnlyAModelWithToolsIsToldHowToUseThem() {
 	s.Empty(Tools{}.Prompt(), "a harness without tools adds nothing to the system prompt")
-	s.Equal(usePolicy, testTools().Prompt())
+	s.Equal(usePolicy+" "+sayDo, testTools().Prompt())
 	s.Empty(Tools{}.TextPrompt())
-	s.Equal(textUsePolicy, testTools().TextPrompt())
+	s.Equal(textUsePolicy+" "+sayDo, testTools().TextPrompt())
 }
 
 func (s *ToolsSuite) TestAWrittenConversationFillsNoPauseBeforeACall() {
@@ -169,6 +169,49 @@ func (s *ToolsSuite) TestRequestsCarryTheSchemaTheModelFillsIn() {
 	s.Equal("transfer", requests[0].Name)
 	s.Equal("hand the caller to a human", requests[0].Description)
 	s.Equal("object", requests[0].Parameters["type"])
+}
+
+func (s *ToolsSuite) TestSourcesAreOrderedSkillThenKnowledgeThenWeb() {
+	skills := Skills{Skills: []Skill{{Name: "sales", Description: "pricing", Instructions: "quote"}}}
+	built, err := DefaultTools()
+	s.Require().NoError(err)
+	lookup, _ := built.Lookup("lookup")
+	search, _ := built.Lookup("search")
+
+	// Declared in any order, the sources are still told skill, knowledge base, web.
+	order := Tools{Tools: []Tool{search, lookup, skills.LoadTool()}}.SourceOrder()
+	s.Contains(order, "a matching skill (load_skill), then the knowledge base (lookup), then the web (search)")
+	s.Contains(order, "one at a time")
+	s.Contains(order, "never let a later source contradict an earlier one")
+	s.Contains(order, "Load a skill only when its description covers the request")
+	s.Contains(order, "Always ask the knowledge base before the web")
+
+	withoutSkills := Tools{Tools: []Tool{search, lookup}}.SourceOrder()
+	s.Contains(withoutSkills, "the knowledge base (lookup), then the web (search)")
+	s.NotContains(withoutSkills, "Load a skill")
+
+	withoutKnowledge := Tools{Tools: []Tool{skills.LoadTool(), search}}.SourceOrder()
+	s.Contains(withoutKnowledge, "a matching skill (load_skill), then the web (search)")
+	s.NotContains(withoutKnowledge, "knowledge base before the web")
+}
+
+func (s *ToolsSuite) TestOneSourceHasNothingToOrder() {
+	built, err := DefaultTools()
+	s.Require().NoError(err)
+	search, _ := built.Lookup("search")
+
+	s.Empty(Tools{Tools: []Tool{search}}.SourceOrder())
+	s.Empty(testTools().SourceOrder())
+}
+
+func (s *ToolsSuite) TestTheBuiltInSourcesDeferToTheOnesAboveThem() {
+	built, err := DefaultTools()
+	s.Require().NoError(err)
+	lookup, _ := built.Lookup("lookup")
+	search, _ := built.Lookup("search")
+
+	s.Contains(lookup.Description, "after a matching skill and before searching the web")
+	s.Contains(search.Description, "only when a matching skill and the knowledge base have nothing")
 }
 
 func (s *ToolsSuite) TestLookupMissesWhatWasNeverDeclared() {

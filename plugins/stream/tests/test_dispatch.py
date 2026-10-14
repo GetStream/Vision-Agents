@@ -173,6 +173,7 @@ CALL = {
     "work_id": "work-1",
     "call_id": "phone-+15125551234",
     "call_type": "default",
+    "session_id": "session-1",
     "called_number": "+15125551234",
     "caller_number": "+15550001111",
     "custom": {"line": "support"},
@@ -277,6 +278,7 @@ class TestDispatch:
 
         assert call.call_id == "phone-+15125551234"
         assert call.call_type == "default"
+        assert call.session_id == "session-1"
         assert call.called_number == "+15125551234"
         assert call.caller_number == "+15550001111"
         assert call.custom == {"line": "support"}
@@ -658,7 +660,7 @@ class TestDispatch:
             "error": "this worker answers no calls",
         }
 
-    async def test_a_message_written_to_a_session_names_it_and_its_command(
+    async def test_a_message_written_to_a_session_names_it_and_its_request(
         self, router: Router, dispatch: stream.Dispatch
     ):
         written: asyncio.Queue = asyncio.Queue()
@@ -674,7 +676,7 @@ class TestDispatch:
                     "type": "message",
                     "work_id": "work-3",
                     "session_id": "session-9",
-                    "command_id": "command-4",
+                    "request_id": "request-4",
                     "text": "where is my order?",
                     "user_id": "sam",
                 }
@@ -685,7 +687,7 @@ class TestDispatch:
             await asyncio.gather(running, return_exceptions=True)
 
         assert message.session_id == "session-9"
-        assert message.command_id == "command-4"
+        assert message.request_id == "request-4"
         assert message.channel_id == ""
         assert message.text == "where is my order?"
 
@@ -693,14 +695,14 @@ class TestDispatch:
         self, router: Router
     ):
         # The worker's own credential acting for whoever wrote, so the response goes to
-        # the model rather than back to a worker, and it lands on the command.
+        # the model rather than back to a worker, and it lands on the request.
         worker = stream.Dispatch(url=router.url, customer_id="acme")
 
         await worker.answer(
             InboundMessage(
                 channel_id="",
                 session_id="session-9",
-                command_id="command-4",
+                request_id="request-4",
                 text="where is my order?",
                 user_id="sam",
             )
@@ -708,7 +710,7 @@ class TestDispatch:
 
         [(session_id, body, headers)] = router.responses
         assert session_id == "session-9"
-        assert body == {"text": "where is my order?", "command_id": "command-4"}
+        assert body == {"text": "where is my order?", "request_id": "request-4"}
         assert headers["X-Stream-User-Id"] == "sam"
         assert headers["X-Customer-Id"] == "acme"
 
@@ -728,7 +730,10 @@ class TestDispatch:
         )
 
         [(_, body, headers)] = router.responses
-        assert body == {"text": "hi"}
+        assert body["text"] == "hi"
+        assert len(body["request_id"]) == 36, (
+            "a message sent without one is named afresh"
+        )
         assert headers["Stream-Auth-Type"] == "server"
         assert headers["X-Stream-User-Id"] == "sam"
 
@@ -876,7 +881,7 @@ class TestDispatch:
 
         assert len(router.sessions) == 1
         assert router.sessions[0]["agent_id"] == "call-1"
-        assert router.sessions[0]["text"] is True
+        assert router.sessions[0].get("start_voice", False) is False
         assert router.sessions[0]["config_id"] == "config-7"
 
     async def test_a_second_message_on_a_channel_goes_to_the_agent_that_answered_the_first(

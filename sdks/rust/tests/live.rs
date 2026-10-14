@@ -185,10 +185,9 @@ async fn an_agent_joins_a_stream_call() {
     let agent = Agent::named("Rust Live")
         .client(client)
         .stream(stream)
-        .instructions("Say hello once.")
         .watch(WatchOptions::default());
 
-    let session = agent.join("").await.unwrap();
+    let session = agent.join().await.unwrap();
     let url = agent.monitor_url(&session).unwrap();
     session.close().await;
 

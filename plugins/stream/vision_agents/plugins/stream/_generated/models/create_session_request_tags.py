@@ -12,7 +12,10 @@ T = TypeVar("T", bound="CreateSessionRequestTags")
 
 @_attrs_define
 class CreateSessionRequestTags:
-    """Cost labels, carried onto every request the session makes."""
+    """Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a
+    key, this one wins.
+
+    """
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 

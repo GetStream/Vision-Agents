@@ -14,10 +14,6 @@ final readonly class PlaceCallRequest
         // One of the customer's own numbers, which is what the person sees.
         public string $from,
         public string $to,
-        // The Stream call the answered leg joins, and so the one the agent has to be in. Omit to have one named after...
-        public ?string $callId = null,
-        // The Stream call type. Omit for "agent".
-        public ?string $callType = null,
         // Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, s...
         /** @var array<string, string>|null */
         public ?array $custom = null,
@@ -28,6 +24,8 @@ final readonly class PlaceCallRequest
         public ?string $initialDigits = null,
         // How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicem...
         public ?int $ringTimeoutSeconds = null,
+        // The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes wha...
+        public ?string $sessionId = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
     ) {
@@ -41,12 +39,11 @@ final readonly class PlaceCallRequest
         return new self(
             from: Json::string($data, 'from'),
             to: Json::string($data, 'to'),
-            callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
-            callType: array_key_exists('call_type', $data) && $data['call_type'] !== null ? Json::string($data, 'call_type') : null,
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::stringMap($data, 'custom') : null,
             headers: array_key_exists('headers', $data) && $data['headers'] !== null ? Json::stringMap($data, 'headers') : null,
             initialDigits: array_key_exists('initial_digits', $data) && $data['initial_digits'] !== null ? Json::string($data, 'initial_digits') : null,
             ringTimeoutSeconds: array_key_exists('ring_timeout_seconds', $data) && $data['ring_timeout_seconds'] !== null ? Json::int($data, 'ring_timeout_seconds') : null,
+            sessionId: array_key_exists('session_id', $data) && $data['session_id'] !== null ? Json::string($data, 'session_id') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
         );
     }
@@ -61,12 +58,6 @@ final readonly class PlaceCallRequest
         $out = [];
         $out['from'] = $this->from;
         $out['to'] = $this->to;
-        if ($this->callId !== null) {
-            $out['call_id'] = $this->callId;
-        }
-        if ($this->callType !== null) {
-            $out['call_type'] = $this->callType;
-        }
         if ($this->custom !== null) {
             $out['custom'] = $this->custom;
         }
@@ -78,6 +69,9 @@ final readonly class PlaceCallRequest
         }
         if ($this->ringTimeoutSeconds !== null) {
             $out['ring_timeout_seconds'] = $this->ringTimeoutSeconds;
+        }
+        if ($this->sessionId !== null) {
+            $out['session_id'] = $this->sessionId;
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;

@@ -101,6 +101,29 @@ func (s *PhoneSuite) TestACallCannotRingForLessThanNoTime() {
 	s.Contains(failure, "less than no time")
 }
 
+func (s *PhoneSuite) TestACallToAShortCodeIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: "+15125551234", To: "911",
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "E.164")
+}
+
+func (s *PhoneSuite) TestACallOrATransferToAPremiumRateNumberIsForbidden() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: "+15125551234", To: "+19005550100",
+	})
+	s.Equal(http.StatusForbidden, status)
+	s.Contains(failure, "premium-rate")
+
+	status, failure = s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer", TransferCallRequest{
+		From: "+15125551234", To: "+19765550100", SessionId: "session-" + s.utils.uuid(),
+	})
+	s.Equal(http.StatusForbidden, status)
+	s.Contains(failure, "premium-rate")
+}
+
 func (s *PhoneSuite) TestTheAnswerPathIsReachedByAVendorThatHasNoCustomerToName() {
 	// A telephony vendor fetching a call plan holds no credential of ours, so this path
 	// has to be outside the middleware that requires one. Being unauthorized here would

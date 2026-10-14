@@ -54,6 +54,10 @@ const (
 	// will draw the same prompt, they differ in price and in how long a picture takes, and
 	// one call is one unit of work with nothing arriving in pieces.
 	Image Modality = "image"
+	// Detection is boxes found in one image. It is routed like image generation: one call
+	// is one unit of work, and the vendors differ in what they can find, what it costs and
+	// how long it takes.
+	Detection Modality = "detection"
 	// Memory, Knowledge and Phone are recorded but not routed: there is one memory store,
 	// one knowledge base and one vendor per number, so there is nothing to choose
 	// between. They are modalities so what they cost shows up in the same reporting as
@@ -313,6 +317,8 @@ type Alias struct {
 	Description string `yaml:"description"`
 
 	RequireInputModalities []string `yaml:"require_input_modalities"`
+	// RequireTerms are the terms every candidate must be able to express.
+	RequireTerms []options.Term `yaml:"require_terms"`
 	// Only names the candidates outright, for the shortcut whose members have nothing
 	// declarable in common. It is the exception to everything above: a name here is a
 	// judgement about which models are wanted rather than a fact about what they can do,
@@ -357,7 +363,7 @@ func (a Alias) matches(provider ProviderConfig) bool {
 	if a.Tier != "" && provider.tier() != a.Tier {
 		return false
 	}
-	return provider.Speaks(a.Languages) && provider.Sees(a.RequireInputModalities)
+	return provider.Speaks(a.Languages) && provider.Sees(a.RequireInputModalities) && provider.Supports(a.RequireTerms)
 }
 
 // ModalityConfig is the capability configuration for one modality.

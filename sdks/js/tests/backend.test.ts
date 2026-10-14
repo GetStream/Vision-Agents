@@ -94,6 +94,32 @@ describe("Backend", () => {
     assert.equal(claimsOf(minted?.token ?? "")["user_id"], "jlahey");
   });
 
+  it("keeps a key passed beside a customer id for Stream, not the router", async () => {
+    // A local page names the customer the router trusts and still connects chat and video,
+    // which need the key and a user's token. The router is shown neither.
+    let minted = 0;
+    const backend = new Backend({ url: router.url, customerId: "local", apiKey: "vak_live_x" });
+    await backend.setUser({ id: "jlahey", name: "Jim Lahey" }, () => {
+      minted += 1;
+      return `token-${minted}`;
+    });
+
+    assert.deepEqual(await backend.headers(), { "X-Customer-Id": "local" });
+    assert.deepEqual(backend.query(), { user_id: "jlahey" });
+    const url = new URL(await backend.socketURL("/v1/agents/sessions/x/events"));
+    assert.equal(url.searchParams.get("customer_id"), "local");
+    assert.equal(url.searchParams.get("user_id"), "jlahey");
+    assert.equal(url.searchParams.get("token"), null);
+    assert.equal(minted, 0, "the router never asked for the token");
+
+    assert.deepEqual(await backend.streamCredentials(), {
+      apiKey: "vak_live_x",
+      user: { id: "jlahey", name: "Jim Lahey" },
+      token: "token-1",
+    });
+    assert.equal((await backend.streamCredentials())?.token, "token-2", "asked again each time");
+  });
+
   it("names the customer when that is all there is to go on", async () => {
     const backend = new Backend({ url: router.url, customerId: "local" });
 

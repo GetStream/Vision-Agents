@@ -33,7 +33,7 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	llm := stream.Accelerated(stream.Config{LLM: "llm-fast"})
+	llm := stream.Accelerated(stream.Config{Agent: "jean", LLM: "llm-fast"})
 
 	agent, err := agents.New(agents.Options{
 		Name:         "jean",
@@ -44,6 +44,9 @@ func run(ctx context.Context) error {
 		MemoryFilter: map[string]string{"user_id": "123"},
 	})
 	if err != nil {
+		return err
+	}
+	if _, err := agent.Sync(ctx); err != nil {
 		return err
 	}
 	if err := agent.Tools().Add(GetWeather{}); err != nil {

@@ -20,6 +20,8 @@ pub const AGENT_STAMP: &str = ".agent_sync";
 pub const INSTRUCTIONS_FILE: &str = "instructions.md";
 pub const GUARDRAIL_FILE: &str = "guardrail.md";
 pub const SKILLS_DIR: &str = "skills";
+/// What a skill kept as a folder calls its frontmatter and instructions.
+pub const SKILL_FILE: &str = "SKILL.md";
 pub const KNOWLEDGE_DIR: &str = "knowledge";
 pub const SIMULATIONS_DIR: &str = "simulations";
 /// The pages a knowledge directory is kept filled from, as opposed to the files it is
@@ -103,6 +105,24 @@ pub struct VideoSettings {
     pub max_frames: i64,
 }
 
+/// One connector `agent.yaml` binds. It is written as the alias alone, or as a mapping
+/// naming it with the connector, the tools and a connection.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConnectorSettings {
+    /// The alias the model sees tools under.
+    pub name: String,
+    /// The connector id. Empty means the name.
+    pub connector: String,
+    /// Names or path.Match patterns, sent as `tool_patterns`. `None`, whether the key was left
+    /// out or null, means every tool. An empty list is refused: it would grant nothing.
+    pub tools: Option<Vec<String>>,
+    /// An id or a label of one of the app's connections to the connector. `None` is a session
+    /// binding; set, it is fixed to the connection it names.
+    pub connection: Option<String>,
+    /// Whether a session needs this connector. `None` leaves it optional.
+    pub required: Option<bool>,
+}
+
 /// What `agent.yaml` declares.
 ///
 /// A field left out leaves whatever the stored config has, so a model chosen in the
@@ -117,16 +137,19 @@ pub struct Settings {
     /// `None` when the declaration says nothing, and empty when it turns it off.
     pub sts: Option<String>,
     pub voice: String,
-    /// The voice's rate of delivery, 1 being its own. Zero leaves it there.
-    pub speed: f64,
     pub llm: String,
     pub harness: Option<types::Harness>,
     /// The slower model a voice agent hands its skills to. A text agent names none.
-    pub thinking_llm: String,
+    pub subagent: String,
     pub search: String,
-    pub greeting: String,
+    /// What the agent opens the call with. `None` leaves the stored one.
+    pub greeting: Option<types::Greeting>,
     pub sandbox: Option<types::Sandbox>,
     pub plugins: Vec<String>,
+    /// The connectors whose tools the agent may call. `None` when the declaration says
+    /// nothing, which leaves the bindings stored; empty when the file lists none, which
+    /// removes them.
+    pub connectors: Option<Vec<ConnectorSettings>>,
     pub keyterms: Vec<String>,
     pub tags: BTreeMap<String, String>,
     pub video: Option<VideoSettings>,
@@ -143,10 +166,15 @@ pub struct Settings {
 ///   instructions.md
 ///   guardrail.md
 ///   skills/think.md
+///   skills/pdf/SKILL.md
+///   skills/pdf/scripts/fill.py
 ///   knowledge/pricing.md
 ///   knowledge/urls.yaml
 ///   simulations/lunch.yaml
 /// ```
+///
+/// A skill kept as a folder has its SKILL.md for frontmatter and instructions, and brings
+/// the text files beside it; scripts among them run in the sandbox.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Folder {
     /// The directory this was read from.
@@ -307,6 +335,10 @@ pub(crate) fn fingerprint(
             }
             hasher.update(seconds);
         }
+        // Written only when there are some, so a skill without files keeps its fingerprint.
+        for (path, content) in &skill.files {
+            hasher.update(format!("\nfile:{path}\n{content}"));
+        }
     }
 
     let mut documents: Vec<&Document> = knowledge.iter().collect();
@@ -435,22 +467,15 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             "tts" => settings.tts = text()?,
             "sts" => settings.sts = if value.is_null() { None } else { Some(text()?) },
             "voice" => settings.voice = text()?,
-            "speed" => {
-                settings.speed = match &value {
-                    Yaml::Real(number) => number.parse().map_err(|_| "speed is a number")?,
-                    Yaml::Integer(number) => *number as f64,
-                    Yaml::Null => 0.0,
-                    _ => return Err("speed is a number".into()),
-                }
-            }
             "llm" => settings.llm = text()?,
             "harness" => settings.harness = named(&text()?, "harness")?,
-            "thinking_llm" => settings.thinking_llm = text()?,
+            "subagent" => settings.subagent = text()?,
             "search" => settings.search = text()?,
-            "greeting" => settings.greeting = text()?,
+            "greeting" => settings.greeting = greeting(&value)?,
             "mode" => settings.mode = named(&text()?, "mode")?,
             "sandbox" => settings.sandbox = named(&text()?, "sandbox")?,
             "plugins" => settings.plugins = strings(&value, &key)?,
+            "connectors" => settings.connectors = connectors(&value)?,
             "keyterms" => settings.keyterms = strings(&value, &key)?,
             "tags" => settings.tags = mapping(&value, &key)?,
             "video" => settings.video = video(&value)?,
@@ -458,7 +483,90 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             _ => return Err(format!("{key:?} is not a setting agent.yaml knows")),
         }
     }
+    // The model is offered each as <name>__<tool>, so the same name would be two tools.
+    for connector in settings.connectors.iter().flatten() {
+        if settings.plugins.contains(&connector.name) {
+            return Err(format!(
+                "{:?} is named under both connectors and plugins",
+                connector.name
+            ));
+        }
+    }
     Ok(settings)
+}
+
+fn connectors(value: &Yaml) -> std::result::Result<Option<Vec<ConnectorSettings>>, String> {
+    let items = match value {
+        Yaml::Null => return Ok(None),
+        Yaml::Array(items) => items,
+        _ => return Err("connectors must be a list".into()),
+    };
+    items
+        .iter()
+        .map(connector)
+        .collect::<std::result::Result<_, _>>()
+        .map(Some)
+}
+
+fn connector(item: &Yaml) -> std::result::Result<ConnectorSettings, String> {
+    let mut connector = ConnectorSettings::default();
+    match item {
+        Yaml::Hash(fields) => {
+            for (key, value) in fields {
+                let key = scalar(key).unwrap_or_default();
+                let text = || scalar(value).ok_or(format!("connectors.{key} is a string"));
+                match key.as_str() {
+                    "name" => connector.name = text()?,
+                    "connector" => connector.connector = text()?,
+                    "tools" => {
+                        connector.tools = match value {
+                            Yaml::Null => None,
+                            _ => Some(strings(value, "connectors.tools")?),
+                        }
+                    }
+                    "connection" => {
+                        connector.connection = match value {
+                            Yaml::Null => None,
+                            // Refused below by name, with the rest of the entry's checks.
+                            _ => Some(scalar(value).unwrap_or_default()),
+                        }
+                    }
+                    "required" => {
+                        connector.required = match value {
+                            Yaml::Null => None,
+                            Yaml::Boolean(required) => Some(*required),
+                            _ => return Err("connectors.required is a boolean".into()),
+                        }
+                    }
+                    _ => {
+                        return Err(format!(
+                            "{key:?} is not a connector setting; name, connector, tools, connection and required are"
+                        ));
+                    }
+                }
+            }
+        }
+        Yaml::Null | Yaml::String(_) | Yaml::Integer(_) | Yaml::Real(_) | Yaml::Boolean(_) => {
+            connector.name = scalar(item).unwrap_or_default()
+        }
+        _ => return Err("a connector is a name or a mapping".into()),
+    }
+    if connector.name.is_empty() {
+        return Err("a connector needs a name".into());
+    }
+    if connector.tools.as_ref().is_some_and(Vec::is_empty) {
+        return Err(format!(
+            "connector {:?}: tools: [] grants nothing; leave tools out for every tool",
+            connector.name
+        ));
+    }
+    if connector.connection.as_ref().is_some_and(String::is_empty) {
+        return Err(format!(
+            "connector {:?}: connection must be a connection id or label",
+            connector.name
+        ));
+    }
+    Ok(connector)
 }
 
 /// A string enum as the spec spells it, or `None` for an empty value.
@@ -472,6 +580,32 @@ fn named<T: serde::de::DeserializeOwned>(
     serde_json::from_value(json!(value))
         .map(Some)
         .map_err(|_| format!("{value:?} is not a {key}"))
+}
+
+fn greeting(value: &Yaml) -> std::result::Result<Option<types::Greeting>, String> {
+    let Yaml::Hash(fields) = value else {
+        return if value.is_null() {
+            Ok(None)
+        } else {
+            Err("greeting is a mapping of text and mode".into())
+        };
+    };
+    let mut greeting = types::Greeting::default();
+    for (key, value) in fields {
+        match scalar(key).as_deref() {
+            Some("text") => greeting.text = scalar(value).ok_or("greeting.text is a string")?,
+            Some("mode") => {
+                let mode = scalar(value).ok_or("greeting.mode is a string")?;
+                greeting.mode = named(&mode, "greeting mode; exact or variation is")?;
+            }
+            _ => {
+                return Err(format!(
+                    "{key:?} is not a greeting setting; text and mode are"
+                ));
+            }
+        }
+    }
+    Ok(Some(greeting))
 }
 
 fn video(value: &Yaml) -> std::result::Result<Option<VideoSettings>, String> {
@@ -571,33 +705,98 @@ fn scalar(value: &Yaml) -> Option<String> {
     }
 }
 
+/// Reads skills/: a skill is either a markdown file, or a folder holding a SKILL.md and
+/// whatever files it comes with, nested as deep as they are.
 fn load_skills(path: &Path) -> Result<Vec<Skill>> {
     let entries = match std::fs::read_dir(path) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(Error::io(path, error)),
     };
-    let mut files: Vec<PathBuf> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|file| {
-            file.is_file() && file.extension().is_some_and(|extension| extension == "md")
-        })
-        .collect();
-    files.sort();
+    let mut entries: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    entries.sort();
 
-    files
-        .into_iter()
-        .map(|file| {
-            let content =
-                std::fs::read_to_string(&file).map_err(|error| Error::io(&file, error))?;
-            let stem = file
+    let mut skills = Vec::new();
+    let mut declared: BTreeMap<String, String> = BTreeMap::new();
+    for entry in entries {
+        let entry_name = entry
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (name, file) = if entry.is_dir() {
+            let file = entry.join(SKILL_FILE);
+            if !file.is_file() {
+                return Err(Error::folder(
+                    &entry,
+                    format!("has no {SKILL_FILE}, so it is not a skill"),
+                ));
+            }
+            (entry_name.clone(), file)
+        } else if entry.is_file() && entry.extension().is_some_and(|extension| extension == "md") {
+            let stem = entry
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            parse_skill(stem, &content).map_err(|message| Error::folder(&file, message))
-        })
-        .collect()
+            (stem, entry.clone())
+        } else {
+            continue;
+        };
+        if let Some(first) = declared.get(&name) {
+            return Err(Error::folder(
+                path,
+                format!("skill {name:?} is both {first} and {entry_name}"),
+            ));
+        }
+        declared.insert(name.clone(), entry_name);
+
+        let content = std::fs::read_to_string(&file).map_err(|error| Error::io(&file, error))?;
+        let mut skill =
+            parse_skill(name, &content).map_err(|message| Error::folder(&file, message))?;
+        if entry.is_dir() {
+            load_skill_files(&entry, &entry, &mut skill.files)?;
+        }
+        skills.push(skill);
+    }
+    Ok(skills)
+}
+
+/// Reads every file in a skill folder but its SKILL.md, by `/` path relative to the folder.
+fn load_skill_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut BTreeMap<String, String>,
+) -> Result<()> {
+    let entries = std::fs::read_dir(directory).map_err(|error| Error::io(directory, error))?;
+    for entry in entries.flatten() {
+        let file = entry.path();
+        if skipped(&entry.file_name().to_string_lossy()) {
+            continue;
+        }
+        if file.is_dir() {
+            load_skill_files(root, &file, files)?;
+            continue;
+        }
+        if file == root.join(SKILL_FILE) {
+            continue;
+        }
+        let content = std::fs::read(&file).map_err(|error| Error::io(&file, error))?;
+        let text = String::from_utf8(content)
+            .map_err(|_| Error::folder(&file, "not text, and a skill brings only text files"))?;
+        let relative = file.strip_prefix(root).unwrap_or(&file);
+        let relative = relative
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        files.insert(relative, text);
+    }
+    Ok(())
+}
+
+/// Whether a file or folder in a skill folder is left behind: hidden ones such as
+/// .DS_Store, and the __pycache__ running a skill's Python scripts locally leaves.
+fn skipped(name: &str) -> bool {
+    name.starts_with('.') || name == "__pycache__"
 }
 
 /// Reads a skill file: frontmatter between `---` lines, then the instructions.

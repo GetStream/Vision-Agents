@@ -45,14 +45,14 @@ final readonly class Call
         public ?string $stt = null,
         // The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the...
         public ?string $sttUsed = null,
+        // The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were...
+        public ?string $subagent = null,
+        // The provider/model delegated work ran on. Empty when nothing was handed over, or when the subagent was neve...
+        public ?string $subagentUsed = null,
         // What a model made of the call, written once it was over.
         public ?string $summary = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
-        // The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were...
-        public ?string $thinkingLlm = null,
-        // The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target w...
-        public ?string $thinkingLlmUsed = null,
         public ?string $toNumber = null,
         // The voice target, on the same terms as stt.
         public ?string $tts = null,
@@ -95,10 +95,10 @@ final readonly class Call
             stsUsed: array_key_exists('sts_used', $data) && $data['sts_used'] !== null ? Json::string($data, 'sts_used') : null,
             stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
             sttUsed: array_key_exists('stt_used', $data) && $data['stt_used'] !== null ? Json::string($data, 'stt_used') : null,
+            subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
+            subagentUsed: array_key_exists('subagent_used', $data) && $data['subagent_used'] !== null ? Json::string($data, 'subagent_used') : null,
             summary: array_key_exists('summary', $data) && $data['summary'] !== null ? Json::string($data, 'summary') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
-            thinkingLlm: array_key_exists('thinking_llm', $data) && $data['thinking_llm'] !== null ? Json::string($data, 'thinking_llm') : null,
-            thinkingLlmUsed: array_key_exists('thinking_llm_used', $data) && $data['thinking_llm_used'] !== null ? Json::string($data, 'thinking_llm_used') : null,
             toNumber: array_key_exists('to_number', $data) && $data['to_number'] !== null ? Json::string($data, 'to_number') : null,
             tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
             ttsUsed: array_key_exists('tts_used', $data) && $data['tts_used'] !== null ? Json::string($data, 'tts_used') : null,
@@ -170,17 +170,17 @@ final readonly class Call
         if ($this->sttUsed !== null) {
             $out['stt_used'] = $this->sttUsed;
         }
+        if ($this->subagent !== null) {
+            $out['subagent'] = $this->subagent;
+        }
+        if ($this->subagentUsed !== null) {
+            $out['subagent_used'] = $this->subagentUsed;
+        }
         if ($this->summary !== null) {
             $out['summary'] = $this->summary;
         }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
-        }
-        if ($this->thinkingLlm !== null) {
-            $out['thinking_llm'] = $this->thinkingLlm;
-        }
-        if ($this->thinkingLlmUsed !== null) {
-            $out['thinking_llm_used'] = $this->thinkingLlmUsed;
         }
         if ($this->toNumber !== null) {
             $out['to_number'] = $this->toNumber;

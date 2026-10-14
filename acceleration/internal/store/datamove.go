@@ -46,7 +46,8 @@ type dataTable struct {
 // connector_authorization_attempts: one lives minutes, is sealed under this deployment's
 // key and finishes at this deployment's callback, so a copy could only expire. And
 // connector_oauth_clients: a client's secret is sealed under this deployment's key, and a
-// client without it cannot authenticate, so the app puts it again where it moved to. And
+// client without it cannot authenticate, so the app puts it again where it moved to. So is
+// custom_models, whose endpoint keys are sealed the same way. And
 // connector_config_tokens, sealed under this deployment's key for the provider app whose
 // events URL is this deployment's. And connector_event_destinations, whose signing secrets are
 // sealed under this deployment's key, with connector_event_deliveries, forwards in flight. And
@@ -59,7 +60,8 @@ type dataTable struct {
 // connector_invocation_arguments: this deployment's record of what it did with credentials
 // sealed under its own key. And connector_tool_pins: the deployment a connection moves to pins
 // its tools again on first use. And connector_connection_clients: the next consent of the
-// connection where it moved to records its client again.
+// connection where it moved to records its client again. And connector_connection_validations:
+// the next validate where it moved to records its result again.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},
@@ -113,7 +115,7 @@ var dataTables = []dataTable{
 // their data would be a way to walk off with a customer's users' accounts. Both are left
 // out on the way out and left alone on the way in, so a connection arrives needing to be
 // authorized again rather than arriving broken.
-var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed", "password_sealed"}
+var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed", "password_sealed", "bridge_password_sealed"}
 
 // DataChange is one thing that happened to one row.
 type DataChange struct {
@@ -371,6 +373,11 @@ func (t dataTable) identity() string {
 	// holds (20261007050000_sip_trunks.sql).
 	if t.name == "sip_trunks" {
 		return "jsonb_build_object('customer_id', ?::text, 'password_kek_version', 0)"
+	}
+	// An attached number arrives without its bridge password for the same reason, so its key
+	// version stays behind too rather than describing a password that is not there.
+	if t.name == "phone_numbers" {
+		return "jsonb_build_object('customer_id', ?::text, 'bridge_password_kek_version', NULL)"
 	}
 	return fmt.Sprintf("jsonb_build_object('%s', ?::text)", t.customer)
 }

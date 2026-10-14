@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -12,9 +12,11 @@
 		A1000103 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000003 /* ChatView.swift */; };
 		A1000104 /* VoiceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000004 /* VoiceView.swift */; };
 		A1000105 /* Demo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000005 /* Demo.swift */; };
+		A1000106 /* AgentChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000007 /* AgentChat.swift */; };
+		A1000107 /* CallControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000008 /* CallControls.swift */; };
 		A1000201 /* VisionAgentsCore in Frameworks */ = {isa = PBXBuildFile; productRef = A1000301 /* VisionAgentsCore */; };
-		A1000202 /* VisionAgentsUI in Frameworks */ = {isa = PBXBuildFile; productRef = A1000302 /* VisionAgentsUI */; };
-		A1000203 /* VisionAgentsRTC in Frameworks */ = {isa = PBXBuildFile; productRef = A1000303 /* VisionAgentsRTC */; };
+		A1000202 /* StreamChat in Frameworks */ = {isa = PBXBuildFile; productRef = A1000302 /* StreamChat */; };
+		A1000203 /* StreamChatAI in Frameworks */ = {isa = PBXBuildFile; productRef = A1000303 /* StreamChatAI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +26,8 @@
 		A1000004 /* VoiceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceView.swift; sourceTree = "<group>"; };
 		A1000005 /* Demo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Demo.swift; sourceTree = "<group>"; };
 		A1000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A1000007 /* AgentChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChat.swift; sourceTree = "<group>"; };
+		A1000008 /* CallControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallControls.swift; sourceTree = "<group>"; };
 		A1000010 /* SwiftDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -33,8 +37,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1000201 /* VisionAgentsCore in Frameworks */,
-				A1000202 /* VisionAgentsUI in Frameworks */,
-				A1000203 /* VisionAgentsRTC in Frameworks */,
+				A1000202 /* StreamChat in Frameworks */,
+				A1000203 /* StreamChatAI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -55,7 +59,9 @@
 				A1000001 /* SwiftDemoApp.swift */,
 				A1000002 /* ContentView.swift */,
 				A1000003 /* ChatView.swift */,
+				A1000007 /* AgentChat.swift */,
 				A1000004 /* VoiceView.swift */,
+				A1000008 /* CallControls.swift */,
 				A1000005 /* Demo.swift */,
 				A1000006 /* Info.plist */,
 			);
@@ -88,8 +94,8 @@
 			name = SwiftDemo;
 			packageProductDependencies = (
 				A1000301 /* VisionAgentsCore */,
-				A1000302 /* VisionAgentsUI */,
-				A1000303 /* VisionAgentsRTC */,
+				A1000302 /* StreamChat */,
+				A1000303 /* StreamChatAI */,
 			);
 			productName = SwiftDemo;
 			productReference = A1000010 /* SwiftDemo.app */;
@@ -111,6 +117,7 @@
 				};
 			};
 			buildConfigurationList = A1000700 /* Build configuration list for PBXProject "SwiftDemo" */;
+			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -120,8 +127,7 @@
 			mainGroup = A1000500;
 			packageReferences = (
 				A1000B01 /* XCLocalSwiftPackageReference "../../../../sdks/swift/core" */,
-				A1000B02 /* XCLocalSwiftPackageReference "../../../../sdks/swift/ui" */,
-				A1000B03 /* XCLocalSwiftPackageReference "../../../../sdks/swift/rtc" */,
+				A1000B04 /* XCRemoteSwiftPackageReference "stream-chat-swift" */,
 			);
 			productRefGroup = A1000502 /* Products */;
 			projectDirPath = "";
@@ -152,6 +158,8 @@
 				A1000103 /* ChatView.swift in Sources */,
 				A1000104 /* VoiceView.swift in Sources */,
 				A1000105 /* Demo.swift in Sources */,
+				A1000106 /* AgentChat.swift in Sources */,
+				A1000107 /* CallControls.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -277,28 +285,33 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../../../sdks/swift/core;
 		};
-		A1000B02 /* XCLocalSwiftPackageReference "../../../../sdks/swift/ui" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../../../sdks/swift/ui;
-		};
-		A1000B03 /* XCLocalSwiftPackageReference "../../../../sdks/swift/rtc" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../../../sdks/swift/rtc;
-		};
 /* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A1000B04 /* XCRemoteSwiftPackageReference "stream-chat-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/GetStream/stream-chat-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.13.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		A1000301 /* VisionAgentsCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = VisionAgentsCore;
 		};
-		A1000302 /* VisionAgentsUI */ = {
+		A1000302 /* StreamChat */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = VisionAgentsUI;
+			package = A1000B04 /* XCRemoteSwiftPackageReference "stream-chat-swift" */;
+			productName = StreamChat;
 		};
-		A1000303 /* VisionAgentsRTC */ = {
+		A1000303 /* StreamChatAI */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = VisionAgentsRTC;
+			package = A1000B04 /* XCRemoteSwiftPackageReference "stream-chat-swift" */;
+			productName = StreamChatAI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

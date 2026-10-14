@@ -282,7 +282,6 @@ describe(
       // all a browser has.
       const page = await asUser(uniqueId("browser"));
       const session = await Session.open(page, {
-        text: true,
         agent_id: uniqueId("conv"),
         llm: model,
       });
@@ -302,7 +301,6 @@ describe(
         webSocket: authenticated(await backend.backend.headers()),
       });
       const session = await Session.open(page, {
-        text: true,
         agent_id: uniqueId("conv"),
         llm: model,
       });

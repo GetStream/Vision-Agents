@@ -117,46 +117,27 @@ class Responses:
     next question. A single turn's items come off the handle ``create`` returns.
     """
 
-    def __init__(self, backend: Backend, session_id: str, kept: bool = False):
+    def __init__(self, backend: Backend, session_id: str):
         self._backend = backend
         self._session_id = session_id
-        self._kept = kept
         self.items = Items(backend, session_id)
 
     async def create(
         self,
         text: str,
         images: Optional[list[ImageSource]] = None,
-        command_id: str = "",
     ) -> AgentResponse:
         """Ask the agent something and name the turn it answers as.
 
         An incognito session records nothing, so the turn it hands back has no id: there is
-        nothing to read back afterwards, which is what incognito means.
+        nothing to read back afterwards, which is what incognito means. A text-only question
+        is sent with a fresh request id, so a retry of it is answered once.
 
         Args:
             text: The question.
             images: Pictures to ask about alongside it.
-            command_id: Names the question, so a retry is answered once rather than twice.
-                Left empty, a session kept in Stream Chat is given a fresh one, because the
-                router requires one there.
         """
-        request = CreateResponseRequest(text=text)
-        if images:
-            request.images = images
-        # A command carries text only, so a question with images goes without one.
-        if not command_id and self._kept and not images:
-            command_id = str(uuid.uuid4())
-        if command_id:
-            request.command_id = command_id
-
-        created = await _unwrapped(
-            create_response.asyncio(
-                self._session_id, client=self._backend.client(), body=request
-            ),
-            f"asking {self._session_id}",
-        )
-        return AgentResponse(self._backend, created)
+        return await _create_response(self._backend, self._session_id, text, images)
 
     async def list(
         self, limit: Optional[int] = None, cursor: Optional[str] = None
@@ -203,6 +184,34 @@ class Responses:
             ),
             f"rewinding {self._session_id}",
         )
+
+
+async def _create_response(
+    backend: Backend,
+    session_id: str,
+    text: str,
+    images: Optional[list[ImageSource]] = None,
+    request_id: str = "",
+) -> AgentResponse:
+    """Create a response under `request_id`, or a fresh one when the question is text only.
+
+    Only a dispatch worker names the request: it passes back the id of the inbound message
+    it is answering, so the answer lands on it.
+    """
+    request = CreateResponseRequest(text=text)
+    if images:
+        request.images = images
+    # The router refuses a request id alongside images.
+    elif not request_id:
+        request_id = str(uuid.uuid4())
+    if request_id:
+        request.request_id = request_id
+
+    created = await _unwrapped(
+        create_response.asyncio(session_id, client=backend.client(), body=request),
+        f"asking {session_id}",
+    )
+    return AgentResponse(backend, created)
 
 
 async def _asked(call: Awaitable[T], what: str) -> T:

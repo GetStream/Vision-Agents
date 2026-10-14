@@ -7,7 +7,7 @@
 // there is no response, no commit and no response.done. The model listens and speaks at
 // the same time and decides for itself when to do which.
 //
-// A reply is therefore whatever the model says between two silences, numbered here: one
+// A reply is therefore whatever the model says between two silences, assigned an ID here: one
 // opens with the first audio after a quiet spell and settles once the audio has stopped for
 // ReplyGap. The caller is taken to have stopped at the last piece of transcript before the
 // model began, since the API has no word for it. Only Interrupt settles a reply as cut off:
@@ -352,6 +352,7 @@ func CapabilitiesFor(string) sts.Capabilities {
 	return sts.Capabilities{
 		Text:             true,
 		Tools:            true,
+		FullDuplex:       true,
 		InputTranscript:  true,
 		OutputTranscript: true,
 		ToolsMidSession:  true,
@@ -378,6 +379,8 @@ func (s *STS) Start(ctx context.Context) error {
 		}
 		return stack.Wrap(fmt.Errorf("openailive: dial: %w", err))
 	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	if err := s.handshake(conn); err != nil {
 		conn.Close()
 		return err
@@ -692,6 +695,7 @@ func (s *STS) send(frame any) error {
 
 // readLoop translates server frames into events until the connection ends.
 func (s *STS) readLoop(conn *websocket.Conn) {
+	defer s.Close()
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -761,6 +765,7 @@ func (s *STS) handleMessage(event serverEvent) {
 			Clean:    event.Reason != closedByConnectionLoss,
 			At:       time.Now(),
 		})
+		_ = s.Close()
 	case eventError:
 		failure := errors.New("openailive: unknown error")
 		if event.Error != nil {

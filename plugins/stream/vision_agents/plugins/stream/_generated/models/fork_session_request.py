@@ -25,15 +25,11 @@ class ForkSessionRequest:
 
         Attributes:
             agent (str | Unset):
-            call_id (str | Unset): The call the fork joins. A voice session cannot be forked into a text one or the other
-                way about, so this is required when the parent held a call and refused when it did not.
             config_id (str | Unset):
             custom (ForkSessionRequestCustom | Unset):
             description (str | Unset):
             incognito (bool | Unset): Hold the fork off the record. The parent still exists; this conversation onwards is
                 simply not kept.
-            instructions (str | Unset): Server-side only: a device sending it is refused with a 403, as it is on
-                createSession and updateSession.
             messages (bool | Unset): Carry the parent's history into the fork, so the new conversation continues from what
                 was already said. False starts the same configuration over from nothing, which is what comparing two answers to
                 the same opening question wants. Default: True.
@@ -52,12 +48,10 @@ class ForkSessionRequest:
     """
 
     agent: str | Unset = UNSET
-    call_id: str | Unset = UNSET
     config_id: str | Unset = UNSET
     custom: ForkSessionRequestCustom | Unset = UNSET
     description: str | Unset = UNSET
     incognito: bool | Unset = UNSET
-    instructions: str | Unset = UNSET
     messages: bool | Unset = True
     model_overwrites: ModelOverwrites | Unset = UNSET
     project_id: str | Unset = UNSET
@@ -68,8 +62,6 @@ class ForkSessionRequest:
     def to_dict(self) -> dict[str, Any]:
         agent = self.agent
 
-        call_id = self.call_id
-
         config_id = self.config_id
 
         custom: dict[str, Any] | Unset = UNSET
@@ -79,8 +71,6 @@ class ForkSessionRequest:
         description = self.description
 
         incognito = self.incognito
-
-        instructions = self.instructions
 
         messages = self.messages
 
@@ -99,8 +89,6 @@ class ForkSessionRequest:
         field_dict.update({})
         if agent is not UNSET:
             field_dict["agent"] = agent
-        if call_id is not UNSET:
-            field_dict["call_id"] = call_id
         if config_id is not UNSET:
             field_dict["config_id"] = config_id
         if custom is not UNSET:
@@ -109,8 +97,6 @@ class ForkSessionRequest:
             field_dict["description"] = description
         if incognito is not UNSET:
             field_dict["incognito"] = incognito
-        if instructions is not UNSET:
-            field_dict["instructions"] = instructions
         if messages is not UNSET:
             field_dict["messages"] = messages
         if model_overwrites is not UNSET:
@@ -126,15 +112,11 @@ class ForkSessionRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.fork_session_request_custom import (
-            ForkSessionRequestCustom,
-        )
+        from ..models.fork_session_request_custom import ForkSessionRequestCustom
         from ..models.model_overwrites import ModelOverwrites
 
         d = dict(src_dict)
         agent = d.pop("agent", UNSET)
-
-        call_id = d.pop("call_id", UNSET)
 
         config_id = d.pop("config_id", UNSET)
 
@@ -148,8 +130,6 @@ class ForkSessionRequest:
         description = d.pop("description", UNSET)
 
         incognito = d.pop("incognito", UNSET)
-
-        instructions = d.pop("instructions", UNSET)
 
         messages = d.pop("messages", UNSET)
 
@@ -168,12 +148,10 @@ class ForkSessionRequest:
 
         fork_session_request = cls(
             agent=agent,
-            call_id=call_id,
             config_id=config_id,
             custom=custom,
             description=description,
             incognito=incognito,
-            instructions=instructions,
             messages=messages,
             model_overwrites=model_overwrites,
             project_id=project_id,

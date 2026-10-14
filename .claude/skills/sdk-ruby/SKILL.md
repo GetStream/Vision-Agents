@@ -35,8 +35,9 @@ lib/getstream/vision_agents.rb     requires everything, in order
 
 Two at runtime, and adding a third needs a reason written here.
 
-- **`getstream-ruby ~> 12.1`**, Stream's server-side gem, only in `edge.rb` to create the call
-  the backend joins (`client.video.get_or_create_call`). It pulls in Faraday; that is the
+- **`getstream-ruby ~> 12.1`**, Stream's server-side gem, only in `edge.rb`'s `create_call`
+  (`client.video.get_or_create_call`), for a caller that wants a Stream call of its own; an
+  agent's session names its call itself. It pulls in Faraday; that is the
   price of using Stream's client rather than re-implementing call creation. It has no
   public user-token method, so tokens are signed in `Backend.sign`.
 - **`websocket-driver ~> 0.8`**: the protocol only. The connection, TLS, reader thread and
@@ -125,9 +126,17 @@ websocket-driver reads only the status and the headers.
   fixture in `folder_test.rb` pins `02a7b2c8428f31e3a2b93ca2f5a6ec70`. With a subagent or cost
   labels set the hash is re-fingerprinted with `map[k:v ...]`, which is how Go's `fmt.Sprint`
   writes a map. A matching `.agent_sync` reads the config back instead of posting.
-- Outbound: create the Stream call, `POST /v1/phone/calls`, then open the session with
-  `navigating: true` and `phone.vendor_call_id`. In that order.
-- An `InboundCall` is joined as it arrived, with `phone.number` set to the number rung.
+- A session owns its call, `agent:<session id>`: nothing here names or creates one. `join`
+  opens the session with `start_voice: true`, `chat` opens it in writing, and
+  `session.voice.start`/`stop` move it between the two (`POST`/`DELETE
+  /v1/agents/sessions/{id}/voice`). Voice is on when the session answered a `call_id`.
+  `sessions.resume(id)` gets a session and watches it. A fork is always held in writing.
+- Instructions reach the backend only through `sync`; no session request or socket frame
+  carries them.
+- Outbound: `POST /v1/phone/calls`, then open the session it answers (`session_id`) with
+  `start_voice`, `navigating: true` and `phone.vendor_call_id`. In that order.
+- An `InboundCall` opens the `session_id` its dispatch frame names, with voice and
+  `phone.number` set to the number rung; one naming no session is refused.
 - Rewind is 204 and refused with 400 on a persisted conversation; fork with `response_id`
   instead. A response id is not the `turn_id` socket frames carry.
 - Dispatch `ping.at` is a number the router echoes, not a timestamp.

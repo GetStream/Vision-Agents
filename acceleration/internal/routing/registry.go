@@ -45,7 +45,9 @@ type Spec struct {
 	// which is what makes an unrecognised field an error rather than a setting that was
 	// accepted and never sent.
 	Overwrites json.RawMessage
-	Logger     *slog.Logger
+	// Endpoint is where a customer's own model is served, and empty for every other.
+	Endpoint Endpoint
+	Logger   *slog.Logger
 }
 
 // Settings decodes this provider's overwrites into a struct of its own.

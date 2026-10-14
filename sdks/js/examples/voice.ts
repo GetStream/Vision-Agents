@@ -8,7 +8,7 @@
  * Needs a router to talk to — `go run ./cmd/router` in `acceleration/` — and
  * `STREAM_API_KEY` and `STREAM_API_SECRET` for the call itself.
  */
-import { Agent } from "@stream-io/vision-agents";
+import { Agent } from "@stream-io/calypso";
 
 const agent = new Agent({
   name: "John",

@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,6 +109,77 @@ func (s *SkillsSuite) TestASubagentThatNeedsSomethingIsRecognised() {
 	text, question = answer("  It is 12.63.  ")
 	s.Equal("It is 12.63.", text)
 	s.Empty(question)
+}
+
+func (s *SkillsSuite) TestASkillsInstructionsAreReadByName() {
+	instructions, err := testSkills().Instructions(context.Background(), "recall")
+	s.Require().NoError(err)
+	s.Equal("read the transcript", instructions)
+
+	_, err = testSkills().Instructions(context.Background(), "teleport")
+	s.ErrorContains(err, `no skill called "teleport"`)
+	s.ErrorContains(err, "think, recall", "the model is told which names it may use")
+}
+
+func (s *SkillsSuite) TestAStoredSkillIsReadWhenItIsLoaded() {
+	// A stored skill is held by name and description; its instructions are read when used,
+	// so one edited mid-conversation is loaded as it now is.
+	read := 0
+	skills := Skills{
+		Skills: []Skill{{Name: "sales-moderation", Description: "moderation pricing"}},
+		Load: func(_ context.Context, name string) (Loaded, error) {
+			read++
+			return Loaded{Instructions: "instructions for " + name}, nil
+		},
+	}
+
+	instructions, err := skills.Instructions(context.Background(), "sales-moderation")
+	s.Require().NoError(err)
+	s.Equal("instructions for sales-moderation", instructions)
+	s.Equal(1, read)
+}
+
+func (s *SkillsSuite) TestOnlyAFileThatIsNotADocumentIsAScript() {
+	s.Equal([]string{"scripts/fill.py", "scripts/merge.go"},
+		Scripts([]string{"reference/forms.md", "scripts/merge.go", "NOTES.TXT", "scripts/fill.py", "guide.mdx"}))
+	s.Empty(Scripts([]string{"reference/forms.md"}))
+}
+
+func (s *SkillsSuite) TestASkillWithScriptsNeedsASandbox() {
+	err := NeedsSandbox("pdf", []string{"reference/forms.md", "scripts/fill.py"}, false)
+	s.ErrorContains(err, `skill "pdf" runs scripts (scripts/fill.py), so the agent needs a sandbox`)
+
+	s.NoError(NeedsSandbox("pdf", []string{"scripts/fill.py"}, true))
+	s.NoError(NeedsSandbox("pdf", []string{"reference/forms.md"}, false), "a reference is read, not run")
+}
+
+func (s *SkillsSuite) TestASkillsFileIsReadByItsPath() {
+	skills := Skills{
+		Skills: []Skill{{Name: "pdf", Description: "fill PDF forms", Files: []string{"reference/forms.md"}}},
+		Load: func(context.Context, string) (Loaded, error) {
+			return Loaded{Instructions: "fill it", Files: map[string]string{"reference/forms.md": "# Forms"}}, nil
+		},
+	}
+
+	content, err := skills.File(context.Background(), "pdf", "./reference/forms.md")
+	s.Require().NoError(err)
+	s.Equal("# Forms", content)
+
+	_, err = skills.File(context.Background(), "pdf", "reference/missing.md")
+	s.ErrorContains(err, "it has: reference/forms.md", "the model is told which files there are")
+}
+
+func (s *SkillsSuite) TestLoadToolOffersEachSkillByNameAndDescription() {
+	skills := Skills{Skills: []Skill{{Name: "sales-chat", Description: "Chat pricing"}, {Name: "sales-video", Description: "Video pricing"}}}
+	tool := skills.LoadTool()
+
+	s.Equal(LoadSkillTool, tool.Name)
+	s.Contains(tool.Description, "- sales-chat: Chat pricing")
+	s.Contains(tool.Description, "- sales-video: Video pricing")
+	s.Contains(tool.Description, "before any other tool")
+	s.Equal([]string{"sales-chat", "sales-video"},
+		tool.Parameters["properties"].(map[string]any)["name"].(map[string]any)["enum"])
+	s.NoError(Tools{Tools: []Tool{tool}}.Validate())
 }
 
 func (s *SkillsSuite) TestTextSkillsAcceptCompleteWrittenRequests() {

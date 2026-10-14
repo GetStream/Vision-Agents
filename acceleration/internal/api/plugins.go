@@ -67,6 +67,8 @@ func (s *Server) listConfigPlugins(ctx context.Context, request *listConfigPlugi
 	if err != nil {
 		return nil, errUnknownConfig
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathListConfig,
+		"customer", customerID, "config", config.ID)
 
 	conns, err := s.store.PluginConnections(ctx, customerID, request.Id)
 	if err != nil {
@@ -210,6 +212,8 @@ func (s *Server) setPluginClient(ctx context.Context, request *setPluginClientRe
 	if plugin.Auth != "oauth" {
 		return nil, invalidRequest(plugin.Name + " has no OAuth login to set a client for")
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathClientSet,
+		"customer", customerID, "config", config.ID, "plugin", plugin.ID, "via", plugins.ViaPlugins)
 
 	owner := plugins.Owner{CustomerID: customerID, ConfigID: request.Id}
 	client := store.PluginClient{
@@ -265,6 +269,8 @@ func (s *Server) deletePluginClient(ctx context.Context, request *deletePluginCl
 	if err != nil {
 		return nil, err
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathClientDelete,
+		"customer", customerID, "config", request.Id, "plugin", request.PluginId, "via", plugins.Via(request.PluginId))
 	name := request.PluginId
 	if plugin, known := plugins.Lookup(request.PluginId); known {
 		name = plugin.Name
@@ -295,6 +301,8 @@ func (s *Server) authorizePlugin(ctx context.Context, request *authorizePluginRe
 	if err != nil {
 		return nil, err
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathLogin,
+		"customer", customerID, "config", config.ID, "plugin", plugin.ID, "via", plugins.Via(plugin.ID))
 
 	instance := ""
 	if request.Body != nil {
@@ -351,6 +359,8 @@ func (s *Server) disconnectPlugin(ctx context.Context, request *disconnectPlugin
 	if err := s.store.DeletePluginConnection(ctx, customerID, request.Id, string(request.PluginId)); err != nil && !user {
 		return nil, errUnknownPlugin
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathDisconnect,
+		"customer", customerID, "config", config.ID, "plugin", string(request.PluginId), "via", plugins.Via(string(request.PluginId)))
 	unnamed := func(entry store.PluginEntry) bool { return entry.Name == string(request.PluginId) }
 	config.Plugins = slices.DeleteFunc(config.Plugins, unnamed)
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
@@ -411,6 +421,8 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound("no such login"))
 		return
 	}
+	s.logger.Warn(plugins.DeprecatedUse, "path", plugins.PathCallback,
+		"customer", conn.CustomerID, "config", conn.ConfigID, "plugin", conn.PluginID, "via", plugins.Via(conn.PluginID))
 
 	token, err := auth.Exchange(r.Context(), plugins.Owner{CustomerID: conn.CustomerID, ConfigID: conn.ConfigID}, plugins.Pending{
 		PluginID:      conn.PluginID,
@@ -555,7 +567,9 @@ func (s *Server) registerPlugins(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/plugins",
 		Summary:     "The hosted MCP servers an agent may attach",
-		Description: "A built-in catalog, not the customer's own rows. q filters by name, category or " +
+		Deprecated:  true,
+		Description: "Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. " +
+			"A built-in catalog, not the customer's own rows. q filters by name, category or " +
 			"description. Connecting one is a login on a config, not a change to this list.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "Matching plugins, in catalog order"},
@@ -567,7 +581,9 @@ func (s *Server) registerPlugins(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/configs/{id}/plugins",
 		Summary:     "The plugin logins this agent holds",
-		Description: "The app's own logins, then every plugin the config names that has none yet, as " +
+		Deprecated:  true,
+		Description: "Deprecated: use listConnections for the logins, and the config's connectors for what " +
+			"it binds. The app's own logins, then every plugin the config names that has none yet, as " +
 			"not_connected, then every MCP server it names by URL that needs a login and has no user, " +
 			"which the app logs into the same way. An end user's logins, made for a plugin or a server " +
 			"with user, are never listed.",
@@ -581,7 +597,10 @@ func (s *Server) registerPlugins(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/v1/agents/configs/{id}/plugins/{plugin_id}/authorize",
 		Summary:     "Start a plugin login",
-		Description: "Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. " +
+		Deprecated:  true,
+		Description: "Deprecated: use createConnection, which returns the consent URL of a connector login; " +
+			"an MCP server named by URL becomes a custom connector with createConnector. " +
+			"Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. " +
 			"Shopify needs an instance url, because it has no single global host.\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device.",
@@ -595,7 +614,9 @@ func (s *Server) registerPlugins(api huma.API) {
 		Method:      http.MethodDelete,
 		Path:        "/v1/agents/configs/{id}/plugins/{plugin_id}",
 		Summary:     "Drop a plugin login",
-		Description: "Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+		Deprecated:  true,
+		Description: "Deprecated: use deleteConnection.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device.",
 		DefaultStatus: http.StatusNoContent,
 		Responses: map[string]*huma.Response{
@@ -608,7 +629,9 @@ func (s *Server) registerPlugins(api huma.API) {
 		Method:      http.MethodPut,
 		Path:        "/v1/agents/configs/{id}/plugins/{plugin_id}/client",
 		Summary:     "Set the OAuth client an agent logs a plugin in with",
-		Description: "The OAuth app the app registered with the provider, such as a Google Cloud client, " +
+		Deprecated:  true,
+		Description: "Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. " +
+			"The OAuth app the app registered with the provider, such as a Google Cloud client, " +
 			"used for this config's logins to the plugin: the app's own and every end user's. A plugin " +
 			"with client_required has no other way in. The secret is sealed and never returned. " +
 			"Replaces the client set before; a login made with that one keeps working until it has to " +
@@ -625,7 +648,9 @@ func (s *Server) registerPlugins(api huma.API) {
 		Method:      http.MethodDelete,
 		Path:        "/v1/agents/configs/{id}/plugins/{plugin_id}/client",
 		Summary:     "Drop the OAuth client an agent logs a plugin in with",
-		Description: "Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+		Deprecated:  true,
+		Description: "Deprecated: use deleteConnectorOAuthClient.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device.",
 		DefaultStatus: http.StatusNoContent,
 		Responses: map[string]*huma.Response{

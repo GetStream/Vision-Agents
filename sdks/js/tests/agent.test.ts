@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -12,6 +12,7 @@ import {
   USER_KEY,
   daytona,
   userIdOf,
+  type ConnectorDeclaration,
   type Folder,
   type Schemas,
 } from "../src/index.js";
@@ -70,12 +71,11 @@ describe("Agent", () => {
   it("holds a conversation in writing without joining a call", async () => {
     await chatting(new Agent({ name: "John", instructions: "Be brief.", client: api }));
 
-    const body = requested();
-    assert.equal(body.text, true);
-    assert.equal(body.call_id, undefined);
-    assert.equal(body.instructions, "Be brief.");
-    assert.equal(body.user_id, "john");
-    assert.equal(body.user_name, "John");
+    const body = requested() as Record<string, unknown>;
+    assert.equal(body["start_voice"], undefined);
+    assert.equal(body["instructions"], undefined, "instructions reach the backend with sync");
+    assert.equal(body["user_id"], "john");
+    assert.equal(body["user_name"], "John");
   });
 
   it("renders the models it was declared with into the session", async () => {
@@ -241,12 +241,13 @@ describe("Agent", () => {
     assert.equal(agent.instructions, "Be warm.");
   });
 
-  it("answers a call that arrived on the dispatch socket without creating one", async () => {
+  it("answers a call that arrived on the dispatch socket in the session it names", async () => {
     const agent = new Agent({ name: "John", client: api });
 
     const opening = agent.answer({
-      callId: "call_1",
+      callId: "sess_1",
       callType: "agent",
+      sessionId: "sess_1",
       calledNumber: "+15551234567",
       callerNumber: "+15557654321",
       custom: {},
@@ -255,64 +256,122 @@ describe("Agent", () => {
     const held = await opening;
 
     const body = requested();
-    assert.equal(body.call_id, "call_1");
-    assert.equal(body.call_type, "agent");
+    assert.equal(body.id, "sess_1");
+    assert.equal(body.start_voice, true, "a call is not held in writing");
     assert.deepEqual(body.phone, { number: "+15551234567" });
-    assert.equal(body.text, undefined, "a call is not held in writing");
 
     connection.socket.close();
     await held.wait();
   });
 
-  it("rings somebody and joins the call it placed, navigating", async () => {
+  it("refuses a call that names no session, since there is no call to join", async () => {
+    const agent = new Agent({ name: "John", client: api });
+    const call = {
+      callId: "",
+      callType: "default",
+      sessionId: "",
+      calledNumber: "+15551234567",
+      callerNumber: "",
+      custom: {},
+    };
+
+    await assert.rejects(() => agent.answer(call), ConfigurationError);
+    assert.equal(router.received.length, 0);
+  });
+
+  it("rings somebody and joins the session the call was placed for, navigating", async () => {
     router.serve("POST", "/v1/phone/calls", {
       status: 202,
-      body: { vendor: "twilio", vendor_call_id: "vc_1", call_id: "demo", call_type: "agent" },
+      body: { status: "ringing", vendor: "twilio", vendor_call_id: "vc_1", session_id: "sess_1" },
     });
-    const agent = new Agent({
-      name: "John",
-      client: api,
-      costTracking: { team: "sales" },
-      edge: new Edge({ apiKey: "key", apiSecret: "secret", fetch: streamCallCreated }),
-    });
+    const agent = new Agent({ name: "John", client: api, costTracking: { team: "sales" } });
 
     const opening = agent.startCall("+15551234567", "+15557654321");
     const connection = await router.socket();
     const held = await opening;
 
-    const placed = router.received.find((one) => one.path === "/v1/phone/calls")?.body as {
-      from: string;
-      to: string;
-      call_id: string;
-      tags: Record<string, string>;
-    };
-    assert.equal(placed.from, "+15551234567");
-    assert.equal(placed.to, "+15557654321");
-    assert.deepEqual(placed.tags, { team: "sales" });
+    const placed = router.received.find((one) => one.path === "/v1/phone/calls")?.body;
+    assert.deepEqual(placed, { from: "+15551234567", to: "+15557654321", tags: { team: "sales" } });
 
     const body = requested();
+    assert.equal(body.id, "sess_1");
+    assert.equal(body.start_voice, true);
     assert.equal(body.navigating, true);
     assert.deepEqual(body.phone, { number: "+15551234567", vendor_call_id: "vc_1" });
-    assert.equal(body.call_id, placed.call_id);
 
     connection.socket.close();
     await held.wait();
   });
 
-  it("builds a link to the call it joined, as a listener of its own", async () => {
+  it("answers the next caller to a number in the session the router opened the call for", async () => {
+    router.serve("POST", "/v1/phone/numbers/%2B15551234567/attach", {
+      body: { number: "+15551234567", trunk_id: "t_1", sip_uri: "sip:x" },
+    });
+    const agent = new Agent({ name: "John", client: api });
+
+    const waiting = agent.waitForCall("+15551234567");
+    const dispatch = await router.socket();
+    assert.equal(dispatch.path, "/v1/dispatch");
+    assert.equal(dispatch.query.get("capacity"), "1");
+    dispatch.send({
+      type: "call",
+      work_id: "work_1",
+      call_id: "sess_1",
+      call_type: "agent",
+      session_id: "sess_1",
+      called_number: "+15551234567",
+    });
+    const connection = await router.socket();
+    connection.send({ type: "heard", text: "hello?" });
+    const held = await waiting;
+
+    const attached = router.received.find((one) => one.path.endsWith("/attach"))?.body;
+    assert.deepEqual(attached, {}, "a number is attached to the agent, not to a call");
+    const body = requested();
+    assert.equal(body.id, "sess_1");
+    assert.equal(body.start_voice, true);
+    assert.deepEqual(body.phone, { number: "+15551234567" });
+
+    connection.socket.close();
+    await held.wait();
+  });
+
+  it("builds a link to the session's own call, as a listener of its own", async () => {
     const agent = new Agent({
       name: "John",
       client: api,
       edge: new Edge({ apiKey: "key", apiSecret: "secret", fetch: streamCallCreated }),
     });
 
-    const opening = agent.join({ id: "demo" });
+    const opening = agent.join();
     const connection = await router.socket();
     const held = await opening;
 
+    assert.equal(requested().start_voice, true);
     const url = new URL(await agent.monitorURL(held));
-    assert.equal(url.pathname, "/video/demos/join/demo");
+    assert.equal(url.pathname, "/video/demos/join/sess_1");
     assert.equal(url.searchParams.get("user_name"), "Monitor");
+
+    connection.socket.close();
+    await held.wait();
+  });
+
+  it("has no link to give for a conversation held in writing", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: { ...session, call_id: "", call_type: "" },
+    });
+    const agent = new Agent({
+      name: "John",
+      client: api,
+      edge: new Edge({ apiKey: "key", apiSecret: "secret", fetch: streamCallCreated }),
+    });
+
+    const opening = agent.chat();
+    const connection = await router.socket();
+    const held = await opening;
+
+    await assert.rejects(() => agent.monitorURL(held), ConfigurationError);
 
     connection.socket.close();
     await held.wait();
@@ -339,7 +398,7 @@ describe("Agent", () => {
         settings: {
           llm: "llm-smart",
           stt: "flux",
-          greeting: "Welcome",
+          greeting: { text: "Hello", mode: "variation" },
           harness: "default",
           tags: { team: "support" },
           dispatch: { incoming_call: "disabled", text: "enabled" },
@@ -369,7 +428,7 @@ describe("Agent", () => {
       assert.equal(body.stt, "flux", "what only agent.yaml says still goes");
       assert.deepEqual(body.tags, { team: "support" });
       assert.deepEqual(body.dispatch, { incoming_call: "disabled", text: "enabled" });
-      assert.deepEqual(body.greeting, { text: "Welcome" });
+      assert.deepEqual(body.greeting, { text: "Hello", mode: "variation" });
       assert.equal(body.harness, "default");
       assert.equal(body.skills?.length, 1);
       assert.equal(body.knowledge?.length, 1);
@@ -429,6 +488,230 @@ describe("Agent", () => {
 
       assert.equal(hashes[0], hashes[1]);
       assert.notEqual(hashes[1], hashes[2]);
+    });
+
+    it("sends a skill folder's files, and fingerprints a skill moved into a folder the same until it brings one", async () => {
+      router.serve("POST", "/v1/agents/sync", {
+        body: {
+          unchanged: false,
+          config: { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" },
+        },
+      });
+      // Nothing stored, so a stamp that still matches syncs again and the request is seen.
+      router.serve("GET", "/v1/agents/configs", { body: [] });
+      const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
+      const skill = "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n";
+      await mkdir(join(root, "skills"), { recursive: true });
+      await writeFile(join(root, "agent.yaml"), "name: jean\n");
+      await writeFile(join(root, "skills", "pdf.md"), skill);
+      await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+      await rm(join(root, "skills", "pdf.md"));
+      await mkdir(join(root, "skills", "pdf", "scripts"), { recursive: true });
+      await writeFile(join(root, "skills", "pdf", "SKILL.md"), skill);
+      await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+      await writeFile(join(root, "skills", "pdf", "scripts", "fill.py"), "print('filled')\n");
+      await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+      const [asFile, asFolder, withFile] = router
+        .requestsTo("POST", "/v1/agents/sync")
+        .map((one) => one.body as Schemas["SyncAgentRequest"]);
+      assert.equal(asFolder?.skills?.[0] && "files" in asFolder.skills[0], false);
+      assert.deepEqual(withFile?.skills?.[0]?.files, { "scripts/fill.py": "print('filled')\n" });
+      assert.equal(asFile?.hash, asFolder?.hash, "moving a skill into a folder would sync it again");
+      assert.notEqual(asFolder?.hash, withFile?.hash, "a file added to a skill would not sync");
+    });
+
+    describe("connectors", () => {
+      const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" };
+      const folder = (connectors: ConnectorDeclaration[] | undefined): Folder => ({
+        path: "/agents/jean",
+        name: "jean",
+        settings: connectors ? { connectors } : {},
+        instructions: "Be brief.",
+        guardrail: "",
+        skills: [],
+        knowledge: [],
+        knowledgeURLs: [],
+      });
+      const connection = (id: string, label: string): Schemas["Connection"] =>
+        ({ id, label }) as Schemas["Connection"];
+
+      beforeEach(() => {
+        router.serve("POST", "/v1/agents/sync", { body: { unchanged: false, config: stored } });
+      });
+
+      async function synced(connectors: ConnectorDeclaration[] | undefined): Promise<Record<string, unknown>> {
+        await new Agent({ folder: folder(connectors), client: api }).sync();
+        return router.requestsTo("POST", "/v1/agents/sync").at(-1)?.body as Record<string, unknown>;
+      }
+
+      it("sends a connector named alone as a session binding of every tool, and lists no connections", async () => {
+        const body = await synced([{ name: "linear" }, { name: "github", tools: ["list_*"], required: false }]);
+
+        assert.deepEqual(body["connectors"], [
+          { name: "linear", connector_id: "linear", tools: [], tool_patterns: ["*"], connection: { type: "session" } },
+          {
+            name: "github",
+            connector_id: "github",
+            tools: [],
+            tool_patterns: ["list_*"],
+            required: false,
+            connection: { type: "session" },
+          },
+        ]);
+        assert.equal(router.requestsTo("GET", "/v1/agents/connections").length, 0);
+      });
+
+      it("sends no connectors when agent.yaml has none, and an empty list when it lists none", async () => {
+        const without = await synced(undefined);
+        const emptied = await synced([]);
+
+        assert.equal("connectors" in without, false, "the stored bindings would be removed");
+        assert.deepEqual(emptied["connectors"], [], "the stored bindings would never be removed");
+        assert.notEqual(without["hash"], emptied["hash"]);
+      });
+
+      it("fixes a connection by its id before its label, reading every page", async () => {
+        router.serve("GET", "/v1/agents/connections", (request) => ({
+          body: request.query.get("cursor")
+            ? { items: [connection("acct", "other")], has_more: false }
+            : { items: [connection("wrong", "acct")], has_more: true, next_cursor: "2" },
+        }));
+
+        const body = await synced([{ name: "issues", connector: "linear", connection: "acct" }]);
+
+        const listed = router.requestsTo("GET", "/v1/agents/connections");
+        assert.equal(listed.length, 2);
+        assert.equal(listed[0]?.query.get("owner_type"), "app");
+        assert.equal(listed[0]?.query.get("connector_id"), "linear");
+        assert.deepEqual((body["connectors"] as Schemas["AgentConnectorBinding"][])[0]?.connection, {
+          type: "fixed",
+          connection_id: "acct",
+        });
+      });
+
+      it("fixes the one connection with that label, and stops at a cursor it has read", async () => {
+        router.serve("GET", "/v1/agents/connections", (request) => ({
+          body: request.query.get("cursor")
+            ? { items: [connection("the-one", "work")], has_more: true, next_cursor: "again" }
+            : { items: [connection("other", "nope")], has_more: true, next_cursor: "again" },
+        }));
+
+        const body = await synced([{ name: "issues", connection: "work" }]);
+
+        assert.equal(router.requestsTo("GET", "/v1/agents/connections").length, 2);
+        assert.deepEqual((body["connectors"] as Schemas["AgentConnectorBinding"][])[0]?.connection, {
+          type: "fixed",
+          connection_id: "the-one",
+        });
+      });
+
+      it("refuses a connection nobody has, or a label two share, and sends nothing", async () => {
+        router.serve("GET", "/v1/agents/connections", {
+          body: { items: [connection("a", "work"), connection("b", "work")], has_more: false },
+        });
+
+        await assert.rejects(
+          () => new Agent({ folder: folder([{ name: "issues", connection: "missing" }]), client: api }).sync(),
+          /connector "issues": no app connection with id or label "missing"/,
+        );
+        await assert.rejects(
+          () => new Agent({ folder: folder([{ name: "issues", connection: "work" }]), client: api }).sync(),
+          /connector "issues": "work" matches 2 app connections/,
+        );
+        assert.equal(router.requestsTo("POST", "/v1/agents/sync").length, 0);
+      });
+    });
+
+    describe("mcp_servers and channels", () => {
+      const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" };
+
+      beforeEach(() => {
+        router.serve("POST", "/v1/agents/sync", { body: { unchanged: false, config: stored } });
+      });
+
+      async function synced(declaration: string): Promise<Record<string, unknown>> {
+        const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
+        await mkdir(root);
+        await writeFile(join(root, "agent.yaml"), declaration);
+        await writeFile(join(root, "instructions.md"), "Be brief.\n");
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+        return router.requestsTo("POST", "/v1/agents/sync").at(-1)?.body as Record<string, unknown>;
+      }
+
+      it("sends them the way the Go SDK does", async () => {
+        const body = await synced(
+          [
+            "name: jean",
+            "mcp_servers:",
+            "  - name: crm",
+            '    url: "https://crm.example.com/mcp"',
+            "    tools: [list_*, get_deal]",
+            "    scopes:",
+            "      - read",
+            "    user: true",
+            "  - name: notes",
+            "    url: https://notes.example.com/mcp",
+            "    tools: []",
+            "    user: false",
+            "channels:",
+            "  whatsapp:",
+            '    number: "+15551234567" # the main line',
+            "  sms:",
+            "    number: +15557654321",
+            "  imessage:",
+            "  identity: link # by link",
+            "",
+          ].join("\n"),
+        );
+
+        assert.deepEqual(body["mcp_servers"], [
+          {
+            name: "crm",
+            url: "https://crm.example.com/mcp",
+            tools: ["list_*", "get_deal"],
+            scopes: ["read"],
+            user: true,
+          },
+          { name: "notes", url: "https://notes.example.com/mcp" },
+        ]);
+        assert.deepEqual(body["channels"], {
+          whatsapp: { number: "+15551234567" },
+          sms: { number: "+15557654321" },
+          identity: "link",
+        });
+      });
+
+      it("sends no mcp_servers for an empty list, and empty channels for an empty mapping", async () => {
+        const body = await synced("name: jean\nmcp_servers: []\nchannels: {}\n");
+
+        assert.equal("mcp_servers" in body, false);
+        assert.deepEqual(body["channels"], {});
+      });
+
+      it("fingerprints a change to either", async () => {
+        const one = await synced("name: jean\nchannels:\n  sms:\n    number: +15550000001\n");
+        const other = await synced("name: jean\nchannels:\n  sms:\n    number: +15550000002\n");
+        const servers = await synced("name: jean\nmcp_servers:\n  - name: a\n    url: https://a.example.com\n");
+
+        assert.notEqual(one["hash"], other["hash"]);
+        assert.notEqual(one["hash"], servers["hash"]);
+      });
+
+      it("sends the same body as before for an agent.yaml that names neither", async () => {
+        const body = await synced("name: jean\nllm: llm-fast\nplugins:\n  - weather\n");
+
+        assert.deepEqual(body, {
+          name: "jean",
+          instructions: "Be brief.",
+          llm: "llm-fast",
+          plugins: ["weather"],
+          // Probed on the base, before agent.yaml could declare either.
+          hash: "693edb6e1c1bf06d590d73d9b06ec2b7defcb319627b098b9a0c1f56e2b38561",
+        });
+      });
     });
 
     it("only reads back a directory nothing has touched since .agent_sync was written", async () => {

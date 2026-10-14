@@ -196,6 +196,13 @@ func (s *PhoneSuite) TestACallSaysWhichOfItsTermsAVendorCannotExpress() {
 	s.Empty(Outbound{RingTimeout: time.Second}.Unsupported(provider))
 }
 
+func (s *PhoneSuite) TestDigitsAVendorCannotPlayAreATermItCannotExpress() {
+	provider := &picky{stub: stub{vendor: "telnyx"}, plays: "0123456789w#*"}
+
+	s.Equal([]CallFeature{FeatureInitialDigits}, Outbound{InitialDigits: "W1"}.Unsupported(provider))
+	s.Empty(Outbound{InitialDigits: "ww1#"}.Unsupported(provider))
+}
+
 func (s *PhoneSuite) TestACallThatCannotBePlacedAsDescribedIsRefused() {
 	bridge := Bridge{URI: "sip:trunk@sip.stream-io-api.com"}
 	valid := Outbound{From: "+15125551234", To: "+15550001111", Bridge: bridge}
@@ -222,6 +229,17 @@ func (s *PhoneSuite) TestACallThatCannotBePlacedAsDescribedIsRefused() {
 	long := valid
 	long.InitialDigits = strings.Repeat("1", maxInitialDigits+1)
 	s.ErrorContains(long.Validate(), "than the 32")
+}
+
+func (s *PhoneSuite) TestOnlyAFullNumberThatIsNotPremiumRateCanBeDialled() {
+	bridge := Bridge{URI: "sip:trunk@sip.stream-io-api.com"}
+	for _, short := range []string{"911", "112", "999", "000", "988", "+1911", "5125550123", "+1 512 555 0123"} {
+		s.ErrorContains(Outbound{From: "+15125551234", To: short, Bridge: bridge}.Validate(), "E.164", short)
+	}
+	for _, premium := range []string{"+19005550100", "+19765550100"} {
+		s.ErrorIs(Outbound{From: "+15125551234", To: premium, Bridge: bridge}.Validate(), ErrDestinationRefused, premium)
+	}
+	s.NoError(Outbound{From: "+15125551234", To: "+442071838750", Bridge: bridge}.Validate())
 }
 
 func (s *PhoneSuite) TestALineThatWasNotPlacedFromHereCannotPressAnything() {
@@ -558,6 +576,16 @@ func (s *stub) SendDigits(context.Context, string, string) error { return s.err 
 func (s *stub) Supports(filter Filter) bool { return !slices.Contains(s.unsupported, filter) }
 
 func (s *stub) Dials(feature CallFeature) bool { return !slices.Contains(s.undialable, feature) }
+
+// picky is a vendor that presses some keys on answer but not every one a keypad has.
+type picky struct {
+	stub
+	plays string
+}
+
+func (p *picky) PlaysDigits(digits string) bool {
+	return !strings.ContainsFunc(digits, func(key rune) bool { return !strings.ContainsRune(p.plays, key) })
+}
 
 func (s *stub) Vendor() string { return s.vendor }
 

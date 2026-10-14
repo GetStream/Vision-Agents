@@ -744,6 +744,33 @@ func (s *AgentSuite) TestAHeldReplyDoesNotKeepTheRestOfWhatTheVoiceSaysWaiting()
 	s.Equal(replyID, spokeEvent.TurnID)
 }
 
+func (s *AgentSuite) TestAudioHeldForSilenceIsLevelledWhenItIsLetOut() {
+	window := 600 * time.Millisecond
+	s.replySilence = &window
+	s.join(true)
+	alice := stt.Participant{ID: "alice"}
+	s.speakAloud(alice)
+	s.voice.mu.Lock()
+	s.voice.silent = true
+	s.voice.mu.Unlock()
+	s.says(alice, "please find a table")
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the reply never reached the voice")
+	replyID := s.voice.spoken()[0].ID
+	s.voice.emitter.Send(tts.AudioChunk{SynthesisID: replyID, Audio: chunkAt(100)})
+	s.replyIsHeld()
+	s.voice.emitter.Send(tts.SynthesisComplete{SynthesisID: replyID, AudioDurationMs: 10})
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the held reply was never let out")
+	heard := s.edge.heard()[0]
+	var peak int16
+	for _, sample := range heard.Samples {
+		if sample > peak {
+			peak = sample
+		}
+	}
+	s.Greater(peak, int16(100), "a quiet frame is levelled when the held events are published")
+}
+
 func (s *AgentSuite) TestTheHoldOfAReplyIsReportedOnItsTurn() {
 	window := 500 * time.Millisecond
 	s.replySilence = &window

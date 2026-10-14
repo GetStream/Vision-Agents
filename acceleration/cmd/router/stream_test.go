@@ -120,6 +120,7 @@ func (s *StreamClientsSuite) TestTheDeploymentLearnsItsOwnAppAndSaysSoOnce() {
 func (s *StreamClientsSuite) TestAppModeRefusesToStartWithoutAKeyring() {
 	settings := config.Defaults()
 	settings.Stream.Tenancy = config.TenancyApp
+	settings.Stream.MintURL, settings.Stream.MintToken = "http://gateway-internal:8082", "the-routers-bearer"
 
 	_, err := newStreamClients(settings, &store.Store{}, nil, slog.New(slog.DiscardHandler))
 
@@ -129,6 +130,7 @@ func (s *StreamClientsSuite) TestAppModeRefusesToStartWithoutAKeyring() {
 func (s *StreamClientsSuite) TestAppModeRefusesToStartWithoutPostgres() {
 	settings := config.Defaults()
 	settings.Stream.Tenancy = config.TenancyApp
+	settings.Stream.MintURL, settings.Stream.MintToken = "http://gateway-internal:8082", "the-routers-bearer"
 
 	_, err := newStreamClients(settings, nil, nil, slog.New(slog.DiscardHandler))
 
@@ -142,6 +144,7 @@ func (s *StreamClientsSuite) TestAMismatchedDeploymentAppRefusesToStart() {
 	settings := config.Defaults()
 	settings.Stream.APIKey, settings.Stream.APISecret, settings.Stream.BaseURL = "deploy-key", "deploy-secret", stream.URL
 	settings.Stream.Tenancy, settings.Stream.AppID = config.TenancyApp, 99
+	settings.Stream.MintURL, settings.Stream.MintToken = "http://gateway-internal:8082", "the-routers-bearer"
 	sealer, err := auth.NewSealer("first-key")
 	s.Require().NoError(err)
 	clients, err := newStreamClients(settings, &store.Store{}, sealer, slog.New(slog.DiscardHandler))
@@ -160,6 +163,7 @@ func (s *StreamClientsSuite) TestAppModeStartsWhenStreamCannotBeReached() {
 	settings := config.Defaults()
 	settings.Stream.APIKey, settings.Stream.APISecret, settings.Stream.BaseURL = "deploy-key", "deploy-secret", closed.URL
 	settings.Stream.Tenancy, settings.Stream.AppID = config.TenancyApp, 99
+	settings.Stream.MintURL, settings.Stream.MintToken = "http://gateway-internal:8082", "the-routers-bearer"
 	sealer, err := auth.NewSealer("first-key")
 	s.Require().NoError(err)
 	clients, err := newStreamClients(settings, &store.Store{}, sealer, slog.New(slog.DiscardHandler))

@@ -6,20 +6,25 @@ module GetStream
   module VisionAgents
     # A call that arrived, as the router hands it to a worker.
     #
-    # The caller is already in the Stream call; Agent#join with this joins that call rather
-    # than creating one, and carries the number they rang so the agent can transfer them.
+    # The caller is already in the Stream call, which is named for the session to open:
+    # Agent#join with this opens session_id with voice, and carries the number they rang so
+    # the agent can transfer them. session_id is empty for a number attached before calls
+    # were, which has to be attached again.
     class InboundCall
-      attr_reader :call_id, :call_type, :called_number, :caller_number, :custom, :at, :session
+      attr_reader :call_id, :call_type, :session_id, :called_number, :caller_number, :custom, :at, :session
 
       def self.from(frame)
         new(call_id: frame["call_id"].to_s, call_type: frame["call_type"].to_s.then { |t| t.empty? ? "default" : t },
+            session_id: frame["session_id"].to_s,
             called_number: frame["called_number"].to_s, caller_number: frame["caller_number"].to_s,
             custom: Inbound.strings(frame["custom"]), at: Inbound.time(frame["at"]))
       end
 
-      def initialize(call_id:, call_type: "default", called_number: "", caller_number: "", custom: {}, at: nil)
+      def initialize(call_id:, call_type: "default", session_id: "", called_number: "", caller_number: "", custom: {},
+                     at: nil)
         @call_id = call_id
         @call_type = call_type
+        @session_id = session_id
         @called_number = called_number
         @caller_number = caller_number
         @custom = custom
@@ -52,14 +57,14 @@ module GetStream
     # answers it from that session, because that agent is the one that knows what has been said.
     #
     # session_id is that running session, which nothing has answered yet: Dispatch#answer has
-    # the model do so. command_id is the durable command it was sent as, empty when there is none.
-    InboundMessage = Data.define(:channel_id, :channel_type, :agent_id, :config_id, :session_id, :command_id,
+    # the model do so. request_id is the request it was sent as, empty when there is none.
+    InboundMessage = Data.define(:channel_id, :channel_type, :agent_id, :config_id, :session_id, :request_id,
                                  :text, :message_id, :user_id, :user_name, :custom, :at) do
       def self.from(frame)
         new(channel_id: frame["channel_id"].to_s,
             channel_type: frame["channel_type"].to_s.then { |t| t.empty? ? "agent" : t },
             agent_id: frame["agent_id"].to_s, config_id: frame["config_id"].to_s,
-            session_id: frame["session_id"].to_s, command_id: frame["command_id"].to_s, text: frame["text"].to_s,
+            session_id: frame["session_id"].to_s, request_id: frame["request_id"].to_s, text: frame["text"].to_s,
             message_id: frame["message_id"].to_s, user_id: frame["user_id"].to_s,
             user_name: frame["user_name"].to_s, custom: Inbound.strings(frame["custom"]),
             at: Inbound.time(frame["at"]))

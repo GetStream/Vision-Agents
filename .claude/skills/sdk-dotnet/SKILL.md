@@ -77,8 +77,9 @@ Never hand-edit `Generated/Models.cs`. Never re-declare a schema by hand; use th
 
 ## Dependencies
 
-- **getstream-net 16.0.1** for what is Stream rather than this router: `Edge` creates the call
-  (`VideoClient.GetOrCreateCallAsync`) and mints user tokens (`CreateUserToken`). It refuses a
+- **getstream-net 16.0.1** for what is Stream rather than this router: `Edge` mints user
+  tokens (`CreateUserToken`) and can still create a call (`VideoClient.GetOrCreateCallAsync`),
+  though agents no longer need one created: the router names it after the session. It refuses a
   secret shorter than 256 bits, which a real Stream secret never is; test fixtures use a
   64-character one. Its exceptions are wrapped in `RouterException`.
 - **YamlDotNet 18.1.0** for `agent.yaml`, `urls.yaml` and skill frontmatter, with duplicate
@@ -131,10 +132,13 @@ Hand-written in `Socket.cs`, because OpenAPI stops at the upgrade. One `Socket` 
 
 ## Agent and folder
 
-- `JoinAsync` creates the Stream call then opens the session; `JoinAsync(InboundCall)` joins
-  one dispatch already made; `ChatAsync` is `text: true` and no call; `OutboundCallAsync`
-  places the call first, then joins with `navigating`; `WaitForCallAsync` attaches the number,
-  joins and returns once somebody speaks.
+- Sessions own their call, `agent:<session id>`. `JoinAsync` opens one with `start_voice`;
+  `JoinAsync(InboundCall)` opens the session the call names, with voice; `ChatAsync` sends no
+  `start_voice`; `Session.Voice` starts and stops it later. `OutboundCallAsync` places the call
+  first, then joins the session it returns with `navigating`; `WaitForCallAsync` attaches the
+  number, waits on a one-call `Dispatch` for the router to hand a call over, joins it and
+  returns once somebody speaks. `ResumeAsync(id)` reads a session and watches it.
+- Instructions reach the backend only through `SyncAsync`; nothing sends them per session.
 - `Config` is a directory holding `agent.yaml` or a stored config's name; `ConfigId` is a
   stored config by id, which is what a dispatched message carries. Naming both is refused.
 - What code sets wins over what the directory says.
@@ -166,7 +170,7 @@ xUnit v3 (4.0.1) on the Microsoft Testing Platform (`global.json` sets the runne
 
 - `TestRouter` is a real Kestrel server on loopback port 0 with real WebSocket upgrades. It
   records what arrived and lets a test script frames. Assert on what reached the far end.
-- Getstream-net is pointed at the same server through `EdgeOptions.BaseUrl`, so the Stream call
-  request is checked on the wire too.
+- Getstream-net is pointed at the same server through `EdgeOptions.BaseUrl`, so a test can
+  assert that no Stream call is created.
 - `LiveTests` skip unless `VISION_AGENTS_LIVE_URL` is set. They hold real conversations and
   wait for what the router writes behind a request instead of sleeping.

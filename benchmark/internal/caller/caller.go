@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/transport"
 )
 
 // DefaultTurnHangoverMS is how long the agent must be silent before the next caller turn.
@@ -109,8 +109,10 @@ func (r Result) ClockDriftMS() int {
 
 // Engine plays scripted turns onto a Media pipe and records both legs.
 type Engine struct {
-	Audio          map[string][]int16
-	Logger         *slog.Logger
+	Audio  map[string][]int16
+	Logger *slog.Logger
+	// Threshold is the energy at which the agent's track counts as speech. Zero is
+	// audio.AgentSpeechThreshold.
 	Threshold      float64
 	TurnHangoverMS int
 	ClosingGraceMS int
@@ -132,7 +134,7 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 		e.Logger = slog.Default()
 	}
 	if e.Threshold == 0 {
-		e.Threshold = audio.DefaultSpeechThreshold
+		e.Threshold = audio.AgentSpeechThreshold
 	}
 	if e.ClosingGraceMS == 0 {
 		e.ClosingGraceMS = DefaultClosingGraceMS

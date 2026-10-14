@@ -1,10 +1,19 @@
 """Telecom tools and agent factory."""
 
+from enum import StrEnum
+
 from vision_agents.core import Agent, User
 from vision_agents.plugins import getstream
 
 from voicebench_agents import pack_prompt
 from voicebench_agents.world_client import WorldClient
+
+
+class Window(StrEnum):
+    """When a technician comes: morning or afternoon."""
+
+    AM = "am"
+    PM = "pm"
 
 
 async def create_agent(**kwargs) -> Agent:
@@ -38,7 +47,7 @@ async def create_agent(**kwargs) -> Agent:
     @llm.register_function(
         description="Dispatch a technician. Reboot must have failed first. window is am or pm"
     )
-    async def dispatch_tech(window: str, ticket_id: str = "") -> dict:
+    async def dispatch_tech(window: Window, ticket_id: str = "") -> dict:
         return world.call("dispatch_tech", window=window, ticket_id=ticket_id)
 
     @llm.register_function(description="Apply a bill credit if eligible")

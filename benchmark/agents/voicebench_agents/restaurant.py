@@ -28,7 +28,7 @@ async def create_agent(**kwargs) -> Agent:
         )
 
     @llm.register_function(
-        description="Book the table. Call this before telling the caller they are booked. allergen is required. time is h:mm 12-hour, like 7:30"
+        description="Book the table. Call this before telling the caller they are booked. allergen is required: the allergen alone, like peanut or gluten, or none. time is h:mm 12-hour, like 7:30"
     )
     async def create_reservation(
         time: str,
@@ -53,7 +53,7 @@ async def create_agent(**kwargs) -> Agent:
         )
 
     @llm.register_function(
-        description="Update an existing reservation. time is h:mm 12-hour, like 7:30"
+        description="Update an existing reservation. time is h:mm 12-hour, like 7:30. allergen is the allergen alone, like peanut or gluten"
     )
     async def update_reservation(
         time: str = "",
@@ -83,11 +83,13 @@ async def create_agent(**kwargs) -> Agent:
     async def lookup_menu() -> dict:
         return world.call("lookup_menu")
 
-    @llm.register_function(description="Place a pickup order. allergen is required.")
+    @llm.register_function(
+        description="Place a pickup order. items are menu item names, like burger; modifiers go in modifiers. allergen is required: the allergen alone, like peanut or gluten, or none."
+    )
     async def create_order(
         name: str,
         allergen: str,
-        items: list[dict[str, str]],
+        items: list[str],
         pickup_window: str = "",
         modifiers: list[str] | None = None,
     ) -> dict:

@@ -87,12 +87,8 @@ class ClassifyAnswer:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.classify_answer_legend import (
-            ClassifyAnswerLegend,
-        )
-        from ..models.classify_answer_probabilities import (
-            ClassifyAnswerProbabilities,
-        )
+        from ..models.classify_answer_legend import ClassifyAnswerLegend
+        from ..models.classify_answer_probabilities import ClassifyAnswerProbabilities
 
         d = dict(src_dict)
         type_ = ClassifyQuestionType(d.pop("type"))

@@ -1,7 +1,7 @@
 package sts
 
 import (
-	"fmt"
+	"crypto/rand"
 	"sync"
 	"time"
 
@@ -16,7 +16,7 @@ import (
 // safe for both.
 type Turn struct {
 	// ID correlates the events belonging to this reply. It is the vendor's response id
-	// where the vendor has one and a number made up here where it does not.
+	// where the vendor has one and a generated id where it does not.
 	ID string
 	// Generation counts replies within a session from one.
 	Generation int
@@ -33,7 +33,7 @@ type Turn struct {
 // for a reply that answers nobody's wait, such as one asked for by Prompt.
 func NewTurn(id string, generation int, heardAt time.Time) *Turn {
 	if id == "" {
-		id = fmt.Sprintf("r-%d", generation)
+		id = "r-" + rand.Text()
 	}
 	return &Turn{ID: id, Generation: generation, heardAt: heardAt, startedAt: time.Now()}
 }

@@ -16,10 +16,10 @@ import (
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/report"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
 )
 
 // ttsPatience is how long one line is waited on, from sending the text to its last audio.

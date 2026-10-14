@@ -1,6 +1,8 @@
 package io.getstream.visionagents.core
 
+import kotlin.time.Instant
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -63,8 +65,29 @@ public data class AgentEvent(
             id = string("id"),
             name = string("name"),
             arguments = string("arguments"),
-            commandId = string("command_id"),
+            requestId = string("request_id"),
             turnId = turnId,
+        )
+
+    /**
+     * A connector tool call the provider refused because the person's own connection lacks
+     * access it asked for, and the step-up consent the router began for it, or null when this
+     * event is not one. The old grant keeps working until the step-up succeeds, and the same
+     * call works afterwards in the same session.
+     *
+     * An app cannot finish the step-up yet: `launchUrl` takes `handoffToken` only from a page
+     * on the dashboard's origin, as for a `connector_authorization` attachment.
+     */
+    public val connectorScopeRequired: ConnectorScopeRequired?
+        get() = if (kind != Kind.ConnectorScopeRequired) null else ConnectorScopeRequired(
+            name = string("name"),
+            connectorId = string("connector_id"),
+            connectionId = string("connection_id"),
+            scopes = (this["scopes"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+            authorizationId = string("authorization_id"),
+            launchUrl = string("launch_url"),
+            handoffToken = string("handoff_token"),
+            expiresAt = instantOrNull(string("expires_at")),
         )
 
     /** A string field, or the empty string. */
@@ -99,6 +122,7 @@ public data class AgentEvent(
         OverlapDecided("overlap_decided"),
         ConversationCompacted("conversation_compacted"),
         ConversationUpdated("conversation_updated"),
+        ConnectorScopeRequired("connector_scope_required"),
         CommandAccepted("command_accepted"),
         CommandStopped("command_stopped"),
         ModelsChanged("models_changed"),
@@ -112,8 +136,8 @@ public data class AgentEvent(
         val name: String,
         /** The arguments as the model wrote them, which is a JSON object encoded as a string. */
         val arguments: String,
-        /** Repeated on the answer, so a result cannot be adopted by another command or turn. */
-        val commandId: String,
+        /** Repeated on the answer, so a result cannot be adopted by another request or turn. */
+        val requestId: String,
         val turnId: String,
     ) {
         /** The arguments decoded, or an empty object if the model wrote something else. */
@@ -126,6 +150,20 @@ public data class AgentEvent(
                 JsonObject(emptyMap())
             }
     }
+
+    /** The access a connector tool call needs, and where the person grants it. */
+    public data class ConnectorScopeRequired(
+        /** The binding's alias. */
+        val name: String,
+        val connectorId: String,
+        val connectionId: String,
+        /** What the provider asked for, empty for a claims challenge. */
+        val scopes: List<String>,
+        val authorizationId: String,
+        val launchUrl: String,
+        val handoffToken: String,
+        val expiresAt: Instant?,
+    )
 
     public companion object {
         /**

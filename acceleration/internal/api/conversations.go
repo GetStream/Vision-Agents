@@ -43,7 +43,7 @@ func (s *Server) getConversationCommand(ctx context.Context, req *getConversatio
 	if err != nil {
 		return nil, errUnknownCommand
 	}
-	receipt, err := service.CommandForCaller(ctx, owner, req.AgentId, req.Cid, CallerFrom(ctx).UserID, req.CommandId)
+	receipt, err := service.CommandForCaller(ctx, owner, req.AgentId, req.Cid, CallerFrom(ctx).UserID, req.RequestId)
 	if err != nil {
 		return nil, errUnknownCommand
 	}
@@ -65,7 +65,7 @@ func (s *Server) registerConversations(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getConversationCommand",
 		Method:      http.MethodGet,
-		Path:        "/v1/agents/conversations/{cid}/commands/{command_id}",
+		Path:        "/v1/agents/conversations/{cid}/commands/{request_id}",
 		Summary:     "What a command in this conversation ended as",
 		Description: "Reads one command's receipt from the conversation's own durable record. It opens " +
 			"nothing and starts nothing, so a client whose stop found no session left to reach " +
@@ -87,7 +87,7 @@ type getConversationMessagesRequest struct {
 
 type getConversationCommandRequest struct {
 	Cid       string `path:"cid"`
-	CommandId string `path:"command_id" doc:"The client's own command id, as sent when the command was submitted."`
+	RequestId string `path:"request_id" doc:"The request id the question was sent with."`
 	AgentId   string `query:"agent_id" required:"true"`
 }
 

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.skill_request_files import SkillRequestFiles
+
 
 T = TypeVar("T", bound="SkillRequest")
 
@@ -23,6 +27,10 @@ class SkillRequest:
         name (str): How the config names it, which is unique among that config's own skills.
         capture_video (bool | Unset): Capture task-scoped visual evidence before reasoning.
         deadline_ms (int | Unset): How long the work may run before it is abandoned. Zero is the default.
+        files (SkillRequestFiles | Unset): The rest of the skill's folder beside SKILL.md, each file's text by its path
+            relative to the folder, such as reference/forms.md or scripts/fill.py. The model reads them one at a time when
+            it needs them. A file that is not .md, .mdx or .txt is a script, run in the sandbox, so a skill with one belongs
+            only to an agent with a sandbox. At most 64 files and 1 MB in all.
     """
 
     config_id: str
@@ -31,6 +39,7 @@ class SkillRequest:
     name: str
     capture_video: bool | Unset = UNSET
     deadline_ms: int | Unset = UNSET
+    files: SkillRequestFiles | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,6 +55,10 @@ class SkillRequest:
 
         deadline_ms = self.deadline_ms
 
+        files: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.files, Unset):
+            files = self.files.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -60,11 +73,15 @@ class SkillRequest:
             field_dict["capture_video"] = capture_video
         if deadline_ms is not UNSET:
             field_dict["deadline_ms"] = deadline_ms
+        if files is not UNSET:
+            field_dict["files"] = files
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.skill_request_files import SkillRequestFiles
+
         d = dict(src_dict)
         config_id = d.pop("config_id")
 
@@ -78,6 +95,13 @@ class SkillRequest:
 
         deadline_ms = d.pop("deadline_ms", UNSET)
 
+        _files = d.pop("files", UNSET)
+        files: SkillRequestFiles | Unset
+        if isinstance(_files, Unset):
+            files = UNSET
+        else:
+            files = SkillRequestFiles.from_dict(_files)
+
         skill_request = cls(
             config_id=config_id,
             description=description,
@@ -85,6 +109,7 @@ class SkillRequest:
             name=name,
             capture_video=capture_video,
             deadline_ms=deadline_ms,
+            files=files,
         )
 
         skill_request.additional_properties = d

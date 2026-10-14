@@ -2,9 +2,14 @@ import { type Frame, text } from "./socket.js";
 
 /** A call that arrived, as the router hands it to a worker. */
 export interface InboundCall {
-  /** The Stream call the caller is already in, which is the one to join. */
+  /** The Stream call the caller is already in, named for `sessionId`. */
   callId: string;
   callType: string;
+  /**
+   * The session to open for the call, with voice: the call is named for it. Empty for a
+   * number attached before calls were, which has to be attached again.
+   */
+  sessionId: string;
   /** The number they rang, which is what the agent acts from and can transfer on. */
   calledNumber: string;
   /** The number they rang from, where the vendor passed it on. */
@@ -36,8 +41,8 @@ export interface InboundMessage {
    * Nothing has answered it: `dispatch.answer` has the model do so.
    */
   sessionId: string;
-  /** The durable command it was sent as, which the answer is created under. May be empty. */
-  commandId: string;
+  /** The request it was sent as, which the answer is created under. May be empty. */
+  requestId: string;
   text: string;
   messageId: string;
   userId: string;
@@ -51,6 +56,7 @@ export function callOf(frame: Frame): InboundCall {
   return {
     callId: text(frame, "call_id"),
     callType: text(frame, "call_type") || "default",
+    sessionId: text(frame, "session_id"),
     calledNumber: text(frame, "called_number"),
     callerNumber: text(frame, "caller_number"),
     custom: strings(frame["custom"]),
@@ -67,7 +73,7 @@ export function messageOf(frame: Frame): InboundMessage {
     agentId: text(frame, "agent_id"),
     configId: text(frame, "config_id"),
     sessionId: text(frame, "session_id"),
-    commandId: text(frame, "command_id"),
+    requestId: text(frame, "request_id"),
     text: text(frame, "text"),
     messageId: text(frame, "message_id"),
     userId: text(frame, "user_id"),

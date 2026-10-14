@@ -19,8 +19,9 @@ final readonly class Connection
         public string $authScheme,
         public string $connectorId,
         public \DateTimeImmutable $createdAt,
-        // The connector's revision when the connection was made, which it keeps reading until it is reconnected.
+        // The connector's revision the connection reads: the one its grant was made on. Every consent runs on the con...
         public int $definitionRevision,
+        public ConnectionDefinitionStatus|string $definitionStatus,
         /** @var list<string> */
         public array $grantedScopes,
         public string $id,
@@ -40,9 +41,15 @@ final readonly class Connection
         public array $usedBy,
         // The provider account, known once it is connected.
         public ?string $accountId = null,
+        // The OAuth client the connection's grant was issued to. Absent for a scheme without one, before the first co...
+        public ?ConnectionClient $client = null,
+        // Why the connector marked definition_revision broken. Present only when definition_status is broken.
+        public ?string $definitionBrokenReason = null,
         // When the current credential expires. Absent when there is none or it does not.
         public ?\DateTimeImmutable $expiresAt = null,
         public ?string $label = null,
+        // What the last validate (POST .../validate) of the connection's current credentials found. Absent until the...
+        public ?ConnectionLastValidation $lastValidation = null,
     ) {
     }
 
@@ -56,6 +63,7 @@ final readonly class Connection
             connectorId: Json::string($data, 'connector_id'),
             createdAt: Json::date($data, 'created_at'),
             definitionRevision: Json::int($data, 'definition_revision'),
+            definitionStatus: Json::enum($data, 'definition_status', ConnectionDefinitionStatus::class),
             grantedScopes: Json::strings($data, 'granted_scopes'),
             id: Json::string($data, 'id'),
             inputs: Json::stringMap($data, 'inputs'),
@@ -66,8 +74,11 @@ final readonly class Connection
             updatedAt: Json::date($data, 'updated_at'),
             usedBy: array_map(ConnectionUse::fromArray(...), Json::objects($data, 'used_by')),
             accountId: array_key_exists('account_id', $data) && $data['account_id'] !== null ? Json::string($data, 'account_id') : null,
+            client: array_key_exists('client', $data) && $data['client'] !== null ? ConnectionClient::fromArray(Json::object($data, 'client')) : null,
+            definitionBrokenReason: array_key_exists('definition_broken_reason', $data) && $data['definition_broken_reason'] !== null ? Json::string($data, 'definition_broken_reason') : null,
             expiresAt: array_key_exists('expires_at', $data) && $data['expires_at'] !== null ? Json::date($data, 'expires_at') : null,
             label: array_key_exists('label', $data) && $data['label'] !== null ? Json::string($data, 'label') : null,
+            lastValidation: array_key_exists('last_validation', $data) && $data['last_validation'] !== null ? ConnectionLastValidation::fromArray(Json::object($data, 'last_validation')) : null,
         );
     }
 
@@ -83,6 +94,7 @@ final readonly class Connection
         $out['connector_id'] = $this->connectorId;
         $out['created_at'] = Json::dateValue($this->createdAt);
         $out['definition_revision'] = $this->definitionRevision;
+        $out['definition_status'] = Json::enumValue($this->definitionStatus);
         $out['granted_scopes'] = $this->grantedScopes;
         $out['id'] = $this->id;
         $out['inputs'] = $this->inputs;
@@ -95,11 +107,20 @@ final readonly class Connection
         if ($this->accountId !== null) {
             $out['account_id'] = $this->accountId;
         }
+        if ($this->client !== null) {
+            $out['client'] = $this->client->toArray();
+        }
+        if ($this->definitionBrokenReason !== null) {
+            $out['definition_broken_reason'] = $this->definitionBrokenReason;
+        }
         if ($this->expiresAt !== null) {
             $out['expires_at'] = Json::dateValue($this->expiresAt);
         }
         if ($this->label !== null) {
             $out['label'] = $this->label;
+        }
+        if ($this->lastValidation !== null) {
+            $out['last_validation'] = $this->lastValidation->toArray();
         }
         return $out;
     }

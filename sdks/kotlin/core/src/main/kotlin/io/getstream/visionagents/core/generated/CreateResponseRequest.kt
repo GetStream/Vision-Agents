@@ -39,8 +39,10 @@ import kotlinx.serialization.encoding.Encoder
  * 
  *
  * @param text What to answer, as though it had been said.
- * @param commandId Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id.
  * @param images 
+ * @param maxOutputTokens Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
+ * @param reasoningEffort How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
+ * @param requestId Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
  * @param videos Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
  */
 @Serializable
@@ -51,12 +53,20 @@ internal data class CreateResponseRequest (
     @SerialName(value = "text")
     val text: kotlin.String,
 
-    /* Required for personal persistent text conversations, and text only. Reuse this ID and identical text for retries; a retry starts no second turn and returns no id. */
-    @SerialName(value = "command_id")
-    val commandId: kotlin.String? = null,
-
     @SerialName(value = "images")
     val images: kotlin.collections.List<ImageSource>? = null,
+
+    /* Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's. */
+    @SerialName(value = "max_output_tokens")
+    val maxOutputTokens: kotlin.Int? = null,
+
+    /* How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's. */
+    @SerialName(value = "reasoning_effort")
+    val reasoningEffort: kotlin.String? = null,
+
+    /* Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id. */
+    @SerialName(value = "request_id")
+    val requestId: kotlin.String? = null,
 
     /* Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole. */
     @SerialName(value = "videos")

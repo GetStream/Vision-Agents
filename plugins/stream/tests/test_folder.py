@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 from vision_agents.plugins.stream.folder import (
     ChannelSettings,
+    ConnectorSettings,
+    GreetingSettings,
     MCPServerSettings,
     PluginSettings,
     ToolSettings,
@@ -67,6 +69,108 @@ class TestFolder:
         assert folder.knowledge[0].source == "pricing.md"
         assert folder.knowledge_namespace() == "jean"
 
+    def test_a_skill_folder_brings_its_nested_files(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(
+            tmp_path,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: fill PDFs\n---\nFill it.",
+        )
+        write(tmp_path, "skills/pdf/reference/forms.md", "# Forms\n")
+        write(tmp_path, "skills/pdf/scripts/lib/fill.py", "print('filled')\n")
+
+        skill = load(tmp_path).skills[0]
+
+        assert skill.name == "pdf"
+        assert skill.instructions == "Fill it."
+        assert skill.files == {
+            "reference/forms.md": "# Forms\n",
+            "scripts/lib/fill.py": "print('filled')\n",
+        }
+
+    def test_a_skill_folder_without_skill_md_is_refused(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(tmp_path, "skills/pdf/fill.py", "print('filled')\n")
+        with pytest.raises(ValueError, match="SKILL.md"):
+            load(tmp_path)
+
+    def test_a_skill_both_a_file_and_a_folder_is_refused(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(tmp_path, "skills/pdf.md", "---\ndescription: fill PDFs\n---\nFill it.")
+        write(
+            tmp_path,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: fill PDFs\n---\nFill it.",
+        )
+        with pytest.raises(ValueError, match="both"):
+            load(tmp_path)
+
+    def test_a_skill_file_that_is_not_text_is_refused(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(
+            tmp_path,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: fill PDFs\n---\nFill it.",
+        )
+        (tmp_path / "skills/pdf/logo.png").write_bytes(b"\x89PNG\xff\xfe")
+        with pytest.raises(ValueError, match="not text"):
+            load(tmp_path)
+
+    def test_a_folder_skill_hashes_the_way_every_sdk_hashes_it(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\nsandbox: daytona\n")
+        write(root, "instructions.md", "You are Jean.\n")
+        write(
+            root,
+            "skills/think.md",
+            "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n",
+        )
+        write(
+            root,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n",
+        )
+        write(root, "skills/pdf/reference/forms.md", "# Forms\n")
+        write(root, "skills/pdf/scripts/fill.py", "print('filled')\n")
+        write(root, "skills/pdf/scripts/lib/fill_lib.py", "def fill():\n    return 1\n")
+        pycache = root / "skills/pdf/scripts/__pycache__"
+        pycache.mkdir()
+        (pycache / "fill.cpython-313.pyc").write_bytes(b"\xcb\x0d\xff")
+        (root / "skills/pdf/.DS_Store").write_bytes(b"\x00\xff")
+        write(root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+
+        assert load(root).hash() == "e47f7807b97bbcbdee683c6c481d1d36"
+
+    def test_hidden_files_and_pycache_are_left_out_of_a_skill(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(
+            tmp_path,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: fill PDFs\n---\nFill it.",
+        )
+        write(tmp_path, "skills/pdf/scripts/fill.py", "print('filled')\n")
+        pycache = tmp_path / "skills/pdf/scripts/__pycache__"
+        pycache.mkdir()
+        (pycache / "fill.cpython-313.pyc").write_bytes(b"\xcb\x0d\xff")
+        (tmp_path / "skills/pdf/.DS_Store").write_bytes(b"\x00\xff")
+
+        assert load(tmp_path).skills[0].files == {
+            "scripts/fill.py": "print('filled')\n"
+        }
+
+    def test_moving_a_skill_into_a_folder_keeps_its_hash(self, tmp_path: Path):
+        skill = "---\ndescription: fill PDFs\n---\nFill it."
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(tmp_path, "skills/pdf.md", skill)
+        flat = load(tmp_path).hash()
+
+        (tmp_path / "skills/pdf.md").unlink()
+        write(tmp_path, "skills/pdf/SKILL.md", skill)
+        assert load(tmp_path).hash() == flat
+
+        write(tmp_path, "skills/pdf/scripts/fill.py", "print('filled')\n")
+        assert load(tmp_path).hash() != flat
+
     def test_the_same_files_hash_the_same(self, tmp_path: Path):
         root = tmp_path / "jean"
         write(root, "agent.yaml", "name: jean\n")
@@ -105,7 +209,7 @@ class TestFolder:
             "llm: llm-fast\n"
             "subagent: llm-thinking\n"
             "sandbox: daytona\n"
-            "greeting: Hello.\n"
+            "greeting:\n  text: Hello.\n  mode: variation\n"
             "keyterms:\n  - Vision Agents\n  - ''\n"
             "tags:\n  team: support\n",
         )
@@ -116,7 +220,7 @@ class TestFolder:
         assert settings.llm == "llm-fast"
         assert settings.subagent == "llm-thinking"
         assert settings.sandbox == "daytona"
-        assert settings.greeting == "Hello."
+        assert settings.greeting == GreetingSettings(text="Hello.", mode="variation")
         assert settings.keyterms == ["Vision Agents"]
         assert settings.tags == {"team": "support"}
 
@@ -205,6 +309,326 @@ class TestFolder:
 
         with pytest.raises(ValueError, match="not something an agent has"):
             load(root)
+
+    def test_a_connector_named_by_its_id_is_a_session_binding(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - linear\n")
+
+        settings = load(root).settings
+
+        assert settings.connectors == [ConnectorSettings(name="linear")]
+
+    def test_an_empty_connector_name_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", 'name: triage\nconnectors:\n  - ""\n')
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_connector_name_is_kept_as_written(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", 'name: triage\nconnectors:\n  - " linear "\n')
+
+        assert load(root).settings.connectors == [ConnectorSettings(name=" linear ")]
+
+    def test_an_object_name_and_connector_are_kept_as_written(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n"
+            '  - name: " github "\n    connector: " linear "\n    connection: company\n',
+        )
+
+        assert load(root).settings.connectors == [
+            ConnectorSettings(
+                name=" github ", connector=" linear ", connection="company"
+            )
+        ]
+
+    def test_a_whitespace_only_object_name_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            'name: triage\nconnectors:\n  - name: "   "\n    connection: company\n',
+        )
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_null_connector_entry_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - ~\n")
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_commented_out_connector_entry_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - # linear\n")
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_connector_mapping_without_a_name_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - connector: linear\n",
+        )
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_null_connection_is_a_session_binding(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    connection: null\n",
+        )
+
+        assert load(root).settings.connectors == [ConnectorSettings(name="github")]
+
+    def test_a_null_connector_is_the_alias(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: issues\n    connector: null\n",
+        )
+
+        assert load(root).settings.connectors == [ConnectorSettings(name="issues")]
+
+    def test_a_null_required_is_left_unset(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    required: null\n",
+        )
+
+        assert load(root).settings.connectors == [
+            ConnectorSettings(name="github", required=None)
+        ]
+
+    def test_a_required_that_is_not_true_or_false_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    required: 1\n",
+        )
+
+        with pytest.raises(
+            ValueError, match="should give connectors required as true or false"
+        ):
+            load(root)
+
+    def test_a_tool_that_is_not_text_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    tools: [1]\n",
+        )
+
+        with pytest.raises(ValueError, match="should give connectors.tools as a list"):
+            load(root)
+
+    def test_a_connector_id_that_is_not_text_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    connector: 123\n",
+        )
+
+        with pytest.raises(ValueError, match="connector must be a connector id"):
+            load(root)
+
+    def test_an_object_names_the_connector_patterns_connection_and_required(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n"
+            "  - name: issues\n    connector: linear\n"
+            "    tools: [list_*, get_issue]\n    connection: desk\n    required: true\n"
+            "  - name: mail\n    tools:\n    required: false\n",
+        )
+
+        settings = load(root).settings
+
+        assert settings.connectors == [
+            ConnectorSettings(
+                name="issues",
+                connector="linear",
+                tools=["list_*", "get_issue"],
+                connection="desk",
+                required=True,
+            ),
+            ConnectorSettings(name="mail", tools=None, required=False),
+        ]
+
+    def test_tools_left_out_offers_every_tool_and_an_empty_list_is_refused(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - name: github\n")
+        assert load(root).settings.connectors == [ConnectorSettings(name="github")]
+
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    tools: []\n",
+        )
+        with pytest.raises(
+            ValueError,
+            match=r'connector "github": tools: \[\] grants nothing; leave tools out for every tool',
+        ):
+            load(root)
+
+    def test_an_empty_connection_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            'name: triage\nconnectors:\n  - name: github\n    connection: ""\n',
+        )
+
+        with pytest.raises(
+            ValueError,
+            match='connector "github": connection must be a connection id or label',
+        ):
+            load(root)
+
+    def test_a_connector_setting_nobody_knows_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    plugin: github\n",
+        )
+
+        with pytest.raises(ValueError, match="unknown connectors setting: plugin"):
+            load(root)
+
+    def test_a_connector_alias_cannot_be_a_plugin_or_mcp_server_name(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nplugins:\n  - linear\nconnectors:\n  - linear\n",
+        )
+        with pytest.raises(
+            ValueError, match='"linear" is named under both connectors and plugins'
+        ):
+            load(root)
+
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: notes\n"
+            "mcp_servers:\n  - name: notes\n    url: https://example.com/mcp\n",
+        )
+        with pytest.raises(
+            ValueError, match='"notes" is named under both connectors and mcp_servers'
+        ):
+            load(root)
+
+    def test_connectors_that_are_not_a_list_are_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors: linear\n")
+
+        with pytest.raises(ValueError, match="should give connectors as a list"):
+            load(root)
+
+    def test_a_connector_that_is_neither_an_id_nor_a_mapping_is_refused(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - [linear]\n")
+
+        with pytest.raises(ValueError, match="connectors"):
+            load(root)
+
+    def test_the_mcp_plugins_example_loads_its_connectors(self):
+        root = (
+            Path(__file__).resolve().parents[3]
+            / "examples"
+            / "text_agents"
+            / "mcp_plugins"
+        )
+
+        settings = load(root).settings
+
+        assert settings.plugins == []
+        assert settings.connectors is not None
+        by_name = {entry.name: entry for entry in settings.connectors}
+        assert by_name["github"].tools is None
+        assert by_name["github"].connector == ""
+        for company in ("sentry", "github", "hubspot", "salesforce"):
+            assert by_name[company].connection == "company"
+        for person in (
+            "linear",
+            "google_calendar",
+            "google_drive",
+            "google_docs",
+            "calendly",
+            "calcom",
+            "slack",
+        ):
+            assert by_name[person].connection == ""
+        readme = (root / "README.md").read_text()
+        source = (root / "mcp_plugins.py").read_text()
+        assert "/v1/agents/connectors/oauth/callback" in readme
+        assert "/v1/agents/plugins/callback" not in readme
+        assert "/plugins" not in readme
+        assert "Set up" not in readme
+        assert "connector_authorization" in source
+        assert "plugin_authorization" not in source
+        assert by_name["sentry"].tools == [
+            "find_organizations",
+            "find_projects",
+            "search_issues",
+            "search_errors",
+            "get_sentry_resource",
+            "analyze_issue_with_seer",
+            "update_issue",
+        ]
+        assert by_name["linear"].tools == [
+            "list_issues",
+            "get_issue",
+            "save_issue",
+            "list_comments",
+            "save_comment",
+            "list_projects",
+            "get_project",
+            "list_cycles",
+            "list_teams",
+            "list_users",
+            "list_issue_statuses",
+        ]
+        assert [(server.name, server.url) for server in settings.mcp_servers] == [
+            ("tablejourney", "https://tablejourney.com/mcp")
+        ]
+        assert settings.mcp_servers[0].tools == [
+            "search_places",
+            "place",
+            "dishes",
+            "plan_day",
+            "festivals",
+            "experiences",
+            "itineraries",
+            "cities",
+        ]
 
     def test_the_declaration_says_who_logs_into_each_mcp_server(self, tmp_path: Path):
         root = tmp_path / "triage"
@@ -502,19 +926,31 @@ class TestFolder:
 
         assert load(root).hash() != before
 
-    def test_harness_is_read_from_the_declaration(self, tmp_path: Path):
+    def test_the_harness_is_read_from_the_declaration(self, tmp_path: Path):
         root = tmp_path / "jean"
         write(root, "agent.yaml", "name: jean\nharness: default\n")
 
-        settings = load(root).settings
+        assert load(root).settings.harness == "default"
 
-        assert settings.harness == "default"
-
-    def test_the_removed_speed_setting_is_refused(self, tmp_path: Path):
+    def test_speed_is_not_something_an_agent_has(self, tmp_path: Path):
         root = tmp_path / "jean"
-        write(root, "agent.yaml", "name: jean\nspeed: 1.1\n")
+        write(root, "agent.yaml", "name: jean\nspeed: 0.9\n")
 
         with pytest.raises(ValueError, match="speed"):
+            load(root)
+
+    def test_a_greeting_given_as_text_alone_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ngreeting: Hello.\n")
+
+        with pytest.raises(ValueError, match="greeting"):
+            load(root)
+
+    def test_a_greeting_without_text_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ngreeting:\n  mode: exact\n")
+
+        with pytest.raises(ValueError, match="greeting"):
             load(root)
 
     def test_a_page_may_be_read_again_on_a_schedule(self, tmp_path: Path):

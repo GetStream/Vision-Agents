@@ -9,8 +9,9 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/caller"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/livekitrtc"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/streamrtc"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/target"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/streamrtc"
+	"github.com/GetStream/Vision-Agents/benchmark/rtc/transport"
 )
 
 const agentReadyTimeout = 45 * time.Second
@@ -27,10 +28,7 @@ func runWebRTC(ctx context.Context, cfg Config, sc scenario.Scenario, audioMap m
 	if callID == "" {
 		callID = webrtcCallID(cfg, sc, trial)
 	}
-	callType := cfg.CallType
-	if callType == "" {
-		callType = "default"
-	}
+	callType := webrtcCallType(cfg)
 
 	media, err := dial(ctx, cfg, callID, callType)
 	if err != nil {
@@ -59,6 +57,19 @@ func runWebRTC(ctx context.Context, cfg Config, sc scenario.Scenario, audioMap m
 		return recording, targetFailure{err: err}
 	}
 	return recording, err
+}
+
+// webrtcCallType is the call the caller and the agent meet in. A router session's agent is
+// on the call agent:<session id>, whatever was asked for, and that holds for a Python agent
+// running through the router as much as for the router alone.
+func webrtcCallType(cfg Config) string {
+	if cfg.TargetName == target.AccelerationName || cfg.TargetName == target.AcceleratedName {
+		return "agent"
+	}
+	if cfg.CallType == "" {
+		return "default"
+	}
+	return cfg.CallType
 }
 
 func dial(ctx context.Context, cfg Config, callID string, callType string) (transport.Media, error) {

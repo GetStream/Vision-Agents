@@ -61,25 +61,25 @@ export class Sessions {
    * Opens a conversation and starts watching it.
    *
    * It resolves once the backend is holding the conversation, so a session that has opened
-   * is one that is already listening. Without a `call_id` it is held in writing, which is
+   * is one that is already listening. Without `start_voice` it is held in writing, which is
    * what the resource surface is mostly for: a conversation somebody comes back to.
    */
   create(options: CreateSessionOptions = {}): Promise<Session> {
     const { tools, interim, decisions, watch, modelOverwrites, ...rest } = options;
     const request: Schemas["CreateSessionRequest"] = {
       agent: this.agent,
-      // Held in writing unless a call was named. A session resource is a conversation, and
-      // a caller who wants one on a call says which call.
-      ...(rest.call_id ? {} : { text: true }),
       ...rest,
       ...(modelOverwrites ? { model_overwrites: modelOverwrites } : {}),
     };
-    return Session.open(this.client, request, {
-      ...(tools ? { tools } : {}),
-      ...(interim === undefined ? {} : { interim }),
-      ...(decisions === undefined ? {} : { decisions }),
-      ...(watch === undefined ? {} : { watch }),
-    });
+    return Session.open(this.client, request, watching({ tools, interim, decisions, watch }));
+  }
+
+  /**
+   * Carries on a conversation held in writing, by the id of the session it was held in, and
+   * starts watching it. One that ended is reopened with what was said in it.
+   */
+  async resume(id: string, options: SessionOptions = {}): Promise<Session> {
+    return Session.watching(this.client, await this.get(id), watching(options));
   }
 
   /**
@@ -87,7 +87,7 @@ export class Sessions {
    *
    * What comes back are the rows rather than live handles: reading a conversation back is
    * not the same as holding one, and most of these are over. `responses` reads the turns of
-   * one, and `create({ conversation_id })` opens a new conversation on its transcript.
+   * one, and `resume` carries one on.
    */
   query(query: SessionQuery = {}): Promise<Schemas["SessionPage"]> {
     return this.client.post("/v1/agents/sessions/query", { body: this.queryOf("", query) });
@@ -152,4 +152,20 @@ export class Sessions {
       ...(query.cursor ? { cursor: query.cursor } : {}),
     };
   }
+}
+
+/** How a session is watched, with what was left out left out. */
+function watching(options: {
+  tools?: SessionOptions["tools"] | undefined;
+  interim?: boolean | undefined;
+  decisions?: boolean | undefined;
+  watch?: boolean | undefined;
+}): SessionOptions {
+  const { tools, interim, decisions, watch } = options;
+  return {
+    ...(tools ? { tools } : {}),
+    ...(interim === undefined ? {} : { interim }),
+    ...(decisions === undefined ? {} : { decisions }),
+    ...(watch === undefined ? {} : { watch }),
+  };
 }

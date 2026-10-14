@@ -3,6 +3,7 @@ package world
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 func registerTelecom(s *Server) {
@@ -22,7 +23,7 @@ func registerTelecom(s *Server) {
 			if last4 != "" && asString(a["last4"]) != last4 {
 				continue
 			}
-			if address != "" && !strings.Contains(strings.ToLower(asString(a["address"])), strings.ToLower(address)) {
+			if address != "" && !strings.Contains(addressWords(asString(a["address"])), addressWords(address)) {
 				continue
 			}
 			sess.State["identity_verified"] = true
@@ -112,4 +113,13 @@ func registerTelecom(s *Server) {
 		sess.State["transfer_summary"] = summary
 		return map[string]any{"summary": summary}, nil
 	})
+}
+
+// addressWords is an address in lower case with its punctuation dropped, so the
+// "14 Cedar Lane, unit B" a caller is read back matches 14 Cedar Lane unit B on file.
+func addressWords(address string) string {
+	words := strings.FieldsFunc(strings.ToLower(address), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	return strings.Join(words, " ")
 }

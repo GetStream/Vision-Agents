@@ -17,8 +17,8 @@ import (
 
 // newStreamClients builds what every Stream action the router takes resolves through. In
 // deployment mode that is the deployment's own app, for every customer. In app mode it is
-// the app each customer registered, which needs the store the apps are kept in and the
-// keyring their keys are sealed under.
+// each customer's own app, acted in with the server token the gateway forwarded for it, which
+// needs the store the tokens are kept in and the keyring they are sealed under.
 func newStreamClients(settings config.Config, pgStore *store.Store, sealer *auth.Sealer, logger *slog.Logger) (*streamapp.Clients, error) {
 	perApp := settings.Stream.Tenancy == config.TenancyApp
 	deployment := streamapp.NewDeployment(streamapp.DeploymentOptions{
@@ -33,11 +33,22 @@ func newStreamClients(settings config.Config, pgStore *store.Store, sealer *auth
 		return streamapp.NewClients(deployment, streamapp.ClientsOptions{}), nil
 	}
 	if pgStore == nil {
-		return nil, fmt.Errorf("stream.tenancy=%s keeps every app's keys in Postgres: set postgres.dsn", config.TenancyApp)
+		return nil, fmt.Errorf("stream.tenancy=%s keeps every app's server token in Postgres: set postgres.dsn", config.TenancyApp)
+	}
+	mint, err := streamapp.NewMint(settings.Stream.MintURL, settings.Stream.MintToken)
+	if err != nil {
+		return nil, err
+	}
+	forwarded, err := streamapp.NewForwarded(streamapp.ForwardedOptions{
+		Store: pgStore, Sealer: sealer, Mint: mint, BaseURL: settings.Stream.BaseURL, Logger: logger,
+	})
+	if err != nil {
+		return nil, err
 	}
 	stored, err := streamapp.NewStored(streamapp.StoredOptions{
-		Store: pgStore, Sealer: sealer, Deployment: deployment,
+		Store: pgStore, Deployment: deployment,
 		FallbackToDeployment: settings.Stream.EffectiveFallback() == config.FallbackDeployment,
+		Forwarded:            forwarded,
 		Logger:               logger,
 	})
 	if err != nil {

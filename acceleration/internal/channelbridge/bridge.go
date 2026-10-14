@@ -426,12 +426,25 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 	if err != nil {
 		return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
 	}
-	if len(configs) != 1 {
-		// Two agents answering one thread would talk over each other, and none answers a
-		// thread nobody bound. Either is the customer's agent configs to fix.
+	if len(configs) == 0 {
+		// None answers a thread nobody bound: the customer's agent configs to fix. A test copy
+		// is not listed, so it never answers (AI-1049).
 		b.logger.Warn("dropped an inbound message: one agent config must bind the connection it came in on",
 			"connector", message.ConnectorID, "customer", app.CustomerID, "connection", connection.ID, "configs", len(configs))
 		return store.ChannelThread{}, store.AgentConfig{}, false, nil, nil
+	}
+	if len(configs) > 1 {
+		// Two agents answering one thread would talk over each other, so the oldest answers: the
+		// connection's owner. A save no longer lets a second live config bind it
+		// (store.ChannelConnectionTakenError), so only configs that shared it before that rule
+		// get here, and the others are named for the customer to unbind (AI-1049).
+		others := make([]string, 0, len(configs)-1)
+		for _, other := range configs[1:] {
+			others = append(others, other.ID)
+		}
+		b.logger.Warn("more than one agent config binds the connection a message came in on: the oldest answers",
+			"connector", message.ConnectorID, "customer", app.CustomerID, "connection", connection.ID,
+			"config", configs[0].ID, "not_answering", others)
 	}
 	read, rule, err := b.read(ctx, connection, *message)
 	if err != nil {
@@ -449,8 +462,10 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 			return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
 		}
 		if !linked {
-			b.logger.Debug("dropped an inbound message that is not addressed to the connection on a thread nobody linked",
-				"connector", message.ConnectorID, "connection", connection.ID)
+			// waiting is a reply kept for a message that links its thread to take (wait).
+			b.logger.Info("dropped an inbound message that is not addressed to the connection on a thread nobody linked",
+				"connector", message.ConnectorID, "provider_app", app.ProviderAppID, "customer", app.CustomerID,
+				"connection", connection.ID, "config", configs[0].ID, "waiting", !startsThread(read))
 			return store.ChannelThread{}, store.AgentConfig{}, false, nil, nil
 		}
 	}
@@ -474,7 +489,8 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 		return store.ChannelThread{}, store.AgentConfig{}, false, nil, err
 	}
 	if !fresh {
-		b.logger.Debug("dropped a retried inbound message", "connector", message.ConnectorID, "channel", thread.ChannelID)
+		b.logger.Info("dropped a retried inbound message", "connector", message.ConnectorID, "provider_app", app.ProviderAppID,
+			"customer", app.CustomerID, "connection", connection.ID, "config", configs[0].ID, "channel", thread.ChannelID)
 	}
 	// Every reply in a thread comes after the message that started it, so the replies that
 	// waited for that message are all to be answered. A link made by a reply, such as a

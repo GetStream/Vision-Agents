@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { Client, Session, Socket, Tools } from "../src/index.js";
+import { Client, ConfigurationError, Session, Socket, Tools } from "../src/index.js";
 import { TestRouter, type Connection } from "./router.js";
 
 describe("Socket", () => {
@@ -113,7 +113,7 @@ describe("Session", () => {
 
   /** Opens a session and hands back both ends of it. */
   async function opened(tools?: Tools): Promise<[Session, Connection]> {
-    const opening = Session.open(api, { call_id: "demo" }, tools ? { tools } : {});
+    const opening = Session.open(api, { start_voice: true }, tools ? { tools } : {});
     const connection = await router.socket();
     return [await opening, connection];
   }
@@ -128,7 +128,7 @@ describe("Session", () => {
   });
 
   it("asks for interim speech only when told to", async () => {
-    const opening = Session.open(api, { call_id: "demo" }, { interim: true });
+    const opening = Session.open(api, { start_voice: true }, { interim: true });
     const connection = await router.socket();
     const session = await opening;
 
@@ -157,7 +157,7 @@ describe("Session", () => {
     router.serve("POST", "/v1/agents/sessions/sess_1/stop", { status: 204 });
     await router.stop();
 
-    await assert.rejects(() => Session.open(unwatchable, { call_id: "demo" }));
+    await assert.rejects(() => Session.open(unwatchable, { start_voice: true }));
   });
 
   it("hands the backend's events to whoever is reading them", async () => {
@@ -208,7 +208,7 @@ describe("Session", () => {
     await session.close();
   });
 
-  it("names the durable command and turn a tool was asked for by, so the result is taken", async () => {
+  it("names the durable request and turn a tool was asked for by, so the result is taken", async () => {
     const tools = new Tools().register({ name: "lookup", description: "Look it up", run: () => "found" });
     const [session, connection] = await opened(tools);
 
@@ -217,14 +217,14 @@ describe("Session", () => {
       id: "call_1",
       name: "lookup",
       arguments: "{}",
-      command_id: "command-a",
+      request_id: "request-a",
       turn_id: "turn-a",
     });
 
     assert.deepEqual(await connection.next(), {
       type: "tool_result",
       tool_call_id: "call_1",
-      command_id: "command-a",
+      request_id: "request-a",
       turn_id: "turn-a",
       output: "found",
     });
@@ -285,6 +285,126 @@ describe("Session", () => {
     await session.close();
   });
 
+  describe("a function that asks first", () => {
+    const refundCall = {
+      type: "tool_call",
+      id: "call_1",
+      name: "issue_refund",
+      arguments: JSON.stringify({ order_id: "A-1042", reason: "it arrived unopened" }),
+      request_id: "m1",
+      turn_id: "t1",
+    };
+    let ran: string[];
+    const refunds = (): Tools =>
+      new Tools().register<{ order_id: string }>({
+        name: "issue_refund",
+        description: "Refund an order",
+        approval: { title: "Refund order A-1042?", reasonArgument: "reason" },
+        run: (input) => {
+          ran.push(input.order_id);
+          return `Refunded ${input.order_id}`;
+        },
+      });
+
+    beforeEach(() => {
+      ran = [];
+    });
+
+    async function waiting(session: Session): Promise<void> {
+      for await (const event of session.events()) {
+        if (event.kind === "tool_call") {
+          return;
+        }
+      }
+    }
+
+    it("waits for the person, then runs once allowed", async () => {
+      const [session, connection] = await opened(refunds());
+
+      connection.send(refundCall);
+      await waiting(session);
+      assert.deepEqual(session.approvals, [
+        {
+          id: "call_1",
+          name: "issue_refund",
+          arguments: refundCall.arguments,
+          approval: { title: "Refund order A-1042?", reasonArgument: "reason" },
+          reason: "it arrived unopened",
+        },
+      ]);
+      assert.deepEqual(ran, []);
+
+      session.decide("call_1", { allowed: true });
+
+      assert.deepEqual(session.approvals, []);
+      assert.deepEqual(await connection.next(), {
+        type: "tool_approval",
+        tool_call_id: "call_1",
+        allowed: true,
+        request_id: "m1",
+        turn_id: "t1",
+      });
+      assert.deepEqual(await connection.next(), {
+        type: "tool_result",
+        tool_call_id: "call_1",
+        request_id: "m1",
+        turn_id: "t1",
+        output: "Refunded A-1042",
+      });
+      assert.deepEqual(ran, ["A-1042"]);
+      await session.close();
+    });
+
+    it("declined, never runs, tells the model so, and a second answer does nothing", async () => {
+      const [session, connection] = await opened(refunds());
+
+      connection.send(refundCall);
+      await waiting(session);
+      session.decide("call_1", { allowed: false, summary: "Kept the order" });
+      session.decide("call_1", { allowed: true });
+      session.say("still there?");
+
+      assert.deepEqual(await connection.next(), {
+        type: "tool_approval",
+        tool_call_id: "call_1",
+        allowed: false,
+        summary: "Kept the order",
+        request_id: "m1",
+        turn_id: "t1",
+      });
+      assert.deepEqual(await connection.next(), {
+        type: "tool_result",
+        tool_call_id: "call_1",
+        request_id: "m1",
+        turn_id: "t1",
+        error: "The person declined this call.",
+      });
+      assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+      assert.deepEqual(ran, []);
+      await session.close();
+    });
+
+    it("stops waiting when the model cancels the call", async () => {
+      const [session, connection] = await opened(refunds());
+
+      connection.send(refundCall);
+      await waiting(session);
+      connection.send({ type: "tool_cancel", id: "call_1" });
+      connection.send({ type: "responded", text: "never mind" });
+      for await (const event of session.events()) {
+        if (event.kind === "responded") {
+          break;
+        }
+      }
+
+      assert.deepEqual(session.approvals, []);
+      session.decide("call_1", { allowed: true });
+      session.say("still there?");
+      assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+      await session.close();
+    });
+  });
+
   it("does not hand a tool call to whoever is reading events", async () => {
     const tools = new Tools().register({
       name: "ping",
@@ -313,27 +433,40 @@ describe("Session", () => {
     assert.deepEqual(await connection.next(), { type: "interrupt" });
     assert.deepEqual(await connection.next(), { type: "say", text: "actually" });
 
-    session.setInstructions("be brief");
-    assert.deepEqual(await connection.next(), {
-      type: "instructions",
-      instructions: "be brief",
-    });
-
     await session.close();
   });
 
-  it("abandons the reply to one command, or whatever is being said", async () => {
+  it("takes the agent off the call and puts it back, carrying on one conversation", async () => {
+    const [session] = await opened();
+    const row = { id: "sess_1", user_id: "john", agent_id: "john", state: "live", created_at: "2026-01-01T00:00:00Z" };
+    router.serve("DELETE", "/v1/agents/sessions/sess_1/voice", { body: row });
+    router.serve("POST", "/v1/agents/sessions/sess_1/voice", { body: { ...row, call_id: "sess_1" } });
+
+    assert.equal(session.voice.started, true, "a session that joined its call has voice on");
+    await session.voice.stop();
+    assert.equal(router.last.method, "DELETE");
+    assert.equal(router.last.path, "/v1/agents/sessions/sess_1/voice");
+    assert.equal(session.voice.started, false);
+
+    await session.voice.start();
+    assert.equal(router.last.method, "POST");
+    assert.equal(router.last.path, "/v1/agents/sessions/sess_1/voice");
+    assert.equal(session.voice.started, true);
+    await session.close();
+  });
+
+  it("abandons the reply to one request, or whatever is being said", async () => {
     const [session, connection] = await opened();
 
-    session.interrupt({ commandId: "cmd_2" });
-    assert.deepEqual(await connection.next(), { type: "interrupt", command_id: "cmd_2" });
+    session.interrupt({ requestId: "req_2" });
+    assert.deepEqual(await connection.next(), { type: "interrupt", request_id: "req_2" });
     session.interrupt();
     assert.deepEqual(await connection.next(), { type: "interrupt" });
 
     await session.close();
   });
 
-  it("opens the channel on a chat client the caller already holds", async () => {
+  it("opens the channel on the chat client the app handed over, and leaves it connected", async () => {
     router.serve("POST", "/v1/agents/sessions", {
       status: 201,
       body: {
@@ -345,23 +478,143 @@ describe("Session", () => {
         created_at: "2026-01-01T00:00:00Z",
       },
     });
-    const opening = Session.open(api, { text: true });
+    const opening = Session.open(api, {});
     await router.socket();
     const session = await opening;
     let connects = 0;
+    let disconnects = 0;
     const client = {
       channel: (type: string, id: string) => ({ type, id }),
       connectUser: async () => {
         connects++;
       },
-      disconnectUser: async () => undefined,
+      disconnectUser: async () => {
+        disconnects++;
+      },
     };
+    api.use({ chat: client });
 
-    const chat = await session.chat({ client });
+    const chat = await session.chat();
+    await api.disconnect();
 
     assert.equal(chat.client, client);
     assert.deepEqual(chat.channel, { type: "agent", id: "support-1" });
     assert.equal(connects, 0, "no second connection");
+    assert.equal(disconnects, 0, "the app's client is the app's to disconnect");
+    await session.close();
+  });
+
+  it("joins the call on the video client the app handed over", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        call_id: "sess_1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(api, { start_voice: true });
+    await router.socket();
+    const session = await opening;
+    const client = {
+      streamClient: { userID: "john" },
+      call: (type: string, id: string) => ({ type, id }),
+      disconnectUser: async () => undefined,
+    };
+    api.use({ video: client });
+
+    const video = await session.video();
+
+    assert.equal(video.client, client);
+    assert.deepEqual(video.call, { type: "agent", id: "sess_1" });
+    await session.close();
+  });
+
+  it("refuses a chat client the app connected as somebody else", async () => {
+    const page = new Client({ url: router.url, customerId: "local", apiKey: "vak_live_x" });
+    await page.setUser({ id: "john" }, "token-for-john");
+    page.use({
+      chat: {
+        userID: "jane",
+        channel: (type: string, id: string) => ({ type, id }),
+        connectUser: async () => undefined,
+        disconnectUser: async () => undefined,
+      },
+    });
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(page, {});
+    await router.socket();
+    const session = await opening;
+
+    await assert.rejects(session.chat(), (error: Error) => {
+      assert.ok(error instanceof ConfigurationError);
+      assert.match(error.message, /connected as jane but setUser named john/);
+      return true;
+    });
+    await session.close();
+  });
+
+  it("says what chat needs before connecting a client with no Stream key", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(api, {});
+    await router.socket();
+    const session = await opening;
+
+    await assert.rejects(session.chat(), (error: Error) => {
+      assert.ok(error instanceof ConfigurationError);
+      assert.match(error.message, /pass apiKey and call setUser/);
+      return true;
+    });
+    await session.close();
+  });
+
+  it("names the entry point to import when chat was never opted into", async () => {
+    // Each test file runs in its own process, and this one never imports the chat entry.
+    const page = new Client({ url: router.url, customerId: "local", apiKey: "vak_live_x" });
+    await page.setUser({ id: "john" }, "token-for-john");
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(page, {});
+    await router.socket();
+    const session = await opening;
+
+    await assert.rejects(session.chat(), (error: Error) => {
+      assert.ok(error instanceof ConfigurationError);
+      assert.match(error.message, /import "@stream-io\/calypso\/chat"/);
+      return true;
+    });
     await session.close();
   });
 

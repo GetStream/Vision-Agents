@@ -122,3 +122,19 @@ func TestAVendorErrorSayingNotANumberIsNotTakenForANumberWeDoNotHold(t *testing.
 	require.True(t, isNumberNotHeld(ours))
 	require.False(t, isNumberNotHeld(nil))
 }
+
+// Only a self-hosted router lacks a keyring, and the customer cannot set its env vars.
+func TestAttachingWithoutAKeyringIsNotConfiguredAndNamesNoSetting(t *testing.T) {
+	logged := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logged, nil))
+	failure := stack.Wrap(fmt.Errorf("phone: telnyx numbers are answered with their stored trunk: %w", phone.ErrNoSealer))
+	handler, _ := served(t, func() error { return phoneFailure(logger, failure) })
+
+	response := postSync(handler, `{"name":"jean"}`)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	answer := answered(t, response.Body.Bytes())
+	require.Equal(t, "not_configured", answer.Code)
+	require.NotContains(t, response.Body.String(), "ROUTER_AUTH_KEK")
+	require.Contains(t, logged.String(), "ROUTER_AUTH_KEK", "the operator still learns what to set")
+}

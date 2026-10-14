@@ -894,6 +894,114 @@ ORDER BY b.bucket ASC`, unit)
 	return buckets, nil
 }
 
+// CustomerConcurrencyPeak returns the most sessions one customer had open at the same time
+// in a window. A session still open counts up to now, and one that closed at the instant
+// another opened did not overlap it.
+func (s *Store) CustomerConcurrencyPeak(ctx context.Context, customerID string, from, to time.Time) (ConcurrencyPeak, error) {
+	if customerID == "" {
+		return ConcurrencyPeak{}, stack.Wrap(errors.New("store: customer id is required"))
+	}
+
+	var peaks []ConcurrencyPeak
+	err := s.db.NewRaw(`
+WITH spans AS (
+    SELECT GREATEST(created_at, ?0) AS opened, LEAST(COALESCE(closed_at, now()), ?1) AS closed
+    FROM agent_sessions
+    WHERE customer_id = ?2 AND created_at < ?1 AND (closed_at IS NULL OR closed_at > ?0)
+),
+edges AS (
+    SELECT opened AS at, 1 AS delta FROM spans WHERE closed > opened
+    UNION ALL
+    SELECT closed AS at, -1 AS delta FROM spans WHERE closed > opened
+),
+running AS (
+    SELECT at, SUM(delta) OVER (ORDER BY at, delta ROWS UNBOUNDED PRECEDING) AS sessions
+    FROM edges
+)
+SELECT sessions, at FROM running ORDER BY sessions DESC, at ASC LIMIT 1`,
+		from, to, customerID,
+	).Scan(ctx, &peaks)
+	if err != nil {
+		return ConcurrencyPeak{}, stack.Wrap(fmt.Errorf("store: concurrency peak: %w", err))
+	}
+	if len(peaks) == 0 || peaks[0].Sessions <= 0 {
+		return ConcurrencyPeak{}, nil
+	}
+	return peaks[0], nil
+}
+
+// CustomerToolUsage returns how every tool one customer's agents ran in a window was used,
+// most called first, and the same figures over all of them. A web search the agent made
+// has no result item, so it is not a tool call here.
+func (s *Store) CustomerToolUsage(ctx context.Context, customerID string, from, to time.Time) (ToolUsage, []ToolUsage, error) {
+	if customerID == "" {
+		return ToolUsage{}, nil, stack.Wrap(errors.New("store: customer id is required"))
+	}
+
+	var rows []struct {
+		Tool      string   `bun:"tool"`
+		Overall   bool     `bun:"overall"`
+		Calls     int64    `bun:"calls"`
+		Failed    int64    `bun:"failed"`
+		AvgTokens float64  `bun:"avg_tokens"`
+		AvgMs     *float64 `bun:"avg_ms"`
+		P99Ms     *float64 `bun:"p99_ms"`
+	}
+	err := s.db.NewRaw(`
+WITH ran AS (
+    SELECT
+        r.tool_name AS tool,
+        r.payload->>'error' IS NOT NULL AS failed,
+        (octet_length(r.tool_name) + octet_length(COALESCE(r.payload->>'arguments', ''))
+            + octet_length(r.text) + ?0 - 1) / ?0 AS tokens,
+        EXTRACT(EPOCH FROM (r.at - started.at)) * 1000 AS ms
+    FROM agent_responses AS a
+    JOIN agent_response_items AS r ON r.response_id = a.id AND r.kind = ?1
+    LEFT JOIN LATERAL (
+        SELECT c.at FROM agent_response_items AS c
+        WHERE c.response_id = r.response_id AND c.kind = ?2 AND c.tool_name = r.tool_name
+            AND c.ordinal < r.ordinal
+            AND COALESCE(c.payload->>'call_id', '') = COALESCE(r.payload->>'call_id', '')
+        ORDER BY c.ordinal DESC LIMIT 1
+    ) AS started ON true
+    WHERE a.customer_id = ?3 AND a.created_at < ?5 AND r.at >= ?4 AND r.at < ?5
+)
+SELECT
+    COALESCE(tool, '') AS tool,
+    GROUPING(tool) = 1 AS overall,
+    COUNT(*) AS calls,
+    COUNT(*) FILTER (WHERE failed) AS failed,
+    COALESCE(AVG(tokens), 0)::double precision AS avg_tokens,
+    AVG(ms)::double precision AS avg_ms,
+    percentile_cont(0.99) WITHIN GROUP (ORDER BY ms) AS p99_ms
+FROM ran
+GROUP BY GROUPING SETS ((tool), ())
+ORDER BY overall DESC, calls DESC, tool ASC`,
+		charsPerToken, ItemToolResult, ItemToolCall, customerID, from, to,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return ToolUsage{}, nil, stack.Wrap(fmt.Errorf("store: tool usage: %w", err))
+	}
+
+	var overall ToolUsage
+	tools := make([]ToolUsage, 0, len(rows))
+	for _, row := range rows {
+		usage := ToolUsage{
+			Tool: row.Tool, Calls: row.Calls, Failed: row.Failed,
+			AvgTokens: row.AvgTokens, AvgMs: row.AvgMs, P99Ms: row.P99Ms,
+		}
+		if row.Overall {
+			overall = usage
+			continue
+		}
+		tools = append(tools, usage)
+	}
+	return overall, tools, nil
+}
+
+// charsPerToken is the rule of thumb llm.Compose estimates tool use with.
+const charsPerToken = 4
+
 // ModelRequests returns how many requests each "provider/model" served for a modality
 // since a time, across every customer. It is what makes a model popular, so it counts
 // calls rather than spend, and is read from the raw requests so it needs no rollup.
@@ -965,6 +1073,10 @@ func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at t
 	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
 		Set("released_at = ?", at).
 		Set("sip_trunk_id = NULL").
+		Set("bridge_uri = NULL").
+		Set("bridge_username = NULL").
+		Set("bridge_password_sealed = NULL").
+		Set("bridge_password_kek_version = NULL").
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
@@ -1001,6 +1113,10 @@ func (s *Store) AttachNumber(ctx context.Context, customerID, e164 string, attac
 		Set("stream_app_pk = ?", nullablePin(attached.StreamAppPK)).
 		Set("stream_call_id = ?", attached.CallID).
 		Set("stream_call_type = ?", attached.CallType).
+		Set("bridge_uri = ?", nullable(attached.BridgeURI)).
+		Set("bridge_username = ?", nullable(attached.BridgeUsername)).
+		Set("bridge_password_sealed = ?", nullableBytes(attached.BridgePasswordSealed)).
+		Set("bridge_password_kek_version = ?", nullableVersion(attached.BridgePasswordKEKVersion)).
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
@@ -1026,6 +1142,75 @@ type NumberAttachment struct {
 	StreamAppPK int64
 	CallType    string
 	CallID      string
+	// BridgeURI, BridgeUsername and the sealed password are the trunk's address and
+	// credentials. Empty stores nothing, as for a service with no key to seal them under.
+	BridgeURI                string
+	BridgeUsername           string
+	BridgePasswordSealed     []byte
+	BridgePasswordKEKVersion int
+}
+
+// AttachedBridge is the Stream trunk an attached number's calls go to, with its password
+// still sealed.
+type AttachedBridge struct {
+	CustomerID     string
+	URI            string
+	Username       string
+	PasswordSealed []byte
+	KEKVersion     int
+}
+
+// ErrNoStoredBridge is AttachedBridge's error for a number that is attached but whose trunk
+// credentials were not kept: it was attached before they were, or arrived by a data move,
+// which leaves the password behind. Attaching it again keeps them.
+var ErrNoStoredBridge = errors.New("store: the number's trunk credentials were not kept")
+
+// AttachedBridge returns the trunk calls to a number of the vendor go to. It matches
+// ErrNoNumber when nobody holds the number at that vendor or it is not attached, and
+// ErrNoStoredBridge when it was attached without its credentials kept.
+func (s *Store) AttachedBridge(ctx context.Context, vendor, e164 string) (AttachedBridge, error) {
+	if vendor == "" || e164 == "" {
+		return AttachedBridge{}, stack.Wrap(errors.New("store: a vendor and a number are required"))
+	}
+
+	var number PhoneNumber
+	err := s.db.NewSelect().Model(&number).
+		Where("vendor = ?", vendor).
+		Where("e164 = ?", e164).
+		Where("released_at IS NULL").
+		Where("stream_trunk_id IS NOT NULL").
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AttachedBridge{}, stack.Wrap(numberNotHeld{fmt.Sprintf("store: %s is not an attached %s number", e164, vendor)})
+	}
+	if err != nil {
+		return AttachedBridge{}, stack.Wrap(fmt.Errorf("store: attached bridge: %w", err))
+	}
+	if number.BridgeURI == "" || len(number.BridgePasswordSealed) == 0 {
+		return AttachedBridge{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoStoredBridge, e164))
+	}
+	return AttachedBridge{
+		CustomerID:     number.CustomerID,
+		URI:            number.BridgeURI,
+		Username:       number.BridgeUsername,
+		PasswordSealed: number.BridgePasswordSealed,
+		KEKVersion:     number.BridgePasswordKEKVersion,
+	}, nil
+}
+
+func nullableBytes(value []byte) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return value
+}
+
+func nullableVersion(version int) any {
+	if version == 0 {
+		return nil
+	}
+	return version
 }
 
 // nullablePin stores the deployment's own app as NULL, as every pin written before apps

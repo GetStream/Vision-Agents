@@ -60,9 +60,7 @@ class ConnectorEventDestinationPage:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.connector_event_destination import (
-            ConnectorEventDestination,
-        )
+        from ..models.connector_event_destination import ConnectorEventDestination
 
         d = dict(src_dict)
         has_more = d.pop("has_more")

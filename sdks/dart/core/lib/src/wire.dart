@@ -38,8 +38,11 @@ final class HttpWire implements Wire {
     Map<String, String?> query = const {},
     Object? body,
   }) async {
+    final anonymously = operation == 'createGuestUser' && backend.anonymous;
     final request = http.Request(method, backend.requestUri(path, query));
-    request.headers.addAll(await backend.headers());
+    request.headers.addAll(
+      anonymously ? const {'Stream-Auth-Type': 'anonymous'} : await backend.headers(),
+    );
     if (body != null) {
       request.headers['Content-Type'] = 'application/json';
       request.body = jsonEncode(body);
@@ -52,6 +55,9 @@ final class HttpWire implements Wire {
       throw TransportException(error);
     }
 
+    if (anonymously && response.statusCode == 401) {
+      throw StateError(_anonymousGuestRefused);
+    }
     if (response.statusCode < 200 || response.statusCode > 299) {
       throw _refusalOf(response, operation);
     }
@@ -65,6 +71,12 @@ final class HttpWire implements Wire {
     }
   }
 }
+
+/// What a device asking for a guest with no token is told when the router, or Stream's proxy
+/// in front of it, admits no anonymous callers.
+const _anonymousGuestRefused =
+    'this router admits no anonymous callers, so a device cannot mint its own guest: mint it '
+    "on your backend with the server SDK's guestUser and pass it to withGuest";
 
 /// The most of a body that is not the router's kept as a message: a proxy's error page can
 /// run to pages, and a message is for a log line.

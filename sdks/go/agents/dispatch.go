@@ -241,7 +241,7 @@ func (d *Dispatch) Answer(ctx context.Context, message InboundMessage) error {
 		return err
 	}
 	_, err = api.Agent(message.AgentID).Sessions.Responses(message.SessionID).
-		Create(ctx, message.Text, client.Command(message.CommandID))
+		Create(ctx, message.Text, client.RequestID(message.RequestID))
 	return err
 }
 

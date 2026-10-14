@@ -17,7 +17,9 @@ use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Pipeline;
 use GetStream\VisionAgents\Skill;
 use GetStream\VisionAgents\Tests\Support\LocalRouter;
+use GetStream\VisionAgents\Tests\Support\RecordedLog;
 use GetStream\VisionAgents\Tests\Support\Rows;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class AgentTest extends TestCase
@@ -58,10 +60,10 @@ final class AgentTest extends TestCase
         self::assertSame('ses_1', $session->id());
         $sent = $this->router->to('POST', '/v1/agents/sessions')[0]->json();
         self::assertSame('cfg_9', $sent['config_id']);
-        self::assertTrue($sent['text']);
+        self::assertArrayNotHasKey('start_voice', $sent);
         self::assertSame('support', $sent['user_id']);
         self::assertSame('support', $sent['agent_id']);
-        self::assertSame('Be brief.', $sent['instructions']);
+        self::assertArrayNotHasKey('instructions', $sent, 'instructions reach the router through sync');
         self::assertSame('openai/gpt-5.6', $sent['llm']);
         self::assertSame(['fr'], $sent['languages']);
         self::assertSame(['env' => 'production'], $sent['tags']);
@@ -86,7 +88,7 @@ final class AgentTest extends TestCase
 
         $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
         self::assertSame('default', $sent['harness']);
-        self::assertSame('openai/gpt-5.6', $sent['thinking_llm']);
+        self::assertSame('openai/gpt-5.6', $sent['subagent']);
         self::assertSame('daytona', $sent['sandbox']);
         self::assertSame(
             [['config_id' => '', 'description' => 'Work it out', 'instructions' => 'Reason it through.', 'name' => 'think', 'deadline_ms' => 30000]],
@@ -99,12 +101,12 @@ final class AgentTest extends TestCase
         $this->router->answer('GET', '/v1/agents/configs', 200, [Rows::config('cfg_9', 'support')]);
         $this->router->answer('PATCH', '/v1/agents/configs/cfg_9', 200, Rows::config('cfg_9', 'support') + ['guardrail' => 'No refunds.']);
 
-        $config = $this->router->client()->agent('support')->updateConfig(new AgentConfigPatch(guardrail: 'No refunds.', speed: 1.1, visibleTools: ['athena_*']));
+        $config = $this->router->client()->agent('support')->updateConfig(new AgentConfigPatch(guardrail: 'No refunds.', visibleTools: ['athena_*']));
 
         self::assertSame('No refunds.', $config->guardrail);
         self::assertSame('support', $this->router->to('GET', '/v1/agents/configs')[0]->params()['name']);
         self::assertSame(
-            ['guardrail' => 'No refunds.', 'speed' => 1.1, 'visible_tools' => ['athena_*']],
+            ['guardrail' => 'No refunds.', 'visible_tools' => ['athena_*']],
             $this->router->to('PATCH', '/v1/agents/configs/cfg_9')[0]->json(),
         );
     }
@@ -152,63 +154,102 @@ final class AgentTest extends TestCase
         );
     }
 
-    public function testJoinCreatesTheStreamCallFirst(): void
+    public function testJoinStartsVoiceOnTheSessionsOwnCall(): void
     {
-        $this->router->answer('POST', '/api/v2/video/call/agent/hello', 201, ['duration' => '1ms', 'created' => true]);
-        $agent = new Agent(name: 'jean', client: $this->router->client(), edge: $this->edge());
+        $agent = new Agent(name: 'jean', client: $this->router->client());
 
-        $agent->join('hello');
+        $session = $agent->join();
 
-        $received = $this->router->received();
-        self::assertSame('/api/v2/video/call/agent/hello', $received[0]->path);
-        self::assertSame('jean', Json::object($received[0]->json(), 'data')['created_by_id']);
+        self::assertSame(['/v1/agents/sessions'], array_map(static fn ($r) => $r->path, $this->router->received()), 'no Stream call is created first');
         $sent = $this->router->to('POST', '/v1/agents/sessions')[0]->json();
-        self::assertSame('hello', $sent['call_id']);
-        self::assertSame('agent', $sent['call_type']);
-        self::assertArrayNotHasKey('text', $sent);
+        self::assertTrue($sent['start_voice']);
+        self::assertArrayNotHasKey('call_id', $sent);
+        self::assertSame('ses_1', $session->call()->id);
+        self::assertSame('agent', $session->call()->type);
     }
 
-    public function testOutboundCallPlacesTheCallBeforeJoining(): void
+    public function testMonitorUrlNamesTheSessionsCallOnceVoiceIsStarted(): void
     {
-        $this->router->answer('POST', '/api/v2/video/call/agent/out', 201, ['duration' => '1ms']);
-        $this->router->answer('POST', '/v1/phone/calls', 201, ['vendor_call_id' => 'CA123', 'status' => 'queued']);
-        $agent = new Agent(name: 'jean', costTracking: ['team' => 'sales'], client: $this->router->client(), edge: $this->edge());
+        $this->router->answer('POST', '/v1/agents/sessions/ses_1/voice', 200, Rows::session('ses_1', ['call_id' => 'ses_1', 'call_type' => 'agent']));
+        $agent = new Agent(name: 'jean', client: $this->router->client(), edge: $this->edge());
+        $session = $agent->chat();
+        $session->startVoice();
 
-        $agent->outboundCall('+15550001111', '+15552223333', 'out');
+        $url = $agent->monitorUrl($session);
+
+        self::assertStringContainsString('/join/ses_1?', $url);
+    }
+
+    public function testASessionHeldInWritingHasNoMonitorUrl(): void
+    {
+        $agent = new Agent(name: 'jean', client: $this->router->client(), edge: $this->edge());
+
+        $this->expectException(ConfigurationException::class);
+        $agent->monitorUrl($agent->chat());
+    }
+
+    public function testResumeCarriesOnTheSessionById(): void
+    {
+        $this->router->answer('GET', '/v1/agents/sessions/ses_7', 200, Rows::session('ses_7'));
+        $agent = new Agent(name: 'jean', client: $this->router->client());
+
+        $session = $agent->resume('ses_7');
+
+        self::assertSame('ses_7', $session->id());
+        self::assertSame($agent, $session->agent);
+        self::assertSame([], $this->router->to('POST', '/v1/agents/sessions'));
+    }
+
+    public function testOutboundCallJoinsTheSessionThePlacedCallNames(): void
+    {
+        $this->router->answer('POST', '/v1/phone/calls', 201, ['vendor_call_id' => 'CA123', 'status' => 'queued', 'session_id' => 'ses_out']);
+        $agent = new Agent(name: 'jean', costTracking: ['team' => 'sales'], client: $this->router->client());
+
+        $agent->outboundCall('+15550001111', '+15552223333');
 
         $paths = array_map(static fn ($r) => $r->path, $this->router->received());
-        self::assertSame(['/api/v2/video/call/agent/out', '/v1/phone/calls', '/v1/agents/sessions'], $paths);
+        self::assertSame(['/v1/phone/calls', '/v1/agents/sessions'], $paths);
         self::assertSame(
-            ['from' => '+15550001111', 'to' => '+15552223333', 'call_id' => 'out', 'call_type' => 'agent', 'tags' => ['team' => 'sales']],
+            ['from' => '+15550001111', 'to' => '+15552223333', 'tags' => ['team' => 'sales']],
             $this->router->to('POST', '/v1/phone/calls')[0]->json(),
         );
         $sent = $this->router->to('POST', '/v1/agents/sessions')[0]->json();
+        self::assertSame('ses_out', $sent['id']);
+        self::assertTrue($sent['start_voice']);
         self::assertTrue($sent['navigating']);
         self::assertSame(['number' => '+15550001111', 'vendor_call_id' => 'CA123'], $sent['phone']);
     }
 
-    public function testAnswerCarriesTheNumberReached(): void
+    public function testAnswerJoinsTheSessionTheCallNames(): void
     {
         $agent = new Agent(name: 'jean', client: $this->router->client());
 
-        $agent->answer(InboundCall::fromFrame(['call_id' => 'c1', 'called_number' => '+15550001111']));
+        $agent->answer(InboundCall::fromFrame(['call_id' => 'ses_in', 'session_id' => 'ses_in', 'called_number' => '+15550001111']));
 
         $sent = $this->router->to('POST', '/v1/agents/sessions')[0]->json();
-        self::assertSame('c1', $sent['call_id']);
-        self::assertSame('default', $sent['call_type']);
+        self::assertSame('ses_in', $sent['id']);
+        self::assertTrue($sent['start_voice']);
+        self::assertArrayNotHasKey('call_id', $sent);
         self::assertSame(['number' => '+15550001111'], $sent['phone']);
     }
 
-    public function testReplyAnswersInTheChannel(): void
+    public function testACallNamingNoSessionIsRefused(): void
+    {
+        $agent = new Agent(name: 'jean', client: $this->router->client());
+
+        $this->expectException(ConfigurationException::class);
+        $agent->answer(InboundCall::fromFrame(['call_id' => 'c1']));
+    }
+
+    public function testReplyAnswersInTheAgentsConversation(): void
     {
         $agent = new Agent(name: 'jean', client: $this->router->client());
 
         $agent->reply(InboundMessage::fromFrame(['channel_id' => 'ch1', 'text' => 'hi', 'agent_id' => 'jean-7']));
 
         $sent = $this->router->to('POST', '/v1/agents/sessions')[0]->json();
-        self::assertTrue($sent['text']);
         self::assertArrayNotHasKey('incognito', $sent);
-        self::assertSame('agent:ch1', $sent['conversation_id']);
+        self::assertArrayNotHasKey('conversation_id', $sent);
         self::assertSame('jean-7', $sent['agent_id']);
     }
 
@@ -234,6 +275,21 @@ final class AgentTest extends TestCase
         self::assertSame('You are Jean.', $sent['instructions']);
         self::assertSame('pricing.md', Json::objects($sent, 'knowledge')[0]['source']);
         self::assertSame('02a7b2c8428f31e3a2b93ca2f5a6ec70', Folder::load($this->dir)->stamp());
+    }
+
+    public function testSyncSendsASkillFoldersFiles(): void
+    {
+        $this->folder();
+        mkdir($this->dir . '/skills/pdf/scripts', 0o777, true);
+        file_put_contents($this->dir . '/skills/pdf/SKILL.md', "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+        file_put_contents($this->dir . '/skills/pdf/scripts/fill.py', "print('filled')\n");
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        [$pdf, $think] = Json::objects($this->router->to('POST', '/v1/agents/sync')[0]->json(), 'skills');
+        self::assertSame(['scripts/fill.py' => "print('filled')\n"], $pdf['files']);
+        self::assertArrayNotHasKey('files', $think, 'a skill without files sends none');
     }
 
     public function testSyncCarriesKnowledgeUrlsInTheSameRequest(): void
@@ -281,22 +337,24 @@ final class AgentTest extends TestCase
         (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
 
         $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
-        foreach (['dispatch', 'speed', 'harness', 'simulations'] as $absent) {
+        foreach (['dispatch', 'greeting', 'harness', 'simulations'] as $absent) {
             self::assertArrayNotHasKey($absent, $sent);
         }
     }
 
-    public function testSyncSendsSpeedHarnessAndSchedules(): void
+    public function testSyncSendsGreetingPluginsHarnessAndSchedules(): void
     {
         $this->folder();
-        file_put_contents($this->dir . '/agent.yaml', "name: jean\nspeed: 1.1\nharness: default\n");
+        file_put_contents($this->dir . '/agent.yaml', "name: jean\ngreeting:\n  text: Hello there.\n  mode: variation\nplugins: [sentry]\nharness: default\n");
         file_put_contents($this->dir . '/knowledge/urls.yaml', "- url: https://example.com/plans\n  refresh_hours: 24\n");
         $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
 
         (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
 
         $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
-        self::assertSame(1.1, $sent['speed']);
+        self::assertSame(['text' => 'Hello there.', 'mode' => 'variation'], $sent['greeting']);
+        self::assertSame(['sentry'], $sent['plugins']);
+        self::assertArrayNotHasKey('agent_plugins', $sent);
         self::assertSame('default', $sent['harness']);
         self::assertSame([['url' => 'https://example.com/plans', 'refresh_hours' => 24]], $sent['knowledge_urls']);
     }
@@ -316,9 +374,263 @@ final class AgentTest extends TestCase
         self::assertSame([['assertion' => 'One club.', 'name' => 'lunch', 'scenario' => 'Order a club.', 'variations' => 3]], $declared->json()['simulations']);
     }
 
+    public function testSyncSendsNoConnectorsWhenAgentYamlHasNone(): void
+    {
+        $this->folder();
+
+        $this->syncConnectors(null);
+
+        self::assertArrayNotHasKey('connectors', $this->router->to('POST', '/v1/agents/sync')[0]->json());
+        self::assertSame([], $this->router->to('GET', '/v1/agents/connections'));
+    }
+
+    public function testSyncSendsNoConnectorsForAKeyWithNoValue(): void
+    {
+        $this->folder();
+
+        $this->syncConnectors('');
+
+        self::assertArrayNotHasKey('connectors', $this->router->to('POST', '/v1/agents/sync')[0]->json());
+    }
+
+    public function testSyncSendsAnEmptyListToClearTheBindings(): void
+    {
+        $this->folder();
+
+        $this->syncConnectors('[]');
+
+        $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
+        self::assertSame([], $sent['connectors']);
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function mappingsWhereGoWantsAList(): iterable
+    {
+        yield 'connectors: {}' => ['{}', 'connectors must be a list'];
+        yield 'connectors: {a: b}' => ['{a: b}', 'connectors must be a list'];
+        yield 'tools: {}' => ["\n  - name: linear\n    tools: {}", 'connector "linear": tools is a list'];
+        yield 'connection: {}' => ["\n  - name: linear\n    connection: {}", 'connector "linear": connection must be a connection id or label'];
+    }
+
+    #[DataProvider('mappingsWhereGoWantsAList')]
+    public function testSyncRefusesAMappingWhereGoWantsAListAndSendsNothing(string $yaml, string $message): void
+    {
+        $this->folder();
+
+        $caught = null;
+        try {
+            $this->syncConnectors($yaml);
+        } catch (ConfigurationException $caught) {
+            // message checked below
+        }
+        self::assertInstanceOf(ConfigurationException::class, $caught);
+        self::assertSame("{$this->dir}/agent.yaml: {$message}", $caught->getMessage());
+        self::assertSame([], $this->router->to('POST', '/v1/agents/sync'), 'nothing is stored');
+    }
+
+    public function testSyncSendsAStringEntryAsASessionBinding(): void
+    {
+        $this->folder();
+
+        $this->syncConnectors("\n  - linear");
+
+        self::assertEquals(
+            [['connection' => ['type' => 'session'], 'connector_id' => 'linear', 'name' => 'linear', 'tool_patterns' => ['*'], 'tools' => []]],
+            $this->sentConnectors(),
+        );
+    }
+
+    public function testSyncSendsAnObjectEntryWithItsConnectorToolsAndRequired(): void
+    {
+        $this->folder();
+
+        $this->syncConnectors("\n  - name: issues\n    connector: linear\n    tools: [search, linear_*]\n    required: true\n  - name: github");
+
+        [$issues, $github] = $this->sentConnectors();
+        self::assertEquals(
+            ['connection' => ['type' => 'session'], 'connector_id' => 'linear', 'name' => 'issues', 'required' => true, 'tool_patterns' => ['search', 'linear_*'], 'tools' => []],
+            $issues,
+        );
+        self::assertSame('github', $github['connector_id'], 'the connector defaults to the name');
+        self::assertSame(['*'], $github['tool_patterns'], 'tools left out is every tool');
+        self::assertArrayNotHasKey('required', $github);
+    }
+
+    public function testSyncReadsNullToolsAsEveryTool(): void
+    {
+        $this->folder();
+
+        $this->syncConnectors("\n  - name: linear\n    tools:");
+
+        self::assertSame(['*'], $this->sentConnectors()[0]['tool_patterns']);
+    }
+
+    public function testSyncFixesAConnectionById(): void
+    {
+        $this->folder();
+        $this->router->answer('GET', '/v1/agents/connections', 200, ['has_more' => false, 'items' => [
+            Rows::connection('conn_a', 'linear', 'prod'),
+            Rows::connection('conn_b', 'linear', 'conn_a'),
+        ]]);
+
+        $this->syncConnectors("\n  - name: linear\n    connection: conn_a");
+
+        self::assertEquals(['connection_id' => 'conn_a', 'type' => 'fixed'], $this->sentConnectors()[0]['connection']);
+        self::assertEquals(
+            ['connector_id' => 'linear', 'owner_type' => 'app'],
+            $this->router->to('GET', '/v1/agents/connections')[0]->params(),
+        );
+    }
+
+    public function testSyncFixesAConnectionByTheOneLabelThatMatches(): void
+    {
+        $this->folder();
+        $this->router->answer('GET', '/v1/agents/connections', 200, ['has_more' => false, 'items' => [
+            Rows::connection('conn_a', 'linear', 'staging'),
+            Rows::connection('conn_b', 'linear', 'prod'),
+        ]]);
+
+        $this->syncConnectors("\n  - name: linear\n    connection: prod");
+
+        self::assertEquals(['connection_id' => 'conn_b', 'type' => 'fixed'], $this->sentConnectors()[0]['connection']);
+    }
+
+    public function testSyncQueriesConnectionsByConnectorId(): void
+    {
+        $this->folder();
+        $this->router->answer('GET', '/v1/agents/connections', 200, ['has_more' => false, 'items' => [
+            Rows::connection('conn_a', 'linear', 'prod'),
+        ]]);
+
+        $this->syncConnectors("\n  - name: issues\n    connector: linear\n    connection: prod");
+
+        self::assertEquals(
+            ['connector_id' => 'linear', 'owner_type' => 'app'],
+            $this->router->to('GET', '/v1/agents/connections')[0]->params(),
+        );
+    }
+
+    public function testSyncReadsEveryPageBeforeChoosingAConnection(): void
+    {
+        $this->folder();
+        $this->router->answer(
+            'GET',
+            '/v1/agents/connections',
+            200,
+            ['has_more' => true, 'next_cursor' => 'c2', 'items' => [Rows::connection('conn_a', 'linear', 'conn_z')]],
+            ['has_more' => false, 'items' => [Rows::connection('conn_z', 'linear', 'other')]],
+        );
+
+        $this->syncConnectors("\n  - name: linear\n    connection: conn_z");
+
+        self::assertEquals(
+            ['connection_id' => 'conn_z', 'type' => 'fixed'],
+            $this->sentConnectors()[0]['connection'],
+            'an id on a later page wins over a label on an earlier one',
+        );
+        self::assertSame(['c2'], [$this->router->to('GET', '/v1/agents/connections')[1]->params()['cursor']]);
+    }
+
+    public function testSyncStopsWhenRouterRepeatsNextCursor(): void
+    {
+        $this->folder();
+        $page = ['has_more' => true, 'next_cursor' => 'c1', 'items' => [Rows::connection('conn_a', 'linear', 'prod')]];
+        $this->router->answer('GET', '/v1/agents/connections', 200, $page, $page);
+        // A third list call fails the sync rather than spinning on the repeated cursor.
+        $this->router->answer('GET', '/v1/agents/connections', 400, ['error' => [
+            'message' => 'listed past a repeated cursor',
+            'type' => 'invalid_request',
+            'code' => 'invalid_request',
+            'doc_url' => 'https://getstream.io/agents/docs/api/errors/#invalid_request',
+        ]]);
+
+        $this->syncConnectors("\n  - name: linear\n    connection: conn_a");
+
+        self::assertCount(2, $this->router->to('GET', '/v1/agents/connections'));
+    }
+
+    public function testSyncRefusesALabelThatMatchesNoConnection(): void
+    {
+        $this->folder();
+        $this->router->answer('GET', '/v1/agents/connections', 200, ['has_more' => false, 'items' => [Rows::connection('conn_a', 'linear', 'staging')]]);
+
+        $caught = null;
+        try {
+            $this->syncConnectors("\n  - name: linear\n    connection: prod");
+        } catch (ConfigurationException $caught) {
+            // message checked below
+        }
+        self::assertInstanceOf(ConfigurationException::class, $caught, 'expected ConfigurationException');
+        self::assertSame('agents: connector "linear": no app connection with id or label "prod"', $caught->getMessage());
+        self::assertSame([], $this->router->to('POST', '/v1/agents/sync'), 'nothing is stored');
+    }
+
+    public function testSyncRefusesALabelThatMatchesSeveralConnections(): void
+    {
+        $this->folder();
+        $this->router->answer('GET', '/v1/agents/connections', 200, ['has_more' => false, 'items' => [
+            Rows::connection('conn_a', 'linear', 'prod'),
+            Rows::connection('conn_b', 'linear', 'prod'),
+        ]]);
+
+        $caught = null;
+        try {
+            $this->syncConnectors("\n  - name: linear\n    connection: prod");
+        } catch (ConfigurationException $caught) {
+            // message checked below
+        }
+        self::assertInstanceOf(ConfigurationException::class, $caught);
+        self::assertSame('agents: connector "linear": "prod" matches 2 app connections', $caught->getMessage());
+    }
+
+    public function testSyncWarnsOnceThatPluginsAreDeprecatedAndStillSendsThem(): void
+    {
+        $this->folder();
+        file_put_contents($this->dir . '/agent.yaml', "name: jean\nplugins: [sentry]\n");
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+        $log = new RecordedLog();
+
+        (new Agent(folder: $this->dir, client: $this->router->client(), logger: $log))->sync();
+
+        self::assertSame([['warning', 'agent.yaml plugins are deprecated: rename plugins to connectors']], $log->lines);
+        self::assertSame(['sentry'], $this->router->to('POST', '/v1/agents/sync')[0]->json()['plugins']);
+    }
+
+    public function testSyncDoesNotWarnWithoutPlugins(): void
+    {
+        $this->folder();
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+        $log = new RecordedLog();
+
+        (new Agent(folder: $this->dir, client: $this->router->client(), logger: $log))->sync();
+
+        self::assertSame([], $log->lines);
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function sentConnectors(): array
+    {
+        return Json::objects($this->router->to('POST', '/v1/agents/sync')[0]->json(), 'connectors');
+    }
+
     private function edge(): Edge
     {
         return new Edge('key', str_repeat('s', 32), $this->router->url);
+    }
+
+    /**
+     * Syncs the folder with `connectors:` set to the YAML given after the key, or left out when null.
+     */
+    private function syncConnectors(?string $yaml): void
+    {
+        file_put_contents($this->dir . '/agent.yaml', "name: jean\n" . ($yaml === null ? '' : "connectors: {$yaml}\n"));
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
     }
 
     private function folder(): void

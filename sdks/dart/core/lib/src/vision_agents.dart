@@ -25,6 +25,10 @@ import 'wire.dart';
 /// agent is configured as and a token to join a call with are server-side only: they belong
 /// to the app's backend, which hands down what the app needs.
 ///
+/// Stream is set up once: the key, `userId` and token are the one identity for the router,
+/// Stream Chat and Stream Video. The chat and rtc packages build one client of each per user
+/// however many sessions ask, or use the app's own, and [disconnect] closes the ones built.
+///
 /// The constructor does no I/O.
 final class VisionAgents {
   VisionAgents({
@@ -73,17 +77,17 @@ final class VisionAgents {
   /// call would have, and arrive as deltas on the socket, which is already open when this
   /// returns.
   Future<AgentSession> chat([SessionOptions options = const SessionOptions()]) =>
-      _follow(sessions, options, null);
+      _follow(sessions, options, voice: false);
 
-  /// Puts an agent on a call and follows it.
+  /// Puts an agent on the session's own call, `agent:<session id>`, and follows it.
   ///
   /// The agent joins as soon as this returns. Joining the same call from this device is what
   /// the rtc package is for; this only starts the agent and gives you the state.
-  Future<AgentSession> voice(String callId, [SessionOptions options = const SessionOptions()]) =>
-      _follow(sessions, options, callId);
+  Future<AgentSession> voice([SessionOptions options = const SessionOptions()]) =>
+      _follow(sessions, options, voice: true);
 
   /// Follows a session this caller already has, without creating one: after a relaunch, on
-  /// another screen, or a fork.
+  /// another screen, or a fork. It is also how a conversation is carried on.
   ///
   /// A session opened by somebody else is not found, because reading one is reading a
   /// conversation.
@@ -110,6 +114,8 @@ final class VisionAgents {
   /// remembered, for a "not me" button: reusing the remembered one would hand the person at
   /// the keyboard somebody else's conversations.
   ///
+  /// With an api key and no token yet it is asked for anonymously, which a router must admit;
+  /// one that does not throws a [StateError], and the guest is minted by your backend instead.
   /// Throws a [RouterException] with status 403 when the app does not admit guests.
   Future<GuestUser> guestUser({
     String? name,
@@ -136,6 +142,10 @@ final class VisionAgents {
   /// Forgets the remembered guest without minting another, which is what signing out does.
   Future<void> forgetGuest(GuestStore store) => store.clear();
 
+  /// Disconnects the Stream Chat and Video clients built for sessions, and none the app
+  /// handed over. Leaving a call or closing a session disconnects nothing.
+  Future<void> disconnect() => backend.disconnectStream();
+
   /// Closes the HTTP client, if this created it. Sessions close on their own.
   void close() {
     if (_ownsClient) {
@@ -143,9 +153,13 @@ final class VisionAgents {
     }
   }
 
-  Future<AgentSession> _follow(Sessions sessions, SessionOptions options, String? callId) async {
+  Future<AgentSession> _follow(
+    Sessions sessions,
+    SessionOptions options, {
+    required bool voice,
+  }) async {
     final session = AgentSession(
-      await sessions.create(options, callId),
+      await openSession(sessions, options, voice: voice),
       backend: backend,
       sessions: sessions,
       tools: options.tools,
@@ -186,9 +200,9 @@ final class Agent {
 
   /// Holds a conversation with this agent in writing.
   Future<AgentSession> chat([SessionOptions options = const SessionOptions()]) =>
-      _agents._follow(sessions, options, null);
+      _agents._follow(sessions, options, voice: false);
 
-  /// Puts this agent on a call and follows it.
-  Future<AgentSession> voice(String callId, [SessionOptions options = const SessionOptions()]) =>
-      _agents._follow(sessions, options, callId);
+  /// Puts this agent on the session's own call and follows it.
+  Future<AgentSession> voice([SessionOptions options = const SessionOptions()]) =>
+      _agents._follow(sessions, options, voice: true);
 }

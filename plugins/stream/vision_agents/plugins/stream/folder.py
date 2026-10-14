@@ -17,6 +17,7 @@ AGENT_STAMP = ".agent_sync"
 INSTRUCTIONS_FILE = "instructions.md"
 GUARDRAIL_FILE = "guardrail.md"
 SKILLS_DIR = "skills"
+SKILL_FILE = "SKILL.md"
 KNOWLEDGE_DIR = "knowledge"
 KNOWLEDGE_URLS_FILE = "urls.yaml"
 SIMULATIONS_DIR = "simulations"
@@ -165,12 +166,42 @@ class PluginSettings:
 
 
 @dataclass
+class ConnectorSettings:
+    """One connector the agent binds.
+
+    `agent.yaml` gives it as the connector's id alone, a session binding offering every
+    tool, or as a mapping naming the alias with the rest.
+    """
+
+    name: str
+    connector: str = ""
+    """The connector id. Empty is the alias."""
+    tools: list[str] | None = None
+    """Names or patterns to offer, as written. None offers every tool."""
+    connection: str = ""
+    """An app connection's id, or the label of exactly one of them. Empty is a session
+    binding, filled when a session opens."""
+    required: bool | None = None
+    """Whether a session needs this connector. None when the file says nothing about it."""
+
+
+@dataclass
 class ToolSettings:
     """How plugin, MCP server and connector tools are offered."""
 
     progressive: bool | None = None
     """Offer each tool by a summary, the first call to it returning its full description
     instead of running it. None when the file says nothing about it."""
+
+
+@dataclass
+class GreetingSettings:
+    """What the agent says as it joins, before anyone speaks."""
+
+    text: str = ""
+    mode: str = ""
+    """exact, the default, or variation, which has the model say its own variation of
+    the text on every call."""
 
 
 @dataclass
@@ -194,13 +225,17 @@ class Settings:
     subagent: str = ""
     """The model a voice agent hands its skills to. A text agent runs on its llm alone."""
     search: str = ""
-    greeting: str = ""
+    greeting: GreetingSettings | None = None
+    """What the agent opens the call with. None leaves the stored one."""
     sandbox: str = ""
     sandbox_options: SandboxSettings | None = None
     """How the sandbox is built. None when the file says nothing about it."""
     plugins: list[PluginSettings] = field(default_factory=list)
     """Catalog MCP servers the app connects once, on the dashboard, for every session, or
     each end user with their own account, in the chat, for one with `user`."""
+    connectors: list[ConnectorSettings] | None = None
+    """Connectors the agent binds. None when the file says nothing about them, which
+    leaves whatever is stored; an empty list removes them."""
     mcp_servers: list[MCPServerSettings] = field(default_factory=list)
     """MCP servers outside the catalog, opened by the router by their URL, with a login
     when the server asks for one."""
@@ -233,6 +268,8 @@ class Folder:
           instructions.md
           guardrail.md
           skills/think.md
+          skills/pdf/SKILL.md
+          skills/pdf/scripts/fill.py
           knowledge/pricing.md
           knowledge/urls.yaml
           simulations/lunch.yaml
@@ -279,6 +316,10 @@ class Folder:
             hasher.update(b"\n")
             if skill.deadline_seconds:
                 hasher.update(str(skill.deadline_seconds).encode())
+            # Only when there are some, so a skill without files keeps its fingerprint.
+            for name in sorted(skill.files):
+                hasher.update(f"\nfile:{name}\n".encode())
+                hasher.update(skill.files[name].encode())
         for document in sorted(self.knowledge, key=lambda item: item.source):
             hasher.update(b"\nknowledge:")
             hasher.update(document.source.encode())
@@ -437,13 +478,15 @@ def _declare(path: Path) -> Settings:
         elif field_name == "search":
             settings.search = _word(value)
         elif field_name == "greeting":
-            settings.greeting = _word(value)
+            settings.greeting = _greeting(path, value)
         elif field_name == "sandbox":
             settings.sandbox = _word(value)
         elif field_name == "sandbox_options":
             settings.sandbox_options = _sandbox_options(path, value)
         elif field_name == "plugins":
             settings.plugins = _plugins(path, field_name, value)
+        elif field_name == "connectors":
+            settings.connectors = _connectors(path, value)
         elif field_name == "mcp_servers":
             settings.mcp_servers = _mcp_servers(path, value)
         elif field_name == "tools":
@@ -466,6 +509,7 @@ def _declare(path: Path) -> Settings:
             raise ValueError(
                 f"{path} declares {field_name!r}, which is not something an agent has"
             )
+    _refuse_connector_aliases(settings)
     return settings
 
 
@@ -559,6 +603,122 @@ def _plugins(path: Path, field_name: str, value: object) -> list[PluginSettings]
             )
         )
     return named
+
+
+def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
+    """The connectors one list binds, each an id or a mapping naming the alias.
+
+    None, the key left out or set to null, leaves the stored bindings. An empty list
+    removes them. A blank entry is refused: dropping it would sync an empty list and
+    wipe what is stored. A name is kept as written. `tools` left out or null offers
+    every tool; `tools: []` grants nothing and is refused.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError(f"{path} should give connectors as a list")
+    named: list[ConnectorSettings] = []
+    for item in value:
+        # A null element, including one whose value is only a comment, is not "left out".
+        if item is None or item == "":
+            raise ValueError("a connector needs a name")
+        if isinstance(item, str):
+            named.append(ConnectorSettings(name=item))
+            continue
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"{path} should give each of connectors as a connector id or a mapping"
+            )
+        extra = set(item) - {"name", "connector", "tools", "connection", "required"}
+        if extra:
+            raise ValueError(f"{path} unknown connectors setting: {sorted(extra)[0]}")
+        name = _text(item.get("name"))
+        if not name.strip():
+            raise ValueError("a connector needs a name")
+        connector = ""
+        if "connector" in item and item.get("connector") is not None:
+            raw_connector = item.get("connector")
+            if not isinstance(raw_connector, str):
+                raise ValueError(f"{path} connector must be a connector id")
+            connector = raw_connector
+        connection = ""
+        if "connection" in item and item.get("connection") is not None:
+            raw_connection = item.get("connection")
+            if not isinstance(raw_connection, str) or raw_connection == "":
+                raise ValueError(
+                    f'connector "{name}": connection must be a connection id or label'
+                )
+            connection = raw_connection
+        required: bool | None = None
+        if "required" in item and item.get("required") is not None:
+            flag = item.get("required")
+            if not isinstance(flag, bool):
+                raise ValueError(
+                    f"{path} should give connectors required as true or false"
+                )
+            required = flag
+        named.append(
+            ConnectorSettings(
+                name=name,
+                connector=connector,
+                tools=_connector_tools(path, name, item),
+                connection=connection,
+                required=required,
+            )
+        )
+    return named
+
+
+def _connector_tools(
+    path: Path, name: str, item: dict[str, object]
+) -> list[str] | None:
+    """Patterns as written. Absent or null offers every tool; an empty list grants none."""
+    if "tools" not in item or item.get("tools") is None:
+        return None
+    raw = item.get("tools")
+    if not isinstance(raw, list):
+        raise ValueError(f"{path} should give connectors.tools as a list")
+    if len(raw) == 0:
+        raise ValueError(
+            f'connector "{name}": tools: [] grants nothing; leave tools out for every tool'
+        )
+    patterns: list[str] = []
+    for piece in raw:
+        if not isinstance(piece, str):
+            raise ValueError(f"{path} should give connectors.tools as a list")
+        patterns.append(piece)
+    return patterns
+
+
+def _refuse_connector_aliases(settings: Settings) -> None:
+    """An alias is also how its tools are prefixed, so it cannot be a plugin or MCP name."""
+    if not settings.connectors:
+        return
+    plugins = {plugin.name for plugin in settings.plugins}
+    servers = {server.name for server in settings.mcp_servers}
+    for entry in settings.connectors:
+        if entry.name in servers:
+            raise ValueError(
+                f'"{entry.name}" is named under both connectors and mcp_servers'
+            )
+        if entry.name in plugins:
+            raise ValueError(
+                f'"{entry.name}" is named under both connectors and plugins'
+            )
+
+
+def _greeting(path: Path, value: object) -> GreetingSettings | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should give greeting as a mapping with text and mode")
+    extra = set(value) - {"text", "mode"}
+    if extra:
+        raise ValueError(f"{path} unknown greeting setting: {sorted(extra)[0]}")
+    text = _word(value.get("text"))
+    if not text:
+        raise ValueError(f"{path} should give the greeting's text")
+    return GreetingSettings(text=text, mode=_word(value.get("mode")))
 
 
 def _tools(path: Path, value: object) -> ToolSettings | None:
@@ -673,15 +833,58 @@ def _looks_like_agent(path: Path) -> bool:
 
 
 def _load_skills(path: Path) -> list[Skill]:
+    """Read `skills/`: each skill is a markdown file, or a folder holding a SKILL.md and
+    whatever files it comes with, nested as deep as they are."""
     if not path.is_dir():
         return []
 
     skills: list[Skill] = []
-    for file in sorted(path.iterdir()):
-        if not file.is_file() or file.suffix != ".md":
+    declared: dict[str, str] = {}
+    for entry in sorted(path.iterdir()):
+        if entry.is_dir():
+            name, file = entry.name, entry / SKILL_FILE
+            if not file.is_file():
+                raise ValueError(f"{entry} has no {SKILL_FILE}, so it is not a skill")
+        elif entry.is_file() and entry.suffix == ".md":
+            name, file = entry.stem, entry
+        else:
             continue
-        skills.append(_parse_skill(file.stem, file.read_text()))
+        if name in declared:
+            raise ValueError(
+                f"skill {name!r} is both {declared[name]} and {entry.name}"
+            )
+        declared[name] = entry.name
+        skill = _parse_skill(name, file.read_text())
+        if entry.is_dir():
+            skill.files = _load_skill_files(entry)
+        skills.append(skill)
     return skills
+
+
+def _load_skill_files(folder: Path) -> dict[str, str]:
+    """Every file in a skill folder but its SKILL.md, by slash path relative to it."""
+    files: dict[str, str] = {}
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames[:] = [name for name in dirnames if not _skipped(name)]
+        for filename in filenames:
+            if _skipped(filename):
+                continue
+            file = Path(dirpath) / filename
+            if file == folder / SKILL_FILE:
+                continue
+            try:
+                text = file.read_bytes().decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError(
+                    f"{file} is not text, and a skill brings only text files"
+                ) from exc
+            files[file.relative_to(folder).as_posix()] = text
+    return files
+
+
+def _skipped(name: str) -> bool:
+    """Hidden files such as .DS_Store, and the __pycache__ running a script locally leaves."""
+    return name.startswith(".") or name == "__pycache__"
 
 
 def _parse_skill(name: str, content: str) -> Skill:

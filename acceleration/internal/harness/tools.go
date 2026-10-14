@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -143,6 +144,13 @@ const textUsePolicy = "Call a tool as soon as every argument it requires is know
 	"ask you to write before acting (such as reading the caller's details back). " +
 	useArguments
 
+// sayDo holds what the agent says to what its tools did. A voice model told to say a hold
+// phrase before a call can say the outcome instead: in Voicebench Gemma told a caller
+// "You're all set" for a booking it never made. It sits beside the use policy rather than in
+// it, so that stays short.
+const sayDo = "Never say something is done (booked, changed, cancelled, sent) unless a " +
+	"tool result in this conversation shows it; if you have not called that tool, call it now."
+
 // Prompt is what the model is told about using its tools: when to call one and how to fill
 // it in. It is empty when there are none, so a harness without tools adds nothing to the
 // system prompt.
@@ -150,7 +158,7 @@ func (t Tools) Prompt() string {
 	if len(t.Tools) == 0 {
 		return ""
 	}
-	return usePolicy
+	return usePolicy + " " + sayDo
 }
 
 // TextPrompt is Prompt for a conversation held in writing, which fills no pause before a
@@ -159,7 +167,47 @@ func (t Tools) TextPrompt() string {
 	if len(t.Tools) == 0 {
 		return ""
 	}
-	return textUsePolicy
+	return textUsePolicy + " " + sayDo
+}
+
+// sources are the tools an answer can come from, most authoritative first: what the
+// business told the agent to do, then what it wrote down, then the open web. A tool's own
+// description cannot say this, since none of them knows which of the others is offered.
+var sources = []struct{ tool, what string }{
+	{LoadSkillTool, "a matching skill"},
+	{"lookup", "the knowledge base"},
+	{"search", "the web"},
+}
+
+// SourceOrder is what the model is told about the order to take answers from the sources
+// it is offered. It is empty with fewer than two, since there is nothing to order.
+func (t Tools) SourceOrder() string {
+	offers := func(name string) bool {
+		_, ok := t.Lookup(name)
+		return ok
+	}
+	var offered []string
+	for _, source := range sources {
+		if offers(source.tool) {
+			offered = append(offered, fmt.Sprintf("%s (%s)", source.what, source.tool))
+		}
+	}
+	if len(offered) < 2 {
+		return ""
+	}
+	order := "Take answers from your sources in this order: " + strings.Join(offered, ", then ") +
+		". Go to the next only when the one before has no answer. These calls depend on each " +
+		"other, so make them one at a time in that order, never together, and never let a " +
+		"later source contradict an earlier one."
+	if offers(LoadSkillTool) {
+		order += " Load a skill only when its description covers the request; when none does, " +
+			"start with the next source."
+	}
+	if offers("lookup") && offers("search") {
+		order += " Always ask the knowledge base before the web, even when you expect it to " +
+			"have nothing."
+	}
+	return order
 }
 
 // Validate reports the first tool the harness could not use.

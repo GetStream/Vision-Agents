@@ -15,15 +15,15 @@ class CommandReceipt:
     """
     Attributes:
         assistant_message_id (str):
-        command_id (str):
         duplicate (bool): True when this command already exists and no new inference was started.
+        request_id (str):
         state (str): Latest locally recorded response state; an interrupted command is never automatically rerun.
         user_message_id (str):
     """
 
     assistant_message_id: str
-    command_id: str
     duplicate: bool
+    request_id: str
     state: str
     user_message_id: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -31,9 +31,9 @@ class CommandReceipt:
     def to_dict(self) -> dict[str, Any]:
         assistant_message_id = self.assistant_message_id
 
-        command_id = self.command_id
-
         duplicate = self.duplicate
+
+        request_id = self.request_id
 
         state = self.state
 
@@ -44,8 +44,8 @@ class CommandReceipt:
         field_dict.update(
             {
                 "assistant_message_id": assistant_message_id,
-                "command_id": command_id,
                 "duplicate": duplicate,
+                "request_id": request_id,
                 "state": state,
                 "user_message_id": user_message_id,
             }
@@ -58,9 +58,9 @@ class CommandReceipt:
         d = dict(src_dict)
         assistant_message_id = d.pop("assistant_message_id")
 
-        command_id = d.pop("command_id")
-
         duplicate = d.pop("duplicate")
+
+        request_id = d.pop("request_id")
 
         state = d.pop("state")
 
@@ -68,8 +68,8 @@ class CommandReceipt:
 
         command_receipt = cls(
             assistant_message_id=assistant_message_id,
-            command_id=command_id,
             duplicate=duplicate,
+            request_id=request_id,
             state=state,
             user_message_id=user_message_id,
         )

@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -30,6 +32,9 @@ const InstructionsFile = "instructions.md"
 
 // GuardrailFile is what it calls the policy screening what may be asked of it.
 const GuardrailFile = "guardrail.md"
+
+// SkillFile is what a skill kept as a folder calls its frontmatter and instructions.
+const SkillFile = "SKILL.md"
 
 // SkillsDir, KnowledgeDir and SimulationsDir are what it calls the rest.
 const (
@@ -165,6 +170,11 @@ type Settings struct {
 	// Plugins are the catalog plugins the agent reaches: with the app's own login, or
 	// with each end user's own account for one that sets user.
 	Plugins []PluginSettings `yaml:"plugins"`
+	// Connectors are the connectors whose tools the agent may call. Nil when the
+	// declaration says nothing, which leaves the bindings stored; empty when the
+	// file lists none, which removes them. A null entry is refused: dropping it
+	// would sync an empty list and wipe the stored bindings.
+	Connectors connectorList `yaml:"connectors"`
 	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
 	// a text conversation when it arrives.
 	PluginEvents []PluginEventSettings `yaml:"plugin_events"`
@@ -237,6 +247,76 @@ func (p *PluginSettings) UnmarshalYAML(node *yaml.Node) error {
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
 	return decoder.Decode((*plain)(p))
+}
+
+// ConnectorSettings is one connector the agent binds. agent.yaml gives it as the alias
+// alone, or as a mapping naming it with the connector, the tools, and a connection.
+type ConnectorSettings struct {
+	// Name is the alias the model sees tools under.
+	Name string `yaml:"name"`
+	// Connector is the connector id. Empty means the name.
+	Connector string `yaml:"connector"`
+	// Tools are names or path.Match patterns, sent as tool_patterns. Nil, whether the
+	// key was left out or null, means every tool. An empty list is refused: it would
+	// grant nothing.
+	Tools *[]string `yaml:"tools"`
+	// Connection is an id or a label of one of the app's connections to the connector.
+	// Nil is a session binding; set, it is fixed to the connection it names.
+	Connection *string `yaml:"connection"`
+	// Required is whether a session needs this connector. Nil leaves it optional.
+	Required *bool `yaml:"required"`
+}
+
+func (c *ConnectorSettings) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		*c = ConnectorSettings{Name: node.Value}
+	} else {
+		// A node decodes without its decoder's KnownFields, so the mapping is read again by
+		// one that refuses a key it does not know.
+		raw, err := yaml.Marshal(node)
+		if err != nil {
+			return err
+		}
+		type plain ConnectorSettings
+		decoder := yaml.NewDecoder(bytes.NewReader(raw))
+		decoder.KnownFields(true)
+		if err := decoder.Decode((*plain)(c)); err != nil {
+			return err
+		}
+	}
+	if c.Name == "" {
+		return errors.New("a connector needs a name")
+	}
+	if c.Tools != nil && len(*c.Tools) == 0 {
+		return fmt.Errorf("connector %q: tools: [] grants nothing; leave tools out for every tool", c.Name)
+	}
+	if c.Connection != nil && *c.Connection == "" {
+		return fmt.Errorf("connector %q: connection must be a connection id or label", c.Name)
+	}
+	return nil
+}
+
+// connectorList is the connectors list. yaml.v3 drops a null element of a plain
+// struct slice without calling UnmarshalYAML, so the entry is walked here.
+type connectorList []ConnectorSettings
+
+func (c *connectorList) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.SequenceNode {
+		return errors.New("connectors must be a list")
+	}
+	items := make(connectorList, 0, len(node.Content))
+	for _, item := range node.Content {
+		if item.ShortTag() == "!!null" {
+			return errors.New("a connector needs a name")
+		}
+		var entry ConnectorSettings
+		if err := item.Decode(&entry); err != nil {
+			return err
+		}
+		items = append(items, entry)
+	}
+	*c = items
+	return nil
 }
 
 // MCPServerSettings is an MCP server outside the plugin catalog. Name prefixes its tools,
@@ -317,12 +397,16 @@ type DispatchSettings struct {
 //	  instructions.md
 //	  guardrail.md
 //	  skills/think.md
+//	  skills/pdf/SKILL.md
+//	  skills/pdf/scripts/fill.py
 //	  knowledge/pricing.md
 //	  knowledge/urls.yaml
 //	  simulations/lunch.yaml
 //
 // A skill is a markdown file with YAML-ish frontmatter naming what the fast model sees; the
-// body is the prompt only the subagent sees.
+// body is the prompt only the subagent sees. A skill kept as a folder has that file as its
+// SKILL.md, and the files beside it are read when the model needs them; scripts among them
+// run in the sandbox, so such an agent needs one.
 type Folder struct {
 	// Path is the directory this was read from.
 	Path string
@@ -483,6 +567,11 @@ func fingerprint(
 			}
 			io.WriteString(hasher, seconds)
 		}
+		// Written only when there are some, so a skill without files keeps the fingerprint
+		// the Python SDK takes of it.
+		for _, file := range slices.Sorted(maps.Keys(skill.Files)) {
+			io.WriteString(hasher, "\nfile:"+file+"\n"+skill.Files[file])
+		}
 	}
 
 	documents := slices.SortedFunc(slices.Values(knowledge), func(a, b Document) int {
@@ -570,9 +659,38 @@ func declare(raw []byte) (Settings, error) {
 		}
 		options.timeout = timeout
 	}
+	if err := refuseConnectorAliases(settings); err != nil {
+		return Settings{}, err
+	}
 	return settings, nil
 }
 
+// refuseConnectorAliases refuses an alias that is also a plugin or an MCP server name.
+// The model is offered each as <name>__<tool>, so the same name would be two tools.
+// Compared on the alias, not the connector id: issues bound to linear may sit beside a
+// linear plugin.
+func refuseConnectorAliases(settings Settings) error {
+	plugins := map[string]struct{}{}
+	for _, plugin := range settings.Plugins {
+		plugins[plugin.Name] = struct{}{}
+	}
+	servers := map[string]struct{}{}
+	for _, server := range settings.MCPServers {
+		servers[server.Name] = struct{}{}
+	}
+	for _, connector := range settings.Connectors {
+		if _, named := servers[connector.Name]; named {
+			return fmt.Errorf("%q is named under both connectors and mcp_servers", connector.Name)
+		}
+		if _, named := plugins[connector.Name]; named {
+			return fmt.Errorf("%q is named under both connectors and plugins", connector.Name)
+		}
+	}
+	return nil
+}
+
+// loadSkills reads skills/: a skill is either a markdown file, or a folder holding a
+// SKILL.md and whatever files it comes with, nested as deep as they are.
 func loadSkills(path string) ([]Skill, error) {
 	entries, err := os.ReadDir(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -583,24 +701,89 @@ func loadSkills(path string) ([]Skill, error) {
 	}
 
 	var skills []Skill
+	declared := map[string]string{}
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
+		name := entry.Name()
+		file := filepath.Join(path, name)
+		switch {
+		case entry.IsDir():
+			file = filepath.Join(file, SkillFile)
+		case filepath.Ext(name) == ".md":
+			name = strings.TrimSuffix(name, ".md")
+		default:
 			continue
 		}
 
-		file := filepath.Join(path, entry.Name())
 		content, err := os.ReadFile(file)
+		if entry.IsDir() && errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("agents: %s has no %s, so it is not a skill", filepath.Join(path, entry.Name()), SkillFile)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("agents: reading %s: %w", file, err)
 		}
+		if first, taken := declared[name]; taken {
+			return nil, fmt.Errorf("agents: skill %q is both %s and %s", name, first, entry.Name())
+		}
+		declared[name] = entry.Name()
 
-		skill, err := parseSkill(strings.TrimSuffix(entry.Name(), ".md"), string(content))
+		skill, err := parseSkill(name, string(content))
 		if err != nil {
 			return nil, fmt.Errorf("agents: %s: %w", file, err)
+		}
+		if entry.IsDir() {
+			if skill.Files, err = loadSkillFiles(filepath.Join(path, entry.Name())); err != nil {
+				return nil, err
+			}
 		}
 		skills = append(skills, skill)
 	}
 	return skills, nil
+}
+
+// loadSkillFiles reads every file in a skill folder but its SKILL.md, by slash path
+// relative to the folder. Nil when there are none.
+func loadSkillFiles(dir string) (map[string]string, error) {
+	var files map[string]string
+	err := filepath.WalkDir(dir, func(file string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if file != dir && skipped(entry.Name()) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() || file == filepath.Join(dir, SkillFile) {
+			return nil
+		}
+		content, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		if !utf8.Valid(content) {
+			return fmt.Errorf("%s is not text, and a skill brings only text files", file)
+		}
+		relative, err := filepath.Rel(dir, file)
+		if err != nil {
+			return err
+		}
+		if files == nil {
+			files = map[string]string{}
+		}
+		files[filepath.ToSlash(relative)] = string(content)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading %s: %w", dir, err)
+	}
+	return files, nil
+}
+
+// skipped says whether a file or folder in a skill folder is left behind: hidden ones such
+// as .DS_Store, and the __pycache__ that running a skill's Python scripts locally leaves.
+func skipped(name string) bool {
+	return strings.HasPrefix(name, ".") || name == "__pycache__"
 }
 
 // parseSkill reads a skill file: frontmatter between --- lines, then the instructions.

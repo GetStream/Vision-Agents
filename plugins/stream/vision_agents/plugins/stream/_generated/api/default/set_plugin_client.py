@@ -95,7 +95,8 @@ def sync_detailed(
 ) -> Response[ErrorResponse | PluginClient]:
     """Set the OAuth client an agent logs a plugin in with
 
-     The OAuth app the app registered with the provider, such as a Google Cloud client, used for this
+     Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The
+    OAuth app the app registered with the provider, such as a Google Cloud client, used for this
     config's logins to the plugin: the app's own and every end user's. A plugin with client_required has
     no other way in. The secret is sealed and never returned. Replaces the client set before; a login
     made with that one keeps working until it has to be renewed.
@@ -137,7 +138,8 @@ def sync(
 ) -> ErrorResponse | PluginClient | None:
     """Set the OAuth client an agent logs a plugin in with
 
-     The OAuth app the app registered with the provider, such as a Google Cloud client, used for this
+     Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The
+    OAuth app the app registered with the provider, such as a Google Cloud client, used for this
     config's logins to the plugin: the app's own and every end user's. A plugin with client_required has
     no other way in. The secret is sealed and never returned. Replaces the client set before; a login
     made with that one keeps working until it has to be renewed.
@@ -174,7 +176,8 @@ async def asyncio_detailed(
 ) -> Response[ErrorResponse | PluginClient]:
     """Set the OAuth client an agent logs a plugin in with
 
-     The OAuth app the app registered with the provider, such as a Google Cloud client, used for this
+     Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The
+    OAuth app the app registered with the provider, such as a Google Cloud client, used for this
     config's logins to the plugin: the app's own and every end user's. A plugin with client_required has
     no other way in. The secret is sealed and never returned. Replaces the client set before; a login
     made with that one keeps working until it has to be renewed.
@@ -214,7 +217,8 @@ async def asyncio(
 ) -> ErrorResponse | PluginClient | None:
     """Set the OAuth client an agent logs a plugin in with
 
-     The OAuth app the app registered with the provider, such as a Google Cloud client, used for this
+     Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The
+    OAuth app the app registered with the provider, such as a Google Cloud client, used for this
     config's logins to the plugin: the app's own and every end user's. A plugin with client_required has
     no other way in. The secret is sealed and never returned. Replaces the client set before; a login
     made with that one keeps working until it has to be renewed.

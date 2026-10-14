@@ -37,9 +37,7 @@ expected_tools:
       name: Patel
       allergen: peanut
       pickup_window: "20 minutes"
-      items:
-        - {name: burger}
-        - {name: fries}
+      items: [burger, fries]
 entities:
   - {name: name, value: Patel, in_speech: true, in_tools: true, tool: create_order, arg: name}
   - {name: allergen, value: peanut, in_speech: true, in_tools: true, tool: create_order, arg: allergen}

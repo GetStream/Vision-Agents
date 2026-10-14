@@ -20,13 +20,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -200,6 +200,10 @@ func (s *Service) Close() {
 // for the declared ones and unsubscribes and drops the rest. Nothing is sent to the server
 // here, so the validate does not wait on it.
 //
+// An event is subscribed to once per connection, by its owner (owners): a test copy of a
+// config, or a second config binding the same connection, would otherwise open a second
+// conversation for each event (AI-1048).
+//
 // A copy that is not connected changes nothing. The copy is read without the credential lock,
 // so it can be another router's renewal in flight (needs_reauthorization at the resolver's
 // checkpoint) while the stored row is connected again; a deleted or disconnected connection's
@@ -212,22 +216,9 @@ func (s *Service) Reconcile(ctx context.Context, connection store.ConnectorConne
 	if err != nil {
 		return err
 	}
-	for _, config := range configs {
-		for _, binding := range config.Connectors {
-			if !bindsFixed(binding, connection) {
-				continue
-			}
-			for _, event := range binding.Events {
-				// The config endpoints refuse an event with no name; one stored some other way
-				// is left out, so it cannot fail the validate of every config on the connection.
-				if strings.TrimSpace(event.Event) == "" {
-					s.logger.Warn("not subscribing to an MCP event with no name", "config", config.ID, "binding", binding.Name)
-					continue
-				}
-				if err := s.add(ctx, connection, config.ID, binding.Name, event); err != nil {
-					return err
-				}
-			}
+	for _, owner := range s.owners(configs, connection, true) {
+		if err := s.add(ctx, connection, owner.config.ID, owner.binding, owner.event); err != nil {
+			return err
 		}
 	}
 	if err := s.store.DueConnectionEventSubscriptions(ctx, connection.CustomerID, connection.ID, time.Now()); err != nil {
@@ -317,8 +308,8 @@ func (s *Service) attemptDue() (wait time.Duration, again bool) {
 
 // attempt brings one claimed subscription in step: dropped when its connection is deleted or
 // disconnected, left for later while it waits on a renewal or a reconnect, unsubscribed and
-// dropped when no binding declares it any more, and otherwise asked for, or asked for again,
-// at the server.
+// dropped when no binding declares it any more or its owner's own subscription is active
+// (declaration), and otherwise asked for, or asked for again, at the server.
 func (s *Service) attempt(sub store.ConnectionEventSubscription) {
 	ctx := s.ctx
 	connection, err := s.store.ConnectorConnection(ctx, sub.CustomerID, sub.ConnectionID)
@@ -341,15 +332,17 @@ func (s *Service) attempt(sub store.ConnectionEventSubscription) {
 		}
 		return
 	}
-	if _, _, declared, err := s.declaration(ctx, sub); err != nil {
+	_, held, declared, err := s.declaration(ctx, connection, sub)
+	if err != nil {
 		s.logger.Warn("could not read an MCP event subscription's config", "subscription", sub.ID, "error", err)
 		return
-	} else if !declared {
+	} else if !declared || replaced(sub, held) {
 		s.unsubscribe(ctx, connection, sub)
-		s.drop(ctx, sub, "no binding declares it any more")
+		s.drop(ctx, sub, "no binding declares it any more, or its owner's subscription is active")
 		return
 	}
 
+	activated := sub.Status != store.ConnectionEventActive
 	grant, err := s.subscribe(ctx, connection, sub)
 	now := time.Now().UTC()
 	if err != nil {
@@ -358,6 +351,7 @@ func (s *Service) attempt(sub store.ConnectionEventSubscription) {
 		sub.Failures++
 		next := now.Add(retryWait(sub.Failures))
 		sub.Status, sub.Error, sub.NextAttemptAt = store.ConnectionEventFailed, err.Error(), &next
+		activated = false
 	} else {
 		sub.Status, sub.Error, sub.RemoteID, sub.RefreshBefore = store.ConnectionEventActive, "", grant.ID, grant.RefreshBefore
 		sub.Failures = 0
@@ -366,6 +360,16 @@ func (s *Service) attempt(sub store.ConnectionEventSubscription) {
 	}
 	if err := s.store.SaveConnectionEventSubscription(ctx, &sub); err != nil {
 		s.logger.Warn("could not store an MCP event subscription", "subscription", sub.ID, "error", err)
+		return
+	}
+	if activated {
+		// A subscription active now has the others for its event looked at again, in this look:
+		// one that carried the owner's events meanwhile (declaration) goes once the owner's is
+		// active. Only on the change to active, so two that carry one event never wake each other
+		// at every refresh.
+		if err := s.store.DueOtherConnectionEventSubscriptions(ctx, sub.ConnectionID, sub.Key, sub.ID, now); err != nil {
+			s.logger.Warn("could not hand an MCP event over to its owner's subscription", "subscription", sub.ID, "error", err)
+		}
 	}
 }
 
@@ -504,30 +508,93 @@ func (s *Service) eventSource(ctx context.Context, connection store.ConnectorCon
 	return core.ResolvedBinding{}, nil, stack.Wrap(fmt.Errorf("%w: connector %s has no source that offers events", core.ErrNoEvents, connection.ConnectorID))
 }
 
-// declaration is the config and the event its binding declares that a subscription was made
-// for, and whether a live config still declares it on the subscription's connection.
-func (s *Service) declaration(ctx context.Context, sub store.ConnectionEventSubscription) (store.AgentConfig, store.BindingEvent, bool, error) {
-	config, err := s.store.AgentConfig(ctx, sub.CustomerID, sub.ConfigID)
-	if errors.Is(err, store.ErrNoAgentConfig) {
-		return store.AgentConfig{}, store.BindingEvent{}, false, nil
+// declaration is the binding of a live config that owns the subscription's event on its
+// connection (owners), the subscription its events are taken as (held: the owner's own), and
+// whether a live config declares the event at all.
+//
+// Ownership moves without a validate: the owner is deleted, tagged a test copy, or an older
+// config starts declaring the event. Then the subscription the server delivers to is not the
+// owner's. It carries the owner's events, taken as the owner's subscription, which it adds and
+// wakes the worker for, and goes once that one is active (attempt, Receive). So no event is lost
+// while a live config declares it. A subscription of a test copy, or of a second binding or
+// config beside the owner's, goes the same way.
+func (s *Service) declaration(ctx context.Context, connection store.ConnectorConnection, sub store.ConnectionEventSubscription) (owned, store.ConnectionEventSubscription, bool, error) {
+	configs, err := s.store.AgentConfigsBindingConnection(ctx, sub.CustomerID, sub.ConnectionID)
+	if err != nil {
+		return owned{}, store.ConnectionEventSubscription{}, false, err
+	}
+	owner, ok := s.owners(configs, connection, false)[sub.Key]
+	if !ok {
+		return owned{}, store.ConnectionEventSubscription{}, false, nil
+	}
+	if owner.config.ID == sub.ConfigID && owner.binding == sub.Binding {
+		return owner, sub, true, nil
+	}
+	held, err := s.store.ConnectionEventSubscriptionOf(ctx, sub.ConnectionID, owner.config.ID, owner.binding, sub.Key)
+	if errors.Is(err, store.ErrNoConnectionEventSubscription) {
+		// Due at once (add), and the worker woken, as Reconcile wakes it.
+		if err := s.add(ctx, connection, owner.config.ID, owner.binding, owner.event); err != nil {
+			return owned{}, store.ConnectionEventSubscription{}, false, err
+		}
+		s.wake()
+		held, err = s.store.ConnectionEventSubscriptionOf(ctx, sub.ConnectionID, owner.config.ID, owner.binding, sub.Key)
 	}
 	if err != nil {
-		return store.AgentConfig{}, store.BindingEvent{}, false, err
+		return owned{}, store.ConnectionEventSubscription{}, false, err
 	}
-	index := slices.IndexFunc(config.Connectors, func(b store.ConnectorBinding) bool { return b.Name == sub.Binding })
-	if index < 0 {
-		return config, store.BindingEvent{}, false, nil
-	}
-	binding := config.Connectors[index]
-	if binding.Connection.Type != "fixed" || binding.Connection.ConnectionID != sub.ConnectionID {
-		return config, store.BindingEvent{}, false, nil
-	}
-	for _, event := range binding.Events {
-		if Key(event.Event, event.Arguments) == sub.Key {
-			return config, event, true, nil
+	return owner, held, true, nil
+}
+
+// replaced reports whether sub carries the events of an owner whose own subscription, held,
+// is active, so it goes.
+func replaced(sub, held store.ConnectionEventSubscription) bool {
+	return held.ID != sub.ID && held.Status == store.ConnectionEventActive
+}
+
+// owned is the binding of a live config that an event on a connection is subscribed for.
+type owned struct {
+	config  store.AgentConfig
+	binding string
+	event   store.BindingEvent
+}
+
+// owners are, by Key, the bindings each event declared on the connection is subscribed for:
+// the first to declare it, in the order configs are in, which AgentConfigsBindingConnection
+// gives oldest first and without test copies. Each subscription has a callback URL of its own
+// (callbackURL), and the server keys a subscription by its URL among the rest (eventSlot in
+// fakeprovider, after the draft), so a second config declaring the same event gets a
+// subscription of its own, and each event would open a conversation for each (AI-1048). warn
+// logs each declaration left out, as Reconcile does.
+func (s *Service) owners(configs []store.AgentConfig, connection store.ConnectorConnection, warn bool) map[string]owned {
+	owners := map[string]owned{}
+	for _, config := range configs {
+		for _, binding := range config.Connectors {
+			if !bindsFixed(binding, connection) {
+				continue
+			}
+			for _, event := range binding.Events {
+				// The config endpoints refuse an event with no name; one stored some other way
+				// is left out, so it cannot fail the validate of every config on the connection.
+				if strings.TrimSpace(event.Event) == "" {
+					if warn {
+						s.logger.Warn("not subscribing to an MCP event with no name", "config", config.ID, "binding", binding.Name)
+					}
+					continue
+				}
+				key := Key(event.Event, event.Arguments)
+				if first, taken := owners[key]; taken {
+					if warn {
+						s.logger.Warn("not subscribing to an MCP event a second time: an older agent config on the connection subscribes to it",
+							"connection", connection.ID, "event", event.Event, "config", config.ID, "binding", binding.Name,
+							"subscribed_config", first.config.ID, "subscribed_binding", first.binding)
+					}
+					continue
+				}
+				owners[key] = owned{config: config, binding: binding.Name, event: event}
+			}
 		}
 	}
-	return config, store.BindingEvent{}, false, nil
+	return owners
 }
 
 // Receive answers one delivery to a subscription's callback: the challenge a server checks the
@@ -580,7 +647,7 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 		// answer «a retryable status (503 or 425 Too Early)», and the server sends it again.
 		return Reply{Status: http.StatusServiceUnavailable, Body: failure("the connection is waiting on a renewal or a reconnect")}
 	}
-	config, declared, ok, err := s.declaration(ctx, sub)
+	owner, held, ok, err := s.declaration(ctx, connection, sub)
 	if err != nil {
 		return Reply{Status: http.StatusInternalServerError, Body: failure("something went wrong")}
 	}
@@ -591,7 +658,16 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 		}
 		return Reply{Status: http.StatusGone, Body: failure("the agent no longer subscribes to this event")}
 	}
-	fresh, err := s.store.ClaimConnectionEvent(ctx, sub.ID, delivered.EventID)
+	if replaced(sub, held) {
+		// It goes, but still carries this delivery: the server may have sent it before the
+		// owner's subscription was active, to this one alone.
+		if err := s.store.DueConnectionEventSubscription(ctx, sub.ID, time.Now()); err == nil {
+			s.wake()
+		}
+	}
+	// Claimed as the owner's subscription, so the same event delivered again to the owner's,
+	// once it is active, opens no second conversation.
+	fresh, err := s.store.ClaimConnectionEvent(ctx, held.ID, delivered.EventID)
 	if err != nil {
 		return Reply{Status: http.StatusInternalServerError, Body: failure("something went wrong")}
 	}
@@ -603,7 +679,7 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 	s.working.Add(1)
 	go func() {
 		defer s.working.Done()
-		s.run(config, declared, sub, delivered)
+		s.run(owner.config, owner.event, held, delivered)
 	}()
 	return Reply{Status: http.StatusAccepted, Body: map[string]string{}}
 }
@@ -638,7 +714,7 @@ func (s *Service) run(config store.AgentConfig, declared store.BindingEvent, sub
 
 	s.logger.Info("an MCP event opened a conversation", "connection", sub.ConnectionID,
 		"event", delivered.Name, "config", config.ID, "session", created.ID())
-	if _, err := created.Respond(ctx, said(sub.Binding, delivered), nil); err != nil {
+	if _, err := created.Respond(ctx, said(sub.Binding, delivered), nil, options.LLM{}); err != nil {
 		s.logger.Error("the agent could not take an MCP event", "session", created.ID(), "error", err)
 		return
 	}

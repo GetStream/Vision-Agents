@@ -60,6 +60,15 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 // the directory says, and is part of the fingerprint, so changing either syncs again.
 func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithResponses) (*acceleration.AgentConfig, error) {
 	folder := a.folder
+	// Still sent as before, until the router stops taking them.
+	if len(folder.Settings.Plugins) > 0 || len(folder.Settings.PluginEvents) > 0 {
+		named := make([]string, 0, len(folder.Settings.Plugins))
+		for _, plugin := range folder.Settings.Plugins {
+			named = append(named, plugin.Name)
+		}
+		a.logger.Warn("agent.yaml plugins are deprecated: rename plugins to connectors",
+			"agent", a.options.Name, "plugins", named, "plugin_events", len(folder.Settings.PluginEvents))
+	}
 	skills := a.syncedSkills()
 	hash := fingerprint(folder.Declaration, a.options.Instructions, a.options.Guardrail,
 		skills, folder.Knowledge, folder.KnowledgeURLs, folder.Simulations)
@@ -114,6 +123,11 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 		body.Simulations = &declared
 	}
 	declareSettings(&body, folder.Settings)
+	bindings, err := connectorBindings(ctx, client, folder.Settings)
+	if err != nil {
+		return nil, err
+	}
+	body.Connectors = bindings
 	if harness != nil {
 		body.Harness = harness
 	}
@@ -296,6 +310,121 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	}
 }
 
+// connectorBindings are the connectors agent.yaml names, in the shape the sync takes.
+// Nil when the key was left out, so the stored bindings stay; empty when the file
+// lists none, which removes them.
+func connectorBindings(ctx context.Context, client *acceleration.ClientWithResponses, settings Settings) (*[]acceleration.AgentConnectorBinding, error) {
+	if settings.Connectors == nil {
+		return nil, nil
+	}
+	bindings := make([]acceleration.AgentConnectorBinding, 0, len(settings.Connectors))
+	for _, entry := range settings.Connectors {
+		binding, err := connectorBinding(ctx, client, entry)
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, binding)
+	}
+	return &bindings, nil
+}
+
+func connectorBinding(ctx context.Context, client *acceleration.ClientWithResponses, entry ConnectorSettings) (acceleration.AgentConnectorBinding, error) {
+	connectorID := entry.Connector
+	if connectorID == "" {
+		connectorID = entry.Name
+	}
+	patterns := []string{"*"}
+	if entry.Tools != nil {
+		patterns = append([]string(nil), (*entry.Tools)...)
+	}
+	binding := acceleration.AgentConnectorBinding{
+		Name:         entry.Name,
+		ConnectorId:  connectorID,
+		Tools:        []acceleration.ConnectorToolGrant{},
+		ToolPatterns: &patterns,
+		Required:     entry.Required,
+		Connection:   acceleration.AgentConnectorSelection{Type: acceleration.AgentConnectorSelectionTypeSession},
+	}
+	if entry.Connection == nil {
+		return binding, nil
+	}
+	id, err := fixedConnection(ctx, client, entry.Name, connectorID, *entry.Connection)
+	if err != nil {
+		return acceleration.AgentConnectorBinding{}, err
+	}
+	binding.Connection = acceleration.AgentConnectorSelection{
+		Type:         acceleration.AgentConnectorSelectionTypeFixed,
+		ConnectionId: &id,
+	}
+	return binding, nil
+}
+
+// fixedConnection is the app connection entry names, by id or by the one label that
+// matches. An id wins over a label. Every page is read first: a label on an early page
+// must not hide the id on a later one, and a label is only unique once the list ends.
+func fixedConnection(ctx context.Context, client *acceleration.ClientWithResponses, name, connectorID, token string) (string, error) {
+	connections, err := appConnections(ctx, client, connectorID)
+	if err != nil {
+		return "", fmt.Errorf("agents: connector %q: %w", name, err)
+	}
+	for _, connection := range connections {
+		if connection.Id != nil && *connection.Id == token {
+			return *connection.Id, nil
+		}
+	}
+	var labels []string
+	for _, connection := range connections {
+		if connection.Label != nil && *connection.Label == token && connection.Id != nil {
+			labels = append(labels, *connection.Id)
+		}
+	}
+	switch len(labels) {
+	case 1:
+		return labels[0], nil
+	case 0:
+		return "", fmt.Errorf("agents: connector %q: no app connection with id or label %q", name, token)
+	default:
+		return "", fmt.Errorf("agents: connector %q: %q matches %d app connections", name, token, len(labels))
+	}
+}
+
+func appConnections(ctx context.Context, client *acceleration.ClientWithResponses, connectorID string) ([]acceleration.Connection, error) {
+	var cursor *string
+	asked := map[string]bool{}
+	var connections []acceleration.Connection
+	for {
+		key := ""
+		if cursor != nil {
+			key = *cursor
+		}
+		if asked[key] {
+			break
+		}
+		asked[key] = true
+
+		listed, err := client.ListConnectionsWithResponse(ctx, &acceleration.ListConnectionsParams{
+			OwnerType:   acceleration.ConnectionOwnerTypeApp,
+			ConnectorId: &connectorID,
+			Cursor:      cursor,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("listing connections: %w", err)
+		}
+		page, err := answer(listed.JSON200, listed.HTTPResponse, listed.Body)
+		if err != nil {
+			return nil, err
+		}
+		if page.Items != nil {
+			connections = append(connections, (*page.Items)...)
+		}
+		if page.NextCursor == nil || *page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	return connections, nil
+}
+
 // storedConfig is the config stored under a name, or nil when there is none.
 func storedConfig(ctx context.Context, client *acceleration.ClientWithResponses, name string) (*acceleration.AgentConfig, error) {
 	listed, err := client.ListAgentConfigsWithResponse(ctx, &acceleration.ListAgentConfigsParams{Name: &name})
@@ -413,6 +542,10 @@ func skillRequestOf(skill Skill) acceleration.SkillRequest {
 	if skill.Deadline > 0 {
 		milliseconds := skill.Deadline.Milliseconds()
 		body.DeadlineMs = &milliseconds
+	}
+	if len(skill.Files) > 0 {
+		files := skill.Files
+		body.Files = &files
 	}
 	return body
 }

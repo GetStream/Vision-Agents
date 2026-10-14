@@ -61,9 +61,7 @@ class ImageGenerationRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.image_generation_request_tags import (
-            ImageGenerationRequestTags,
-        )
+        from ..models.image_generation_request_tags import ImageGenerationRequestTags
         from ..models.image_options import ImageOptions
 
         d = dict(src_dict)

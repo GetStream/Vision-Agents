@@ -1,6 +1,8 @@
 package io.getstream.visionagents.core
 
 import io.getstream.visionagents.core.generated.Equals
+import io.getstream.visionagents.core.generated.Greeting as GreetingSchema
+import io.getstream.visionagents.core.generated.GreetingMode
 import io.getstream.visionagents.core.generated.SessionFilter
 import io.getstream.visionagents.core.generated.SessionQuery as QuerySchema
 import io.getstream.visionagents.core.generated.TextMatch
@@ -15,8 +17,9 @@ import kotlinx.serialization.json.JsonObject
  */
 public data class SessionOptions(
     /**
-     * A UUID to hold the session by, for a caller that wants to know it before the session
-     * exists. One already taken is refused with a 409. Null lets the router generate one.
+     * An id to hold the session by, for a caller that wants to know it before the session
+     * exists: up to 64 letters, digits, `-` and `_`. One already taken is refused with a 409.
+     * Null lets the router generate one.
      */
     val id: String? = null,
     /** An agent config to start from, by the name it was synced under. */
@@ -33,14 +36,15 @@ public data class SessionOptions(
     val custom: JsonObject? = null,
     /** Record nothing about this conversation: it cannot be found, rewound or forked afterwards. */
     val incognito: Boolean? = null,
-    /** The Stream Chat channel of an earlier text conversation to carry on. */
-    val conversationId: String? = null,
+    /**
+     * Has the agent join the session's own call, `agent:<session id>`, as soon as it opens.
+     * False holds the conversation in writing until [AgentSession.startVoice] starts it.
+     */
+    val startVoice: Boolean = false,
     /** What to change about the models for this conversation alone. */
     val modelOverwrites: ModelOverwrites? = null,
-    /** The system prompt. */
-    val instructions: String? = null,
-    /** Said on joining without going through the model. */
-    val greeting: String? = null,
+    /** What the agent opens the call with. */
+    val greeting: Greeting? = null,
     val llm: String? = null,
     val stt: String? = null,
     val tts: String? = null,
@@ -51,6 +55,32 @@ public data class SessionOptions(
     /** Cost labels, carried onto every request the session makes. */
     val tags: Map<String, String> = emptyMap(),
 )
+
+/** What the agent says as it joins a call, before anyone speaks. */
+public data class Greeting(
+    /** Empty means the agent waits to be spoken to. */
+    val text: String,
+    /** Null says it word for word, as [Mode.Exact] does. */
+    val mode: Mode? = null,
+) {
+    public enum class Mode {
+        /** Word for word. */
+        Exact,
+
+        /** The model rewords it on every call, so callers do not hear the same opening. */
+        Variation,
+    }
+
+    internal val schema: GreetingSchema
+        get() = GreetingSchema(
+            text,
+            when (mode) {
+                Mode.Exact -> GreetingMode.exact
+                Mode.Variation -> GreetingMode.variation
+                null -> null
+            },
+        )
+}
 
 /**
  * What to change about a conversation while continuing it as a new one.
@@ -69,7 +99,6 @@ public data class ForkOptions(
     val projectId: String? = null,
     val custom: JsonObject? = null,
     val modelOverwrites: ModelOverwrites? = null,
-    val instructions: String? = null,
     /** Keep the fork off the record. */
     val incognito: Boolean? = null,
     /**
@@ -77,8 +106,6 @@ public data class ForkOptions(
      * which is a point in that history.
      */
     val withoutHistory: Boolean = false,
-    /** The call the fork joins, which a voice session needs and a text session refuses. */
-    val callId: String? = null,
 )
 
 /**

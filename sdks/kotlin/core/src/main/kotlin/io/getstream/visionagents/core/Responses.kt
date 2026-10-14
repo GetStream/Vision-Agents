@@ -23,8 +23,6 @@ private const val ITEM_PAGE = 200
 public class Responses internal constructor(
     private val backend: Backend,
     public val sessionId: String,
-    /** A conversation kept in Stream Chat, whose every question is a command answered at most once. */
-    private val kept: Boolean = false,
     /** Shows what was asked in a live transcript, before the router has started on it. */
     private val asked: (String) -> Unit = {},
 ) {
@@ -34,14 +32,26 @@ public class Responses internal constructor(
      * It returns as soon as the agent has started answering rather than when it has finished,
      * so the result is a handle on an answer in progress: [items] with its id reads what has
      * been written down so far. From [AgentSession.responses] the question shows in
-     * [AgentSession.conversation] at once.
+     * [AgentSession.conversation] at once. A text question carries a fresh request id, so a
+     * retry of the same request starts no second turn.
+     *
+     * [maxOutputTokens] caps this answer, reasoning included, and [reasoningEffort] is how long
+     * the model may think first, one of the efforts the session's model accepts. Both cover the
+     * replies that finish it after its tools; left null, the session's own apply.
      */
-    public suspend fun create(text: String, images: List<ImageSource> = emptyList()): AgentResponse {
+    public suspend fun create(
+        text: String,
+        images: List<ImageSource> = emptyList(),
+        maxOutputTokens: Int? = null,
+        reasoningEffort: String? = null,
+    ): AgentResponse {
         val request = CreateResponseRequest(
             text = text,
             images = images.ifEmpty { null }?.map { it.schema },
-            // A command carries text only, so a question showing the agent something goes without one.
-            commandId = if (kept && images.isEmpty()) UUID.randomUUID().toString() else null,
+            maxOutputTokens = maxOutputTokens,
+            reasoningEffort = reasoningEffort,
+            // The router refuses a request id on a question showing the agent something.
+            requestId = if (images.isEmpty()) UUID.randomUUID().toString() else null,
         )
         asked(text)
         val created = backend.post(

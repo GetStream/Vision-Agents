@@ -85,6 +85,8 @@ def sync_detailed(
      Reading a session is open to the device holding it, for the same reason listing and stopping are: it
     is the conversation the caller is having. A session belonging to somebody else is reported as not
     found rather than refused, so this is not a way to find out whose an id is.
+    A session that ended is read too. A backend is also given its summary, review and usage, which a
+    device asks the backend for.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -118,6 +120,8 @@ def sync(
      Reading a session is open to the device holding it, for the same reason listing and stopping are: it
     is the conversation the caller is having. A session belonging to somebody else is reported as not
     found rather than refused, so this is not a way to find out whose an id is.
+    A session that ended is read too. A backend is also given its summary, review and usage, which a
+    device asks the backend for.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -146,6 +150,8 @@ async def asyncio_detailed(
      Reading a session is open to the device holding it, for the same reason listing and stopping are: it
     is the conversation the caller is having. A session belonging to somebody else is reported as not
     found rather than refused, so this is not a way to find out whose an id is.
+    A session that ended is read too. A backend is also given its summary, review and usage, which a
+    device asks the backend for.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -177,6 +183,8 @@ async def asyncio(
      Reading a session is open to the device holding it, for the same reason listing and stopping are: it
     is the conversation the caller is having. A session belonging to somebody else is reported as not
     found rather than refused, so this is not a way to find out whose an id is.
+    A session that ended is read too. A backend is also given its summary, review and usage, which a
+    device asks the backend for.
 
     Args:
         id (str): The session, as returned when it was created.

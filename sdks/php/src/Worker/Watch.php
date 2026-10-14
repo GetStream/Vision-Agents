@@ -101,11 +101,6 @@ final class Watch implements IteratorAggregate
         $this->socket->send(['type' => 'interrupt']);
     }
 
-    public function setInstructions(string $instructions): void
-    {
-        $this->socket->send(['type' => 'instructions', 'instructions' => $instructions]);
-    }
-
     /**
      * Stops watching. The session goes on; `Session::close()` ends it.
      */
@@ -126,9 +121,9 @@ final class Watch implements IteratorAggregate
         $id = Json::string($frame, 'id');
         $name = Json::string($frame, 'name');
         $result = ['type' => 'tool_result', 'tool_call_id' => $id];
-        // A durable command's result has to name the command and turn it answers, so it cannot
+        // A durable command's result has to name the request and turn it answers, so it cannot
         // be adopted by another.
-        foreach (['command_id', 'turn_id'] as $key) {
+        foreach (['request_id', 'turn_id'] as $key) {
             if (Json::string($frame, $key) !== '') {
                 $result[$key] = $frame[$key];
             }

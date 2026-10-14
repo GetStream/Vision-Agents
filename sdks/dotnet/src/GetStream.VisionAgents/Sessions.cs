@@ -60,8 +60,7 @@ public sealed class Sessions(VisionAgentsClient client, string? agent = null)
     /// A field left null is left as it is.
     /// </summary>
     /// <remarks>
-    /// One that ended can still be renamed and relabelled; instructions, models and voice
-    /// need it running, and take over from its next turn. Only a backend may ask.
+    /// One that ended can still be renamed and relabelled; models and voice need it running, and take over from its next turn. Only a backend may ask.
     /// </remarks>
     public Task<Models.Session> UpdateAsync(string id, UpdateSessionRequest update, CancellationToken cancellationToken = default) =>
         client.PatchAsync<Models.Session>($"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}", update, cancellationToken);

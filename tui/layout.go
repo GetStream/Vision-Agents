@@ -97,8 +97,8 @@ func (m *Model) header() string {
 // conversationLabel names the conversation in the header, or says why it has no name.
 func (m *Model) conversationLabel() string {
 	switch {
-	case m.conversationID != "":
-		return m.conversationID
+	case m.sessionID != "":
+		return m.sessionID
 	case m.connecting:
 		return "opening…"
 	default:

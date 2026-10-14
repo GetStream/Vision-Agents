@@ -76,10 +76,11 @@ def sync_detailed(
 ) -> Response[Any | ErrorResponse]:
     """Receive a plugin's MCP event
 
-     Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard
-    Webhooks. The path is unauthenticated because the server is not a customer: the token names the
-    subscription and its secret signs each delivery. A verification is answered with its challenge, and
-    an event opens a text conversation.
+     Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's
+    MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is
+    unauthenticated because the server is not a customer: the token names the subscription and its
+    secret signs each delivery. A verification is answered with its challenge, and an event opens a text
+    conversation.
 
     Args:
         token (str):
@@ -110,10 +111,11 @@ def sync(
 ) -> Any | ErrorResponse | None:
     """Receive a plugin's MCP event
 
-     Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard
-    Webhooks. The path is unauthenticated because the server is not a customer: the token names the
-    subscription and its secret signs each delivery. A verification is answered with its challenge, and
-    an event opens a text conversation.
+     Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's
+    MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is
+    unauthenticated because the server is not a customer: the token names the subscription and its
+    secret signs each delivery. A verification is answered with its challenge, and an event opens a text
+    conversation.
 
     Args:
         token (str):
@@ -139,10 +141,11 @@ async def asyncio_detailed(
 ) -> Response[Any | ErrorResponse]:
     """Receive a plugin's MCP event
 
-     Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard
-    Webhooks. The path is unauthenticated because the server is not a customer: the token names the
-    subscription and its secret signs each delivery. A verification is answered with its challenge, and
-    an event opens a text conversation.
+     Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's
+    MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is
+    unauthenticated because the server is not a customer: the token names the subscription and its
+    secret signs each delivery. A verification is answered with its challenge, and an event opens a text
+    conversation.
 
     Args:
         token (str):
@@ -171,10 +174,11 @@ async def asyncio(
 ) -> Any | ErrorResponse | None:
     """Receive a plugin's MCP event
 
-     Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard
-    Webhooks. The path is unauthenticated because the server is not a customer: the token names the
-    subscription and its secret signs each delivery. A verification is answered with its challenge, and
-    an event opens a text conversation.
+     Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's
+    MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is
+    unauthenticated because the server is not a customer: the token names the subscription and its
+    secret signs each delivery. A verification is answered with its challenge, and an event opens a text
+    conversation.
 
     Args:
         token (str):

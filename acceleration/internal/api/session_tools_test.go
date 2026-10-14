@@ -23,8 +23,7 @@ func TestADeclaredToolsApprovalReachesTheSpec(t *testing.T) {
 			Approval: &SessionToolApproval{Title: "Share your location?", Message: &message, ReasonArgument: &reason}},
 		{Name: "athena_read_canvas", Description: "Read a canvas", Approval: &SessionToolApproval{}},
 	}
-	text := true
-	spec := specOf(CreateSessionRequest{Text: &text, Tools: &tools}, "acme", nil)
+	spec := specOf(CreateSessionRequest{Tools: &tools}, "acme", nil)
 	require.Len(t, spec.Tools, 2)
 	require.True(t, spec.Tools[0].Client)
 	require.Equal(t, &harness.ToolApproval{Title: "Share your location?", Message: "Only your city is shared.", ReasonArgument: "purpose"}, spec.Tools[0].Approval)

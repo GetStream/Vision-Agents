@@ -92,24 +92,24 @@ def sync_detailed(
 ) -> Response[ErrorResponse | Session]:
     """Change a session
 
-     Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this
-    session only: the agent config it started from is untouched. A field left out is left as it is. The
-    id, the call and incognito are what the session is, so they cannot change; forking is how to get a
-    session that differs in those.
+     Renames a session, relabels it or moves it onto other models, for this session only: the agent
+    config it started from is untouched. A field left out is left as it is. The id, the call, incognito
+    and the instructions are what the session is, so they cannot change: the instructions are the agent
+    config's, and forking is how to get a session that differs in the rest.
 
     An end user's device may change a session's title, description and custom, so a person can tidy up
-    their own conversations. Instructions, models and voice are the backend's to change, and a device
-    asking for them is refused with a 403.
+    their own conversations. Models and voice are the backend's to change, and a device asking for them
+    is refused with a 403.
 
-    A session that ended can still be renamed and relabelled. Instructions and models only mean
-    something to a session that is running, so asking to change them on one that ended is refused.
+    A session that ended can still be renamed and relabelled. Models only mean something to a session
+    that is running, so asking to change them on one that ended is refused.
 
     Model changes are opened before anything changes, so a target that does not route is refused and the
-    session carries on as it was. Instructions and models take over from the next turn; a reply being
-    spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes
-    it a cascade again. A session that started with the person's episode cards cannot be moved onto a
-    speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the
-    router naming the conversation for what was said.
+    session carries on as it was. Models take over from the next turn; a reply being spoken finishes on
+    what it started with. Naming sts makes the session native, and an empty sts makes it a cascade
+    again. A session that started with the person's episode cards cannot be moved onto a speech-to-
+    speech model: 400, carded_session_to_native. A title or description given here stops the router
+    naming the conversation for what was said.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -146,24 +146,24 @@ def sync(
 ) -> ErrorResponse | Session | None:
     """Change a session
 
-     Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this
-    session only: the agent config it started from is untouched. A field left out is left as it is. The
-    id, the call and incognito are what the session is, so they cannot change; forking is how to get a
-    session that differs in those.
+     Renames a session, relabels it or moves it onto other models, for this session only: the agent
+    config it started from is untouched. A field left out is left as it is. The id, the call, incognito
+    and the instructions are what the session is, so they cannot change: the instructions are the agent
+    config's, and forking is how to get a session that differs in the rest.
 
     An end user's device may change a session's title, description and custom, so a person can tidy up
-    their own conversations. Instructions, models and voice are the backend's to change, and a device
-    asking for them is refused with a 403.
+    their own conversations. Models and voice are the backend's to change, and a device asking for them
+    is refused with a 403.
 
-    A session that ended can still be renamed and relabelled. Instructions and models only mean
-    something to a session that is running, so asking to change them on one that ended is refused.
+    A session that ended can still be renamed and relabelled. Models only mean something to a session
+    that is running, so asking to change them on one that ended is refused.
 
     Model changes are opened before anything changes, so a target that does not route is refused and the
-    session carries on as it was. Instructions and models take over from the next turn; a reply being
-    spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes
-    it a cascade again. A session that started with the person's episode cards cannot be moved onto a
-    speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the
-    router naming the conversation for what was said.
+    session carries on as it was. Models take over from the next turn; a reply being spoken finishes on
+    what it started with. Naming sts makes the session native, and an empty sts makes it a cascade
+    again. A session that started with the person's episode cards cannot be moved onto a speech-to-
+    speech model: 400, carded_session_to_native. A title or description given here stops the router
+    naming the conversation for what was said.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -195,24 +195,24 @@ async def asyncio_detailed(
 ) -> Response[ErrorResponse | Session]:
     """Change a session
 
-     Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this
-    session only: the agent config it started from is untouched. A field left out is left as it is. The
-    id, the call and incognito are what the session is, so they cannot change; forking is how to get a
-    session that differs in those.
+     Renames a session, relabels it or moves it onto other models, for this session only: the agent
+    config it started from is untouched. A field left out is left as it is. The id, the call, incognito
+    and the instructions are what the session is, so they cannot change: the instructions are the agent
+    config's, and forking is how to get a session that differs in the rest.
 
     An end user's device may change a session's title, description and custom, so a person can tidy up
-    their own conversations. Instructions, models and voice are the backend's to change, and a device
-    asking for them is refused with a 403.
+    their own conversations. Models and voice are the backend's to change, and a device asking for them
+    is refused with a 403.
 
-    A session that ended can still be renamed and relabelled. Instructions and models only mean
-    something to a session that is running, so asking to change them on one that ended is refused.
+    A session that ended can still be renamed and relabelled. Models only mean something to a session
+    that is running, so asking to change them on one that ended is refused.
 
     Model changes are opened before anything changes, so a target that does not route is refused and the
-    session carries on as it was. Instructions and models take over from the next turn; a reply being
-    spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes
-    it a cascade again. A session that started with the person's episode cards cannot be moved onto a
-    speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the
-    router naming the conversation for what was said.
+    session carries on as it was. Models take over from the next turn; a reply being spoken finishes on
+    what it started with. Naming sts makes the session native, and an empty sts makes it a cascade
+    again. A session that started with the person's episode cards cannot be moved onto a speech-to-
+    speech model: 400, carded_session_to_native. A title or description given here stops the router
+    naming the conversation for what was said.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -247,24 +247,24 @@ async def asyncio(
 ) -> ErrorResponse | Session | None:
     """Change a session
 
-     Renames a session, relabels it, rewrites its instructions or moves it onto other models, for this
-    session only: the agent config it started from is untouched. A field left out is left as it is. The
-    id, the call and incognito are what the session is, so they cannot change; forking is how to get a
-    session that differs in those.
+     Renames a session, relabels it or moves it onto other models, for this session only: the agent
+    config it started from is untouched. A field left out is left as it is. The id, the call, incognito
+    and the instructions are what the session is, so they cannot change: the instructions are the agent
+    config's, and forking is how to get a session that differs in the rest.
 
     An end user's device may change a session's title, description and custom, so a person can tidy up
-    their own conversations. Instructions, models and voice are the backend's to change, and a device
-    asking for them is refused with a 403.
+    their own conversations. Models and voice are the backend's to change, and a device asking for them
+    is refused with a 403.
 
-    A session that ended can still be renamed and relabelled. Instructions and models only mean
-    something to a session that is running, so asking to change them on one that ended is refused.
+    A session that ended can still be renamed and relabelled. Models only mean something to a session
+    that is running, so asking to change them on one that ended is refused.
 
     Model changes are opened before anything changes, so a target that does not route is refused and the
-    session carries on as it was. Instructions and models take over from the next turn; a reply being
-    spoken finishes on what it started with. Naming sts makes the session native, and an empty sts makes
-    it a cascade again. A session that started with the person's episode cards cannot be moved onto a
-    speech-to-speech model: 400, carded_session_to_native. A title or description given here stops the
-    router naming the conversation for what was said.
+    session carries on as it was. Models take over from the next turn; a reply being spoken finishes on
+    what it started with. Naming sts makes the session native, and an empty sts makes it a cascade
+    again. A session that started with the person's episode cards cannot be moved onto a speech-to-
+    speech model: 400, carded_session_to_native. A title or description given here stops the router
+    naming the conversation for what was said.
 
     Args:
         id (str): The session, as returned when it was created.

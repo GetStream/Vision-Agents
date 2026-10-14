@@ -145,15 +145,24 @@ public sealed class Responses
     /// </remarks>
     /// <param name="text">What to answer.</param>
     /// <param name="images">Images to show the agent with it.</param>
-    /// <param name="commandId">The durable command this answers, reused on a retry; null sends none.</param>
     /// <param name="cancellationToken">Stops waiting.</param>
-    public async Task<Response> CreateAsync(string text, IReadOnlyList<ImageSource>? images = null, string? commandId = null, CancellationToken cancellationToken = default)
+    public Task<Response> CreateAsync(string text, IReadOnlyList<ImageSource>? images = null, CancellationToken cancellationToken = default) =>
+        AnswerAsync(text, images, null, cancellationToken);
+
+    /// <summary><see cref="Dispatch.AnswerAsync"/>'s way in.</summary>
+    /// <param name="text">What to answer.</param>
+    /// <param name="images">Images to show the agent with it.</param>
+    /// <param name="requestId">The request id of the inbound message being answered; null generates one.</param>
+    /// <param name="cancellationToken">Stops waiting.</param>
+    internal async Task<Response> AnswerAsync(string text, IReadOnlyList<ImageSource>? images, string? requestId, CancellationToken cancellationToken)
     {
+        // The router refuses a request id on a question with media.
+        var media = images is { Count: > 0 };
         var request = new CreateResponseRequest
         {
             Text = text,
-            Images = images is { Count: > 0 } ? [.. images] : null,
-            CommandId = VisionAgentsClient.Blank(commandId),
+            Images = media ? [.. images!] : null,
+            RequestId = media ? null : VisionAgentsClient.Blank(requestId) ?? Guid.NewGuid().ToString("N"),
         };
         var created = await _client.PostAsync<AgentResponse>(
             $"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/responses", request, cancellationToken).ConfigureAwait(false);

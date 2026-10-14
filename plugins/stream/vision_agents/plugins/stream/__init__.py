@@ -17,12 +17,22 @@ from ._generated.models import (
     PhoneCapability,
     PhoneNumber,
     PhoneNumberType,
+    SessionPhone,
     SimulationRequest,
     SkippedVendor,
 )
 from .accelerated import Accelerated
 from .client import Agent, Client, GuestOptions, Memories
 from .config import define_agent, define_skills, ensure_agent, sync_agent
+from .detection import (
+    ChangeGate,
+    DetectionProcessor,
+    ObjectAppearedEvent,
+    ObjectDisappearedEvent,
+    Track,
+    Tracks,
+    iou,
+)
 from .dispatch import Dispatch
 from .folder import Folder, load
 from .knowledge import Knowledge
@@ -38,6 +48,7 @@ from .sessions import (
     SessionEvent,
     SessionOptions,
     Sessions,
+    Voice,
 )
 from .simulations import SimulationRuns, Simulations
 from .sts import STS
@@ -52,7 +63,9 @@ __all__ = [
     "AttachedNumber",
     "Backend",
     "CallContext",
+    "ChangeGate",
     "Client",
+    "DetectionProcessor",
     "Dispatch",
     "Folder",
     "ForkOptions",
@@ -73,6 +86,8 @@ __all__ = [
     "ModelOverwritesThinking",
     "ModelOverwritesVerbosity",
     "NumberSearchResult",
+    "ObjectAppearedEvent",
+    "ObjectDisappearedEvent",
     "Participant",
     "Phone",
     "PhoneCapability",
@@ -87,16 +102,21 @@ __all__ = [
     "Session",
     "SessionEvent",
     "SessionOptions",
+    "SessionPhone",
     "Sessions",
     "SimulationRequest",
     "SimulationRuns",
     "Simulations",
     "SkippedVendor",
     "TTS",
+    "Track",
+    "Tracks",
+    "Voice",
     "define_agent",
     "define_router",
     "define_skills",
     "ensure_agent",
+    "iou",
     "load",
     "sync_agent",
     "sync_routers",

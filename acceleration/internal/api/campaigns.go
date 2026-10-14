@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
@@ -179,7 +181,11 @@ func (s *Server) startCampaign(ctx context.Context, request *startCampaignReques
 	if _, err := s.store.Campaign(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownCampaign
 	}
-	if err := s.campaigns.Start(ctx, customerID, request.Id); err != nil {
+	err := s.campaigns.Start(ctx, customerID, request.Id)
+	if errors.Is(err, phone.ErrSuspended) {
+		return nil, errTelephonySuspended
+	}
+	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
 

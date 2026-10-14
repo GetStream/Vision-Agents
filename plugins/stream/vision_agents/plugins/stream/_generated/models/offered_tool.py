@@ -61,9 +61,7 @@ class OfferedTool:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.offered_tool_parameters import (
-            OfferedToolParameters,
-        )
+        from ..models.offered_tool_parameters import OfferedToolParameters
 
         d = dict(src_dict)
         description = d.pop("description")

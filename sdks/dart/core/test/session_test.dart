@@ -46,23 +46,26 @@ void main() {
       expect((await asked).id, 'r1');
       expect(router.last('POST /v1/agents/sessions/s1/responses').json, {
         'text': 'What are your hours?',
+        'request_id': matches(RegExp(r'^[0-9a-f]{32}$')),
       });
       await chat.close();
     });
 
-    test('a conversation kept in chat names each question, unless it shows an image', () async {
-      router
-        ..answer('POST /v1/agents/sessions', Answer(201, sessionJson(conversationId: 'agent:c1')))
-        ..answer('POST /v1/agents/sessions/s1/responses', Answer(202, responseJson('r1')));
+    test('names each question with a fresh request id, unless it shows an image', () async {
+      router.answer('POST /v1/agents/sessions/s1/responses', Answer(202, responseJson('r1')));
       final chat = await agents.chat();
 
       await chat.responses.create('Hello');
-      final named = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
+      final first = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
+      await chat.responses.create('Hello');
+      final again = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
       await chat.responses.create('Look', images: [const AgentImage('https://x/cat.png')]);
       final shown = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
 
-      expect(named['command_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
-      expect(shown.containsKey('command_id'), isFalse);
+      expect(first['request_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(again['request_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(again['request_id'], isNot(first['request_id']));
+      expect(shown.containsKey('request_id'), isFalse);
       await chat.close();
     });
 
@@ -136,7 +139,7 @@ void main() {
 
       socket.send(
         '{"type":"tool_call","id":"c1","name":"lookup_order",'
-        r'"arguments":"{\"order_id\":\"A-1042\"}","command_id":"","turn_id":"t1"}',
+        r'"arguments":"{\"order_id\":\"A-1042\"}","request_id":"","turn_id":"t1"}',
       );
 
       expect(await socket.next(), {
@@ -171,7 +174,7 @@ void main() {
       await chat.close();
     });
 
-    test("repeats a durable command's ids, so no other command can adopt the result", () async {
+    test("repeats a request's ids, so no other request can adopt the result", () async {
       final chat = await agents.chat(
         SessionOptions(
           tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon')],
@@ -180,7 +183,7 @@ void main() {
       final socket = await router.socket();
 
       socket.send(
-        '{"type":"tool_call","id":"c1","name":"now","arguments":"{}","command_id":"cmd-1","turn_id":"t1"}',
+        '{"type":"tool_call","id":"c1","name":"now","arguments":"{}","request_id":"cmd-1","turn_id":"t1"}',
       );
 
       expect(await socket.next(), {
@@ -188,7 +191,7 @@ void main() {
         'tool_call_id': 'c1',
         'output': 'noon',
         'error': '',
-        'command_id': 'cmd-1',
+        'request_id': 'cmd-1',
         'turn_id': 't1',
       });
       await chat.close();
@@ -227,7 +230,7 @@ void main() {
 
       socket
         ..send('{"type":"tool_call","id":"c1","name":"slow","arguments":"{}"}')
-        ..send('{"type":"tool_cancel","id":"c1","command_id":"","turn_id":""}');
+        ..send('{"type":"tool_cancel","id":"c1","request_id":"","turn_id":""}');
       await cancelled;
       release.complete('too late');
       socket.send('{"type":"tool_call","id":"c2","name":"fast","arguments":"{}"}');
@@ -248,6 +251,123 @@ void main() {
 
       expect((await socket.next())['output'], 'noon');
       await chat.close();
+    });
+
+    group('a tool that asks first', () {
+      const refundCall =
+          '{"type":"tool_call","id":"c1","name":"issue_refund",'
+          r'"arguments":"{\"order_id\":\"A-1042\",\"reason\":\"it arrived unopened\"}",'
+          '"request_id":"m1","turn_id":"t1"}';
+      late List<Object?> ran;
+
+      Future<AgentSession> open() => agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool(
+              name: 'issue_refund',
+              description: 'Refund an order.',
+              approval: const ToolApproval(
+                title: 'Refund order A-1042?',
+                reasonArgument: 'reason',
+                allowTitle: 'Refund',
+              ),
+              run: (arguments) async {
+                ran.add(arguments['order_id']);
+                return 'Refunded ${arguments['order_id']}';
+              },
+            ),
+          ],
+        ),
+      );
+
+      setUp(() => ran = []);
+
+      test('declares its question and waits for the person before it runs', () async {
+        final chat = await open();
+        final declared = (router.last('POST /v1/agents/sessions').json as Map)['tools'] as List;
+        expect((declared.single as Map)['approval'], {
+          'title': 'Refund order A-1042?',
+          'allow_title': 'Refund',
+          'reason_argument': 'reason',
+        });
+        final socket = await router.socket();
+
+        socket.send(refundCall);
+        await until(() => chat.approvals.value.isNotEmpty);
+        final waiting = chat.approvals.value.single;
+        expect(waiting.approval.title, 'Refund order A-1042?');
+        expect(waiting.reason, 'it arrived unopened');
+        expect(ran, isEmpty);
+
+        chat.decide('c1', allowed: true);
+
+        expect(chat.approvals.value, isEmpty);
+        expect(await socket.next(), {
+          'type': 'tool_approval',
+          'tool_call_id': 'c1',
+          'allowed': true,
+          'request_id': 'm1',
+          'turn_id': 't1',
+        });
+        expect(await socket.next(), {
+          'type': 'tool_result',
+          'tool_call_id': 'c1',
+          'output': 'Refunded A-1042',
+          'error': '',
+          'request_id': 'm1',
+          'turn_id': 't1',
+        });
+        expect(ran, ['A-1042']);
+        await chat.close();
+      });
+
+      test('declined, never runs, tells the model so, and a second answer does nothing', () async {
+        final chat = await open();
+        final socket = await router.socket();
+
+        socket.send(refundCall);
+        await until(() => chat.approvals.value.isNotEmpty);
+        chat
+          ..decide('c1', allowed: false, summary: 'Kept the order')
+          ..decide('c1', allowed: true)
+          ..say('still there?');
+
+        expect(await socket.next(), {
+          'type': 'tool_approval',
+          'tool_call_id': 'c1',
+          'allowed': false,
+          'summary': 'Kept the order',
+          'request_id': 'm1',
+          'turn_id': 't1',
+        });
+        expect(await socket.next(), {
+          'type': 'tool_result',
+          'tool_call_id': 'c1',
+          'output': '',
+          'error': 'The person declined this call.',
+          'request_id': 'm1',
+          'turn_id': 't1',
+        });
+        expect(await socket.next(), {'type': 'say', 'text': 'still there?'});
+        expect(ran, isEmpty);
+        await chat.close();
+      });
+
+      test('stops waiting when the router cancels the call', () async {
+        final chat = await open();
+        final socket = await router.socket();
+
+        socket.send(refundCall);
+        await until(() => chat.approvals.value.isNotEmpty);
+        socket.send('{"type":"tool_cancel","id":"c1","request_id":"m1","turn_id":"t1"}');
+        await until(() => chat.approvals.value.isEmpty);
+        chat
+          ..decide('c1', allowed: true)
+          ..say('still there?');
+
+        expect(await socket.next(), {'type': 'say', 'text': 'still there?'});
+        await chat.close();
+      });
     });
 
     test('two readers of events each get every event', () async {
@@ -362,6 +482,26 @@ void main() {
       expect(renamed.title, 'Billing');
       expect(chat.session.title, 'Billing');
       expect(chat.session.description, 'Refund');
+      expect(chat.isConnected, isTrue);
+      await chat.close();
+    });
+
+    test('voice puts a written conversation on its call and takes it off again', () async {
+      router
+        ..answer(
+          'POST /v1/agents/sessions/s1/voice',
+          Answer(200, {...sessionJson(), 'call_id': 's1', 'text': false}),
+        )
+        ..answer('DELETE /v1/agents/sessions/s1/voice', Answer(200, sessionJson()));
+      final chat = await agents.chat();
+
+      await chat.startVoice();
+      expect(chat.session.callId, 's1');
+      expect(chat.session.isText, isFalse);
+
+      await chat.stopVoice();
+      expect(chat.session.callId, isEmpty);
+      expect(chat.session.isText, isTrue);
       expect(chat.isConnected, isTrue);
       await chat.close();
     });

@@ -20,19 +20,19 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
 /** A session as the router answers one: every required field and a handful of the optional ones. */
-private fun sessionJson(id: String = "s1", state: String = "live", text: Boolean = true, modality: String = "text") =
-    """{"id":"$id","call_id":"","call_type":"default","user_id":"u1","agent_id":"a1","state":"$state",""" +
-        """"modality":"$modality","created_at":"2026-09-24T04:03:19.979138Z","text":$text,"agent":"docs",""" +
+internal fun sessionJson(id: String = "s1", state: String = "live", callId: String = "", modality: String = "text") =
+    """{"id":"$id","call_id":"$callId","call_type":"agent","user_id":"u1","agent_id":"a1","state":"$state",""" +
+        """"modality":"$modality","created_at":"2026-09-24T04:03:19.979138Z","text":${callId.isEmpty()},"agent":"docs",""" +
         """"title":"Billing","project_id":"Health","custom":{"tenant":"acme"},"closed_at":"2026-09-24T04:03:20Z",""" +
         """"some_field_added_later":1}"""
 
-private fun responseJson(id: String, status: String = "completed") =
+internal fun responseJson(id: String, status: String = "completed") =
     """{"id":"$id","session_id":"s1","said":"hi","status":"$status","created_at":"2026-09-24T04:03:19Z"}"""
 
 private fun itemJson(response: String, ordinal: Int, kind: String = "answer") =
     """{"response_id":"$response","ordinal":$ordinal,"kind":"$kind","text":"t$ordinal","at":"2026-09-24T04:03:19.5Z"}"""
 
-private fun pageJson(items: List<String>, next: String? = null) =
+internal fun pageJson(items: List<String>, next: String? = null) =
     """{"items":${items.joinToString(",", "[", "]")},"has_more":${next != null}""" +
         (if (next != null) ""","next_cursor":"$next"}""" else "}")
 
@@ -80,6 +80,23 @@ class VisionAgentsTest {
     }
 
     @Test
+    fun `a key beside a customer id is Stream's, and the router is still reached by customer id`() = runTest {
+        val local = VisionAgents(url = router.url, customerId = "acme", apiKey = "stream-key")
+        local.setUser(User("jlahey"), "token-for-jlahey")
+        router.answer = { Reply(200, EMPTY_PAGE) }
+
+        local.sessions.query()
+
+        val arrived = router.requests.single()
+        assertEquals("acme", arrived.header("X-Customer-Id"))
+        assertEquals("jlahey", arrived.header("X-Stream-User-Id"))
+        assertNull(arrived.query["api_key"])
+        assertNull(arrived.header("Authorization"))
+        assertEquals("stream-key", local.backend.streamCredentials().apiKey)
+        local.close()
+    }
+
+    @Test
     fun `behind a verifying deployment the token is the credential, asked for once`() = runTest {
         val asked = AtomicInteger()
         val keyed = VisionAgents(url = router.url, apiKey = "key-1")
@@ -90,7 +107,8 @@ class VisionAgentsTest {
         keyed.sessions.query()
 
         assertEquals(listOf("Bearer token-1", "Bearer token-1"), router.requests.map { it.header("Authorization") })
-        assertEquals("key-1", router.requests.first().header("X-Api-Key"))
+        assertEquals(listOf("key-1"), router.requests.first().query["api_key"])
+        assertNull(router.requests.first().header("X-Api-Key"))
         assertEquals("jwt", router.requests.first().header("Stream-Auth-Type"))
         assertNull(router.requests.first().header("X-Customer-Id"))
         keyed.close()
@@ -127,24 +145,25 @@ class VisionAgentsTest {
 
         val session = agents.agent("docs").sessions.create(
             SessionOptions(
-                id = "0199a5c4-7f1e-7c3a-9d2b-5e8f0a1b2c3d",
+                id = "order-1042",
                 title = "Billing",
                 projectId = "Health",
                 incognito = false,
                 custom = buildJsonObject { put("tenant", "acme") },
                 modelOverwrites = ModelOverwrites(thinking = ModelOverwrites.Thinking.High, temperature = 0.0),
+                greeting = Greeting("Hello.", Greeting.Mode.Variation),
             ),
         )
 
         val body = Json.parseToJsonElement(router.requests.single().body).jsonObject
         assertEquals(
-            setOf("id", "text", "agent", "title", "project_id", "incognito", "custom", "model_overwrites"),
+            setOf("id", "agent", "title", "project_id", "incognito", "custom", "model_overwrites", "greeting"),
             body.keys,
         )
-        assertEquals(JsonPrimitive("0199a5c4-7f1e-7c3a-9d2b-5e8f0a1b2c3d"), body["id"])
-        assertEquals(JsonPrimitive(true), body["text"])
+        assertEquals(JsonPrimitive("order-1042"), body["id"])
         assertEquals(JsonPrimitive("docs"), body["agent"])
         assertEquals("""{"temperature":0.0,"thinking":"high"}""", body["model_overwrites"].toString())
+        assertEquals("""{"text":"Hello.","mode":"variation"}""", body["greeting"].toString())
         assertEquals("s1", session.id)
         assertEquals("Billing", session.title)
         assertEquals("Health", session.projectId)
@@ -163,13 +182,30 @@ class VisionAgentsTest {
     }
 
     @Test
-    fun `a voice session names its call and is not a text one`() = runTest {
-        router.answer = { Reply(201, sessionJson(text = false)) }
+    fun `a voice session asks to start voice and is on its own call`() = runTest {
+        router.answer = { Reply(201, sessionJson(callId = "s1")) }
 
-        agents.sessions.create(SessionOptions(configId = "cfg-1"), callId = "call-1")
+        val session = agents.sessions.create(SessionOptions(configId = "cfg-1", startVoice = true))
 
         val body = Json.parseToJsonElement(router.requests.single().body).jsonObject
-        assertEquals(setOf("call_id", "config_id"), body.keys)
+        assertEquals(setOf("config_id", "start_voice"), body.keys)
+        assertEquals(JsonPrimitive(true), body["start_voice"])
+        assertEquals("s1", session.callId)
+    }
+
+    @Test
+    fun `starting and stopping voice moves a session onto its call and off it`() = runTest {
+        router.answer = { Reply(200, sessionJson(callId = if (it.method == "POST") "s1" else "")) }
+
+        val started = agents.sessions.startVoice("s1")
+        val stopped = agents.sessions.stopVoice("s1")
+
+        assertEquals(
+            listOf("POST /v1/agents/sessions/s1/voice", "DELETE /v1/agents/sessions/s1/voice"),
+            router.requests.map { "${it.method} ${it.path}" },
+        )
+        assertEquals("s1", started.callId)
+        assertEquals("", stopped.callId)
     }
 
     @Test
@@ -461,6 +497,33 @@ class VisionAgentsTest {
 
         assertEquals("""{"id":"guest-1"}""", router.requests.single().body)
         assertEquals("new", guest.token)
+    }
+
+    @Test
+    fun `a device with only the app key asks for a guest anonymously`() = runTest {
+        router.answer = { Reply(201, """{"id":"guest-1","token":"t"}""") }
+
+        val guest = VisionAgents(url = router.url, apiKey = "key").use { it.guestUser() }
+
+        assertEquals("guest-1", guest.id)
+        val arrived = router.requests.single()
+        assertEquals("anonymous", arrived.header("Stream-Auth-Type"))
+        assertNull(arrived.header("Authorization"))
+        assertEquals(listOf("key"), arrived.query["api_key"])
+    }
+
+    @Test
+    fun `a router admitting no anonymous callers says to mint the guest on the backend`() = runTest {
+        router.answer = {
+            Reply(401, """{"code":2,"message":"anonymous access is not available on the acceleration api","StatusCode":401}""")
+        }
+
+        val refused = VisionAgents(url = router.url, apiKey = "key").use {
+            assertFailsWith<AgentsException.Configuration> { it.guestUser() }
+        }
+
+        assertTrue(refused.message.orEmpty().contains("setUser"))
+        assertEquals(1, router.requests.size)
     }
 
     @Test

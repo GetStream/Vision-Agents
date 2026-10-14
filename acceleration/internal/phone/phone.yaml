@@ -29,6 +29,8 @@ vendors:
     capabilities: [voice, sms, mms, fax, emergency, hd_voice, international_sms, local_calling]
     credentials: [TELNYX_API_KEY]
     trunk_auth: password
+    # The TeXML application asks /v1/phone/hooks/telnyx where each call goes.
+    asks_for_trunk: true
 
   - vendor: sinch
     implemented: true

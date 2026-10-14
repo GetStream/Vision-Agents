@@ -306,6 +306,9 @@ func (c *converse) observeRevision(transcript stt.Transcript, state floor, super
 	}
 
 	if saying != "" {
+		c.mu.Lock()
+		c.forgetQueuedGrownLocked(transcript.Participant, saying)
+		c.mu.Unlock()
 		c.emitter.Send(Hearing{
 			Participant: transcript.Participant,
 			Text:        saying,
@@ -1105,6 +1108,22 @@ func (c *converse) forgetQueuedRevisedByLocked(ready candidate) {
 	}
 	c.logger.Debug("dropping a queued turn the caller has since said again in full",
 		"candidate", held.candidate.ID, "text", held.candidate.Text, "answered", ready.Text)
+	c.queued = nil
+}
+
+// forgetQueuedGrownLocked drops the queued turn once the caller's words still in progress have
+// grown past it. A caller who paused mid-sentence while the agent talked had the first part
+// queued; the rest goes to the controller with it once it settles. Answering the queued part
+// when the agent stops answers half a sentence, and in Voicebench that half was most of the
+// agent's cut-ins on a caller's long turn. Words that only start the same way are a new turn
+// and leave it queued. The caller holds the lock.
+func (c *converse) forgetQueuedGrownLocked(participant stt.Participant, saying string) {
+	held := c.queued
+	if held == nil || held.candidate.Participant.ID != participant.ID || !growsTranscript(held.candidate.Text, saying) {
+		return
+	}
+	c.logger.Debug("dropping a queued turn the caller is still adding to",
+		"candidate", held.candidate.ID, "text", held.candidate.Text, "saying", saying)
 	c.queued = nil
 }
 

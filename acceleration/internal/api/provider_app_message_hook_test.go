@@ -42,12 +42,15 @@ type messageHookHarness struct {
 	logged      *lockedLog
 	// apiKey and secret are the key of the test customer's own Stream app.
 	apiKey, secret string
+	// deployment starts the router in deployment mode, where every customer shares the
+	// deployment's app, rather than in app mode.
+	deployment bool
 }
 
 // start builds the router: connectors on gives it Slack's app API and the operator's app, as
 // cmd/router does only with connectors enabled; off leaves both out, as cmd/router does.
 func (s *messageHookHarness) start(connectorsOn bool, publicURL string) {
-	s.appMode = true
+	s.appMode = !s.deployment
 	s.environment = map[string]string{
 		"SLACK_BOT_MCP_APP_ID":         "A" + strings.ToUpper(strings.ReplaceAll(s.utils.uuid(), "-", ""))[20:],
 		"SLACK_BOT_MCP_CLIENT_ID":      "operator-client-" + s.utils.uuid(),
@@ -78,12 +81,12 @@ func (s *messageHookHarness) start(connectorsOn bool, publicURL string) {
 	s.staff = &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {suiteOpsKey}}, kind: noCredential}
 }
 
-// SetupTest makes a customer whose id is its Stream app's, and registers that app's key.
+// SetupTest makes a customer whose id is its Stream app's, with a server token for that app.
 func (s *messageHookHarness) SetupTest() {
 	s.useApp(s.numberedApp(streamAppID()))
 	s.apiKey, s.secret = "own-key-"+s.utils.uuid(), "own-secret-"+s.utils.uuid()
 	s.answering(false)
-	s.registered(0, key(s.apiKey, s.secret))
+	s.forwarded(s.apiKey)
 	if s.slack != nil {
 		s.slack.Use(fakeprovider.SlackChannel)
 	}
@@ -385,6 +388,8 @@ func TestProviderAppMessageHookOffSuite(t *testing.T) {
 }
 
 func (s *ProviderAppMessageHookOffSuite) SetupSuite() {
+	// Without the key connectors seal under too, as cmd/router builds it with connectors off.
+	s.connectorsOff = true
 	s.start(false, providerAppPublicURL)
 }
 

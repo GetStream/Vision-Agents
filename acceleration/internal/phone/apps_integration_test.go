@@ -5,7 +5,6 @@ package phone
 import (
 	"context"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -54,7 +54,7 @@ func (s *AppsSuite) SetupSuite() {
 
 func (s *AppsSuite) SetupTest() {
 	s.deployment, s.own = chattest.NewServer(s.T()), chattest.NewServer(s.T())
-	s.apps = &testApps{deployment: s.deployment, own: map[string]*chattest.Server{}, pins: map[string]int64{}}
+	s.apps = &testApps{deployment: s.deployment, own: map[string]*chattest.Server{}, pins: map[string]int64{}, blocked: map[string]bool{}}
 	s.customer = "customer-" + uuid.NewString()
 	s.e164 = "+1512" + uuid.NewString()[:7]
 
@@ -172,13 +172,14 @@ func (s *AppsSuite) TestACampaignCallAndItsSessionShareAnAppAndACall() {
 
 	placed, err := s.service.Call(s.ctx, CallRequest{
 		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",
-		CallID: "campaign-contact-1", CallType: "agent",
 	})
 	s.Require().NoError(err)
 
 	s.Equal(int64(4242), placed.StreamApp)
+	s.Equal(placed.SessionID, placed.CallID, "the answered leg lands in the session's own call")
+	s.Equal("agent", placed.CallType)
 	s.Len(s.own.Trunks(), 1)
-	pin, found, err := s.store.CallPin(s.ctx, s.customer, "agent", "campaign-contact-1")
+	pin, found, err := s.store.CallPin(s.ctx, s.customer, "agent", placed.SessionID)
 	s.Require().NoError(err)
 	s.True(found)
 	s.Equal(int64(4242), pin, "the session joining it finds the app the call's lines are in")
@@ -244,6 +245,13 @@ type testApps struct {
 	deployment *chattest.Server
 	own        map[string]*chattest.Server
 	pins       map[string]int64
+	blocked    map[string]bool
+}
+
+func (a *testApps) block(customer string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.blocked[customer] = true
 }
 
 func (a *testApps) give(customer string, pin int64, server *chattest.Server) {
@@ -255,6 +263,9 @@ func (a *testApps) give(customer string, pin int64, server *chattest.Server) {
 func (a *testApps) For(_ context.Context, customer string) (*Stream, int64, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.blocked[customer] {
+		return nil, 0, streamapp.ErrStreamAppDisconnected
+	}
 	if server, ok := a.own[customer]; ok {
 		return NewStreamFromClient(server.Client), a.pins[customer], nil
 	}
@@ -278,6 +289,14 @@ func (a *testApps) ForAppRemoving(_ context.Context, customer string, app int64)
 		return NewStreamFromClient(server.Client), nil
 	}
 	return NewStreamFromClient(a.deployment.Client), nil
+}
+
+func (s *AppsSuite) TestAnAppStreamBlockedCannotBuyANumber() {
+	s.apps.block(s.customer)
+
+	_, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: "+15550002222", Owner: routing.Owner{CustomerID: s.customer}})
+
+	s.ErrorIs(err, streamapp.ErrStreamAppDisconnected)
 }
 
 func (s *AppsSuite) TestTheVendorIsGivenATrunkAddressStreamCanFindByTheCallingNumber() {
@@ -309,21 +328,79 @@ func (s *AppsSuite) TestAttachingGivesTheVendorATrunkAddressStreamCanFindByTheNu
 	s.Equal(want, attached.Bridge.URI, "the api shows the address the vendor was given")
 }
 
-func (s *AppsSuite) TestAnAttachedNumbersCallIsNamedWithoutThePlus() {
+func (s *AppsSuite) TestAnAttachedNumbersCallersEachLandInACallOfTheirOwn() {
 	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
 	s.Require().NoError(err)
 
-	want := "phone-" + strings.TrimPrefix(s.e164, "+")
-	s.Equal(want, attached.CallID, "stream allows only a-z, 0-9, _ and - in a call id")
-	s.Equal(want, s.number().StreamCallID)
+	rule := s.deployment.Rule(attached.RouteID)
+	s.Require().NotNil(rule)
+	direct := rule["direct_routing_configs"].(map[string]any)
+	s.Equal("{{uuid}}", direct["call_id"], "each caller's call is named for the session answering them")
+	s.Equal("agent", direct["call_type"])
+	custom := rule["call_configs"].(map[string]any)["custom_data"].(map[string]any)
+	s.Equal(s.e164, custom[NumberKey], "the call says which number it rang")
 }
 
-func (s *AppsSuite) TestAnAttachedNumbersCallKeepsTheIdItWasGiven() {
-	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164, CallID: "front-desk"})
+func (s *AppsSuite) TestAPlacedCallLandsInTheCallOfTheSessionItWasPlacedFor() {
+	id := "0b9f2a52-5c1e-4d7a-9a3e-0f6b8f1c2d3e"
+
+	placed, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111", SessionID: id,
+	})
 	s.Require().NoError(err)
 
-	s.Equal("front-desk", attached.CallID)
-	s.Equal("front-desk", s.number().StreamCallID)
+	s.Equal(id, placed.SessionID)
+	s.Equal(id, placed.CallID)
+}
+
+func (s *AppsSuite) TestAnAttachedNumbersTrunkCredentialsAreKeptForItsCalls() {
+	sealer, err := auth.NewSealer("apps suite")
+	s.Require().NoError(err)
+	s.service.sealer = sealer
+
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	bridge, err := s.service.InboundBridge(s.ctx, "twilio", s.e164)
+	s.Require().NoError(err)
+	s.Equal("sip:"+s.e164+"@sip.example.test", bridge.URI, "the address names the number")
+	s.Equal(attached.TrunkID, bridge.Username)
+	s.Equal("secret", bridge.Password, "the password Stream returned at attach")
+	s.NotContains(string(s.number().BridgePasswordSealed), "secret", "the password is stored sealed")
+}
+
+func (s *AppsSuite) TestWithoutASealerANumberStillAttachesButKeepsNoCredentials() {
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	_, err = s.service.InboundBridge(s.ctx, "twilio", s.e164)
+
+	s.ErrorIs(err, ErrNoSealer)
+	s.Empty(s.number().BridgeURI)
+}
+
+// Telnyx asks per call where to send a caller, and the answer is the stored trunk, so a
+// Telnyx number attached with nowhere to keep the trunk's password could never be answered.
+func (s *AppsSuite) TestWithoutASealerATelnyxNumberIsNotAttached() {
+	telnyx := &stub{vendor: "telnyx"}
+	registry := NewRegistry(s.config())
+	registry.Register(telnyx.vendor, func() (Provider, error) { return telnyx, nil })
+	for _, name := range s.credentials(telnyx.vendor) {
+		s.T().Setenv(name, "set")
+	}
+	service, err := NewService(ServiceOptions{Registry: registry, Store: s.store, Apps: s.apps})
+	s.Require().NoError(err)
+	e164 := "+1512" + uuid.NewString()[:7]
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
+		E164: e164, Vendor: telnyx.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
+	}))
+
+	_, err = service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: e164})
+
+	s.ErrorIs(err, ErrNoSealer)
+	s.ErrorContains(err, "ROUTER_AUTH_KEK", "the error names what to set")
+	s.Empty(s.deployment.Trunks(), "nothing is made in Stream")
+	s.Empty(telnyx.inbound.E164, "telnyx is not told to send calls anywhere")
 }
 
 func (s *AppsSuite) TestReattachingANumberMovesItToTheNewCallName() {
@@ -334,6 +411,5 @@ func (s *AppsSuite) TestReattachingANumberMovesItToTheNewCallName() {
 
 	s.NotEqual(first.TrunkID, second.TrunkID)
 	s.Equal([]string{second.TrunkID}, s.deployment.Trunks(), "the first trunk is removed")
-	s.Equal("phone-"+strings.TrimPrefix(s.e164, "+"), s.number().StreamCallID)
 	s.Equal("sip:"+s.e164+"@sip.example.test", s.vendor.inbound.Bridge.URI)
 }

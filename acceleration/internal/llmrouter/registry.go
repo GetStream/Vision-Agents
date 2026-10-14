@@ -1,13 +1,17 @@
 package llmrouter
 
 import (
+	"github.com/openai/openai-go/v3/option"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/anthropic"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/moondream"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/atlascloud"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/baidu"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/baseten"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/cerebras"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/cloudflare"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/coreweave"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/custom"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/deepinfra"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/deepseek"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/digitalocean"
@@ -18,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/inceptron"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/ionet"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/meta"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/nextbit"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/novita"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openai"
@@ -74,8 +79,28 @@ func DefaultRegistry() *Registry {
 		return Started(anthropic.New(anthropic.Options{Model: spec.Model, Logger: spec.Logger}))
 	})
 
+	registry.Register(moondream.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(moondream.New(moondream.Options{Model: spec.Model, Logger: spec.Logger}))
+	})
+
 	registry.Register(xai.ProviderName, func(spec routing.Spec) (Provider, error) {
 		return Started(xai.New(xai.Options{Model: spec.Model, ReasoningEffort: spec.ReasoningEffort, Logger: spec.Logger}))
+	})
+
+	registry.Register(custom.ProviderName, func(spec routing.Spec) (Provider, error) {
+		endpoint := spec.Endpoint
+		var client option.HTTPClient
+		if endpoint.Client != nil {
+			client = endpoint.Client
+		}
+		return Started(custom.New(custom.Options{
+			Name:       spec.Model,
+			Model:      endpoint.Model,
+			BaseURL:    endpoint.BaseURL,
+			APIKey:     endpoint.APIKey,
+			HTTPClient: client,
+			Logger:     spec.Logger,
+		}))
 	})
 
 	// The hosts of open-weight models. They serve the same weights over the same
@@ -118,4 +143,13 @@ func DefaultRegistry() *Registry {
 		})
 	}
 	return registry
+}
+
+// RegisterMock adds the load-test model, which reaches no vendor and spends no tokens. A
+// deployment that has not asked for mocks never calls this, so mock/mock-llm is a target
+// nothing can be built for.
+func RegisterMock(registry *Registry) {
+	registry.Register(mock.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(mock.New(mock.Options{Model: spec.Model, Logger: spec.Logger}))
+	})
 }

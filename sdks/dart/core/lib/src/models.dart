@@ -319,7 +319,7 @@ final class SessionOptions {
     this.id,
     this.agent,
     this.configId,
-    this.instructions,
+    this.startVoice = false,
     this.greeting,
     this.llm,
     this.stt,
@@ -330,14 +330,14 @@ final class SessionOptions {
     this.projectId,
     this.custom,
     this.incognito,
-    this.conversationId,
     this.modelOverwrites,
     this.tools = const [],
     this.tags = const {},
   });
 
-  /// A UUID to hold the session by, for a caller that wants to know it before the session
-  /// exists. One already taken is refused with a 409. Left out, the router generates one.
+  /// An id to hold the session by, for a caller that wants to know it before the session
+  /// exists: up to 64 letters, digits, `-` and `_`. One already taken is refused with a 409.
+  /// Left out, the router generates one.
   final String? id;
 
   /// The agent config to start from, by the name it was stored under.
@@ -346,11 +346,12 @@ final class SessionOptions {
   /// The agent config to start from, by id. Naming both this and [agent] is refused.
   final String? configId;
 
-  /// The system prompt.
-  final String? instructions;
+  /// Has the agent join the session's own call, `agent:<session id>`, as soon as it opens.
+  /// False holds the conversation in writing until [AgentSession.startVoice] starts it.
+  final bool startVoice;
 
-  /// Said on joining without going through the model.
-  final String? greeting;
+  /// What the agent opens the call with.
+  final Greeting? greeting;
   final String? llm;
   final String? stt;
   final String? tts;
@@ -371,10 +372,6 @@ final class SessionOptions {
   /// Hold the conversation and record nothing about it. It cannot be found, rewound or
   /// forked afterwards, which is the point.
   final bool? incognito;
-
-  /// A Stream Chat channel, as `type:id`, to resume. Leave it out on a first open: the
-  /// channel is the backend's to name, and a resume passes the one the first open was given.
-  final String? conversationId;
   final ModelOverwrites? modelOverwrites;
 
   /// Functions of yours the agent may call, answered on this device.
@@ -382,6 +379,25 @@ final class SessionOptions {
 
   /// Cost labels, carried onto every request the session makes.
   final Map<String, String> tags;
+}
+
+/// What the agent says as it joins a call, before anyone speaks.
+final class Greeting {
+  const Greeting(this.text, {this.mode});
+
+  /// Empty means the agent waits to be spoken to.
+  final String text;
+
+  /// Null says it word for word, as [GreetingMode.exact] does.
+  final GreetingMode? mode;
+}
+
+enum GreetingMode {
+  /// Word for word.
+  exact,
+
+  /// The model rewords it on every call, so callers do not hear the same opening.
+  variation,
 }
 
 /// What to change about a conversation while continuing it as a new one.
@@ -396,11 +412,9 @@ final class ForkOptions {
     this.description,
     this.projectId,
     this.custom,
-    this.instructions,
     this.incognito,
     this.withoutHistory = false,
     this.modelOverwrites,
-    this.callId,
   }) : assert(
          !(withoutHistory && responseId != null),
          'a fork at a response carries the history up to it',
@@ -418,16 +432,12 @@ final class ForkOptions {
   final String? description;
   final String? projectId;
   final Map<String, Object?>? custom;
-  final String? instructions;
   final bool? incognito;
 
   /// Start the fork with none of the parent's history. Cannot be combined with [responseId],
   /// which is a point in that history.
   final bool withoutHistory;
   final ModelOverwrites? modelOverwrites;
-
-  /// The call the fork joins, which a voice session needs and a text session refuses.
-  final String? callId;
 }
 
 /// Which conversations to list.

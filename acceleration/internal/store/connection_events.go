@@ -101,6 +101,40 @@ func (s *Store) ConnectionEventSubscriptionByToken(ctx context.Context, token st
 	return sub, nil
 }
 
+// ConnectionEventSubscriptionOf is the subscription one binding of one config has for an event
+// (its Key) on a connection.
+func (s *Store) ConnectionEventSubscriptionOf(ctx context.Context, connectionID, configID, binding, key string) (ConnectionEventSubscription, error) {
+	var sub ConnectionEventSubscription
+	err := s.db.NewSelect().Model(&sub).
+		Where("connection_id = ?", connectionID).
+		Where("config_id = ?", configID).
+		Where("binding = ?", binding).
+		Where("key = ?", key).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ConnectionEventSubscription{}, ErrNoConnectionEventSubscription
+	}
+	if err != nil {
+		return ConnectionEventSubscription{}, stack.Wrap(fmt.Errorf("store: connection event subscription: %w", err))
+	}
+	return sub, nil
+}
+
+// DueOtherConnectionEventSubscriptions makes due at now every subscription of a connection for
+// an event (its Key) but the one with id.
+func (s *Store) DueOtherConnectionEventSubscriptions(ctx context.Context, connectionID, key, id string, now time.Time) error {
+	_, err := s.db.NewUpdate().Model((*ConnectionEventSubscription)(nil)).
+		Set("next_attempt_at = ?", now.UTC()).
+		Where("connection_id = ?", connectionID).
+		Where("key = ?", key).
+		Where("id != ?", id).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: due connection event subscriptions: %w", err))
+	}
+	return nil
+}
+
 // DueConnectionEventSubscription makes one subscription due at now, so the next worker to look
 // asks the server for it again, or drops it.
 func (s *Store) DueConnectionEventSubscription(ctx context.Context, id string, now time.Time) error {

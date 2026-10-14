@@ -4,6 +4,7 @@ package daytona
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -91,22 +92,7 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 	case <-ctx.Done():
 		return sandbox.Result{}, ctx.Err()
 	}
-	if s.closed.Load() {
-		return sandbox.Result{}, errors.New("daytona: sandbox is closed")
-	}
-	if s.box == nil {
-		create, end := context.WithTimeout(ctx, s.timeout)
-		box, err := s.client.Create(create, s.params(), options.WithWaitForStart(false))
-		end()
-		if err != nil {
-			return sandbox.Result{}, err
-		}
-		s.box = box
-	}
-	ready, end := context.WithTimeout(ctx, s.timeout)
-	err := s.box.WaitForStart(ready, s.timeout)
-	end()
-	if err != nil {
+	if err := s.started(ctx); err != nil {
 		return sandbox.Result{}, err
 	}
 	run, cancel := context.WithTimeout(ctx, s.runTimeout+5*time.Second)
@@ -129,6 +115,54 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 		result.Files = append(result.Files, sandbox.File{Name: path.Base(wanted), MIME: mediaType(wanted, data), Data: data})
 	}
 	return result, nil
+}
+
+// Write puts a file into the sandbox, making the directories it sits in.
+func (s *Sandbox) Write(ctx context.Context, name string, data []byte) error {
+	select {
+	case s.gate <- struct{}{}:
+		defer func() { <-s.gate }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := s.started(ctx); err != nil {
+		return err
+	}
+	if dir := path.Dir(name); dir != "." {
+		made, err := s.box.Process.ExecuteCommand(ctx, "mkdir -p "+quoted(dir))
+		if err != nil {
+			return stack.Wrap(err)
+		}
+		if made.ExitCode != 0 {
+			return stack.Wrap(fmt.Errorf("daytona: mkdir %s: %s", dir, made.Result))
+		}
+	}
+	return stack.Wrap(s.box.FileSystem.UploadFile(ctx, data, name))
+}
+
+// started creates the sandbox the first time it is needed and waits for it to be running.
+// The caller holds the gate.
+func (s *Sandbox) started(ctx context.Context) error {
+	if s.closed.Load() {
+		return errors.New("daytona: sandbox is closed")
+	}
+	if s.box == nil {
+		create, end := context.WithTimeout(ctx, s.timeout)
+		box, err := s.client.Create(create, s.params(), options.WithWaitForStart(false))
+		end()
+		if err != nil {
+			return err
+		}
+		s.box = box
+	}
+	ready, end := context.WithTimeout(ctx, s.timeout)
+	defer end()
+	return s.box.WaitForStart(ready, s.timeout)
+}
+
+// quoted is a path as one shell word.
+func quoted(word string) string {
+	return "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
 }
 
 // params are what the sandbox is created from: Daytona's own Python sandbox, or an image
