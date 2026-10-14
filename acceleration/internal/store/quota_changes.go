@@ -41,18 +41,20 @@ func (s *Store) ChangeAppQuota(ctx context.Context, customerID, changedBy, reaso
 		change.NewTokensPerUserPerDay = quota.TokensPerUserPerDay
 	}
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		// The row is locked, so two changes of one app are recorded one after the other and
-		// the second one's previous numbers are the first one's new ones.
+		// The app's changes take turns, so the second one's previous numbers are the first
+		// one's new ones. A row cannot be locked for this: an app's first change has none yet.
+		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", "app_quota_changes:"+customerID); err != nil {
+			return err
+		}
 		var policy Policy
 		err := tx.NewSelect().Model(&policy).
 			Where("scope = ?", ScopeApp).
 			Where("scope_id = ?", customerID).
-			For("UPDATE").
 			Scan(ctx)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		// Taken once the lock is held, so the order of the times is the order of the changes.
+		// Taken once the turn is ours, so the order of the times is the order of the changes.
 		change.ChangedAt = time.Now().UTC().Truncate(time.Microsecond)
 		if previous := policy.Document.Quota; previous != nil {
 			change.PreviousMessagesPerUserPerDay = previous.MessagesPerUserPerDay
