@@ -1090,7 +1090,7 @@ func withCORS(mode auth.Mode, next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", corsRequestHeaders)
 			w.Header().Set("Access-Control-Allow-Methods", corsMethods)
-			w.Header().Set("Access-Control-Expose-Headers", "Server-Timing, "+RequestIDHeader)
+			w.Header().Set("Access-Control-Expose-Headers", "Server-Timing, "+RequestIDHeader+", X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After")
 			w.Header().Set("Access-Control-Max-Age", "600")
 		}
 		// A preflight asks whether the real request would be allowed and carries nothing
