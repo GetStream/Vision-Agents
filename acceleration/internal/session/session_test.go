@@ -1594,6 +1594,27 @@ func (s *SessionSuite) TestShutdownEndsEveryCallRatherThanDroppingIt() {
 	}
 }
 
+func (s *SessionSuite) TestASessionIsCountedUntilItHasFinishedClosing() {
+	// A draining router exits once nothing is counted, and its shutdown closes the recorders
+	// a closing session is still writing its ending to.
+	s.manages()
+	created := s.joins(Spec{})
+	edge := s.edges[len(s.edges)-1]
+	edge.holdSpeech(true)
+
+	closed := make(chan error, 1)
+	go func() {
+		_, err := s.manager.Close(created.ID(), OwnerOf(created.Spec()))
+		closed <- err
+	}()
+	s.eventually(func() bool { return !s.manager.Running(created.ID()) }, "the session was never taken off")
+	s.Equal(1, s.manager.Len(), "a session still closing was counted as gone")
+
+	edge.holdSpeech(false)
+	s.Require().NoError(<-closed)
+	s.Equal(0, s.manager.Len())
+}
+
 func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
 	s.manages()
 	s.model.sees = true

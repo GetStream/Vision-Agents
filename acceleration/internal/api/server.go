@@ -21,6 +21,7 @@ import (
 	"net/netip"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -369,6 +370,11 @@ type Server struct {
 	upgrader   websocket.Upgrader
 	popularity *popularity
 	logger     *slog.Logger
+
+	// draining is closed when the process stops taking work, which sends its dispatch
+	// workers to another one.
+	draining  chan struct{}
+	drainOnce sync.Once
 }
 
 // Option adjusts the options a server is built from. It exists for the settings a
@@ -497,6 +503,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		opsKey:       options.OpsKey,
 		popularity:   newPopularity(options.Store, logger),
 		logger:       logger,
+		draining:     make(chan struct{}),
 	}
 	if options.Store != nil && options.ConnectorSecrets != nil {
 		credentials, err := pgsealed.New(options.Store, options.ConnectorSecrets)
@@ -529,6 +536,13 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		server.forwarder = node.NewForwarder(logger)
 	}
 	return server, nil
+}
+
+// Drain sends every dispatch worker connected here to reconnect, which lands it on whichever
+// process is taking work now. A worker told the socket is going away reconnects; one told it
+// closed normally stops waiting for work at all.
+func (s *Server) Drain() {
+	s.drainOnce.Do(func() { close(s.draining) })
 }
 
 // methodNotAllowed is the answer to a method a route does not serve.

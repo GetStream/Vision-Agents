@@ -166,6 +166,11 @@ type Manager struct {
 	mu       sync.Mutex
 	sessions map[string]*Session
 	closed   bool
+	// closing counts the sessions taken off the map whose Close has not returned. They are
+	// still writing how they ended, so a draining router waits on them and Shutdown keeps
+	// the recorders open for them (ended).
+	closing int
+	ended   sync.WaitGroup
 }
 
 // NewManager validates the options and returns a Manager. It starts nothing.
@@ -1173,7 +1178,18 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	}
 
 	m.mu.Lock()
+	_, held := m.sessions[id]
 	delete(m.sessions, id)
+	if held {
+		m.closing++
+		m.ended.Add(1)
+		defer func() {
+			m.mu.Lock()
+			m.closing--
+			m.mu.Unlock()
+			m.ended.Done()
+		}()
+	}
 	m.mu.Unlock()
 	m.release(id)
 
@@ -1206,6 +1222,15 @@ func (m *Manager) Running(id string) bool {
 
 	_, running := m.sessions[id]
 	return running
+}
+
+// Len is how many sessions this process is running, which is what a draining router waits
+// on before it ends the rest.
+func (m *Manager) Len() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return len(m.sessions) + m.closing
 }
 
 // Delete stops a session if it is running and deletes it: its row, its turns, and what it
@@ -1269,6 +1294,7 @@ func (m *Manager) Shutdown() error {
 			failures = append(failures, err)
 		}
 	}
+	m.ended.Wait()
 
 	// The recorders go last so the endings those closes queued are written rather than
 	// lost on the way out. The reviews go with it: a summary is worth having, but not

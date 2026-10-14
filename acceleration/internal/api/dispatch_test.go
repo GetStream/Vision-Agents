@@ -301,6 +301,19 @@ func (s *DispatchSuite) TestAHostedToolCallIsAnsweredOverTheSocket() {
 	s.Equal("targetSdkVersion 35", got.output)
 }
 
+func (s *DispatchSuite) TestADrainingRouterSendsItsWorkersToReconnectElsewhere() {
+	other, router := s.otherRouter(dispatch.NewPool())
+	worker := s.serverClient.on(other).opens("/v1/dispatch")
+	s.Equal("ready", s.next(worker)["type"])
+
+	router.Drain()
+
+	s.Require().NoError(worker.SetReadDeadline(time.Now().Add(settleFor)))
+	_, _, err := worker.ReadMessage()
+	s.True(websocket.IsCloseError(err, websocket.CloseGoingAway),
+		"a worker told anything but going away stops waiting rather than reconnecting: %v", err)
+}
+
 // worker opens the dispatch socket as a backend and waits until it is in the rotation, so a
 // test that assigns a call straight afterwards does not race the registration.
 func (s *DispatchSuite) worker() *websocket.Conn {
