@@ -563,10 +563,16 @@ class TestAgent < LocalRouterTest
   end
 
   def test_sync_stops_reading_pages_when_a_cursor_repeats
-    serve_connections(nil, pages: {
-                        nil => { "items" => [{ "id" => "conn_a", "label" => "staging" }], "next_cursor" => "p2" },
-                        "p2" => { "items" => [{ "id" => "conn_b", "label" => "prod" }], "next_cursor" => "p2" }
-                      })
+    pages = {
+      nil => { "items" => [{ "id" => "conn_a", "label" => "staging" }], "next_cursor" => "p2" },
+      "p2" => { "items" => [{ "id" => "conn_b", "label" => "prod" }], "next_cursor" => "p2" }
+    }
+    call_count = 0
+    @router.on(:get, "/v1/agents/connections") do |request|
+      call_count += 1
+      next [400, LocalRouter.failure("loop_detected", "loop_detected", "too many list calls")] if call_count > 5
+      pages.fetch(request.query["cursor"])
+    end
 
     request = sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
 

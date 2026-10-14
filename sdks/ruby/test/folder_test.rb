@@ -256,6 +256,9 @@ class TestFolder < Minitest::Test
       "connectors:\n  - connector: linear\n" => "a connector needs a name",
       "connectors:\n  - name: ''\n" => "a connector needs a name",
       "connectors: linear\n" => "connectors must be a list",
+      "connectors: {}\n" => "connectors must be a list",
+      "connectors: {a: b}\n" => "connectors must be a list",
+      "connectors:\n  - name: x\n    tools: {}\n" => 'connector "x": tools should be a list',
       "connectors:\n  - name: linear\n    tools: []\n" =>
         'connector "linear": tools: [] grants nothing; leave tools out for every tool',
       "connectors:\n  - name: linear\n    tools: list_issues\n" => 'connector "linear": tools should be a list',
