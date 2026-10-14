@@ -73,6 +73,14 @@ func (s *ProxyQuotaSuite) TestOneUserSpendingTheirDayDoesNotSpendEveryoneElsesBe
 		"the proxy's address is everybody's, so it is not a bucket")
 }
 
+func (s *ProxyQuotaSuite) TestAGuestTheProxyNamesNobodyForIsStillCounted() {
+	// A guest has no user id, so the address is the only bucket they can be counted in.
+	router := s.router(nil)
+	s.spend(routing.Caller{IP: "127.0.0.1"})
+
+	s.Equal(http.StatusTooManyRequests, s.openSession(router, "", ""))
+}
+
 func (s *ProxyQuotaSuite) TestAnAddressTheProxyVouchesForIsStillCounted() {
 	// With the proxy's ranges configured the forwarded address is the caller's own, which
 	// is what catches a backend that mints a fresh user id per request.
@@ -103,16 +111,21 @@ func (s *ProxyQuotaSuite) spend(caller routing.Caller) {
 	s.limiter.Debit(s.T().Context(), s.app, caller, 1)
 }
 
-// openSession asks for a session as the gateway forwards a user's token, from the proxy's
-// address and, when forwardedFor is set, naming the client it forwarded for.
+// openSession asks for a session as the gateway forwards a user's token, or a guest's when
+// user is empty, from the proxy's address and, when forwardedFor is set, naming the client
+// it forwarded for.
 func (s *ProxyQuotaSuite) openSession(router *httptest.Server, user, forwardedFor string) int {
 	request, err := http.NewRequest(http.MethodPost, router.URL+"/v1/agents/sessions", strings.NewReader("{}"))
 	s.Require().NoError(err)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(auth.AppHeader, s.app)
 	request.Header.Set(auth.OrganizationHeader, "7")
-	request.Header.Set(auth.UserHeader, user)
-	request.Header.Set(auth.AuthTypeHeader, auth.AuthTypeJWT)
+	if user != "" {
+		request.Header.Set(auth.UserHeader, user)
+		request.Header.Set(auth.AuthTypeHeader, auth.AuthTypeJWT)
+	} else {
+		request.Header.Set(auth.AuthTypeHeader, auth.AuthTypeAnonymous)
+	}
 	if forwardedFor != "" {
 		request.Header.Set(ForwardedHeader, forwardedFor)
 	}
