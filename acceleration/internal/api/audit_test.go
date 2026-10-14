@@ -5,6 +5,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -40,6 +41,28 @@ func (s *AuditSuite) TestChangingAnAgentRecordsTheFieldThatMovedAndWhoMovedIt() 
 	s.Equal("llm", entry.Changes[0].Field)
 	s.Equal("llm-flow", entry.Changes[0].Before)
 	s.Equal("llm-fast", entry.Changes[0].After)
+}
+
+func (s *AuditSuite) TestANameSentPercentEncodedIsRecordedAsItIsWritten() {
+	// A browser refuses a header outside Latin-1, so a client in one encodes such a name.
+	s.Equal("Łukasz Nowak", s.actorNameOf("%C5%81ukasz%20Nowak"))
+}
+
+func (s *AuditSuite) TestANameThatIsNotAnEncodingIsRecordedAsItWasSent() {
+	s.Equal("Half 100% sure", s.actorNameOf("Half 100% sure"))
+}
+
+func (s *AuditSuite) TestANameThatDecodesToNoTextIsRecordedAsItWasSent() {
+	s.Equal("%FF%FE", s.actorNameOf("%FF%FE"))
+}
+
+func (s *AuditSuite) TestAControlCharacterInANameIsLeftOut() {
+	s.Equal("Ada Lovelace", s.actorNameOf("Ada%0A Lovelace%1B"))
+}
+
+func (s *AuditSuite) TestALongNameIsCutBetweenCharacters() {
+	// 100 characters of three bytes each: 300 bytes, cut to the 66 that fit in 200.
+	s.Equal(strings.Repeat("山", 66), s.actorNameOf(strings.Repeat("%E5%B1%B1", 100)))
 }
 
 func (s *AuditSuite) TestASaveThatChangedNothingIsNotAChange() {
@@ -201,10 +224,22 @@ func (s *AuditSuite) dashboard() *testClient {
 }
 
 func (s *AuditSuite) createConfig(body map[string]any) AgentConfig {
+	return s.createConfigAs(s.serverClient, body)
+}
+
+// createConfigAs creates an agent as the caller given, for a test about who it records.
+func (s *AuditSuite) createConfigAs(caller *testClient, body map[string]any) AgentConfig {
 	var created AgentConfig
 	s.Require().Equal(http.StatusCreated,
-		s.serverClient.do(http.MethodPost, "/v1/agents/configs", body, &created))
+		caller.do(http.MethodPost, "/v1/agents/configs", body, &created))
 	return created
+}
+
+// actorNameOf is the name the log records for a change sent with this name.
+func (s *AuditSuite) actorNameOf(sent string) string {
+	config := s.createConfigAs(s.serverClient.from("dashboard", "volt-7", sent),
+		map[string]any{"name": "support-" + s.utils.uuid()})
+	return s.latest(AuditFilter{AgentID: &config.Id}).ActorName
 }
 
 // entries are the app's changes the filter matches, newest first.

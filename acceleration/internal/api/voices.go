@@ -13,6 +13,11 @@ import (
 )
 
 // errNoVoices is what the voice paths say on a deployment that cannot hold a recording.
+// maxVoiceSampleBody is the most a recording's upload reads. It rides base64 in the body, a
+// third larger than the audio, so this holds 20 MB of audio with room for its fields, where
+// Huma's 1 MB default would refuse half a minute of WAV.
+const maxVoiceSampleBody = 28 << 20
+
 var errNoVoices = notConfigured("voices of your own are not available: this deployment has no object storage configured")
 
 // errNoLibrary is what the library path says where no provider publishes a catalogue here.
@@ -481,10 +486,12 @@ func (s *Server) registerVoices(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.deleteVoice)
 	huma.Register(api, huma.Operation{
-		OperationID: "addVoiceSample",
-		Method:      http.MethodPost,
-		Path:        "/v1/agents/voices/{id}/samples",
-		Summary:     "Add a recording to a voice",
+		OperationID:     "addVoiceSample",
+		Method:          http.MethodPost,
+		Path:            "/v1/agents/voices/{id}/samples",
+		MaxBodyBytes:    maxVoiceSampleBody,
+		BodyReadTimeout: uploadReadTimeout,
+		Summary:         "Add a recording to a voice",
 		Description: "The audio is stored in the deployment's object bucket and the voice keeps a reference " +
 			"to it, so recordings can be re-sent to a provider that is added later without asking " +
 			"the customer for them again. Adding a recording does not re-prepare the voice.\n" +
