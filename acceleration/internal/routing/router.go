@@ -185,9 +185,6 @@ type Caller struct {
 	ServerSide bool
 }
 
-// Anonymous reports whether there is nobody to count a limit against.
-func (c Caller) Anonymous() bool { return c.UserID == "" && c.IP == "" }
-
 // Request is what a caller wants served.
 type Request struct {
 	// CustomerID owns the request. It is what every statistic is keyed by.
