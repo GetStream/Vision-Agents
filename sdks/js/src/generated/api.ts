@@ -2804,6 +2804,34 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/ops/customers/{customer_id}/quota": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get an app's daily limit per end user
+         * @description What one end user of the app may spend in a UTC day. A number left out is the router's default.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly get: operations["getCustomerQuota"];
+        /**
+         * Set an app's daily limit per end user
+         * @description Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly put: operations["setCustomerQuota"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/ops/customers/{customer_id}/telephony-suspension": {
         readonly parameters: {
             readonly query?: never;
@@ -6666,17 +6694,17 @@ export type components = {
              */
             readonly per_million_output_tokens?: number;
         };
-        /** @description What one end user may spend in a UTC day, counted per user and per address. The lower of the organization's and the app's number applies, and 0 is no cap, so it is never the lower one. A backend's own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset. */
+        /** @description What one end user of the app may spend in a UTC day, counted per user and per address. Stream staff set it: in an app's policy it is read-only, so sending back what was read is fine and changing it is refused. A backend's own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset. */
         readonly Quota: {
             /**
              * Format: int64
-             * @description How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the organization's number applies, or the router's default when it has none.
+             * @description How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
              * @example 20000
              */
             readonly messages_per_user_per_day?: number;
             /**
              * Format: int64
-             * @description How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the organization's number applies, or the router's default when it has none.
+             * @description How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
              * @example 50000000
              */
             readonly tokens_per_user_per_day?: number;
@@ -14079,6 +14107,62 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getCustomerQuota: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The app. */
+                readonly customer_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The app's daily limit */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Quota"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly setCustomerQuota: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The app. */
+                readonly customer_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["Quota"];
+            };
+        };
+        readonly responses: {
+            /** @description The app's daily limit, as stored */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Quota"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
             readonly 500: components["responses"]["InternalError"];
         };
     };

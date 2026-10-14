@@ -5578,7 +5578,7 @@ type Policy struct {
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
 
-	// Quota What one end user may spend in a UTC day, counted per user and per address. The lower of the organization's and the app's number applies, and 0 is no cap, so it is never the lower one. A backend's own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset.
+	// Quota What one end user of the app may spend in a UTC day, counted per user and per address. Stream staff set it: in an app's policy it is read-only, so sending back what was read is fine and changing it is refused. A backend's own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset.
 	Quota *Quota `json:"quota,omitempty"`
 
 	// RequireOwnStreamApp Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
@@ -5709,14 +5709,14 @@ type ProviderPrice struct {
 	PerMillionOutputTokens *float64 `json:"per_million_output_tokens,omitempty"`
 }
 
-// Quota What one end user may spend in a UTC day, counted per user and per address. The lower of the organization's and the app's number applies, and 0 is no cap, so it is never the lower one. A backend's own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset.
+// Quota What one end user of the app may spend in a UTC day, counted per user and per address. Stream staff set it: in an app's policy it is read-only, so sending back what was read is fine and changing it is refused. A backend's own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset.
 type Quota struct {
-	// MessagesPerUserPerDay How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the organization's number applies, or the router's default when it has none.
+	// MessagesPerUserPerDay How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
 	//
 	// Example: 20000
 	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty"`
 
-	// TokensPerUserPerDay How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the organization's number applies, or the router's default when it has none.
+	// TokensPerUserPerDay How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
 	//
 	// Example: 50000000
 	TokensPerUserPerDay *int64 `json:"tokens_per_user_per_day,omitempty"`
@@ -8326,6 +8326,9 @@ type DetectJSONRequestBody = DetectionRequest
 // GenerateImageJSONRequestBody defines body for GenerateImage for application/json ContentType.
 type GenerateImageJSONRequestBody = ImageGenerationRequest
 
+// SetCustomerQuotaJSONRequestBody defines body for SetCustomerQuota for application/json ContentType.
+type SetCustomerQuotaJSONRequestBody = Quota
+
 // SuspendTelephonyJSONRequestBody defines body for SuspendTelephony for application/json ContentType.
 type SuspendTelephonyJSONRequestBody = SuspendTelephonyRequest
 
@@ -10619,6 +10622,37 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `SetOperatorProviderApp` operationId).
 	SetOperatorProviderApp(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCustomerQuota Get an app's daily limit per end user
+	//
+	// What one end user of the app may spend in a UTC day. A number left out is the router's default.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Corresponds with GET /v1/ops/customers/{customer_id}/quota (the `GetCustomerQuota` operationId).
+	GetCustomerQuota(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetCustomerQuotaWithBody Set an app's daily limit per end user
+	//
+	// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/quota (the `SetCustomerQuota` operationId).
+	SetCustomerQuotaWithBody(ctx context.Context, customerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetCustomerQuota Set an app's daily limit per end user
+	//
+	// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/quota (the `SetCustomerQuota` operationId).
+	SetCustomerQuota(ctx context.Context, customerId string, body SetCustomerQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// LiftTelephonySuspension Lift an app's telephony suspension
 	//
@@ -15291,6 +15325,67 @@ func (c *Client) DeleteOperatorProviderApp(ctx context.Context, customerId strin
 // Corresponds with PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `SetOperatorProviderApp` operationId).
 func (c *Client) SetOperatorProviderApp(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetOperatorProviderAppRequest(c.Server, customerId, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCustomerQuota Get an app's daily limit per end user
+//
+// What one end user of the app may spend in a UTC day. A number left out is the router's default.
+//
+// Stream staff only: it needs the ops key.
+//
+// Corresponds with GET /v1/ops/customers/{customer_id}/quota (the `GetCustomerQuota` operationId).
+func (c *Client) GetCustomerQuota(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCustomerQuotaRequest(c.Server, customerId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetCustomerQuotaWithBody Set an app's daily limit per end user
+//
+// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/quota (the `SetCustomerQuota` operationId).
+func (c *Client) SetCustomerQuotaWithBody(ctx context.Context, customerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetCustomerQuotaRequestWithBody(c.Server, customerId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetCustomerQuota Set an app's daily limit per end user
+//
+// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/quota (the `SetCustomerQuota` operationId).
+func (c *Client) SetCustomerQuota(ctx context.Context, customerId string, body SetCustomerQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetCustomerQuotaRequest(c.Server, customerId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -24006,6 +24101,87 @@ func NewSetOperatorProviderAppRequest(server string, customerId string, id strin
 	return req, nil
 }
 
+// NewGetCustomerQuotaRequest constructs an http.Request for the GetCustomerQuota method
+func NewGetCustomerQuotaRequest(server string, customerId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "customer_id", customerId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/customers/%s/quota", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetCustomerQuotaRequest calls the generic SetCustomerQuota builder with application/json body
+func NewSetCustomerQuotaRequest(server string, customerId string, body SetCustomerQuotaJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetCustomerQuotaRequestWithBody(server, customerId, "application/json", bodyReader)
+}
+
+// NewSetCustomerQuotaRequestWithBody constructs an http.Request for the SetCustomerQuota method, with any body, and a specified content type
+func NewSetCustomerQuotaRequestWithBody(server string, customerId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "customer_id", customerId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/customers/%s/quota", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewLiftTelephonySuspensionRequest constructs an http.Request for the LiftTelephonySuspension method
 func NewLiftTelephonySuspensionRequest(server string, customerId string) (*http.Request, error) {
 	var err error
@@ -29075,6 +29251,39 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `SetOperatorProviderApp` operationId).
 	SetOperatorProviderAppWithResponse(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*SetOperatorProviderAppResponse, error)
+
+	// GetCustomerQuotaWithResponse Get an app's daily limit per end user
+	//
+	// What one end user of the app may spend in a UTC day. A number left out is the router's default.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/ops/customers/{customer_id}/quota (the `GetCustomerQuota` operationId).
+	GetCustomerQuotaWithResponse(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*GetCustomerQuotaResponse, error)
+
+	// SetCustomerQuotaWithBodyWithResponse Set an app's daily limit per end user
+	//
+	// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/quota (the `SetCustomerQuota` operationId).
+	SetCustomerQuotaWithBodyWithResponse(ctx context.Context, customerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetCustomerQuotaResponse, error)
+
+	// SetCustomerQuotaWithResponse Set an app's daily limit per end user
+	//
+	// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/quota (the `SetCustomerQuota` operationId).
+	SetCustomerQuotaWithResponse(ctx context.Context, customerId string, body SetCustomerQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*SetCustomerQuotaResponse, error)
 
 	// LiftTelephonySuspensionWithResponse Lift an app's telephony suspension
 	//
@@ -41274,6 +41483,130 @@ func (r SetOperatorProviderAppResponse) ContentType() string {
 	return ""
 }
 
+type GetCustomerQuotaResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Quota
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCustomerQuotaResponse) GetJSON200() *Quota {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetCustomerQuotaResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetCustomerQuotaResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetCustomerQuotaResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCustomerQuotaResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCustomerQuotaResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCustomerQuotaResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCustomerQuotaResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetCustomerQuotaResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Quota
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetCustomerQuotaResponse) GetJSON200() *Quota {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetCustomerQuotaResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetCustomerQuotaResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetCustomerQuotaResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r SetCustomerQuotaResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetCustomerQuotaResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetCustomerQuotaResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetCustomerQuotaResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type LiftTelephonySuspensionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -49177,6 +49510,57 @@ func (c *ClientWithResponses) SetOperatorProviderAppWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseSetOperatorProviderAppResponse(rsp)
+}
+
+// GetCustomerQuotaWithResponse Get an app's daily limit per end user
+//
+// What one end user of the app may spend in a UTC day. A number left out is the router's default.
+//
+// Stream staff only: it needs the ops key.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/ops/customers/{customer_id}/quota (the `GetCustomerQuota` operationId).
+func (c *ClientWithResponses) GetCustomerQuotaWithResponse(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*GetCustomerQuotaResponse, error) {
+	rsp, err := c.GetCustomerQuota(ctx, customerId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCustomerQuotaResponse(rsp)
+}
+
+// SetCustomerQuotaWithBodyWithResponse Set an app's daily limit per end user
+//
+// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/quota (the `SetCustomerQuota` operationId).
+func (c *ClientWithResponses) SetCustomerQuotaWithBodyWithResponse(ctx context.Context, customerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetCustomerQuotaResponse, error) {
+	rsp, err := c.SetCustomerQuotaWithBody(ctx, customerId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetCustomerQuotaResponse(rsp)
+}
+
+// SetCustomerQuotaWithResponse Set an app's daily limit per end user
+//
+// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/quota (the `SetCustomerQuota` operationId).
+func (c *ClientWithResponses) SetCustomerQuotaWithResponse(ctx context.Context, customerId string, body SetCustomerQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*SetCustomerQuotaResponse, error) {
+	rsp, err := c.SetCustomerQuota(ctx, customerId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetCustomerQuotaResponse(rsp)
 }
 
 // LiftTelephonySuspensionWithResponse Lift an app's telephony suspension
@@ -59720,6 +60104,100 @@ func ParseSetOperatorProviderAppResponse(rsp *http.Response) (*SetOperatorProvid
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCustomerQuotaResponse parses an HTTP response from a GetCustomerQuotaWithResponse call
+func ParseGetCustomerQuotaResponse(rsp *http.Response) (*GetCustomerQuotaResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCustomerQuotaResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Quota
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetCustomerQuotaResponse parses an HTTP response from a SetCustomerQuotaWithResponse call
+func ParseSetCustomerQuotaResponse(rsp *http.Response) (*SetCustomerQuotaResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetCustomerQuotaResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Quota
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

@@ -331,14 +331,15 @@ Two things are counted, per UTC day, and reaching either refuses the next respon
 | Model responses | 200 | What "200 messages a day" means |
 | Tokens | 5,000,000 | A backstop for the caller who asks for few responses and makes each one enormous. A turn of an agent with a few MCP servers carries tens of thousands of tokens of tool definitions, so it should not be what an ordinary day hits first |
 
-These numbers are the deployment's default. An app sets its own in its policy's `quota`
-(`messages_per_user_per_day`, `tokens_per_user_per_day`), above the default or below it, and
-`0` is no cap. An organization's `quota` is a ceiling for its apps: where both set a number,
-the lower one applies, and `0` is never the lower one. Each number is decided on its own.
+These numbers are the deployment's default. Stream staff set an app's own with the ops key,
+`PUT /v1/ops/customers/{customer_id}/quota` (`messages_per_user_per_day`,
+`tokens_per_user_per_day`), above the default or below it, and `0` is no cap. An app reads it
+as `quota` in its policy and cannot change it, since an app could otherwise give its users any
+number. Organizations have none. Each number is decided on its own.
 
 Each is counted against two buckets: the `user_id` the caller's token names, scoped
 to the customer who minted it, and the address the request came from, scoped to the
-customer too, since each sets its own limit. Both matter.
+customer too, since each has its own limit. Both matter.
 A user id is the honest answer to who is asking, and the address is the answer that
 still holds when a backend mints a fresh user id per request.
 
@@ -375,7 +376,7 @@ optional. The organization's are a floor its apps can tighten but not loosen.
 | ------- | ------------ |
 | `budget` | A spend cap across every modality, reset hourly, daily, weekly or monthly on a UTC boundary. Once spent, new sessions and new LLM responses are refused. Both the app's and the organization's caps apply |
 | `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models |
-| `quota` | What one end user may spend in a UTC day, in place of the deployment's default. See [Daily limits](#daily-limits) |
+| `quota` | Read-only, on an app's policy: what one end user may spend in a UTC day, set by Stream staff in place of the deployment's default. Sending back what was read is fine; changing it is a 400. See [Daily limits](#daily-limits) |
 | `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the decision model router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
 
 The screen asks one question per harm in OpenRouter's prompt injection list (instruction
