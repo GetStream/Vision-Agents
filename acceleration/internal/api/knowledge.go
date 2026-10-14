@@ -16,6 +16,15 @@ import (
 
 // errNoKnowledge is what the paths say when the deployment has no knowledge provider. Filling
 // a base that nothing can read is not worth pretending to do.
+// maxKnowledgeBody is the most an ingest reads. Documents ride whole in the body as text, so
+// a 5 MB file is more than Huma's 1 MB default would take; the rest is room for JSON
+// escaping.
+const maxKnowledgeBody = 8 << 20
+
+// uploadReadTimeout is how long a large upload has to arrive. Huma gives a body 5 seconds,
+// which a document or recording near its limit outlasts on an ordinary connection.
+const uploadReadTimeout = 2 * time.Minute
+
 var errNoKnowledge = notConfigured("knowledge is not available: no provider configured")
 
 // errNoKnowledgeDocuments is what the document paths say on a deployment that cannot list
@@ -339,10 +348,12 @@ func indexedKnowledgeDocumentOf(document store.KnowledgeDocument) IndexedKnowled
 // registerKnowledge declares the operations served in knowledge.go.
 func (s *Server) registerKnowledge(api huma.API) {
 	huma.Register(api, huma.Operation{
-		OperationID: "ingestKnowledge",
-		Method:      http.MethodPost,
-		Path:        "/v1/agents/knowledge",
-		Summary:     "Fill a knowledge base with what the business wrote down",
+		OperationID:     "ingestKnowledge",
+		Method:          http.MethodPost,
+		Path:            "/v1/agents/knowledge",
+		MaxBodyBytes:    maxKnowledgeBody,
+		BodyReadTimeout: uploadReadTimeout,
+		Summary:         "Fill a knowledge base with what the business wrote down",
 		Description: "The writing half of the lookup a config's knowledge_namespace gives an agent. Each " +
 			"document is cut into passages here rather than by the caller, so a file read off disk " +
 			"by the command and one posted by an SDK are cut the same way and can replace each " +

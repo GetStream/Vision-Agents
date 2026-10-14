@@ -149,6 +149,18 @@ func (s *VoicesSuite) TestVoiceProvidersAreRankedSeparatelyFromTranscribers() {
 	}
 }
 
+func (s *VoicesSuite) TestATwentyMegabyteRecordingIsKept() {
+	created := s.createVoice(map[string]any{"name": "founder"})
+
+	// Sent base64 as it is: about 27 MB of body.
+	recorded := s.record(created.Id, map[string]any{
+		"audio":    base64.StdEncoding.EncodeToString(make([]byte, 20<<20)),
+		"filename": "clip.wav", "content_type": "audio/wav",
+	})
+	s.Require().Len(value(recorded.Samples), 1)
+	s.EqualValues(20<<20, value(value(recorded.Samples)[0].Bytes))
+}
+
 // createVoice brings a voice of the customer's own.
 func (s *VoicesSuite) createVoice(body map[string]any) Voice {
 	var created Voice
