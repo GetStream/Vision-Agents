@@ -1076,6 +1076,10 @@ const corsRequestHeaders = "Authorization, " + auth.AuthTypeHeader + ", " + auth
 // instructions are replaced with one; PATCH does not, because the spec serves none.
 const corsMethods = "GET, POST, PUT, DELETE, OPTIONS"
 
+// corsExposedHeaders are the response headers a page's script may read.
+const corsExposedHeaders = "Server-Timing, " + RequestIDHeader + ", " + rateLimitLimitHeader + ", " +
+	rateLimitRemainingHeader + ", " + rateLimitResetHeader + ", Retry-After"
+
 // withCORS lets a browser at the API from the origins originAllowed accepts.
 //
 // It exists for a customer's website that talks to the router directly with its API key
@@ -1090,7 +1094,7 @@ func withCORS(mode auth.Mode, next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", corsRequestHeaders)
 			w.Header().Set("Access-Control-Allow-Methods", corsMethods)
-			w.Header().Set("Access-Control-Expose-Headers", "Server-Timing, "+RequestIDHeader+", X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After")
+			w.Header().Set("Access-Control-Expose-Headers", corsExposedHeaders)
 			w.Header().Set("Access-Control-Max-Age", "600")
 		}
 		// A preflight asks whether the real request would be allowed and carries nothing

@@ -10,6 +10,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 )
 
+const (
+	rateLimitLimitHeader     = "X-RateLimit-Limit"
+	rateLimitRemainingHeader = "X-RateLimit-Remaining"
+	rateLimitResetHeader     = "X-RateLimit-Reset"
+)
+
 // rateLimitHeaders tells a counted caller where they stand, the way Stream Chat does: the
 // day's allowance, what is left of it and the unix time it resets at. A caller nothing was
 // counted for is told nothing.
@@ -17,9 +23,9 @@ func rateLimitHeaders(header http.Header, status quota.Status) {
 	if status.Limit == 0 {
 		return
 	}
-	header.Set("X-RateLimit-Limit", strconv.FormatInt(status.Limit, 10))
-	header.Set("X-RateLimit-Remaining", strconv.FormatInt(status.Remaining, 10))
-	header.Set("X-RateLimit-Reset", strconv.FormatInt(status.Reset.Unix(), 10))
+	header.Set(rateLimitLimitHeader, strconv.FormatInt(status.Limit, 10))
+	header.Set(rateLimitRemainingHeader, strconv.FormatInt(status.Remaining, 10))
+	header.Set(rateLimitResetHeader, strconv.FormatInt(status.Reset.Unix(), 10))
 }
 
 // withQuota refuses a caller who has spent their day before any work is started.
