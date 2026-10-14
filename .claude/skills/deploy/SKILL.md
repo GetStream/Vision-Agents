@@ -43,6 +43,30 @@ Versions are `vX.Y.Z` or `vX.Y.Z-<prerelease>`, an unreleased build is named aft
 commit (`v0.6.9-dev-<short sha>`), and a published one is immutable. The build is
 reproducible, so the checksum a pod reports traces back to a commit.
 
+## Overlap deploys (the benchmark release)
+
+The benchmark release (`perfbench -target benchmark`, nobody else's traffic) ships a router
+without dropping a call. The runbook is `infra/docs/accelerate_overlap_deploy.md` in the
+private repo; `rocky fastdeploy --service accelerate-benchmark` builds this checkout and swaps
+it in, in 11-20 s warm. Staging and prod still deploy as above.
+
+- A supervisor (devrun) owns the public socket and hands it to each router as fd 3
+  (`listen_fd`), with a peer port of its own (`node.listen`). A swap starts the new router on
+  the same socket, waits for `/health`, then SIGTERMs the old one.
+- The old router stops accepting, keeps every call until it ends, bounded by
+  `shutdown.drain` (1 h), still answering its peers, then exits. A second signal ends its
+  calls now. At most three generations run at once.
+- A draining router exits on `session.Manager.Len()` reaching zero, which counts a session
+  until its `Close` returns. Anything new that holds a call open must be counted there, or
+  the old router exits under it.
+- A call only ends when the client's `close` reaches the router. A client that stops reading
+  its session socket, or closes the connection straight after `close`, leaves the session
+  running and holds the old router for the whole drain. `Pipeline.Leave` in the Go SDK waits
+  for the router to hang up.
+- To check a deploy, run perfbench against the benchmark release during the swap and confirm
+  every call held, nothing answered 5xx, and devrun logged `pid N (sha) drained in ...,
+  exit 0` for each old router once its last call ended.
+
 ## Before and after
 
 - Commit and push first, and build from a clean tree: the version has to name a commit somebody else can check out.

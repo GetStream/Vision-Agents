@@ -961,6 +961,12 @@ func (s *RouterSuite) otherNode() *httptest.Server {
 
 // otherNodeDispatching is otherNode with dispatch workers of its own, waiting in workers.
 func (s *RouterSuite) otherNodeDispatching(workers *dispatch.Pool) *httptest.Server {
+	other, _ := s.otherRouter(workers)
+	return other
+}
+
+// otherRouter is otherNodeDispatching with the router behind it, for a test that stops it.
+func (s *RouterSuite) otherRouter(workers *dispatch.Pool) (*httptest.Server, *Server) {
 	logger := slog.New(slog.DiscardHandler)
 	other := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(other, logger)
@@ -1009,7 +1015,7 @@ func (s *RouterSuite) otherNodeDispatching(workers *dispatch.Pool) *httptest.Ser
 	other.Config.Handler = server.Handler()
 	other.Start()
 	s.T().Cleanup(other.Close)
-	return other
+	return other, server
 }
 
 // deploymentWorkers is one node's view of the dispatch workers across the deployment.

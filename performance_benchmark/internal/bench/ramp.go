@@ -42,8 +42,13 @@ type Options struct {
 	Start  int
 	Factor int
 	Max    int
-	// Hold is how long each step talks for.
+	// Hold is how long each step talks for once every conversation in it is open.
 	Hold time.Duration
+	// JoinRate is how many conversations a step opens a second. Zero opens them all at
+	// once. The hosted edge refuses one address past 600 requests a minute and each
+	// conversation costs two, so a step of hundreds has to be spread out to measure the
+	// router rather than the edge.
+	JoinRate float64
 	// Cluster is where the router runs, for the pod readings. Its zero value takes none.
 	Cluster Cluster
 	// Target is the router, for the report.
@@ -101,18 +106,27 @@ func runStep(ctx context.Context, options Options, count int) Step {
 	go func() { pods <- options.Cluster.Watch(watching, podSample) }()
 	host := watchHost()
 
+	// Every conversation talks until the same moment, so all of them are held together for
+	// Hold however long the last took to open.
+	var apart time.Duration
+	if options.JoinRate > 0 {
+		apart = time.Duration(float64(time.Second) / options.JoinRate)
+	}
+	until := time.Now().Add(time.Duration(count)*apart + options.Hold)
+
 	held := make([]conversation, count)
 	var running sync.WaitGroup
 	for i := range count {
 		running.Add(1)
 		go func() {
 			defer running.Done()
+			sleep(ctx, time.Duration(i)*apart)
 			held[i] = Caller{
 				Agent:  options.Agent,
 				Models: options.Models,
 				Index:  i,
 				Logger: options.Logger,
-			}.Converse(ctx, options.Hold)
+			}.Converse(ctx, until)
 		}()
 	}
 	running.Wait()
