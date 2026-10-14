@@ -840,9 +840,14 @@ func (s *Service) ReleaseCall(ctx context.Context, scope store.AppScope, callTyp
 	if err != nil {
 		return fmt.Errorf("phone: release call resources: %w", err)
 	}
+	// Each leg, the call's own and one per transfer into it, is billed for as long as it
+	// lasted, so each counts toward the sandbox's minutes.
+	var talked time.Duration
+	for _, resource := range resources {
+		talked += time.Since(resource.CreatedAt)
+	}
 	if len(resources) > 0 {
-		began := slices.MinFunc(resources, func(a, b store.CallResource) int { return a.CreatedAt.Compare(b.CreatedAt) })
-		s.gate.Talked(ctx, began.CustomerID, time.Since(began.CreatedAt))
+		s.gate.Talked(ctx, resources[0].CustomerID, talked)
 	}
 	for _, resource := range resources {
 		s.unwire(ctx, resource.CustomerID, resource.StreamAppPK, resource.RouteID, resource.TrunkID, "a call ended")
