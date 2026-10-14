@@ -4,7 +4,6 @@ package quota
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -69,9 +68,7 @@ func (s *QuotaSuite) SetupTest() {
 
 // limiter returns a Limiter over the shared Redis with the given allowance.
 func (s *QuotaSuite) limiter(messages, tokens int64) *Limiter {
-	limiter, err := New(s.redis, Limits{MessagesPerDay: messages, TokensPerDay: tokens}, nil, slog.Default())
-	s.Require().NoError(err)
-	return limiter
+	return s.limiterWith(Limits{MessagesPerDay: messages, TokensPerDay: tokens}, nil)
 }
 
 func (s *QuotaSuite) TestACallerUnderTheirAllowanceIsAllowed() {
@@ -163,7 +160,7 @@ func (s *QuotaSuite) TestADebitCountsBothMessagesAndTokens() {
 	limiter.Debit(s.ctx, s.customer, s.caller, 250)
 	limiter.Debit(s.ctx, s.customer, s.caller, 250)
 
-	spent, err := limiter.spent(s.ctx, limiter.keys(s.customer, s.caller)[0])
+	spent, err := limiter.spent(s.ctx, limiter.keys(s.customer, s.caller, time.Now())[0])
 
 	s.Require().NoError(err)
 	s.EqualValues(2, spent.messages)
@@ -174,7 +171,7 @@ func (s *QuotaSuite) TestADaysCountersExpireOnTheirOwn() {
 	limiter := s.limiter(10, 0)
 	limiter.Debit(s.ctx, s.customer, s.caller, 10)
 
-	for _, key := range limiter.keys(s.customer, s.caller) {
+	for _, key := range limiter.keys(s.customer, s.caller, time.Now()) {
 		ttl, err := s.redis.Do(s.ctx, s.redis.B().Ttl().Key(key).Build()).AsInt64()
 		s.Require().NoError(err)
 		s.Positive(ttl, "a day's counters should not outlive their retention")
@@ -208,18 +205,11 @@ func (s *QuotaSuite) allow(limiter *Limiter, customerID string, caller routing.C
 // anybody else's.
 type limitsByCustomer map[string]Limits
 
-func (l limitsByCustomer) Limits(_ context.Context, customerID string, defaults Limits) (Limits, error) {
+func (l limitsByCustomer) Limits(_ context.Context, customerID string, defaults Limits) Limits {
 	if limits, ok := l[customerID]; ok {
-		return limits, nil
+		return limits
 	}
-	return defaults, nil
-}
-
-// unreadable is a Source whose policies cannot be read.
-type unreadable struct{}
-
-func (unreadable) Limits(context.Context, string, Limits) (Limits, error) {
-	return Limits{}, errors.New("policies: connection refused")
+	return defaults
 }
 
 func (s *QuotaSuite) limiterWith(defaults Limits, source Source) *Limiter {
@@ -241,17 +231,8 @@ func (s *QuotaSuite) TestEachAppsUsersAreHeldToTheirAppsOwnLimit() {
 	s.NoError(s.allow(limiter, other, s.caller), "the other app is held to the deployment's hundred")
 }
 
-func (s *QuotaSuite) TestALimitThatCannotBeReadIsTheDeployments() {
-	limiter := s.limiterWith(Limits{MessagesPerDay: 1}, unreadable{})
-	s.Require().NoError(s.allow(limiter, s.customer, s.caller))
-	limiter.Debit(s.ctx, s.customer, s.caller, 10)
-
-	s.ErrorIs(s.allow(limiter, s.customer, s.caller), ErrExhausted)
-}
-
 func (s *QuotaSuite) TestTheDeploymentsLimitHoldsWhereNoPolicySetsOne() {
-	// Control: the base allowed three messages under a limit of three and refused the
-	// fourth (probe in author-1.md). A source with no opinion must change neither.
+	// A source with no opinion leaves the deployment's three messages a day.
 	limiter := s.limiterWith(Limits{MessagesPerDay: 3}, limitsByCustomer{})
 	allowed := 0
 	for s.allow(limiter, s.customer, s.caller) == nil && allowed < 10 {
@@ -331,7 +312,7 @@ func (s *QuotaSuite) TestACustomerHeldToNoLimitIsNotCounted() {
 
 	s.Require().NoError(err)
 	s.Zero(status, "an uncounted caller is told nothing")
-	for _, key := range limiter.keys(s.customer, s.caller) {
+	for _, key := range limiter.keys(s.customer, s.caller, time.Now()) {
 		exists, err := s.redis.Do(s.ctx, s.redis.B().Exists().Key(key).Build()).AsInt64()
 		s.Require().NoError(err)
 		s.Zero(exists, "nothing is counted for %s", key)

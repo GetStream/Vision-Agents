@@ -568,19 +568,15 @@ func run(settings config.Config, logger *slog.Logger) error {
 		MessagesPerDay: settings.RateLimit.MessagesPerDay,
 		TokensPerDay:   settings.RateLimit.TokensPerDay,
 	}
-	// A nil Enforcer is no Source at all, rather than one that is there and answers nothing.
-	var limitsByApp quota.Source
-	if policies != nil {
-		limitsByApp = policies
-	}
 	switch {
-	case !limitsApply(limits, limitsByApp):
+	// A deployment with no default of its own still caps an app whose policy sets one.
+	case !limits.Enforced() && policies == nil:
 		logger.Warn("no daily limit configured, an end user may spend without bound",
 			"setting", "rate_limit.messages_per_day")
 	case liveClient == nil:
 		logger.Warn("no redis configured, daily limits will not be enforced", "setting", "redis.addr")
 	default:
-		if limiter, err = quota.New(liveClient.Redis(), limits, limitsByApp, logger); err != nil {
+		if limiter, err = quota.New(liveClient.Redis(), limits, policies, logger); err != nil {
 			return err
 		}
 		logger.Info("capping what one end user may spend in a day, unless their app's policy says otherwise",
@@ -1637,11 +1633,4 @@ func buildDLC(
 		return nil, nil, err
 	}
 	return service, gate, nil
-}
-
-// limitsApply is whether any daily limit can hold: the deployment's own, or the ones an app
-// and its organization set in their policies. A deployment with neither default still caps
-// an app that sets one.
-func limitsApply(defaults quota.Limits, byApp quota.Source) bool {
-	return defaults.Enforced() || byApp != nil
 }

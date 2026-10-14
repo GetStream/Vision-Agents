@@ -104,19 +104,17 @@ func (e *Enforcer) Admit(ctx context.Context, customerID string) (routing.Admiss
 // Limits returns what one of a customer's end users may spend in a day: the lower of the
 // organization's and the app's where both set one, the one that is set, or defaults where
 // neither is. A limit of zero is no cap, so an app may lift the deployment's and only its
-// organization's holds it down. A policy that could not be read leaves defaults in place.
-func (e *Enforcer) Limits(ctx context.Context, customerID string, defaults quota.Limits) (quota.Limits, error) {
+// organization's holds it down. A policy that could not be read leaves defaults in place;
+// a spend that could not be read leaves the limits the policies set.
+func (e *Enforcer) Limits(ctx context.Context, customerID string, defaults quota.Limits) quota.Limits {
 	if e == nil || customerID == "" {
-		return defaults, nil
+		return defaults
 	}
 	decided := e.decide(ctx, customerID)
-	if decided.unread != nil {
-		return defaults, decided.unread
-	}
 	return quota.Limits{
 		MessagesPerDay: orDefault(decided.messages, defaults.MessagesPerDay),
 		TokensPerDay:   orDefault(decided.tokens, defaults.TokensPerDay),
-	}, nil
+	}
 }
 
 // Join records that an app was seen under an organization, which is what an organization's
@@ -286,18 +284,18 @@ func enabled(flag *bool) bool { return flag != nil && *flag }
 
 // lower is the tighter of two daily limits, either of which may be unset. Zero is no cap,
 // so it is the looser of any two.
-func lower(organization, app *int64) *int64 {
+func lower(a, b *int64) *int64 {
 	switch {
-	case organization == nil:
-		return app
-	case app == nil:
-		return organization
-	case *organization == 0:
-		return app
-	case *app == 0:
-		return organization
+	case a == nil:
+		return b
+	case b == nil:
+		return a
+	case *a == 0:
+		return b
+	case *b == 0:
+		return a
 	}
-	lowest := min(*organization, *app)
+	lowest := min(*a, *b)
 	return &lowest
 }
 

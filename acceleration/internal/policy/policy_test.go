@@ -343,85 +343,76 @@ func (s *PolicySuite) TestANewAppsFirstRequestsAreHeldToItsOrganizationsRequirem
 // nothing leaves in place.
 var deployment = quota.Limits{MessagesPerDay: 200, TokensPerDay: 5_000_000}
 
-func (s *PolicySuite) quota(messages, tokens *int64) *store.QuotaPolicy {
+func quotaOf(messages, tokens *int64) *store.QuotaPolicy {
 	return &store.QuotaPolicy{MessagesPerUserPerDay: messages, TokensPerUserPerDay: tokens}
 }
 
-func (s *PolicySuite) TestADailyLimitNobodySetIsTheDeployments() {
-	limits, err := s.enforcer.Limits(s.ctx, s.app, deployment)
+func (s *PolicySuite) TestADailyLimitIsTheLowerOfTheOrganizationsAndTheAppsThatAreSet() {
+	cases := []struct {
+		name              string
+		organization, app *store.QuotaPolicy
+		want              quota.Limits
+	}{
+		{name: "nobody set one, so it is the deployment's", want: deployment},
+		{
+			// Each number is decided on its own, so the tokens left out stay the deployment's.
+			name: "an app may set its users' limit above the deployment's",
+			app:  quotaOf(new(int64(20_000)), nil),
+			want: quota.Limits{MessagesPerDay: 20_000, TokensPerDay: deployment.TokensPerDay},
+		},
+		{
+			name:         "an organization's limit is a ceiling for its apps",
+			organization: quotaOf(new(int64(5_000)), nil),
+			app:          quotaOf(new(int64(20_000)), new(int64(100))),
+			want:         quota.Limits{MessagesPerDay: 5_000, TokensPerDay: 100},
+		},
+		{
+			name:         "an app may tighten its organization's limit",
+			organization: quotaOf(new(int64(5_000)), nil),
+			app:          quotaOf(new(int64(30)), nil),
+			want:         quota.Limits{MessagesPerDay: 30, TokensPerDay: deployment.TokensPerDay},
+		},
+		{
+			name: "an app's zero is no cap and lifts the deployment's",
+			app:  quotaOf(new(int64(0)), new(int64(0))),
+			want: quota.Limits{},
+		},
+		{
+			name:         "an app's zero does not lift its organization's limit",
+			organization: quotaOf(new(int64(5_000)), nil),
+			app:          quotaOf(new(int64(0)), nil),
+			want:         quota.Limits{MessagesPerDay: 5_000, TokensPerDay: deployment.TokensPerDay},
+		},
+		{
+			// The app has a quota, and no opinion about messages.
+			name:         "an organization's zero lifts the deployment's for an app that says nothing",
+			organization: quotaOf(new(int64(0)), nil),
+			app:          quotaOf(nil, new(int64(100))),
+			want:         quota.Limits{MessagesPerDay: 0, TokensPerDay: 100},
+		},
+		{
+			name:         "an organization with no cap leaves its app's limit",
+			organization: quotaOf(new(int64(0)), nil),
+			app:          quotaOf(new(int64(30)), nil),
+			want:         quota.Limits{MessagesPerDay: 30, TokensPerDay: deployment.TokensPerDay},
+		},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: c.organization})
+			s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: c.app})
 
-	s.Require().NoError(err)
-	s.Equal(deployment, limits)
-}
-
-func (s *PolicySuite) TestAnAppMaySetItsUsersDailyLimitAboveTheDeployments() {
-	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: s.quota(new(int64(20_000)), nil)})
-
-	limits, err := s.enforcer.Limits(s.ctx, s.app, deployment)
-
-	s.Require().NoError(err)
-	s.Equal(quota.Limits{MessagesPerDay: 20_000, TokensPerDay: deployment.TokensPerDay}, limits,
-		"each number is decided on its own, so the tokens left out stay the deployment's")
-}
-
-func (s *PolicySuite) TestAnOrganizationsDailyLimitIsACeilingForItsApps() {
-	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: s.quota(new(int64(5_000)), nil)})
-	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: s.quota(new(int64(20_000)), new(int64(100)))})
-
-	limits, err := s.enforcer.Limits(s.ctx, s.app, deployment)
-
-	s.Require().NoError(err)
-	s.Equal(quota.Limits{MessagesPerDay: 5_000, TokensPerDay: 100}, limits)
-}
-
-func (s *PolicySuite) TestAnAppMayTightenItsOrganizationsDailyLimit() {
-	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: s.quota(new(int64(5_000)), nil)})
-	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: s.quota(new(int64(30)), nil)})
-
-	limits, err := s.enforcer.Limits(s.ctx, s.app, deployment)
-
-	s.Require().NoError(err)
-	s.EqualValues(30, limits.MessagesPerDay)
-}
-
-func (s *PolicySuite) TestADailyLimitOfZeroIsNoCap() {
-	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: s.quota(new(int64(0)), new(int64(0)))})
-
-	limits, err := s.enforcer.Limits(s.ctx, s.app, deployment)
-
-	s.Require().NoError(err)
-	s.False(limits.Enforced(), "an app's zero lifts the deployment's default")
-}
-
-func (s *PolicySuite) TestAnAppsZeroDoesNotLiftItsOrganizationsDailyLimit() {
-	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: s.quota(new(int64(5_000)), nil)})
-	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: s.quota(new(int64(0)), nil)})
-
-	limits, err := s.enforcer.Limits(s.ctx, s.app, deployment)
-
-	s.Require().NoError(err)
-	s.EqualValues(5_000, limits.MessagesPerDay)
-}
-
-func (s *PolicySuite) TestAnOrganizationsZeroLiftsTheDefaultForAnAppThatSaysNothing() {
-	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: s.quota(new(int64(0)), nil)})
-	// The app has a quota, and no opinion about messages.
-	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: s.quota(nil, new(int64(100)))})
-
-	limits, err := s.enforcer.Limits(s.ctx, s.app, deployment)
-
-	s.Require().NoError(err)
-	s.Zero(limits.MessagesPerDay)
+			s.Equal(c.want, s.enforcer.Limits(s.ctx, s.app, deployment))
+		})
+	}
 }
 
 func (s *PolicySuite) TestARaisedDailyLimitIsSeenAtOnceOnTheNodeThatSavedIt() {
-	_, err := s.enforcer.Limits(s.ctx, s.app, deployment)
-	s.Require().NoError(err)
-	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: s.quota(new(int64(3)), nil)})
+	s.enforcer.Limits(s.ctx, s.app, deployment)
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: quotaOf(new(int64(3)), nil)})
 
-	limits, err := s.enforcer.Limits(s.ctx, s.app, deployment)
+	limits := s.enforcer.Limits(s.ctx, s.app, deployment)
 
-	s.Require().NoError(err)
 	s.EqualValues(3, limits.MessagesPerDay, "the cached decision is dropped when the policy is saved")
 }
 
@@ -434,18 +425,34 @@ func (s *PolicySuite) TestADailyLimitThatCannotBeReadIsTheDeployments() {
 	enforcer, err := New(configs, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 
-	limits, err := enforcer.Limits(s.ctx, s.app, deployment)
-
-	s.Error(err)
-	s.Equal(deployment, limits)
+	s.Equal(deployment, enforcer.Limits(s.ctx, s.app, deployment))
 }
 
-func (s *PolicySuite) TestAnOrganizationWithNoCapLeavesItsAppsLimit() {
-	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: s.quota(new(int64(0)), nil)})
-	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: s.quota(new(int64(30)), nil)})
-
-	limits, err := s.enforcer.Limits(s.ctx, s.app, deployment)
-
+func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
+	// The policies are cached in Redis and the spend is not, so closing Postgres once the
+	// cache is warm fails the budget's read alone.
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR is not set")
+	}
+	db, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
 	s.Require().NoError(err)
-	s.EqualValues(30, limits.MessagesPerDay)
+	configs, err := appconfig.New(appconfig.Options{Store: db, Address: address, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(configs.Close)
+	enforcer, err := New(configs, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app, store.PolicyDocument{
+		Quota:  quotaOf(new(int64(20_000)), nil),
+		Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily},
+	}))
+	s.Require().EqualValues(20_000, enforcer.Limits(s.ctx, s.app, deployment).MessagesPerDay)
+	s.Require().NoError(db.Close())
+	enforcer.forget(s.app)
+
+	limits := enforcer.Limits(s.ctx, s.app, deployment)
+
+	_, unread := enforcer.RequiresOwnStreamApp(s.ctx, s.app)
+	s.Require().Error(unread, "the spend could not be read")
+	s.EqualValues(20_000, limits.MessagesPerDay, "the app's limit, not the deployment's")
 }

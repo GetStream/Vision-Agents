@@ -60,7 +60,7 @@ func (l Limits) Enforced() bool { return l.MessagesPerDay > 0 || l.TokensPerDay 
 // Source answers which limits one customer's users are held to. It is given the
 // deployment's own, which are what a customer that decided nothing is held to.
 type Source interface {
-	Limits(ctx context.Context, customerID string, defaults Limits) (Limits, error)
+	Limits(ctx context.Context, customerID string, defaults Limits) Limits
 }
 
 // Status is what a caller has left of the limit nearest to refusing them. A zero Status is
@@ -108,7 +108,9 @@ func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.C
 	if l == nil {
 		return Status{}, nil
 	}
-	keys := l.keys(customerID, caller)
+	// One clock reading names the day counted and the midnight it resets at.
+	now := time.Now()
+	keys := l.keys(customerID, caller, now)
 	if len(keys) == 0 {
 		return Status{}, nil
 	}
@@ -127,8 +129,8 @@ func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.C
 			l.logger.Error("could not read a quota, allowing the request", "error", err)
 			return Status{}, nil
 		}
-		nearest = closer(nearest, limits.MessagesPerDay, spent.messages)
-		nearest = closer(nearest, limits.TokensPerDay, spent.tokens)
+		nearest = closer(nearest, limits.MessagesPerDay, spent.messages, nextMidnight(now))
+		nearest = closer(nearest, limits.TokensPerDay, spent.tokens, nextMidnight(now))
 		if limits.MessagesPerDay > 0 && spent.messages >= limits.MessagesPerDay {
 			return nearest, stack.Wrap(fmt.Errorf("%w: %d messages a day", ErrExhausted, limits.MessagesPerDay))
 		}
@@ -148,7 +150,7 @@ func (l *Limiter) Debit(ctx context.Context, customerID string, caller routing.C
 	if l == nil {
 		return
 	}
-	keys := l.keys(customerID, caller)
+	keys := l.keys(customerID, caller, time.Now())
 	if len(keys) == 0 {
 		return
 	}
@@ -197,28 +199,23 @@ func (l *Limiter) spent(ctx context.Context, key string) (spend, error) {
 }
 
 // limits are what the customer's users are held to: what the source says, or the
-// deployment's own when there is no source or it could not be asked. A source that fails
-// has logged why, so it is not logged again on every request.
+// deployment's own when there is no source.
 func (l *Limiter) limits(ctx context.Context, customerID string) Limits {
 	if l.source == nil {
 		return l.defaults
 	}
-	limits, err := l.source.Limits(ctx, customerID, l.defaults)
-	if err != nil {
-		return l.defaults
-	}
-	return limits
+	return l.source.Limits(ctx, customerID, l.defaults)
 }
 
 // keys are the buckets a caller falls in, which is none for one there is nothing to count
 // against and none for a customer's own process, which is trusted with its spend even
 // when it names a user. Both buckets are keyed by the customer as well: a user id is the
 // customer's own name for somebody, and each customer sets its own limit for an address.
-func (l *Limiter) keys(customerID string, caller routing.Caller) []string {
+func (l *Limiter) keys(customerID string, caller routing.Caller, now time.Time) []string {
 	if caller.ServerSide {
 		return nil
 	}
-	day := time.Now().UTC().Format("20060102")
+	day := now.UTC().Format("20060102")
 
 	var keys []string
 	if customerID != "" && caller.UserID != "" {
@@ -233,11 +230,11 @@ func (l *Limiter) keys(customerID string, caller routing.Caller) []string {
 // closer returns whichever of nearest and one limit's standing has the smaller share left,
 // so a caller is told about the limit that will refuse them first. A limit of zero is not
 // enforced and is never the nearest.
-func closer(nearest Status, limit, spent int64) Status {
+func closer(nearest Status, limit, spent int64, reset time.Time) Status {
 	if limit <= 0 {
 		return nearest
 	}
-	candidate := Status{Limit: limit, Remaining: max(limit-spent, 0), Reset: nextMidnight(time.Now())}
+	candidate := Status{Limit: limit, Remaining: max(limit-spent, 0), Reset: reset}
 	if nearest.Limit == 0 || share(candidate) < share(nearest) {
 		return candidate
 	}
