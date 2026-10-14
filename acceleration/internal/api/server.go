@@ -996,7 +996,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
 			ctx = context.WithValue(ctx, callerContextKey{}, routing.Caller{
 				UserID: principal.UserID,
-				IP:     clientIP(r, s.trusted),
+				IP:     s.callerIP(r),
 			})
 			ctx = context.WithValue(ctx, actorContextKey{}, actorOf(r, principal.ServerSide))
 			r = r.WithContext(ctx)
