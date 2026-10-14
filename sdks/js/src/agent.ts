@@ -35,6 +35,8 @@ export interface Skill {
   captureVideo?: boolean;
   /** How long the work may run before it is abandoned. Zero leaves the backend's default. */
   deadlineMs?: number;
+  /** The rest of a skill folder beside its SKILL.md, each file's text by its slash path. */
+  files?: Record<string, string>;
 }
 
 /**
@@ -680,6 +682,7 @@ function skillRequest(skill: Skill): Omit<Schemas["SkillRequest"], "config_id"> 
     instructions: skill.instructions,
     ...(skill.captureVideo === undefined ? {} : { capture_video: skill.captureVideo }),
     ...(skill.deadlineMs ? { deadline_ms: skill.deadlineMs } : {}),
+    ...(skill.files && Object.keys(skill.files).length > 0 ? { files: skill.files } : {}),
   };
 }
 

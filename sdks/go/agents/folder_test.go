@@ -680,3 +680,148 @@ func TestAnEmptyConnectorListIsNotTheSameAsNone(t *testing.T) {
 		t.Errorf("without = %#v, empty = %#v", without.Settings.Connectors, empty.Settings.Connectors)
 	}
 }
+
+func TestASkillFolderBringsItsNestedFiles(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\nsandbox: daytona\n")
+	write(t, root, "skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nRead reference/forms.md, then run scripts/fill.py.\n")
+	write(t, root, "skills/pdf/reference/forms.md", "# Forms\n")
+	write(t, root, "skills/pdf/scripts/fill.py", "print('filled')\n")
+	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(folder.Skills) != 2 || folder.Skills[0].Name != "pdf" || folder.Skills[1].Name != "think" {
+		t.Fatalf("the skills read as %+v", folder.Skills)
+	}
+	pdf := folder.Skills[0]
+	if pdf.Instructions != "Read reference/forms.md, then run scripts/fill.py." {
+		t.Errorf("the instructions read as %q", pdf.Instructions)
+	}
+	want := map[string]string{"reference/forms.md": "# Forms\n", "scripts/fill.py": "print('filled')\n"}
+	if len(pdf.Files) != len(want) || pdf.Files["reference/forms.md"] != want["reference/forms.md"] ||
+		pdf.Files["scripts/fill.py"] != want["scripts/fill.py"] {
+		t.Errorf("the files read as %v", pdf.Files)
+	}
+	if folder.Skills[1].Files != nil {
+		t.Errorf("a one-file skill brought %v", folder.Skills[1].Files)
+	}
+}
+
+func TestASkillFolderWithoutASkillFileIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "skills/pdf/scripts/fill.py", "print('filled')\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "has no SKILL.md") {
+		t.Fatalf("loading gave %v", err)
+	}
+}
+
+func TestASkillThatIsBothAFileAndAFolderIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "skills/pdf.md", "---\ndescription: Fill PDF forms\n---\nFill it.\n")
+	write(t, root, "skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill it.\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), `skill "pdf" is both`) {
+		t.Fatalf("loading gave %v", err)
+	}
+}
+
+func TestASkillFileThatIsNotTextIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill it.\n")
+	write(t, root, "skills/pdf/blank.pdf", "\xff\xfe\x00binary")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "is not text") {
+		t.Fatalf("loading gave %v", err)
+	}
+}
+
+func TestAFolderSkillHashesTheWayEverySDKHashesIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\nsandbox: daytona\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+	write(t, root, "skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
+	write(t, root, "skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n")
+	write(t, root, "skills/pdf/reference/forms.md", "# Forms\n")
+	write(t, root, "skills/pdf/scripts/fill.py", "print('filled')\n")
+	write(t, root, "skills/pdf/scripts/lib/fill_lib.py", "def fill():\n    return 1\n")
+	write(t, root, "skills/pdf/scripts/__pycache__/fill.cpython-313.pyc", "\xcb\x0d\xff")
+	write(t, root, "skills/pdf/.DS_Store", "\x00\xff")
+	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash := folder.Hash(); hash != "e47f7807b97bbcbdee683c6c481d1d36" {
+		t.Errorf("the directory hashes to %s", hash)
+	}
+}
+
+func TestHiddenFilesAndPycacheAreLeftOutOfASkill(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill it.\n")
+	write(t, root, "skills/pdf/scripts/fill.py", "print('filled')\n")
+	write(t, root, "skills/pdf/scripts/__pycache__/fill.cpython-313.pyc", "\xff\xfe\x00binary")
+	write(t, root, "skills/pdf/.DS_Store", "\xff\xfe\x00binary")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := folder.Skills[0].Files; len(got) != 1 || got["scripts/fill.py"] == "" {
+		t.Fatalf("files were %v", got)
+	}
+}
+
+func TestASkillsFilesAreSentWithIt(t *testing.T) {
+	body := skillRequestOf(Skill{Name: "pdf", Description: "Fill PDF forms", Instructions: "Fill it.",
+		Files: map[string]string{"scripts/fill.py": "print('filled')"}})
+
+	if body.Files == nil || (*body.Files)["scripts/fill.py"] != "print('filled')" {
+		t.Errorf("the request carried %v", body.Files)
+	}
+	if skillRequestOf(Skill{Name: "think"}).Files != nil {
+		t.Error("a skill without files sent some")
+	}
+}
+
+func TestASkillsFilesChangeTheHashOnlyWhenThereAreSome(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+	write(t, root, "skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
+	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+	asFile, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(filepath.Join(root, "skills/think.md")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "skills/think/SKILL.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
+	asFolder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asFolder.Hash() != asFile.Hash() {
+		t.Error("moving a skill into a folder of its own changed the hash")
+	}
+
+	write(t, root, "skills/think/reference/steps.md", "1. Think.\n")
+	withFile, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withFile.Hash() == asFile.Hash() {
+		t.Error("a file added to a skill left the hash as it was")
+	}
+}

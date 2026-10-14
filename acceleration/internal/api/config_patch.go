@@ -213,6 +213,11 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.storedSkillSandboxComplaint(ctx, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	// The config no longer matches the directory last synced onto it, so the next sync of
 	// that directory writes it again rather than finding nothing changed.
 	config.SyncHash = ""

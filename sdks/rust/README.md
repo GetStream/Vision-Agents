@@ -194,6 +194,8 @@ agents/jean/
   instructions.md
   guardrail.md
   skills/think.md
+  skills/pdf/SKILL.md   a skill kept as a folder: SKILL.md plus the text files beside it
+  skills/pdf/scripts/fill.py
   knowledge/pricing.md
   knowledge/urls.yaml   pages to read, each a url or {url, title, description, refresh_hours}
   simulations/*.yaml    each a list of {name, scenario, assertion, mode, variations, ...}

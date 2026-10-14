@@ -2199,6 +2199,19 @@ impl Client {
         )
         .await
     }
+    /// Find objects in one image, and return their boxes
+    ///
+    /// `POST /v1/detection` (`detect`).
+    pub async fn detect(&self, body: &types::DetectionRequest) -> Result<types::DetectionResult> {
+        self.send(
+            Method::POST,
+            "/v1/detection",
+            None::<&()>,
+            Some(body),
+            "detect",
+        )
+        .await
+    }
     /// Draw pictures from a prompt, and return them
     ///
     /// `POST /v1/image/generations` (`generateImage`).
@@ -2896,35 +2909,6 @@ impl Client {
         )
         .await
     }
-    /// Check the calling app's own Stream app
-    ///
-    /// `POST /v1/settings/app/stream/check` (`checkAppStreamCredentials`).
-    pub async fn check_app_stream_credentials(&self) -> Result<types::StreamCheck> {
-        self.send(
-            Method::POST,
-            "/v1/settings/app/stream/check",
-            None::<&()>,
-            None::<&()>,
-            "checkAppStreamCredentials",
-        )
-        .await
-    }
-    /// Register the calling app's own Stream app
-    ///
-    /// `PUT /v1/settings/app/stream/credentials` (`updateAppStreamCredentials`).
-    pub async fn update_app_stream_credentials(
-        &self,
-        body: &types::StreamCredentials,
-    ) -> Result<types::AppSettings> {
-        self.send(
-            Method::PUT,
-            "/v1/settings/app/stream/credentials",
-            None::<&()>,
-            Some(body),
-            "updateAppStreamCredentials",
-        )
-        .await
-    }
     /// Who used the calling customer's agents, and how much
     ///
     /// `GET /v1/stats/activity` (`getActivity`).
@@ -2938,6 +2922,19 @@ impl Client {
             Some(query),
             None::<&()>,
             "getActivity",
+        )
+        .await
+    }
+    /// How the calling customer's agents ran, across all of them
+    ///
+    /// `GET /v1/stats/agents` (`getAgentStats`).
+    pub async fn get_agent_stats(&self, query: &GetAgentStatsQuery) -> Result<types::AgentStats> {
+        self.send(
+            Method::GET,
+            "/v1/stats/agents",
+            Some(query),
+            None::<&()>,
+            "getAgentStats",
         )
         .await
     }
@@ -3480,6 +3477,16 @@ pub struct ListUseCaseReviewsQuery {
 pub struct GetActivityQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub granularity: Option<String>,
+    /// Start of the window, inclusive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// End of the window, exclusive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+}
+/// The query string `getAgentStats` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct GetAgentStatsQuery {
     /// Start of the window, inclusive.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,

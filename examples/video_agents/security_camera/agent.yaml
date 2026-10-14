@@ -1,0 +1,7 @@
+name: security_camera
+description: A voice agent watching a door camera, who knows who came by and what they took.
+llm: llm-fast
+subagent: vlm
+video:
+  source: objects
+  max_frames: 2

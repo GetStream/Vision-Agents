@@ -133,6 +133,10 @@ type Options struct {
 	// only that node can answer is carried to it rather than answered with a 404. Absent
 	// when there is no Redis to keep it in, or no address this node's peers reach it at.
 	Directory *node.Directory
+	// Workers is the deployment's dispatch workers, wherever they are connected: told what
+	// the ones here host, and how a running session's text reaches one elsewhere. Absent
+	// when the Directory or the Relay is.
+	Workers *node.Workers
 	// Streams serves the per-modality sockets, for callers running their own pipeline.
 	// Absent when the deployment routes nothing itself.
 	Streams *Streams
@@ -303,6 +307,7 @@ type Server struct {
 	sessions           *session.Manager
 	relayed            *relayed
 	directory          *node.Directory
+	workers            *node.Workers
 	forwarder          *node.Forwarder
 	streams            *Streams
 	stream             *streamapp.Clients
@@ -444,6 +449,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		phone:              options.Phone,
 		sessions:           options.Sessions,
 		directory:          options.Directory,
+		workers:            options.Workers,
 		streams:            options.Streams,
 		stream:             options.Stream,
 		proxyDeclaresKind:  options.ProxyDeclaresKind,
@@ -1591,6 +1597,51 @@ func (s *Server) getActivity(ctx context.Context, request *getActivityRequest) (
 	return &getActivityResponse{Body: activity}, nil
 }
 
+// getAgentStats returns how the calling customer's agents ran over a window.
+func (s *Server) getAgentStats(ctx context.Context, request *getAgentStatsRequest) (*getAgentStatsResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if !request.To.After(request.From) {
+		return nil, invalidRequest("to must be after from")
+	}
+	if s.store == nil {
+		return nil, invalidRequest("statistics are not available: no database configured")
+	}
+
+	peak, err := s.store.CustomerConcurrencyPeak(ctx, customerID, request.From, request.To)
+	if err != nil {
+		return nil, err
+	}
+	overall, tools, err := s.store.CustomerToolUsage(ctx, customerID, request.From, request.To)
+	if err != nil {
+		return nil, err
+	}
+
+	stats := AgentStats{
+		PeakConcurrentSessions: peak.Sessions,
+		PeakAt:                 peak.At,
+		ToolCalls:              toolStatsOf(overall),
+		Tools:                  make([]ToolStats, 0, len(tools)),
+	}
+	for _, tool := range tools {
+		stats.Tools = append(stats.Tools, toolStatsOf(tool))
+	}
+	return &getAgentStatsResponse{Body: stats}, nil
+}
+
+func toolStatsOf(usage store.ToolUsage) ToolStats {
+	return ToolStats{
+		Tool:      usage.Tool,
+		Calls:     usage.Calls,
+		Failed:    usage.Failed,
+		AvgTokens: usage.AvgTokens,
+		AvgMs:     usage.AvgMs,
+		P99Ms:     usage.P99Ms,
+	}
+}
+
 // runRollup aggregates request rows into a rollup table.
 func (s *Server) runRollup(ctx context.Context, request *runRollupRequest) (*runRollupResponse, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
@@ -1857,6 +1908,20 @@ func (s *Server) registerServer(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
 	}, s.getActivity)
 	huma.Register(api, huma.Operation{
+		OperationID: "getAgentStats",
+		Method:      http.MethodGet,
+		Path:        "/v1/stats/agents",
+		Summary:     "How the calling customer's agents ran, across all of them",
+		Description: "The most agents that were running at once, and which tools they called: how often, " +
+			"how much each call put in front of the model and how long it took.\n" +
+			"One figure for the whole window rather than a row per bucket, because neither a peak nor " +
+			"a percentile can be summed out of smaller ones.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The window's figures"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.getAgentStats)
+	huma.Register(api, huma.Operation{
 		OperationID: "runRollup",
 		Method:      http.MethodPost,
 		Path:        "/v1/stats/rollup",
@@ -1962,6 +2027,33 @@ type getActivityRequest struct {
 
 type getActivityResponse struct {
 	Body []ActivityBucket `nullable:"false"`
+}
+
+type getAgentStatsRequest struct {
+	From time.Time `query:"from" doc:"Start of the window, inclusive." required:"true"`
+	To   time.Time `query:"to" doc:"End of the window, exclusive." required:"true"`
+}
+
+type getAgentStatsResponse struct {
+	Body AgentStats
+}
+
+// AgentStats is how a customer's agents ran over a window, across all of them.
+type AgentStats struct {
+	PeakConcurrentSessions int64       `json:"peak_concurrent_sessions" doc:"The most sessions open at the same time, each one an agent running. A session still open counts up to now."`
+	PeakAt                 *time.Time  `json:"peak_at" nullable:"true" doc:"When that peak was first reached. Null when no session was open in the window."`
+	ToolCalls              ToolStats   `json:"tool_calls" doc:"Every tool call in the window, as one. Its tool is empty."`
+	Tools                  []ToolStats `json:"tools" nullable:"false" doc:"One row per tool, most called first."`
+}
+
+// ToolStats is how often a tool ran and what it cost.
+type ToolStats struct {
+	Tool      string   `json:"tool"`
+	Calls     int64    `json:"calls"`
+	Failed    int64    `json:"failed" doc:"Calls that ended in an error."`
+	AvgTokens float64  `json:"avg_tokens" doc:"What a call put in front of the model, its arguments and its result, estimated at four characters a token."`
+	AvgMs     *float64 `json:"avg_ms" nullable:"true" doc:"From the call starting to its result. Null when none was timed."`
+	P99Ms     *float64 `json:"p99_ms" nullable:"true"`
 }
 
 type runRollupRequest struct {

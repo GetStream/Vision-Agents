@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -30,6 +32,9 @@ const InstructionsFile = "instructions.md"
 
 // GuardrailFile is what it calls the policy screening what may be asked of it.
 const GuardrailFile = "guardrail.md"
+
+// SkillFile is what a skill kept as a folder calls its frontmatter and instructions.
+const SkillFile = "SKILL.md"
 
 // SkillsDir, KnowledgeDir and SimulationsDir are what it calls the rest.
 const (
@@ -392,12 +397,16 @@ type DispatchSettings struct {
 //	  instructions.md
 //	  guardrail.md
 //	  skills/think.md
+//	  skills/pdf/SKILL.md
+//	  skills/pdf/scripts/fill.py
 //	  knowledge/pricing.md
 //	  knowledge/urls.yaml
 //	  simulations/lunch.yaml
 //
 // A skill is a markdown file with YAML-ish frontmatter naming what the fast model sees; the
-// body is the prompt only the subagent sees.
+// body is the prompt only the subagent sees. A skill kept as a folder has that file as its
+// SKILL.md, and the files beside it are read when the model needs them; scripts among them
+// run in the sandbox, so such an agent needs one.
 type Folder struct {
 	// Path is the directory this was read from.
 	Path string
@@ -558,6 +567,11 @@ func fingerprint(
 			}
 			io.WriteString(hasher, seconds)
 		}
+		// Written only when there are some, so a skill without files keeps the fingerprint
+		// the Python SDK takes of it.
+		for _, file := range slices.Sorted(maps.Keys(skill.Files)) {
+			io.WriteString(hasher, "\nfile:"+file+"\n"+skill.Files[file])
+		}
 	}
 
 	documents := slices.SortedFunc(slices.Values(knowledge), func(a, b Document) int {
@@ -675,6 +689,8 @@ func refuseConnectorAliases(settings Settings) error {
 	return nil
 }
 
+// loadSkills reads skills/: a skill is either a markdown file, or a folder holding a
+// SKILL.md and whatever files it comes with, nested as deep as they are.
 func loadSkills(path string) ([]Skill, error) {
 	entries, err := os.ReadDir(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -685,24 +701,89 @@ func loadSkills(path string) ([]Skill, error) {
 	}
 
 	var skills []Skill
+	declared := map[string]string{}
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
+		name := entry.Name()
+		file := filepath.Join(path, name)
+		switch {
+		case entry.IsDir():
+			file = filepath.Join(file, SkillFile)
+		case filepath.Ext(name) == ".md":
+			name = strings.TrimSuffix(name, ".md")
+		default:
 			continue
 		}
 
-		file := filepath.Join(path, entry.Name())
 		content, err := os.ReadFile(file)
+		if entry.IsDir() && errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("agents: %s has no %s, so it is not a skill", filepath.Join(path, entry.Name()), SkillFile)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("agents: reading %s: %w", file, err)
 		}
+		if first, taken := declared[name]; taken {
+			return nil, fmt.Errorf("agents: skill %q is both %s and %s", name, first, entry.Name())
+		}
+		declared[name] = entry.Name()
 
-		skill, err := parseSkill(strings.TrimSuffix(entry.Name(), ".md"), string(content))
+		skill, err := parseSkill(name, string(content))
 		if err != nil {
 			return nil, fmt.Errorf("agents: %s: %w", file, err)
+		}
+		if entry.IsDir() {
+			if skill.Files, err = loadSkillFiles(filepath.Join(path, entry.Name())); err != nil {
+				return nil, err
+			}
 		}
 		skills = append(skills, skill)
 	}
 	return skills, nil
+}
+
+// loadSkillFiles reads every file in a skill folder but its SKILL.md, by slash path
+// relative to the folder. Nil when there are none.
+func loadSkillFiles(dir string) (map[string]string, error) {
+	var files map[string]string
+	err := filepath.WalkDir(dir, func(file string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if file != dir && skipped(entry.Name()) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() || file == filepath.Join(dir, SkillFile) {
+			return nil
+		}
+		content, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		if !utf8.Valid(content) {
+			return fmt.Errorf("%s is not text, and a skill brings only text files", file)
+		}
+		relative, err := filepath.Rel(dir, file)
+		if err != nil {
+			return err
+		}
+		if files == nil {
+			files = map[string]string{}
+		}
+		files[filepath.ToSlash(relative)] = string(content)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading %s: %w", dir, err)
+	}
+	return files, nil
+}
+
+// skipped says whether a file or folder in a skill folder is left behind: hidden ones such
+// as .DS_Store, and the __pycache__ that running a skill's Python scripts locally leaves.
+func skipped(name string) bool {
+	return strings.HasPrefix(name, ".") || name == "__pycache__"
 }
 
 // parseSkill reads a skill file: frontmatter between --- lines, then the instructions.

@@ -43,6 +43,7 @@ from ._generated.models import (
     SimulationDeclarationMode,
     SimulationDeclarationTags,
     SkillRequest,
+    SkillRequestFiles,
     SessionVideo,
     SyncAgentRequest,
     SyncAgentRequestTags,
@@ -108,6 +109,7 @@ async def sync_agent(
             description=skill.description,
             instructions=skill.instructions,
             deadline_ms=int((skill.deadline_seconds or 0) * 1000),
+            files=_skill_files(skill),
         )
         for skill in folder.skills
     ]
@@ -319,6 +321,7 @@ async def define_skills(
             description=skill.description,
             instructions=skill.instructions,
             deadline_ms=int((skill.deadline_seconds or 0) * 1000),
+            files=_skill_files(skill),
         )
         if skill.name in known:
             _answer(
@@ -563,3 +566,10 @@ def _answer(answer: Union[T, ErrorResponse, None]) -> T:
 def _read_agent(name: str, path: Optional[str]) -> Folder:
     """Load an agent directory, resolving `name` when no path was given."""
     return load(path or resolve(name))
+
+
+def _skill_files(skill: Skill) -> Union[SkillRequestFiles, Unset]:
+    """The files a skill folder brings, or nothing for a skill that is one file."""
+    if not skill.files:
+        return UNSET
+    return SkillRequestFiles.from_dict(skill.files)

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -57,7 +58,19 @@ func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	defer connection.Close()
 
 	worker, release := s.dispatch.Register(customerID, registration)
-	defer release()
+	defer func() {
+		hosted := s.dispatch.AgentsHostedBy(worker)
+		release()
+		if s.workers == nil {
+			return
+		}
+		for _, agentID := range hosted {
+			s.workers.Offer(r.Context(), customerID, agentID)
+		}
+	}()
+	if s.directory != nil {
+		defer s.directory.Wait(r.Context(), customerID)()
+	}
 
 	s.logger.Info("a dispatch worker is waiting for calls",
 		"customer", customerID, "worker", worker.ID, "capacity", registration.Capacity,
@@ -344,6 +357,9 @@ func (s *Server) hostTools(worker *dispatch.Worker, agentID string, declared []h
 	}
 	if err := s.dispatch.Host(worker, agentID, tools, time.Duration(timeoutMs)*time.Millisecond); err != nil {
 		return refuse(err.Error())
+	}
+	if s.workers != nil {
+		s.workers.Offer(context.Background(), worker.CustomerID, agentID)
 	}
 	s.logger.Info("a worker hosts tools", "worker", worker.ID, "agent", agentID, "tools", names)
 	return frame{"type": "hosting", "agent_id": agentID, "tools": names}

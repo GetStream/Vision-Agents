@@ -17,6 +17,7 @@ AGENT_STAMP = ".agent_sync"
 INSTRUCTIONS_FILE = "instructions.md"
 GUARDRAIL_FILE = "guardrail.md"
 SKILLS_DIR = "skills"
+SKILL_FILE = "SKILL.md"
 KNOWLEDGE_DIR = "knowledge"
 KNOWLEDGE_URLS_FILE = "urls.yaml"
 SIMULATIONS_DIR = "simulations"
@@ -267,6 +268,8 @@ class Folder:
           instructions.md
           guardrail.md
           skills/think.md
+          skills/pdf/SKILL.md
+          skills/pdf/scripts/fill.py
           knowledge/pricing.md
           knowledge/urls.yaml
           simulations/lunch.yaml
@@ -313,6 +316,10 @@ class Folder:
             hasher.update(b"\n")
             if skill.deadline_seconds:
                 hasher.update(str(skill.deadline_seconds).encode())
+            # Only when there are some, so a skill without files keeps its fingerprint.
+            for name in sorted(skill.files):
+                hasher.update(f"\nfile:{name}\n".encode())
+                hasher.update(skill.files[name].encode())
         for document in sorted(self.knowledge, key=lambda item: item.source):
             hasher.update(b"\nknowledge:")
             hasher.update(document.source.encode())
@@ -826,15 +833,58 @@ def _looks_like_agent(path: Path) -> bool:
 
 
 def _load_skills(path: Path) -> list[Skill]:
+    """Read `skills/`: each skill is a markdown file, or a folder holding a SKILL.md and
+    whatever files it comes with, nested as deep as they are."""
     if not path.is_dir():
         return []
 
     skills: list[Skill] = []
-    for file in sorted(path.iterdir()):
-        if not file.is_file() or file.suffix != ".md":
+    declared: dict[str, str] = {}
+    for entry in sorted(path.iterdir()):
+        if entry.is_dir():
+            name, file = entry.name, entry / SKILL_FILE
+            if not file.is_file():
+                raise ValueError(f"{entry} has no {SKILL_FILE}, so it is not a skill")
+        elif entry.is_file() and entry.suffix == ".md":
+            name, file = entry.stem, entry
+        else:
             continue
-        skills.append(_parse_skill(file.stem, file.read_text()))
+        if name in declared:
+            raise ValueError(
+                f"skill {name!r} is both {declared[name]} and {entry.name}"
+            )
+        declared[name] = entry.name
+        skill = _parse_skill(name, file.read_text())
+        if entry.is_dir():
+            skill.files = _load_skill_files(entry)
+        skills.append(skill)
     return skills
+
+
+def _load_skill_files(folder: Path) -> dict[str, str]:
+    """Every file in a skill folder but its SKILL.md, by slash path relative to it."""
+    files: dict[str, str] = {}
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames[:] = [name for name in dirnames if not _skipped(name)]
+        for filename in filenames:
+            if _skipped(filename):
+                continue
+            file = Path(dirpath) / filename
+            if file == folder / SKILL_FILE:
+                continue
+            try:
+                text = file.read_bytes().decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError(
+                    f"{file} is not text, and a skill brings only text files"
+                ) from exc
+            files[file.relative_to(folder).as_posix()] = text
+    return files
+
+
+def _skipped(name: str) -> bool:
+    """Hidden files such as .DS_Store, and the __pycache__ running a script locally leaves."""
+    return name.startswith(".") or name == "__pycache__"
 
 
 def _parse_skill(name: str, content: str) -> Skill:

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -13,16 +14,24 @@ import (
 func salesSkills() harness.Skills {
 	return harness.Skills{
 		Skills: []harness.Skill{{Name: "sales-moderation", Description: "Moderation pricing and positioning"}},
-		Load: func(_ context.Context, name string) (string, error) {
-			return "Quote the pricing page for " + name, nil
+		Load: func(_ context.Context, name string) (harness.Loaded, error) {
+			return harness.Loaded{
+				Instructions: "Quote the pricing page for " + name,
+				Files:        map[string]string{"reference/tiers.md": "Tier 1 is per item."},
+			}, nil
 		},
 	}
 }
 
 // loadsSkill runs one load_skill call on a joined text agent and returns what it reported.
 func (s *AgentSuite) loadsSkill(name string) ToolRan {
+	return s.loadsSkillWith(`{"name":"` + name + `"}`)
+}
+
+// loadsSkillWith runs one load_skill call with these arguments.
+func (s *AgentSuite) loadsSkillWith(arguments string) ToolRan {
 	s.model.reply = []string{"Moderation is priced per item."}
-	call := llm.ToolCall{ID: "skill", Name: harness.LoadSkillTool, Arguments: `{"name":"` + name + `"}`}
+	call := llm.ToolCall{ID: "skill", Name: harness.LoadSkillTool, Arguments: arguments}
 	s.agent.mu.Lock()
 	s.agent.history = []llm.Message{
 		{Role: llm.User, Content: "how much does moderation cost"},
@@ -48,7 +57,21 @@ func (s *AgentSuite) TestAWrittenConversationLoadsItsSkillsItself() {
 	var loaded map[string]string
 	s.Require().NoError(json.Unmarshal([]byte(ran.Result), &loaded))
 	s.Equal("sales-moderation", loaded["name"])
-	s.Equal("Quote the pricing page for sales-moderation", loaded["instructions"])
+	s.True(strings.HasPrefix(loaded["instructions"], "Quote the pricing page for sales-moderation"))
+	s.Contains(loaded["instructions"], "- reference/tiers.md", "the files are listed, not handed over")
+	s.NotContains(loaded["instructions"], "Tier 1 is per item.")
+}
+
+func (s *AgentSuite) TestAWrittenConversationReadsASkillsFileWhenItAsksForOne() {
+	s.skills = salesSkills()
+	s.joinText()
+
+	ran := s.loadsSkillWith(`{"name":"sales-moderation","path":"reference/tiers.md"}`)
+	s.Require().NoError(ran.Err)
+	var loaded map[string]string
+	s.Require().NoError(json.Unmarshal([]byte(ran.Result), &loaded))
+	s.Equal("reference/tiers.md", loaded["path"])
+	s.Equal("Tier 1 is per item.", loaded["content"])
 }
 
 func (s *AgentSuite) TestAnUnknownSkillIsToldToTheModelWithTheNamesItMayUse() {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -488,6 +488,39 @@ describe("Agent", () => {
 
       assert.equal(hashes[0], hashes[1]);
       assert.notEqual(hashes[1], hashes[2]);
+    });
+
+    it("sends a skill folder's files, and fingerprints a skill moved into a folder the same until it brings one", async () => {
+      router.serve("POST", "/v1/agents/sync", {
+        body: {
+          unchanged: false,
+          config: { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" },
+        },
+      });
+      // Nothing stored, so a stamp that still matches syncs again and the request is seen.
+      router.serve("GET", "/v1/agents/configs", { body: [] });
+      const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
+      const skill = "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n";
+      await mkdir(join(root, "skills"), { recursive: true });
+      await writeFile(join(root, "agent.yaml"), "name: jean\n");
+      await writeFile(join(root, "skills", "pdf.md"), skill);
+      await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+      await rm(join(root, "skills", "pdf.md"));
+      await mkdir(join(root, "skills", "pdf", "scripts"), { recursive: true });
+      await writeFile(join(root, "skills", "pdf", "SKILL.md"), skill);
+      await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+      await writeFile(join(root, "skills", "pdf", "scripts", "fill.py"), "print('filled')\n");
+      await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+      const [asFile, asFolder, withFile] = router
+        .requestsTo("POST", "/v1/agents/sync")
+        .map((one) => one.body as Schemas["SyncAgentRequest"]);
+      assert.equal(asFolder?.skills?.[0] && "files" in asFolder.skills[0], false);
+      assert.deepEqual(withFile?.skills?.[0]?.files, { "scripts/fill.py": "print('filled')\n" });
+      assert.equal(asFile?.hash, asFolder?.hash, "moving a skill into a folder would sync it again");
+      assert.notEqual(asFolder?.hash, withFile?.hash, "a file added to a skill would not sync");
     });
 
     describe("connectors", () => {

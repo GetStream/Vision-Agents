@@ -16,6 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1544,7 +1546,16 @@ func (m *Manager) skills(ctx context.Context, spec Spec) (harness.Skills, error)
 		}
 		return harness.Skills{Skills: available}, nil
 	}
-	return m.namedSkills(ctx, spec.CustomerID, spec.ConfigID, spec.SkillNames)
+	named, err := m.namedSkills(ctx, spec.CustomerID, spec.ConfigID, spec.SkillNames)
+	if err != nil {
+		return harness.Skills{}, err
+	}
+	for _, skill := range named.Skills {
+		if err := harness.NeedsSandbox(skill.Name, skill.Files, spec.Sandbox != ""); err != nil {
+			return harness.Skills{}, stack.Wrap(fmt.Errorf("session: %w", err))
+		}
+	}
+	return named, nil
 }
 
 // namedSkills looks up skills by name, against the config's own and the built-in set.
@@ -1574,21 +1585,22 @@ func (m *Manager) namedSkills(ctx context.Context, customerID, configID string, 
 				Description:  skill.Description,
 				Deadline:     time.Duration(skill.DeadlineMs) * time.Millisecond,
 				CaptureVideo: skill.CaptureVideo,
+				Files:        slices.Sorted(maps.Keys(skill.Files)),
 			}
 		}
 	}
 
 	resolved := harness.Skills{Skills: make([]harness.Skill, 0, len(names))}
 	if m.options.Store != nil {
-		resolved.Load = func(ctx context.Context, name string) (string, error) {
+		resolved.Load = func(ctx context.Context, name string) (harness.Loaded, error) {
 			found, err := m.options.Configs.SkillsNamed(ctx, customerID, configID, []string{name})
 			if err != nil {
-				return "", err
+				return harness.Loaded{}, err
 			}
 			if len(found) == 0 {
-				return "", fmt.Errorf("session: the skill %q was deleted", name)
+				return harness.Loaded{}, fmt.Errorf("session: the skill %q was deleted", name)
 			}
-			return found[0].Instructions, nil
+			return harness.Loaded{Instructions: found[0].Instructions, Files: found[0].Files}, nil
 		}
 	}
 	for _, name := range names {

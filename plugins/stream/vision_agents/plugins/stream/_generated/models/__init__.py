@@ -174,6 +174,15 @@ from .data_import import DataImport
 from .data_import_tables import DataImportTables
 from .data_policy import DataPolicy
 from .decision_kind import DecisionKind
+from .detected_object import DetectedObject
+from .detection_box import DetectionBox
+from .detection_error_code import DetectionErrorCode
+from .detection_options import DetectionOptions
+from .detection_options_overwrites import DetectionOptionsOverwrites
+from .detection_request import DetectionRequest
+from .detection_request_tags import DetectionRequestTags
+from .detection_result import DetectionResult
+from .detection_status import DetectionStatus
 from .dispatch_setting import DispatchSetting
 from .endpointing import Endpointing
 from .equals_type_1 import EqualsType1
@@ -355,6 +364,7 @@ from .sip_trunk import SipTrunk
 from .sip_trunk_transport import SipTrunkTransport
 from .skill import Skill
 from .skill_request import SkillRequest
+from .skill_request_files import SkillRequestFiles
 from .skipped_vendor import SkippedVendor
 from .speech import Speech
 from .speech_request import SpeechRequest
@@ -362,13 +372,6 @@ from .speech_request_tags import SpeechRequestTags
 from .spend_bucket import SpendBucket
 from .stats_bucket import StatsBucket
 from .stored_connector_o_auth_client import StoredConnectorOAuthClient
-from .stream_app_state import StreamAppState
-from .stream_check import StreamCheck
-from .stream_credentials import StreamCredentials
-from .stream_key_input import StreamKeyInput
-from .stream_key_state import StreamKeyState
-from .stream_key_state_signs_webhooks import StreamKeyStateSignsWebhooks
-from .stream_key_state_status import StreamKeyStateStatus
 from .stream_settings import StreamSettings
 from .stream_tenancy import StreamTenancy
 from .stream_type_state import StreamTypeState
@@ -605,6 +608,15 @@ __all__ = (
     "DataImportTables",
     "DataPolicy",
     "DecisionKind",
+    "DetectedObject",
+    "DetectionBox",
+    "DetectionErrorCode",
+    "DetectionOptions",
+    "DetectionOptionsOverwrites",
+    "DetectionRequest",
+    "DetectionRequestTags",
+    "DetectionResult",
+    "DetectionStatus",
     "DispatchSetting",
     "Endpointing",
     "EqualsType1",
@@ -784,6 +796,7 @@ __all__ = (
     "SipTrunkTransport",
     "Skill",
     "SkillRequest",
+    "SkillRequestFiles",
     "SkippedVendor",
     "Speech",
     "SpeechRequest",
@@ -791,13 +804,6 @@ __all__ = (
     "SpendBucket",
     "StatsBucket",
     "StoredConnectorOAuthClient",
-    "StreamAppState",
-    "StreamCheck",
-    "StreamCredentials",
-    "StreamKeyInput",
-    "StreamKeyState",
-    "StreamKeyStateSignsWebhooks",
-    "StreamKeyStateStatus",
     "StreamSettings",
     "StreamTenancy",
     "StreamTypeState",

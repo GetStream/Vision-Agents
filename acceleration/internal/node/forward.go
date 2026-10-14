@@ -23,6 +23,18 @@ import (
 // it rather than looking for somewhere else to send it.
 const ForwardedHeader = "X-Acceleration-Forwarded"
 
+type forwardedKey struct{}
+
+// Forwarded reports whether a request was handed over by a peer.
+//
+// Unlike ForwardedHeader, which anybody can send, this is only ever set by the node
+// replaying a peer's request, so it can be trusted to mean the peer already acted on what
+// arrived there first, such as recording a hook as delivered.
+func Forwarded(ctx context.Context) bool {
+	forwarded, _ := ctx.Value(forwardedKey{}).(bool)
+	return forwarded
+}
+
 // Serve returns a handler that answers this deployment's own requests and the Forward
 // calls its peers make, on one port.
 //
@@ -173,8 +185,8 @@ type forwarded struct {
 }
 
 func (f *forwarded) Forward(ctx context.Context, request *ForwardRequest) (*ForwardResponse, error) {
-	replayed, err := http.NewRequestWithContext(
-		ctx, request.GetMethod(), request.GetUrl(), bytes.NewReader(request.GetBody()))
+	replayed, err := http.NewRequestWithContext(context.WithValue(ctx, forwardedKey{}, true),
+		request.GetMethod(), request.GetUrl(), bytes.NewReader(request.GetBody()))
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}

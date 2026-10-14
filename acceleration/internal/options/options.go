@@ -84,6 +84,13 @@ const (
 	AspectRatio    Term = "aspect_ratio"
 	Seed           Term = "seed"
 	NegativePrompt Term = "negative_prompt"
+	// The detection terms. A fixed-class model asked for a word it was never trained on
+	// finds nothing, and an empty list reads as "there is none", so asking for arbitrary
+	// words is a term. So is a confidence floor, which a model that scores nothing cannot
+	// apply, and a vector per box, which only a Workflow that computes one returns.
+	OpenVocabulary Term = "open_vocabulary"
+	Confidence     Term = "confidence"
+	Embeddings     Term = "embeddings"
 )
 
 // Transcription modes. Verbatim keeps what was said; Smart tidies it.

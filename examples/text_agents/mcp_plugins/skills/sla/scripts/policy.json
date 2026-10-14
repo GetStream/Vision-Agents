@@ -1,0 +1,9 @@
+{
+  "business_hours": {"start": 9, "end": 17, "weekdays": [0, 1, 2, 3, 4]},
+  "severities": {
+    "P1": {"clock": "always", "acknowledge_minutes": 15, "resolve_minutes": 240},
+    "P2": {"clock": "always", "acknowledge_minutes": 60, "resolve_minutes": 1440},
+    "P3": {"clock": "business", "acknowledge_minutes": 480, "resolve_minutes": 2400},
+    "P4": {"clock": "business", "acknowledge_minutes": 960, "resolve_minutes": 9600}
+  }
+}

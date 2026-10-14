@@ -107,6 +107,64 @@ public sealed class FolderTests : IDisposable
     }
 
     [Fact]
+    public void ASkillFolderBringsItsNestedFiles()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+        Write("skills/pdf/reference/forms.md", "# Forms\n");
+        Write("skills/pdf/scripts/lib/fill.py", "print('filled')\n");
+
+        var skill = Assert.Single(Folder.Load(_root).Skills);
+
+        Assert.Equal(("pdf", "Fill PDF forms", "Fill the form."), (skill.Name, skill.Description, skill.Instructions));
+        Assert.Equal(new Dictionary<string, string> { ["reference/forms.md"] = "# Forms\n", ["scripts/lib/fill.py"] = "print('filled')\n" }, skill.Files);
+    }
+
+    [Fact]
+    public void HiddenFilesAndPycacheAreLeftBehind()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+        Write("skills/pdf/fill.py", "print('filled')\n");
+        WriteBytes("skills/pdf/.DS_Store", [0x00, 0xff]);
+        Write("skills/pdf/.hidden/notes.md", "secret\n");
+        WriteBytes("skills/pdf/__pycache__/fill.cpython-313.pyc", [0xcb, 0x0d, 0xff]);
+
+        Assert.Equal(["fill.py"], Assert.Single(Folder.Load(_root).Skills).Files.Keys);
+    }
+
+    [Fact]
+    public void AFolderWithoutASkillFileIsRefused()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/pdf/reference/forms.md", "# Forms\n");
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+        Assert.Equal($"{Path.Combine(_root, "skills", "pdf")} has no SKILL.md, so it is not a skill", refused.Message);
+    }
+
+    [Fact]
+    public void ASkillWrittenBothAsAFileAndAFolderIsRefused()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/pdf.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+        Write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+
+        Assert.Equal("skill \"pdf\" is both pdf and pdf.md", Assert.Throws<ConfigurationException>(() => Folder.Load(_root)).Message);
+    }
+
+    [Fact]
+    public void ASkillFileThatIsNotTextIsRefused()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+        WriteBytes("skills/pdf/form.pdf", [0x25, 0x50, 0xff, 0xfe]);
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+        Assert.Equal($"{Path.Combine(_root, "skills", "pdf", "form.pdf")} is not text, and a skill brings only text files", refused.Message);
+    }
+
+    [Fact]
     public void ASkillCanBeNamedSomethingOtherThanItsFile()
     {
         Write("agent.yaml", "name: jean\n");
@@ -187,6 +245,37 @@ public sealed class FolderTests : IDisposable
 
         Write("knowledge/urls.yaml", "- https://example.com/plans\n");
         Assert.NotEqual(folder.Hash(), Folder.Load(_root).Hash());
+    }
+
+    [Fact]
+    public void ASkillFolderHashesTheWayTheGoAndPythonSdksHashIt()
+    {
+        Write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\nsandbox: daytona\n");
+        Write("instructions.md", "You are Jean.\n");
+        Write("skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n");
+        Write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n");
+        Write("skills/pdf/reference/forms.md", "# Forms\n");
+        Write("skills/pdf/scripts/fill.py", "print('filled')\n");
+        Write("skills/pdf/scripts/lib/fill_lib.py", "def fill():\n    return 1\n");
+        WriteBytes("skills/pdf/scripts/__pycache__/fill.cpython-313.pyc", [0xcb, 0x0d, 0xff]);
+        WriteBytes("skills/pdf/.DS_Store", [0x00, 0xff]);
+        Write("knowledge/pricing.md", "# Pricing\n\nA penny.\n");
+
+        Assert.Equal("e47f7807b97bbcbdee683c6c481d1d36", Folder.Load(_root).Hash());
+    }
+
+    [Fact]
+    public void MovingASkillIntoAFolderKeepsTheHashAndAddingAFileChangesIt()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n");
+        var asFile = Folder.Load(_root).Hash();
+
+        File.Move(Path.Combine(_root, "skills", "think.md"), Path.Combine(Directory.CreateDirectory(Path.Combine(_root, "skills", "think")).FullName, "SKILL.md"));
+        Assert.Equal(asFile, Folder.Load(_root).Hash());
+
+        Write("skills/think/notes.md", "Check twice.\n");
+        Assert.NotEqual(asFile, Folder.Load(_root).Hash());
     }
 
     [Fact]
@@ -306,5 +395,12 @@ public sealed class FolderTests : IDisposable
         var path = Path.Combine(_root, name);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, content);
+    }
+
+    private void WriteBytes(string name, byte[] content)
+    {
+        var path = Path.Combine(_root, name);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, content);
     }
 }

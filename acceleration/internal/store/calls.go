@@ -182,6 +182,9 @@ func (s *Store) CustomerCalls(ctx context.Context, customerID string, filter Cal
 	if !filter.To.IsZero() {
 		query = query.Where("started_at < ?", filter.To)
 	}
+	if filter.MaxReviewScore > 0 {
+		query = query.Where("review_score <= ?", filter.MaxReviewScore)
+	}
 
 	var calls []Call
 	if err := query.Scan(ctx, &calls); err != nil {

@@ -205,6 +205,10 @@ func (s *CallHooksSuite) arrive(cid string) int {
 
 // arriving is what Stream sends when a caller lands in a call.
 func (s *CallHooksSuite) arriving(cid string) string {
+	return arrivingCall(cid)
+}
+
+func arrivingCall(cid string) string {
 	id := cid[strings.Index(cid, ":")+1:]
 	callType := cid[:strings.Index(cid, ":")]
 	return fmt.Sprintf(`{

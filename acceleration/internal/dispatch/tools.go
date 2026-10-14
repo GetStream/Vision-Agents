@@ -140,6 +140,23 @@ func (p *Pool) HostedTools(customerID, agentID string) ([]Tool, time.Duration) {
 	return offered, longest
 }
 
+// AgentsHostedBy is the agent ids a worker hosts tools for.
+func (p *Pool) AgentsHostedBy(worker *Worker) []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	var agents []string
+	for agentID, offers := range p.hosted[worker.CustomerID] {
+		for _, offer := range offers {
+			if offer.worker == worker {
+				agents = append(agents, agentID)
+				break
+			}
+		}
+	}
+	return agents
+}
+
 // RunHosted sends one call to a worker hosting that tool for the agent and waits for its
 // answer, the worker's own timeout, or the caller giving up.
 //

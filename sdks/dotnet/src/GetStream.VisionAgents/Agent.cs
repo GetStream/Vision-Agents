@@ -818,5 +818,6 @@ public sealed class Agent : IAsyncDisposable
         Instructions = skill.Instructions,
         CaptureVideo = skill.CaptureVideo,
         DeadlineMs = skill.Deadline is { } deadline && deadline > TimeSpan.Zero ? (long)deadline.TotalMilliseconds : null,
+        Files = skill.Files.Count > 0 ? new Dictionary<string, string>(skill.Files) : null,
     };
 }

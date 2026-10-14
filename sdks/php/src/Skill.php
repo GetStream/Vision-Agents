@@ -19,6 +19,8 @@ final readonly class Skill
      * @param string $description the one line the fast model sees
      * @param string $instructions the full prompt, which only the subagent sees
      * @param float $deadline seconds the work may run before it is abandoned; 0 leaves the backend's
+     * @param array<string, string> $files the rest of a skill folder, each file's text by its slash
+     *     path relative to the folder
      */
     public function __construct(
         public string $name,
@@ -26,6 +28,7 @@ final readonly class Skill
         public string $instructions,
         public bool $captureVideo = false,
         public float $deadline = 0.0,
+        public array $files = [],
     ) {
         if ($name === '') {
             throw new ConfigurationException('a skill needs a name');
@@ -54,6 +57,7 @@ final readonly class Skill
             name: $this->name,
             captureVideo: $this->captureVideo,
             deadlineMs: $this->deadlineMs(),
+            files: $this->files === [] ? null : $this->files,
         );
     }
 

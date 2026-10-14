@@ -35,6 +35,9 @@ public sealed record Skill
 
     /// <summary>How long the work may run before it is abandoned. Null leaves the backend's default.</summary>
     public TimeSpan? Deadline { get; init; }
+
+    /// <summary>The files a skill folder brings beside its SKILL.md, each file's text by its slash path relative to the folder.</summary>
+    public IReadOnlyDictionary<string, string> Files { get; init; } = new Dictionary<string, string>();
 }
 
 /// <summary>One file from an agent's knowledge directory, as it will be ingested.</summary>
@@ -141,6 +144,8 @@ public sealed record Declaration
 ///   instructions.md
 ///   guardrail.md
 ///   skills/think.md
+///   skills/pdf/SKILL.md
+///   skills/pdf/scripts/fill.py
 ///   knowledge/pricing.md
 ///   knowledge/urls.yaml
 ///   simulations/lunch.yaml
@@ -163,6 +168,9 @@ public sealed class Folder
     /// <summary>The skills directory.</summary>
     public const string SkillsDir = "skills";
 
+    /// <summary>What makes a folder in skills/ a skill.</summary>
+    public const string SkillFile = "SKILL.md";
+
     /// <summary>The knowledge directory.</summary>
     public const string KnowledgeDir = "knowledge";
 
@@ -177,6 +185,8 @@ public sealed class Folder
 
     // A model looks things up in prose, not in a binary.
     private static readonly HashSet<string> Readable = [".md", ".mdx", ".txt", ".rst", ".yaml", ".yml"];
+
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     private Folder(string path, string name)
     {
@@ -362,6 +372,11 @@ public sealed class Folder
                 var seconds = deadline.TotalSeconds.ToString(CultureInfo.InvariantCulture);
                 text.Append(seconds.Contains('.') ? seconds : seconds + ".0");
             }
+            // Only when there are some, so a skill without files keeps its fingerprint.
+            foreach (var (path, content) in skill.Files.OrderBy(file => file.Key, StringComparer.Ordinal))
+            {
+                text.Append("\nfile:").Append(path).Append('\n').Append(content);
+            }
         }
         foreach (var document in knowledge.OrderBy(document => document.Source, StringComparer.Ordinal))
         {
@@ -524,6 +539,10 @@ public sealed class Folder
         };
     }
 
+    /// <summary>
+    /// Reads skills/: a skill is either a markdown file, or a folder holding a SKILL.md and
+    /// whatever files it comes with, nested as deep as they are.
+    /// </summary>
     private static List<Skill> LoadSkills(string path)
     {
         if (!Directory.Exists(path))
@@ -531,19 +550,91 @@ public sealed class Folder
             return [];
         }
         var skills = new List<Skill>();
-        foreach (var file in Directory.GetFiles(path, "*.md").Order(StringComparer.Ordinal))
+        var declared = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var entry in Directory.GetFileSystemEntries(path).Order(StringComparer.Ordinal))
         {
+            var entryName = System.IO.Path.GetFileName(entry);
+            var isFolder = Directory.Exists(entry);
+            string name, file;
+            if (isFolder)
+            {
+                (name, file) = (entryName, System.IO.Path.Combine(entry, SkillFile));
+                if (!File.Exists(file))
+                {
+                    throw new ConfigurationException($"{entry} has no {SkillFile}, so it is not a skill");
+                }
+            }
+            else if (System.IO.Path.GetExtension(entryName) == ".md")
+            {
+                (name, file) = (System.IO.Path.GetFileNameWithoutExtension(entryName), entry);
+            }
+            else
+            {
+                continue;
+            }
+            if (declared.TryGetValue(name, out var first))
+            {
+                throw new ConfigurationException($"skill \"{name}\" is both {first} and {entryName}");
+            }
+            declared[name] = entryName;
+
+            Skill skill;
             try
             {
-                skills.Add(ParseSkill(System.IO.Path.GetFileNameWithoutExtension(file), File.ReadAllText(file)));
+                skill = ParseSkill(name, File.ReadAllText(file));
             }
             catch (ConfigurationException failure)
             {
                 throw new ConfigurationException($"{file}: {failure.Message}");
             }
+            skills.Add(isFolder ? skill with { Files = LoadSkillFiles(entry) } : skill);
         }
         return skills;
     }
+
+    /// <summary>
+    /// Reads every file in a skill folder but its SKILL.md, by slash path relative to the folder.
+    /// </summary>
+    private static Dictionary<string, string> LoadSkillFiles(string folder)
+    {
+        var files = new Dictionary<string, string>(StringComparer.Ordinal);
+        var skillFile = System.IO.Path.Combine(folder, SkillFile);
+        void Walk(string directory)
+        {
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                if (Skipped(System.IO.Path.GetFileName(entry)))
+                {
+                    continue;
+                }
+                if (Directory.Exists(entry))
+                {
+                    Walk(entry);
+                    continue;
+                }
+                if (entry == skillFile)
+                {
+                    continue;
+                }
+                try
+                {
+                    files[System.IO.Path.GetRelativePath(folder, entry).Replace('\\', '/')] = StrictUtf8.GetString(File.ReadAllBytes(entry));
+                }
+                catch (DecoderFallbackException)
+                {
+                    throw new ConfigurationException($"{entry} is not text, and a skill brings only text files");
+                }
+            }
+        }
+        Walk(folder);
+        return files;
+    }
+
+    /// <summary>
+    /// Whether a file or folder in a skill folder is left behind: hidden ones such as
+    /// .DS_Store, and the __pycache__ that running a skill's Python scripts locally leaves.
+    /// </summary>
+    private static bool Skipped(string name) => name.StartsWith('.') || name == "__pycache__";
 
     /// <summary>
     /// Reads a skill file: frontmatter between --- lines, then the instructions. The keys are

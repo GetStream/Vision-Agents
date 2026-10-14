@@ -633,10 +633,10 @@ func (s *HarnessSuite) TestASkillOfferedByNameIsReadAsItIsWhenItIsUsed() {
 	stored := "refund within 30 days"
 	s.skills = Skills{
 		Skills: []Skill{{Name: "refund", Description: "what a caller is owed", Deadline: time.Minute}},
-		Load: func(_ context.Context, name string) (string, error) {
+		Load: func(_ context.Context, name string) (Loaded, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			return name + ": " + stored, nil
+			return Loaded{Instructions: name + ": " + stored}, nil
 		},
 	}
 	s.build(true)
@@ -660,8 +660,8 @@ func (s *HarnessSuite) TestASkillOfferedByNameIsReadAsItIsWhenItIsUsed() {
 func (s *HarnessSuite) TestASkillThatCannotBeReadFailsRatherThanRunningWithoutInstructions() {
 	s.skills = Skills{
 		Skills: []Skill{{Name: "refund", Description: "what a caller is owed", Deadline: time.Minute}},
-		Load: func(context.Context, string) (string, error) {
-			return "", errors.New("the skill was deleted")
+		Load: func(context.Context, string) (Loaded, error) {
+			return Loaded{}, errors.New("the skill was deleted")
 		},
 	}
 	s.build(true)

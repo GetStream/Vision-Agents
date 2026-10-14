@@ -630,6 +630,7 @@ type Modality string
 // Defines values for Modality.
 const (
 	DecisionModel Modality = "decision_model"
+	Detection     Modality = "detection"
 	Image         Modality = "image"
 	Knowledge     Modality = "knowledge"
 	Llm           Modality = "llm"
@@ -645,6 +646,8 @@ const (
 func (e Modality) Valid() bool {
 	switch e {
 	case DecisionModel:
+		return true
+	case Detection:
 		return true
 	case Image:
 		return true
@@ -670,7 +673,7 @@ func (e Modality) Valid() bool {
 }
 
 func (Modality) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "Modality", "What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.", "stt", "tts", "llm", "sts", "search", "decision_model", "image", "memory", "knowledge", "phone")
+	return namedEnum(registry, "Modality", "What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.", "stt", "tts", "llm", "sts", "search", "decision_model", "image", "detection", "memory", "knowledge", "phone")
 }
 
 // Provider is the Provider schema.
@@ -1124,6 +1127,7 @@ type Skill struct {
 	CreatedAt    time.Time `json:"created_at"`
 	DeadlineMs   *int64    `json:"deadline_ms,omitempty"`
 	Description  string    `json:"description"`
+	FilePaths    *[]string `json:"file_paths,omitempty" doc:"The files the skill came with, by path relative to its folder."`
 	Id           string    `json:"id"`
 	Instructions string    `json:"instructions"`
 	Name         string    `json:"name"`
@@ -1132,12 +1136,13 @@ type Skill struct {
 
 // SkillRequest is the SkillRequest schema.
 type SkillRequest struct {
-	CaptureVideo *bool  `json:"capture_video,omitempty" doc:"Capture task-scoped visual evidence before reasoning."`
-	ConfigId     string `json:"config_id" doc:"The agent config this skill belongs to. A skill is not shared: two agents that both need one have one each, so editing either leaves the other alone."`
-	DeadlineMs   *int64 `json:"deadline_ms,omitempty" doc:"How long the work may run before it is abandoned. Zero is the default."`
-	Description  string `json:"description" doc:"The one line the fast model sees."`
-	Instructions string `json:"instructions" doc:"The full prompt, which only the subagent sees."`
-	Name         string `json:"name" doc:"How the config names it, which is unique among that config's own skills."`
+	CaptureVideo *bool              `json:"capture_video,omitempty" doc:"Capture task-scoped visual evidence before reasoning."`
+	ConfigId     string             `json:"config_id" doc:"The agent config this skill belongs to. A skill is not shared: two agents that both need one have one each, so editing either leaves the other alone."`
+	DeadlineMs   *int64             `json:"deadline_ms,omitempty" doc:"How long the work may run before it is abandoned. Zero is the default."`
+	Description  string             `json:"description" doc:"The one line the fast model sees."`
+	Files        *map[string]string `json:"files,omitempty" doc:"The rest of the skill's folder beside SKILL.md, each file's text by its path relative to the folder, such as reference/forms.md or scripts/fill.py. The model reads them one at a time when it needs them. A file that is not .md, .mdx or .txt is a script, run in the sandbox, so a skill with one belongs only to an agent with a sandbox. At most 64 files and 1 MB in all."`
+	Instructions string             `json:"instructions" doc:"The full prompt, which only the subagent sees."`
+	Name         string             `json:"name" doc:"How the config names it, which is unique among that config's own skills."`
 }
 
 // Speech is the Speech schema.

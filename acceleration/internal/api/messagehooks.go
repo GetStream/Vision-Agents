@@ -194,6 +194,10 @@ func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, body [
 		return
 	}
 
+	if s.forwardedToWorkers(r, body, customerID) {
+		return
+	}
+
 	message := dispatch.Message{
 		ChannelType: event.ChannelType,
 		ChannelID:   event.ChannelID,
@@ -322,7 +326,7 @@ func (s *Server) dispatchText(ctx context.Context, found *session.Session, messa
 	message.ConfigID = spec.ConfigID
 	message.SessionID = found.ID()
 	message.At = time.Now().UTC()
-	worker, err := s.dispatch.AssignMessage(spec.CustomerID, message)
+	workerID, err := s.assignMessage(ctx, spec.CustomerID, message)
 	if err != nil {
 		if message.CommandID != "" {
 			if _, stopped := found.InterruptCommand(message.CommandID); stopped != nil {
@@ -333,8 +337,21 @@ func (s *Server) dispatchText(ctx context.Context, found *session.Session, messa
 		return conversation.CommandReceipt{}, err
 	}
 	s.logger.Info("handed a message to a worker",
-		"session", found.ID(), "customer", spec.CustomerID, "worker", worker.ID)
+		"session", found.ID(), "customer", spec.CustomerID, "worker", workerID)
 	return receipt, nil
+}
+
+// assignMessage hands a message to one of the customer's workers, wherever in the
+// deployment it is connected, and names the worker it went to.
+func (s *Server) assignMessage(ctx context.Context, customerID string, message dispatch.Message) (string, error) {
+	if s.workers != nil {
+		return s.workers.AssignMessage(ctx, customerID, message)
+	}
+	worker, err := s.dispatch.AssignMessage(customerID, message)
+	if err != nil {
+		return "", err
+	}
+	return worker.ID, nil
 }
 
 // answerMessage answers from a session that is already running.

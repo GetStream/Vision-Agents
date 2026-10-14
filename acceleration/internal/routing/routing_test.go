@@ -332,6 +332,11 @@ func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {
 				// cost and nothing is what they should report.
 				continue
 			}
+			if modality == Detection && provider.Provider == "ultralytics" {
+				// Ultralytics' shared API bills nothing; a dedicated endpoint is billed by
+				// the hour, which no per-request rate describes.
+				continue
+			}
 			s.NotZerof(provider.Price, "%s/%s has no price, so its cost would report as zero",
 				modality, provider.Name())
 		}
@@ -1259,12 +1264,12 @@ func (s *RoutingSuite) TestSeeingDropsModelsThatCannotTakeAnImage() {
 	s.ErrorContains(err, "no provider accepts image input")
 }
 
-func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMetaAndXAI() {
+func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMetaXAIAndMoondream() {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
 
 	for _, provider := range config[LLM].Providers {
-		if provider.Provider == "openai" || provider.Provider == "gemini" || provider.Provider == "anthropic" || provider.Provider == "meta" || provider.Provider == "xai" {
+		if provider.Provider == "openai" || provider.Provider == "gemini" || provider.Provider == "anthropic" || provider.Provider == "meta" || provider.Provider == "xai" || provider.Provider == "moondream" {
 			s.Containsf(provider.InputModalities, "image", "%s should accept images", provider.Name())
 			continue
 		}

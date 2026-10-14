@@ -94,9 +94,9 @@ def sync_detailed(
             text model and a voice. decision_model is a decision model: it answers named questions
             about a piece of text with a typed value and the probability behind it rather than with
             prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
-            from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
+            from a prompt, and detection is boxes found in one. Memory, knowledge and phone are
+            recorded but not routed, since there is one memory store, one knowledge base and one
+            vendor per number, so the provider paths do not serve them while the statistics paths do.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -130,9 +130,9 @@ def sync(
             text model and a voice. decision_model is a decision model: it answers named questions
             about a piece of text with a typed value and the probability behind it rather than with
             prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
-            from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
+            from a prompt, and detection is boxes found in one. Memory, knowledge and phone are
+            recorded but not routed, since there is one memory store, one knowledge base and one
+            vendor per number, so the provider paths do not serve them while the statistics paths do.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -161,9 +161,9 @@ async def asyncio_detailed(
             text model and a voice. decision_model is a decision model: it answers named questions
             about a piece of text with a typed value and the probability behind it rather than with
             prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
-            from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
+            from a prompt, and detection is boxes found in one. Memory, knowledge and phone are
+            recorded but not routed, since there is one memory store, one knowledge base and one
+            vendor per number, so the provider paths do not serve them while the statistics paths do.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -195,9 +195,9 @@ async def asyncio(
             text model and a voice. decision_model is a decision model: it answers named questions
             about a piece of text with a typed value and the probability behind it rather than with
             prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
-            from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
+            from a prompt, and detection is boxes found in one. Memory, knowledge and phone are
+            recorded but not routed, since there is one memory store, one knowledge base and one
+            vendor per number, so the provider paths do not serve them while the statistics paths do.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

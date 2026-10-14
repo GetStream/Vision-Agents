@@ -2353,6 +2353,26 @@ llm:
         per_million_cached_input_tokens: 0.01
         per_million_output_tokens: 0.50
 
+    # Moondream 3 over its OpenAI-compatible chat completions: a small vision model that
+    # answers questions about a picture. It accepts tools and never calls one, so it is no
+    # model to hold a conversation, and nothing prefers it; a request names it to get it.
+    # An image costs about 740 input tokens. Pricing from https://moondream.ai/pricing;
+    # Moondream publish nothing this deployment can read about training or retention.
+    - provider: moondream
+      model: moondream3-preview
+      description: "Moondream 3, a small vision model for questions about a picture. Takes no tools and has published no data policy."
+      context_window: 32000
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: unknown
+        retention: unknown
+      price:
+        per_million_input_tokens: 0.30
+        per_million_output_tokens: 2.50
+
     # xAI's Grok 4.7 over their OpenAI-compatible chat completions, with a 500k context.
     # It cannot be told not to think: none is a 400, and xAI default it to high, so the
     # provider asks for low when a request names no effort. Prompts of 200k tokens or more
@@ -3276,4 +3296,111 @@ image:
 
     multilingual-high-accuracy:
       multilingual: true
+      tier: high-quality
+
+detection:
+  providers:
+    # YOLO26 nano on the Ultralytics Platform's shared API, which serves Ultralytics' own
+    # models without a key and is limited to 20 requests a minute; ULTRALYTICS_ENDPOINT
+    # points it at a dedicated endpoint instead. COCO's 80 classes, boxes in about 150 ms.
+    # The shared API is free (docs.ultralytics.com/platform/deploy/inference, read
+    # 2026-10-13); a dedicated endpoint is billed by the hour, not here.
+    - provider: ultralytics
+      model: yolo26/yolo26n
+      description: "YOLO26 nano. COCO's 80 classes, quick, and free on the shared API at 20 requests a minute."
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      supports: [confidence]
+      price:
+        per_image: 0
+
+    # YOLOv8 nano at 640 on Roboflow's serverless API, the model its SDK calls yolov8n-640.
+    # 0.000125 credits an image at $6 an on-demand credit (roboflow.com/pricing, read
+    # 2026-10-13).
+    - provider: roboflow
+      model: coco/3
+      description: "YOLOv8 nano on Roboflow. COCO's 80 classes, quick, no rate limit to speak of."
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      supports: [confidence]
+      price:
+        per_image: 0.00075
+
+    # Moondream 3 Preview finds whatever it is asked for, one word a call, and scores
+    # nothing. About 740 input and 13 output tokens a call at $0.30 and $2.50 a million
+    # (moondream.ai/pricing, read 2026-10-13); a request for three words is billed three.
+    - provider: moondream
+      model: moondream3-preview
+      description: "Finds any object you can name, such as a package or a red mug. One call per word, no confidence."
+      languages: [en]
+      realtime: true
+      tier: high-quality
+      supports: [open_vocabulary]
+      price:
+        per_image: 0.00025
+
+    # Roboflow's face Workflow, built into the provider: face detection, a crop of each
+    # face and a CLIP embedding of each crop. CLIP describes how a face looks rather than
+    # who it is, which re-identifies someone in the same light and is not face ID. Priced
+    # as the detector plus one CLIP call, an estimate rather than a published rate.
+    - provider: roboflow
+      model: faces
+      description: "Faces, each with a 512-number embedding for matching people seen before."
+      languages: [en]
+      realtime: true
+      tier: high-quality
+      supports: [confidence, embeddings]
+      price:
+        per_image: 0.0015
+
+    # The caller's own Roboflow Workflow, named in overwrites.roboflow by workspace and
+    # workflow_id or sent whole as a specification. Its price is whatever its blocks cost,
+    # so this is the detector's rate as a floor.
+    - provider: roboflow
+      model: workflow
+      description: "Your own Roboflow Workflow, named in overwrites. It must output predictions, and may output embeddings."
+      languages: [en]
+      realtime: true
+      tier: high-quality
+      supports: [confidence, embeddings]
+      price:
+        per_image: 0.00075
+
+  aliases:
+    # The default: COCO's classes, quickest first.
+    detection-fast:
+      title: Fast detection
+      description: "COCO's 80 classes (people, cars, cups, phones...) in a fraction of a second."
+      tier: low-latency
+
+    detection-open:
+      title: Any object
+      description: "Finds whatever you name, such as a package. Slower, and one call per word."
+      require_terms: [open_vocabulary]
+      prefer: moondream/moondream3-preview
+
+    detection-faces:
+      title: Faces
+      description: "Faces with an embedding each, for recognising people seen before."
+      only: [roboflow/faces]
+
+    # The four shortcuts every modality answers to. Detection reads no language but the
+    # class names, which every model here labels in English, so the multilingual ones
+    # are the English ones.
+    en-low-latency:
+      languages: [en]
+      tier: low-latency
+
+    multilingual-low-latency:
+      languages: [en]
+      tier: low-latency
+
+    en-high-accuracy:
+      languages: [en]
+      tier: high-quality
+
+    multilingual-high-accuracy:
+      languages: [en]
       tier: high-quality

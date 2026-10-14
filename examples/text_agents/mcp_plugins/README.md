@@ -256,6 +256,26 @@ Blender scene in Python and renders it in the router's Daytona sandbox:
   scene and renders it with Cycles, and the instruction to pass
   `files=["/tmp/render.png"]` to `run_code`. Its `deadline: 20m` covers the first build.
 
+A skill can also be a folder: `skills/sla/` is a `SKILL.md` and the files it comes with,
+nested as deep as they need to be:
+
+```
+skills/sla/
+  SKILL.md               # what the subagent works under
+  reference/severity.md  # read only when a severity is Sentry's or Linear's
+  reference/policy.md    # read only when somebody asks why
+  scripts/sla.py         # run in the sandbox, with its policy.json and sla_lib/
+```
+
+The subagent sees the list of files and reads one only when it needs it. Any file that is not
+`.md`, `.mdx` or `.txt` is a script: the router writes the skill's files into the sandbox under
+`skills/sla/` before the first `run_code`, and refuses to sync a skill with scripts to an
+agent without a `sandbox`.
+
+```bash
+uv run mcp_plugins.py "Sentry SENTRY-123 is fatal, opened today at 09:00 UTC and not acknowledged. Has it breached its SLA?"
+```
+
 The router downloads the file `run_code` names, uploads it to the conversation's channel,
 and attaches it to the reply that settles the work, so it is still there when the
 conversation is reopened. `task_settled` carries the file's URL as well, which is what this

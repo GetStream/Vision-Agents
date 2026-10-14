@@ -24,6 +24,15 @@ from ._generated.models import (
 from .accelerated import Accelerated
 from .client import Agent, Client, GuestOptions, Memories
 from .config import define_agent, define_skills, ensure_agent, sync_agent
+from .detection import (
+    ChangeGate,
+    DetectionProcessor,
+    ObjectAppearedEvent,
+    ObjectDisappearedEvent,
+    Track,
+    Tracks,
+    iou,
+)
 from .dispatch import Dispatch
 from .folder import Folder, load
 from .knowledge import Knowledge
@@ -54,7 +63,9 @@ __all__ = [
     "AttachedNumber",
     "Backend",
     "CallContext",
+    "ChangeGate",
     "Client",
+    "DetectionProcessor",
     "Dispatch",
     "Folder",
     "ForkOptions",
@@ -75,6 +86,8 @@ __all__ = [
     "ModelOverwritesThinking",
     "ModelOverwritesVerbosity",
     "NumberSearchResult",
+    "ObjectAppearedEvent",
+    "ObjectDisappearedEvent",
     "Participant",
     "Phone",
     "PhoneCapability",
@@ -96,11 +109,14 @@ __all__ = [
     "Simulations",
     "SkippedVendor",
     "TTS",
+    "Track",
+    "Tracks",
     "Voice",
     "define_agent",
     "define_router",
     "define_skills",
     "ensure_agent",
+    "iou",
     "load",
     "sync_agent",
     "sync_routers",

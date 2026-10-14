@@ -44,6 +44,9 @@ class Skill:
         instructions: The full prompt, which only the subagent sees.
         deadline_seconds: How long the work may run before it is abandoned.
         capture_video: Capture task-scoped visual evidence before running the skill.
+        files: The rest of a skill folder beside its SKILL.md, each file's text by its
+            path relative to the folder. The model reads them when it needs them. One
+            that is not .md, .mdx or .txt is a script, run in the sandbox.
     """
 
     name: str
@@ -51,6 +54,7 @@ class Skill:
     instructions: str
     deadline_seconds: Optional[float] = None
     capture_video: bool = False
+    files: dict[str, str] = field(default_factory=dict)
 
 
 class Harness:

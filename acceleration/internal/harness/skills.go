@@ -5,12 +5,16 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"path"
+	"slices"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -43,16 +47,51 @@ type Skill struct {
 	Instructions string `yaml:"instructions"`
 	// Deadline bounds how long the answer stays worth having.
 	Deadline time.Duration `yaml:"deadline"`
+	// Files are the paths of the rest of the skill's folder, which the model reads one at a
+	// time when it needs them, and runs in the sandbox when they are scripts.
+	Files []string `yaml:"-"`
 }
 
 // Skills is the set a harness was configured with.
 type Skills struct {
 	Skills []Skill `yaml:"skills"`
-	// Load reads a skill's instructions at the moment the subagent runs it, for a skill
-	// held by its name and description alone. The fast model only ever sees the index, so
-	// nothing more is read until a skill is used, and a skill edited mid-conversation is
-	// used as it now is. Nil means every skill carries its own instructions.
-	Load func(ctx context.Context, name string) (string, error) `yaml:"-"`
+	// Load reads a skill at the moment the subagent runs it, for a skill held by its name
+	// and description alone. The fast model only ever sees the index, so nothing more is
+	// read until a skill is used, and a skill edited mid-conversation is used as it now is.
+	// Nil means every skill carries its own instructions and has no files.
+	Load func(ctx context.Context, name string) (Loaded, error) `yaml:"-"`
+}
+
+// Loaded is a skill as read at the moment it is used.
+type Loaded struct {
+	Instructions string
+	// Files are the rest of the skill's folder, by path relative to it.
+	Files map[string]string
+}
+
+// documents are the extensions a skill's file is read by the model rather than run.
+var documents = map[string]bool{".md": true, ".mdx": true, ".txt": true}
+
+// Scripts are the files of a skill that are run rather than read, in path order.
+func Scripts(paths []string) []string {
+	var scripts []string
+	for _, file := range paths {
+		if !documents[strings.ToLower(path.Ext(file))] {
+			scripts = append(scripts, file)
+		}
+	}
+	slices.Sort(scripts)
+	return scripts
+}
+
+// NeedsSandbox refuses a skill that brings scripts to an agent with nowhere to run them.
+func NeedsSandbox(name string, paths []string, sandboxed bool) error {
+	scripts := Scripts(paths)
+	if sandboxed || len(scripts) == 0 {
+		return nil
+	}
+	return fmt.Errorf("skill %q runs scripts (%s), so the agent needs a sandbox: set sandbox: daytona in agent.yaml",
+		name, strings.Join(scripts, ", "))
 }
 
 // Lookup returns a skill by name.
@@ -169,18 +208,84 @@ const LoadSkillTool = "load_skill"
 // Instructions returns what a skill says to do, reading a stored skill at the moment it is
 // asked for, so one edited mid-conversation is used as it now is.
 func (s Skills) Instructions(ctx context.Context, name string) (string, error) {
+	loaded, err := s.Read(ctx, name)
+	return loaded.Instructions, err
+}
+
+// Read returns a skill's instructions and files, reading a stored skill at the moment it is
+// asked for.
+func (s Skills) Read(ctx context.Context, name string) (Loaded, error) {
 	skill, found := s.Lookup(name)
 	if !found {
 		names := make([]string, 0, len(s.Skills))
 		for _, known := range s.Skills {
 			names = append(names, known.Name)
 		}
-		return "", fmt.Errorf("harness: there is no skill called %q; use one of: %s", name, strings.Join(names, ", "))
+		return Loaded{}, fmt.Errorf("harness: there is no skill called %q; use one of: %s", name, strings.Join(names, ", "))
 	}
 	if skill.Instructions != "" || s.Load == nil {
-		return skill.Instructions, nil
+		return Loaded{Instructions: skill.Instructions}, nil
 	}
 	return s.Load(ctx, name)
+}
+
+// File returns one of the files a skill brought with it.
+func (s Skills) File(ctx context.Context, name, file string) (string, error) {
+	loaded, err := s.Read(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	return bundled(loaded.Files, file)
+}
+
+// ReadSkillFileTool is the tool the subagent reads a skill's own files with, one at a time
+// and only when it decides it needs one.
+const ReadSkillFileTool = "read_skill_file"
+
+// BundlePath is where a skill's file is put in the sandbox, relative to where code runs.
+func BundlePath(skill, file string) string {
+	return path.Join("skills", skill, file)
+}
+
+// Listing tells the model which files a skill brought, so it can read the ones it needs
+// rather than being handed them all.
+func Listing(skill string, paths []string, sandboxed bool) string {
+	var listing strings.Builder
+	listing.WriteString("This skill comes with these files. Read one only when you need it.")
+	if sandboxed && len(Scripts(paths)) > 0 {
+		fmt.Fprintf(&listing, " In the sandbox they are under %s/, so run the scripts from there.", BundlePath(skill, ""))
+	}
+	for _, file := range paths {
+		listing.WriteString("\n- " + file)
+	}
+	return listing.String()
+}
+
+// bundled is one file out of a skill's folder, or an error naming the ones there are.
+func bundled(files map[string]string, file string) (string, error) {
+	if content, ok := files[strings.TrimPrefix(path.Clean(file), "./")]; ok {
+		return content, nil
+	}
+	if len(files) == 0 {
+		return "", fmt.Errorf("harness: this skill has no files")
+	}
+	return "", fmt.Errorf("harness: the skill has no file %q; it has: %s", file,
+		strings.Join(slices.Sorted(maps.Keys(files)), ", "))
+}
+
+// readFileTool is read_skill_file as the subagent is offered it, naming the files there are.
+func readFileTool(paths []string) llm.Tool {
+	return llm.Tool{
+		Name:        ReadSkillFileTool,
+		Description: "Read one of the files the skill came with, such as a reference it points you to.",
+		Parameters: map[string]any{
+			"type":     "object",
+			"required": []string{"path"},
+			"properties": map[string]any{
+				"path": map[string]any{"type": "string", "enum": paths},
+			},
+		},
+	}
 }
 
 // LoadTool is load_skill as the model is offered it: each skill by name and by the
@@ -190,7 +295,8 @@ func (s Skills) LoadTool() Tool {
 	var description strings.Builder
 	description.WriteString("Load a skill's instructions and follow them yourself. When a request " +
 		"matches a skill's description, load it before any other tool: it says how to answer " +
-		"and which sources to use. When no description matches, load none. Skills:")
+		"and which sources to use. When no description matches, load none. A skill that lists " +
+		"files of its own: load it again with path to read one, only when you need it. Skills:")
 	for _, skill := range s.Skills {
 		names = append(names, skill.Name)
 		fmt.Fprintf(&description, "\n- %s: %s", skill.Name, skill.Description)
@@ -203,6 +309,7 @@ func (s Skills) LoadTool() Tool {
 			"required": []string{"name"},
 			"properties": map[string]any{
 				"name": map[string]any{"type": "string", "enum": names},
+				"path": map[string]any{"type": "string", "description": "One of the files the skill listed, to read it instead of the instructions."},
 			},
 		},
 	}

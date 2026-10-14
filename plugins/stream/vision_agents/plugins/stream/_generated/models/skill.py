@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -26,6 +26,7 @@ class Skill:
         updated_at (datetime.datetime):
         capture_video (bool | Unset): Capture task-scoped visual evidence before reasoning.
         deadline_ms (int | Unset):
+        file_paths (list[str] | Unset): The files the skill came with, by path relative to its folder.
     """
 
     config_id: str
@@ -37,6 +38,7 @@ class Skill:
     updated_at: datetime.datetime
     capture_video: bool | Unset = UNSET
     deadline_ms: int | Unset = UNSET
+    file_paths: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,6 +60,10 @@ class Skill:
 
         deadline_ms = self.deadline_ms
 
+        file_paths: list[str] | Unset = UNSET
+        if not isinstance(self.file_paths, Unset):
+            file_paths = self.file_paths
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -75,6 +81,8 @@ class Skill:
             field_dict["capture_video"] = capture_video
         if deadline_ms is not UNSET:
             field_dict["deadline_ms"] = deadline_ms
+        if file_paths is not UNSET:
+            field_dict["file_paths"] = file_paths
 
         return field_dict
 
@@ -99,6 +107,8 @@ class Skill:
 
         deadline_ms = d.pop("deadline_ms", UNSET)
 
+        file_paths = cast(list[str], d.pop("file_paths", UNSET))
+
         skill = cls(
             config_id=config_id,
             created_at=created_at,
@@ -109,6 +119,7 @@ class Skill:
             updated_at=updated_at,
             capture_video=capture_video,
             deadline_ms=deadline_ms,
+            file_paths=file_paths,
         )
 
         skill.additional_properties = d

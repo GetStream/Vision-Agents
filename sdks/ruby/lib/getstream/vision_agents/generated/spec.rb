@@ -62,12 +62,6 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
-        "checkAppStreamCredentials" => {
-          method: :post, path: "/v1/settings/app/stream/check",
-          path_params: [].freeze, query: [].freeze,
-          body: nil, body_required: false,
-          socket: false, client_accessible: false
-        }.freeze,
         "claimGuestUser" => {
           method: :post, path: "/v1/agents/guests/claim",
           path_params: [].freeze, query: [].freeze,
@@ -320,6 +314,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "detect" => {
+          method: :post, path: "/v1/detection",
+          path_params: [].freeze, query: [].freeze,
+          body: "DetectionRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "disconnectChannel" => {
           method: :delete, path: "/v1/agents/channels/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -389,6 +389,12 @@ module GetStream
         "getAgentLog" => {
           method: :get, path: "/v1/agents/logs/{id}",
           path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "getAgentStats" => {
+          method: :get, path: "/v1/stats/agents",
+          path_params: [].freeze, query: %w[from to].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1046,6 +1052,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "receiveTelnyxCall" => {
+          method: :post, path: "/v1/phone/hooks/telnyx",
+          path_params: [].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "recordSpeech" => {
           method: :post, path: "/v1/tts/recordings",
           path_params: [].freeze, query: [].freeze,
@@ -1244,12 +1256,6 @@ module GetStream
           body: "Policy", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
-        "updateAppStreamCredentials" => {
-          method: :put, path: "/v1/settings/app/stream/credentials",
-          path_params: [].freeze, query: [].freeze,
-          body: "StreamCredentials", body_required: true,
-          socket: false, client_accessible: false
-        }.freeze,
         "updateCustomModel" => {
           method: :put, path: "/v1/agents/models/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -1354,7 +1360,7 @@ module GetStream
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
-          properties: %w[connection connector_id events name policy required timeout_ms tools].freeze,
+          properties: %w[connection connector_id events name policy required timeout_ms tool_patterns tools].freeze,
           required: %w[name connector_id connection tools].freeze, open: false
         }.freeze,
         "AgentConnectorSelection" => {
@@ -1388,6 +1394,10 @@ module GetStream
         "AgentResponsePage" => {
           properties: %w[has_more items next_cursor].freeze,
           required: %w[has_more items].freeze, open: false
+        }.freeze,
+        "AgentStats" => {
+          properties: %w[peak_at peak_concurrent_sessions tool_calls tools].freeze,
+          required: %w[peak_concurrent_sessions peak_at tool_calls tools].freeze, open: false
         }.freeze,
         "AgentTools" => {
           properties: %w[progressive].freeze,
@@ -1702,7 +1712,7 @@ module GetStream
           required: %w[recipient channel].freeze, open: false
         }.freeze,
         "CreateResponseRequest" => {
-          properties: %w[images request_id text videos].freeze,
+          properties: %w[images max_output_tokens reasoning_effort request_id text videos].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateSessionRequest" => {
@@ -1744,6 +1754,26 @@ module GetStream
         "DataPolicy" => {
           properties: %w[allow_training retention].freeze,
           required: [].freeze, open: false
+        }.freeze,
+        "DetectedObject" => {
+          properties: %w[box confidence embedding label].freeze,
+          required: %w[box confidence label].freeze, open: false
+        }.freeze,
+        "DetectionBox" => {
+          properties: %w[x_max x_min y_max y_min].freeze,
+          required: %w[x_max x_min y_max y_min].freeze, open: false
+        }.freeze,
+        "DetectionOptions" => {
+          properties: %w[classes embeddings min_confidence overwrites providers target].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "DetectionRequest" => {
+          properties: %w[image options tags].freeze,
+          required: %w[image].freeze, open: false
+        }.freeze,
+        "DetectionResult" => {
+          properties: %w[cost_micros detections error error_code id model provider status].freeze,
+          required: %w[cost_micros detections id status].freeze, open: false
         }.freeze,
         "ErrorDetail" => {
           properties: %w[code doc_url message type].freeze,
@@ -2142,11 +2172,11 @@ module GetStream
           required: %w[codecs created_at has_password host id late_offer name port transport updated_at username].freeze, open: false
         }.freeze,
         "Skill" => {
-          properties: %w[capture_video config_id created_at deadline_ms description id instructions name updated_at].freeze,
+          properties: %w[capture_video config_id created_at deadline_ms description file_paths id instructions name updated_at].freeze,
           required: %w[config_id created_at description id instructions name updated_at].freeze, open: false
         }.freeze,
         "SkillRequest" => {
-          properties: %w[capture_video config_id deadline_ms description instructions name].freeze,
+          properties: %w[capture_video config_id deadline_ms description files instructions name].freeze,
           required: %w[config_id description instructions name].freeze, open: false
         }.freeze,
         "SkippedVendor" => {
@@ -2173,24 +2203,8 @@ module GetStream
           properties: %w[auth_method client_id connector_id created_at has_client_secret has_signing_secret provider_app_id registration updated_at].freeze,
           required: %w[connector_id registration client_id has_client_secret has_signing_secret created_at updated_at].freeze, open: false
         }.freeze,
-        "StreamCheck" => {
-          properties: %w[reattach settings].freeze,
-          required: %w[settings reattach].freeze, open: false
-        }.freeze,
-        "StreamCredentials" => {
-          properties: %w[allow_guests expected_revision keys primary_key proof].freeze,
-          required: %w[keys expected_revision].freeze, open: false
-        }.freeze,
-        "StreamKeyInput" => {
-          properties: %w[api_key api_secret created_at].freeze,
-          required: %w[api_key api_secret].freeze, open: false
-        }.freeze,
-        "StreamKeyState" => {
-          properties: %w[api_key created_at last_webhook_at secret_last4 signs_webhooks status verified_at].freeze,
-          required: %w[api_key status signs_webhooks].freeze, open: false
-        }.freeze,
         "StreamSettings" => {
-          properties: %w[allow_guests call_type channel_type checked_at keys primary_key revision state state_reason stream_app_id tenancy writes_into].freeze,
+          properties: %w[call_type channel_type checked_at stream_app_id tenancy writes_into].freeze,
           required: %w[tenancy writes_into channel_type call_type].freeze, open: false
         }.freeze,
         "StsOptions" => {
@@ -2244,6 +2258,10 @@ module GetStream
         "ToolResultCommand" => {
           properties: %w[error output request_id tool_call_id turn_id type].freeze,
           required: %w[tool_call_id type].freeze, open: false
+        }.freeze,
+        "ToolStats" => {
+          properties: %w[avg_ms avg_tokens calls failed p99_ms tool].freeze,
+          required: %w[tool calls failed avg_tokens avg_ms p99_ms].freeze, open: false
         }.freeze,
         "TranscriptEntity" => {
           properties: %w[end_ms start_ms text type].freeze,

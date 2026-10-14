@@ -597,7 +597,7 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// A connector whose tools an agent config may call, under an alias. The binding is the grant: only the tools it lists are offered, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with.
+    /// A connector whose tools an agent config may call, under an alias. The binding is the grant: the tools it lists, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with. Or tool_patterns, names or path.Match patterns, pinned per connection on first use, on a session binding or a fixed one. A binding has one or the other.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AgentConnectorBinding
@@ -643,7 +643,13 @@ namespace GetStream.VisionAgents.Models
         public long? TimeoutMs { get; set; } = default!;
 
         /// <summary>
-        /// The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use.
+        /// Names or path.Match patterns of the tools this binding offers, such as search or linear_*. Set, they are the grant and tools is empty: a binding has one or the other, and these are refused together with a non-empty tools list. A session binding or a fixed one may set them. Each tool a connection lists that matches is pinned on that connection the first time, at the digest listed then, and a later session offers it only while that digest still matches. An empty list is refused. At most 128, the same cap as tools, which is also the most one session offers when more match.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tool_patterns")]
+        public System.Collections.Generic.List<string>? ToolPatterns { get; set; } = default!;
+
+        /// <summary>
+        /// The exact tools allowed, each named once. There is no wildcard, and an empty list grants none. A session binding may grant a tool by name alone, which pins its schema per connection on first use. A binding that sets tool_patterns sends an empty list: the patterns are the grant instead.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tools")]
         public System.Collections.Generic.List<ConnectorToolGrant> Tools { get; set; } = new System.Collections.Generic.List<ConnectorToolGrant>();
@@ -943,6 +949,45 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("next_cursor")]
         public string? NextCursor { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AgentStats
+    {
+
+        /// <summary>
+        /// When that peak was first reached. Null when no session was open in the window.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("peak_at")]
+        public System.DateTimeOffset? PeakAt { get; set; } = default!;
+
+        /// <summary>
+        /// The most sessions open at the same time, each one an agent running. A session still open counts up to now.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("peak_concurrent_sessions")]
+        public long PeakConcurrentSessions { get; set; } = default!;
+
+        /// <summary>
+        /// Every tool call in the window, as one. Its tool is empty.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tool_calls")]
+        public ToolStats ToolCalls { get; set; } = new ToolStats();
+
+        /// <summary>
+        /// One row per tool, most called first.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tools")]
+        public System.Collections.Generic.List<ToolStats> Tools { get; set; } = new System.Collections.Generic.List<ToolStats>();
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -4225,6 +4270,18 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<ImageSource>? Images { get; set; } = default!;
 
         /// <summary>
+        /// Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_output_tokens")]
+        public int? MaxOutputTokens { get; set; } = default!;
+
+        /// <summary>
+        /// How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("reasoning_effort")]
+        public string? ReasoningEffort { get; set; } = default!;
+
+        /// <summary>
         /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and text only, and ignored by a session not kept in Stream Chat. A retry with the same id and text starts no second turn and returns no id.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("request_id")]
@@ -4318,7 +4375,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<HistoryMessage>? History { get; set; } = default!;
 
         /// <summary>
-        /// The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that does not start support- or thread- and that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7.
+        /// The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("id")]
         public string? Id { get; set; } = default!;
@@ -4864,6 +4921,204 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("retention")]
         public string? Retention { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class DetectedObject
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("box")]
+        public DetectionBox Box { get; set; } = new DetectionBox();
+
+        /// <summary>
+        /// The model's score from 0 to 1. A model that scores nothing, such as Moondream, reports 1.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("confidence")]
+        public double Confidence { get; set; } = default!;
+
+        /// <summary>
+        /// A vector describing what is in the box. Present only when embeddings was asked for.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("embedding")]
+        public System.Collections.Generic.List<float>? Embedding { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("label")]
+        public string Label { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// A rectangle as fractions of the image: 0,0 is the top left corner and 1,1 the bottom right.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class DetectionBox
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("x_max")]
+        public double XMax { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("x_min")]
+        public double XMin { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("y_max")]
+        public double YMax { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("y_min")]
+        public double YMin { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// Where to look and what to keep.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class DetectionOptions
+    {
+
+        /// <summary>
+        /// The labels to keep. An open-vocabulary model (detection-open) looks for these words and has to be given at least one; a fixed-class model returns only these of what it found. Matched without regard to case.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("classes")]
+        public System.Collections.Generic.List<string>? Classes { get; set; } = default!;
+
+        /// <summary>
+        /// Return a vector on every box, for matching what was found against what was seen before. Only a model that computes one is asked.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("embeddings")]
+        public bool? Embeddings { get; set; } = default!;
+
+        /// <summary>
+        /// Drop boxes scored below this. Only a model that scores its boxes is asked.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("min_confidence")]
+        public double? MinConfidence { get; set; } = default!;
+
+        /// <summary>
+        /// Settings for one provider that the options above have no word for, keyed by provider. roboflow takes workspace and workflow_id, or specification, for the roboflow/workflow model. An overwrite for a provider that is not a candidate is refused.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("overwrites")]
+        public System.Collections.Generic.Dictionary<string, object>? Overwrites { get; set; } = default!;
+
+        /// <summary>
+        /// A priority list of where to try, in the order given, which wins over target when it holds anything.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("providers")]
+        public System.Collections.Generic.List<string>? Providers { get; set; } = default!;
+
+        /// <summary>
+        /// A provider/model or a capability shortcut. Defaults to detection-fast.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("target")]
+        public string? Target { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class DetectionRequest
+    {
+
+        /// <summary>
+        /// The image, base64. A JPEG or PNG of at most 4 MB and 4096 pixels a side; a video frame scaled to 1024 wide is plenty.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("image")]
+        public byte[] Image { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("options")]
+        public DetectionOptions? Options { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("tags")]
+        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class DetectionResult
+    {
+
+        /// <summary>
+        /// Millionths of a dollar, priced per image the vendor billed. Zero when it failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cost_micros")]
+        public long CostMicros { get; set; } = default!;
+
+        /// <summary>
+        /// What was found. Empty when nothing was, or when it failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("detections")]
+        public System.Collections.Generic.List<DetectedObject> Detections { get; set; } = new System.Collections.Generic.List<DetectedObject>();
+
+        /// <summary>
+        /// What went wrong, in words. Absent when the detection completed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("error_code")]
+        public string? ErrorCode { get; set; } = default!;
+
+        /// <summary>
+        /// This response's own id, for logs. Nothing is stored under it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string? Model { get; set; } = default!;
+
+        /// <summary>
+        /// Who looked, or who failed to. Absent when nothing got as far as a provider.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string? Provider { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("status")]
+        public string Status { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -9227,6 +9482,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("description")]
         public string Description { get; set; } = default!;
 
+        /// <summary>
+        /// The files the skill came with, by path relative to its folder.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("file_paths")]
+        public System.Collections.Generic.List<string>? FilePaths { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("id")]
         public string Id { get; set; } = default!;
 
@@ -9277,6 +9538,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("description")]
         public string Description { get; set; } = default!;
+
+        /// <summary>
+        /// The rest of the skill's folder beside SKILL.md, each file's text by its path relative to the folder, such as reference/forms.md or scripts/fill.py. The model reads them one at a time when it needs them. A file that is not .md, .mdx or .txt is a script, run in the sandbox, so a skill with one belongs only to an agent with a sandbox. At most 64 files and 1 MB in all.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("files")]
+        public System.Collections.Generic.Dictionary<string, string>? Files { get; set; } = default!;
 
         /// <summary>
         /// The full prompt, which only the subagent sees.
@@ -9616,172 +9883,12 @@ namespace GetStream.VisionAgents.Models
 
     }
 
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class StreamCheck
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("reattach")]
-        public System.Collections.Generic.List<string>? Reattach { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("settings")]
-        public AppSettings Settings { get; set; } = new AppSettings();
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// The keys the router acts in the calling app's own Stream app with. Secrets are written and never read back: no answer carries one.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class StreamCredentials
-    {
-
-        /// <summary>
-        /// Whether guests may be made in the app. Left out keeps what was set, which starts off false.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("allow_guests")]
-        public bool? AllowGuests { get; set; } = default!;
-
-        /// <summary>
-        /// The revision last read, 0 for an app never registered. A write made against an older one is a 409.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("expected_revision")]
-        public long ExpectedRevision { get; set; } = default!;
-
-        /// <summary>
-        /// Every key the router may act in the app with, which replaces those it held. Each is checked with Stream. Empty disconnects the app, which needs a proof.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("keys")]
-        public System.Collections.Generic.List<StreamKeyInput>? Keys { get; set; } = default!;
-
-        /// <summary>
-        /// The key tokens are minted with. Left out is the first.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("primary_key")]
-        public string? PrimaryKey { get; set; } = default!;
-
-        /// <summary>
-        /// A key and secret of the app, which disconnecting needs. It is checked with Stream and kept nowhere.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("proof")]
-        public StreamKeyInput? Proof { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class StreamKeyInput
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
-        public string ApiKey { get; set; } = default!;
-
-        /// <summary>
-        /// The key's secret. It is sealed and never read back.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("api_secret")]
-        public string ApiSecret { get; set; } = default!;
-
-        /// <summary>
-        /// When Stream made the key, which says which key is the oldest and so signs the app's webhooks.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("created_at")]
-        public System.DateTimeOffset? CreatedAt { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class StreamKeyState
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
-        public string ApiKey { get; set; } = default!;
-
-        /// <summary>
-        /// When Stream made the key.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("created_at")]
-        public System.DateTimeOffset? CreatedAt { get; set; } = default!;
-
-        /// <summary>
-        /// When Stream last signed a hook with this key.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("last_webhook_at")]
-        public System.DateTimeOffset? LastWebhookAt { get; set; } = default!;
-
-        /// <summary>
-        /// The end of the secret, enough to tell two apart.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("secret_last4")]
-        public string? SecretLast4 { get; set; } = default!;
-
-        /// <summary>
-        /// Whether Stream signs the app's hooks with this key, which is its oldest. yes is one a hook arrived signed with.
-        /// <br/>
-        /// <br/>One of `yes`, `no`, `unknown`.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("signs_webhooks")]
-        public string SignsWebhooks { get; set; } = default!;
-
-        /// <summary>
-        /// rejected is a key Stream stopped accepting, which the router no longer uses.
-        /// <br/>
-        /// <br/>One of `active`, `rejected`.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("status")]
-        public string Status { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("verified_at")]
-        public System.DateTimeOffset? VerifiedAt { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
     /// <summary>
     /// Which Stream app the router writes the calling app's conversations, transcripts, calls and phone lines into, and whether that app holds the types they need.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class StreamSettings
     {
-
-        /// <summary>
-        /// Whether guests may be made in the registered app.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("allow_guests")]
-        public bool? AllowGuests { get; set; } = default!;
 
         /// <summary>
         /// Whether the Stream app holds the agent call type calls are made with. Stream reports no grants for it here, so it is present or missing.
@@ -9802,37 +9909,7 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset? CheckedAt { get; set; } = default!;
 
         /// <summary>
-        /// The registered app's keys, oldest first. No secret is ever read back.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("keys")]
-        public System.Collections.Generic.List<StreamKeyState>? Keys { get; set; } = default!;
-
-        /// <summary>
-        /// The key tokens are minted with.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("primary_key")]
-        public string? PrimaryKey { get; set; } = default!;
-
-        /// <summary>
-        /// The registration's revision, 0 for an app that registered none. A write names the one it read.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("revision")]
-        public long? Revision { get; set; } = default!;
-
-        /// <summary>
-        /// Whether the router acts in the registered app. Absent for an app that registered none.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("state")]
-        public string? State { get; set; } = default!;
-
-        /// <summary>
-        /// Why the router stopped acting in the app, for one that is blocked.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("state_reason")]
-        public string? StateReason { get; set; } = default!;
-
-        /// <summary>
-        /// The registered app's own id.
+        /// The calling app's own Stream app id, in app mode, when its work is written there.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("stream_app_id")]
         public long? StreamAppId { get; set; } = default!;
@@ -10671,6 +10748,48 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("type")]
         public string Type { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ToolStats
+    {
+
+        /// <summary>
+        /// From the call starting to its result. Null when none was timed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("avg_ms")]
+        public double? AvgMs { get; set; } = default!;
+
+        /// <summary>
+        /// What a call put in front of the model, its arguments and its result, estimated at four characters a token.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("avg_tokens")]
+        public double AvgTokens { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("calls")]
+        public long Calls { get; set; } = default!;
+
+        /// <summary>
+        /// Calls that ended in an error.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("failed")]
+        public long Failed { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("p99_ms")]
+        public double? P99Ms { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("tool")]
+        public string Tool { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

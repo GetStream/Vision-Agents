@@ -429,6 +429,23 @@ class TestAgent < LocalRouterTest
     FileUtils.rm_rf(File.dirname(root))
   end
 
+  def test_sync_sends_the_files_a_skill_folder_brings
+    root = folder
+    FileUtils.mkdir_p(File.join(root, "skills/pdf/reference"))
+    File.write(File.join(root, "skills/pdf/SKILL.md"), "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    File.write(File.join(root, "skills/pdf/reference/forms.md"), "# Forms\n")
+    File.write(File.join(root, "skills/think.md"), "---\ndescription: Work it out\n---\nReason it through.\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client).sync
+
+    pdf, think = @router.last(:post, "/v1/agents/sync").json["skills"]
+    assert_equal({ "reference/forms.md" => "# Forms\n" }, pdf["files"])
+    refute think.key?("files")
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
   def test_sync_sends_the_greeting_harness_plugins_pages_and_simulations_the_folder_declares
     root = folder
     File.write(File.join(root, "agent.yaml"),
