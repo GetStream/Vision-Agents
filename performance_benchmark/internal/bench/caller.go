@@ -90,6 +90,12 @@ func (c Caller) Converse(ctx context.Context, hold time.Duration) conversation {
 	}
 	held.sessionMs = msSince(askedAt)
 	defer session.Close(context.WithoutCancel(ctx))
+	// The SDK stops reading the socket once its buffer of unread events is full, and a
+	// socket that stops answering pings is cut after 90s, taking the closing frame with it.
+	go func() {
+		for range session.Events() {
+		}
+	}()
 
 	call := session.Call()
 	media, err := streamrtc.Join(ctx, streamrtc.Options{
