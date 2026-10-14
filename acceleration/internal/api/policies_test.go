@@ -131,7 +131,6 @@ func (s *PoliciesSuite) TestUsageIsRecordedUnderThePolicysTagsOverTheRequests() 
 	}, 5*time.Second, 50*time.Millisecond)
 }
 
-// put stores the policy the body describes.
 func (s *PoliciesSuite) TestAnAppsDailyLimitIsStoredAndReadBack() {
 	stored := s.put(map[string]any{"quota": map[string]any{
 		"messages_per_user_per_day": 20_000, "tokens_per_user_per_day": 0,
@@ -167,6 +166,16 @@ func (s *PoliciesSuite) TestANegativeDailyLimitIsRefused() {
 	}
 }
 
+func (s *PoliciesSuite) TestAQuotaSettingNeitherNumberIsStoredAsNoQuota() {
+	stored := s.put(map[string]any{"quota": map[string]any{}})
+	s.Nil(stored.Quota)
+
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
+	s.Nil(read.Quota, "a quota with no number is no opinion")
+}
+
+// put stores the policy the body describes.
 func (s *PoliciesSuite) put(body map[string]any) Policy {
 	var stored Policy
 	s.Require().Equal(http.StatusOK,
