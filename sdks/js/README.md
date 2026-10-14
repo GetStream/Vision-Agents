@@ -1,4 +1,4 @@
-# @stream-io/vision-agents
+# @stream-io/calypso
 
 The JavaScript client for the Stream acceleration backend. One package for both ends: a
 Node process that runs agents, and a browser that holds a conversation with one.
@@ -8,7 +8,7 @@ answers and speaks. What arrives here are the events saying so, and what stays h
 function calling — because the functions are here.
 
 ```bash
-npm install @stream-io/vision-agents
+npm install @stream-io/calypso
 ```
 
 Node 22 or newer, or any browser. No runtime dependencies: `fetch`, `WebSocket` and Web
@@ -25,7 +25,7 @@ Which one a deployment uses is a property of the deployment rather than a choice
 | `apiKey` + `token` | A browser | the conversations that user owns |
 
 ```ts
-import { Client } from "@stream-io/vision-agents";
+import { Client } from "@stream-io/calypso";
 
 // On your own server, with STREAM_API_KEY and STREAM_API_SECRET in the environment.
 const api = new Client();
@@ -109,7 +109,7 @@ memory.
 ## An agent
 
 ```ts
-import { Agent } from "@stream-io/vision-agents";
+import { Agent } from "@stream-io/calypso";
 
 const agent = new Agent({
   name: "John",
@@ -151,7 +151,7 @@ and waits, and the router pushes work down the connection as it arrives — noth
 has to be publicly reachable.
 
 ```ts
-import { Agent, Dispatch } from "@stream-io/vision-agents";
+import { Agent, Dispatch } from "@stream-io/calypso";
 
 const dispatch = new Dispatch({ capacity: 4 });
 
@@ -230,8 +230,8 @@ agents/jean/
 ```
 
 ```ts
-import { Agent } from "@stream-io/vision-agents";
-import { loadFolder } from "@stream-io/vision-agents/node";
+import { Agent } from "@stream-io/calypso";
+import { loadFolder } from "@stream-io/calypso/node";
 
 const agent = new Agent({ folder: await loadFolder("agents/jean") });
 await agent.sync();
@@ -279,7 +279,7 @@ events socket, the dispatch socket and the four modality sockets are written rat
 generated.
 
 ```ts
-import { Socket } from "@stream-io/vision-agents";
+import { Socket } from "@stream-io/calypso";
 
 const socket = await Socket.open(api.backend, await api.backend.socketURL("/v1/stt/stream"));
 socket.send({ type: "start", options: { language: "en" } });
@@ -368,12 +368,12 @@ counts only those scoped `sdk-js`: `feat(sdk-js):` moves the minor, `fix(sdk-js)
 A commit with any other scope, or none, ships nothing, whatever it touches. The workflow runs
 as a dry run unless that box is unticked, printing the version and notes it would publish.
 
-Every release goes to npm's `beta` dist-tag (`npm install @stream-io/vision-agents@beta`), set
+Every release goes to npm's `beta` dist-tag (`npm install @stream-io/calypso@beta`), set
 both in `release.config.mjs` and in `publishConfig`, so a `npm publish` by hand lands there too.
 `latest` moves only when somebody promotes a version:
 
 ```bash
-npm dist-tag add @stream-io/vision-agents@0.3.0 latest
+npm dist-tag add @stream-io/calypso@0.3.0 latest
 ```
 
 It publishes with npm trusted publishing, so there is no token, and npm only lets a package
@@ -381,7 +381,7 @@ trust a workflow once the package exists. The first version is therefore publish
 
 ```bash
 npm publish                               # 0.2.0 on beta, as package.json says
-npm view @stream-io/vision-agents dist-tags
+npm view @stream-io/calypso dist-tags
 git tag sdk-js-v0.2.0 && git push origin sdk-js-v0.2.0
 ```
 

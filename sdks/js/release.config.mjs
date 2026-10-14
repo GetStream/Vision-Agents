@@ -1,5 +1,5 @@
 /**
- * semantic-release for @stream-io/vision-agents, run by .github/workflows/release-sdk-js.yml.
+ * semantic-release for @stream-io/calypso, run by .github/workflows/release-sdk-js.yml.
  *
  * The repository holds every SDK, the router and the Python packages, so a release reads
  * only commits scoped `sdk-js`: a `feat(router)!:` that happens to touch this directory
@@ -44,7 +44,7 @@ export default {
         // A draft, published by the workflow with `--latest=false`, so the repository's
         // latest release stays the Python one.
         draftRelease: true,
-        releaseNameTemplate: "@stream-io/vision-agents v<%= nextRelease.version %>",
+        releaseNameTemplate: "@stream-io/calypso v<%= nextRelease.version %>",
         // Every commit since the last tag is in context, router ones included, so a comment
         // or label per resolved pull request would land on work that is not in this package.
         successComment: false,

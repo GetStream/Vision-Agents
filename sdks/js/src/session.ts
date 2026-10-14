@@ -396,7 +396,7 @@ export class Session {
    * The Stream Chat channel this conversation is written into.
    *
    * `stream-chat` is an optional peer dependency, opted into by importing
-   * `@stream-io/vision-agents/chat` once, so a caller who never touches chat installs nothing
+   * `@stream-io/calypso/chat` once, so a caller who never touches chat installs nothing
    * and ships nothing. A caller who forgot the import is told which one.
    *
    * It opens on the `StreamChat` handed over with `client.use`, or else on one connected as
@@ -412,7 +412,7 @@ export class Session {
    * The Stream video call the agent is on, `agent:<session id>`.
    *
    * The same arrangement as chat: `@stream-io/video-client` is an optional peer dependency,
-   * opted into by importing `@stream-io/vision-agents/video` once, and the client handed over
+   * opted into by importing `@stream-io/calypso/video` once, and the client handed over
    * with `client.use` is used when there is one. A session held in writing has no call, and
    * asking for one says so.
    */

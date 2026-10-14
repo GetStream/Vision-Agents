@@ -157,7 +157,7 @@ export interface SyncStamp {
   write(hash: string): Promise<void>;
 }
 
-/** An agent directory, as `loadFolder` from `@stream-io/vision-agents/node` reads one. */
+/** An agent directory, as `loadFolder` from `@stream-io/calypso/node` reads one. */
 export interface Folder {
   path: string;
   name: string;

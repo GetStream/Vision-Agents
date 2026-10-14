@@ -1,7 +1,7 @@
 name: Release JS SDK
 
 # Run by hand. semantic-release reads the `sdk-js` commits since the last `sdk-js-v*` tag,
-# publishes @stream-io/vision-agents to npm and tags the release. See sdks/js/release.config.mjs.
+# publishes @stream-io/calypso to npm and tags the release. See sdks/js/release.config.mjs.
 on:
   workflow_dispatch:
     inputs:
