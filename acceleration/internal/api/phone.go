@@ -403,6 +403,9 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 	transfer.StreamApp = app
 
 	placed, err := s.phone.Transfer(ctx, transfer)
+	if errors.Is(err, dlc.ErrRefused) {
+		return nil, forbidden(err.Error())
+	}
 	if isNumberNotHeld(err) {
 		return nil, notFound(err.Error())
 	}
