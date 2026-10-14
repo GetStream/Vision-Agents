@@ -167,7 +167,26 @@ func (s *LLMQuotaSuite) TestASessionABackendOpenedForAUserIsNeverRefused() {
 	s.NoError(err, "what the backend spent was not charged to the user's own day")
 }
 
-func (s *LLMQuotaSuite) TestAMockAnswerIsNeitherCheckedNorCounted() {
+func (s *LLMQuotaSuite) TestAMockAnswerIsNotRefusedOnceTheDayIsSpent() {
+	spent, spender := s.session(1, 1, s.caller)
+	stream, err := spent.Create(s.ctx, llm.ResponseParams{ID: "spend", Input: prompt()})
+	s.Require().NoError(err)
+	s.answer(spender, stream, 0, 1_000, 1_000)
+	_, err = spent.Create(s.ctx, llm.ResponseParams{ID: "over", Input: prompt()})
+	s.Require().ErrorIs(err, quota.ErrExhausted, "the user's day is spent")
+
+	session, provider := s.sessionAs(mock.ProviderName, 1, 1, s.caller)
+
+	for turn := range 3 {
+		stream, err := session.Create(s.ctx, llm.ResponseParams{
+			ID: fmt.Sprintf("c%d", turn), Input: prompt(),
+		})
+		s.Require().NoError(err, "a mock answer should not be refused on turn %d", turn)
+		s.answer(provider, stream, turn, 1_000, 1_000)
+	}
+}
+
+func (s *LLMQuotaSuite) TestAMockAnswerIsNotCountedToTheUsersDay() {
 	session, provider := s.sessionAs(mock.ProviderName, 1, 1, s.caller)
 
 	for turn := range 3 {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 )
@@ -27,4 +29,16 @@ func TestBuildSessionsSupportsAnLLMOnlyDeployment(t *testing.T) {
 	missing, err := buildSessions(config.Defaults(), &api.Streams{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, logger)
 	require.NoError(t, err)
 	require.Nil(t, missing)
+}
+
+type noLimits struct{}
+
+func (noLimits) Limits(_ context.Context, _ string, defaults quota.Limits) (quota.Limits, error) {
+	return defaults, nil
+}
+
+func TestADeploymentWithNoDefaultStillCapsAnAppThatSetsALimit(t *testing.T) {
+	require.False(t, limitsApply(quota.Limits{}, nil), "nothing configured anywhere caps nobody")
+	require.True(t, limitsApply(quota.Limits{}, noLimits{}), "a policy source may hold an app's limit")
+	require.True(t, limitsApply(quota.Limits{MessagesPerDay: 10}, nil), "the deployment's default alone caps")
 }

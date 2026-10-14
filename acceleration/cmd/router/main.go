@@ -574,7 +574,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		limitsByApp = policies
 	}
 	switch {
-	case !limits.Enforced() && limitsByApp == nil:
+	case !limitsApply(limits, limitsByApp):
 		logger.Warn("no daily limit configured, an end user may spend without bound",
 			"setting", "rate_limit.messages_per_day")
 	case liveClient == nil:
@@ -1637,4 +1637,11 @@ func buildDLC(
 		return nil, nil, err
 	}
 	return service, gate, nil
+}
+
+// limitsApply is whether any daily limit can hold: the deployment's own, or the ones an app
+// and its organization set in their policies. A deployment with neither default still caps
+// an app that sets one.
+func limitsApply(defaults quota.Limits, byApp quota.Source) bool {
+	return defaults.Enforced() || byApp != nil
 }

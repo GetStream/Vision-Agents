@@ -337,3 +337,11 @@ func (s *QuotaSuite) TestACustomerHeldToNoLimitIsNotCounted() {
 		s.Zero(exists, "nothing is counted for %s", key)
 	}
 }
+
+func (s *QuotaSuite) TestAnAppsLimitHoldsWhereTheDeploymentHasNone() {
+	limiter := s.limiterWith(Limits{}, limitsByCustomer{s.customer: {MessagesPerDay: 1}})
+	s.Require().NoError(s.allow(limiter, s.customer, s.caller))
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+
+	s.ErrorIs(s.allow(limiter, s.customer, s.caller), ErrExhausted)
+}

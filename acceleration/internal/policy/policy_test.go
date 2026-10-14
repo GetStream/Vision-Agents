@@ -439,3 +439,13 @@ func (s *PolicySuite) TestADailyLimitThatCannotBeReadIsTheDeployments() {
 	s.Error(err)
 	s.Equal(deployment, limits)
 }
+
+func (s *PolicySuite) TestAnOrganizationWithNoCapLeavesItsAppsLimit() {
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: s.quota(new(int64(0)), nil)})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: s.quota(new(int64(30)), nil)})
+
+	limits, err := s.enforcer.Limits(s.ctx, s.app, deployment)
+
+	s.Require().NoError(err)
+	s.EqualValues(30, limits.MessagesPerDay)
+}

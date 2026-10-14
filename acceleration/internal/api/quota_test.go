@@ -129,6 +129,8 @@ func (s *QuotaSuite) TestAnAppsOwnLimitIsWhatItsUsersAreRefusedAt() {
 	response := s.client.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 	s.Equal(http.StatusTooManyRequests, response.StatusCode)
 	s.NotEmpty(response.Header.Get("Retry-After"))
+	s.Equal("3", response.Header.Get("X-RateLimit-Limit"))
+	s.Equal("0", response.Header.Get("X-RateLimit-Remaining"))
 	status, payload := s.client.call(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 	s.Require().Equal(http.StatusTooManyRequests, status)
 	var refused ErrorResponse
