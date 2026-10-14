@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -52,6 +53,34 @@ func (s *ProviderMessageSuite) TestAURLTheSDKFlattenedIntoTextKeepsOnlyItsHost()
 	err := fmt.Errorf("standalone SSE request failed (session ID: s1): %v", sending)
 
 	s.Equal(`standalone SSE request failed (session ID: s1): Get "https://crm.example": EOF`, providerMessage(err))
+}
+
+// An unparseable URL (the %zz) is replaced whole, its query token with it.
+func (s *ProviderMessageSuite) TestAURLThatDoesNotParseIsReplacedWhole() {
+	err := errors.New(`Get "https://crm.example/%zz?access_token=` + queryToken + `": EOF`)
+
+	s.Equal(`Get "<url>": EOF`, providerMessage(err))
+}
+
+func (s *ProviderMessageSuite) TestAnUppercaseSchemeKeepsOnlyItsHost() {
+	err := errors.New(`Get "HTTPS://crm.example/mcp?access_token=` + queryToken + `": EOF`)
+
+	s.Equal(`Get "https://crm.example": EOF`, providerMessage(err))
+}
+
+// The one KiB is 1024 bytes, not whatever providerMessageBytes holds.
+func (s *ProviderMessageSuite) TestAMessageIsCutTo1024Bytes() {
+	message := providerMessage(&core.ToolError{Message: strings.Repeat("a", 5000)})
+
+	s.Len(message, 1024)
+}
+
+// Text that is not UTF-8 (nothing but continuation bytes) is cut at most UTFMax-1 bytes
+// before the limit, not back to nothing.
+func (s *ProviderMessageSuite) TestTextThatIsNotUTF8IsStillCutNearTheLimit() {
+	message := providerMessage(&core.ToolError{Message: strings.Repeat("\x80", 5000)})
+
+	s.Len(message, 1024-(utf8.UTFMax-1))
 }
 
 func (s *ProviderMessageSuite) TestAMessageOverOneKiBIsCutAtARuneBoundary() {

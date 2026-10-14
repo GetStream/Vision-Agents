@@ -107,7 +107,9 @@ func (s *CallLogSuite) TestTheLineNamesNoCredential() {
 }
 
 // TestATimedOutCallLogsNoMessage: outcome_unknown returns no error, so nothing is said for it.
+// The provider streams, so its 200 reached the router before the timeout: the line has it.
 func (s *CallLogSuite) TestATimedOutCallLogsNoMessage() {
+	s.provider.streamFirst()
 	app := s.connection("", "primary")
 	binding := s.fixed("crm", app, "slow")
 	binding.TimeoutMs = 200
@@ -118,6 +120,7 @@ func (s *CallLogSuite) TestATimedOutCallLogsNoMessage() {
 	s.Require().NoError(err)
 	line := s.onlyFailedLine(logged)
 	s.Contains(line, "error_type=outcome_unknown")
+	s.Contains(line, "provider_status=200")
 	s.Contains(line, `provider_message=""`)
 }
 
@@ -142,9 +145,10 @@ func (s *CallLogSuite) TestARateLimitedCallLogsTheStatusAndNoMessage() {
 	s.Contains(line, `provider_message=""`)
 }
 
-// TestAnIncognitoSessionsLineNamesNoSessionAndNoMessage: the message can be the tool's answer,
-// which Spec.Incognito keeps out of every record.
-func (s *CallLogSuite) TestAnIncognitoSessionsLineNamesNoSessionAndNoMessage() {
+// TestAnIncognitoSessionsLineNamesNoSessionButLogsTheMessage: the owner decided (AI-1242,
+// 2026-10-14) that the message is logged for an incognito session too; the session id stays
+// out, as it does of the row (Spec.Incognito).
+func (s *CallLogSuite) TestAnIncognitoSessionsLineNamesNoSessionButLogsTheMessage() {
 	app := s.connection("", "primary")
 	spec := s.spec(s.config(s.fixed("crm", app, "fails")), "", nil)
 	spec.ID, spec.Incognito = uuid.NewString(), true
@@ -156,9 +160,8 @@ func (s *CallLogSuite) TestAnIncognitoSessionsLineNamesNoSessionAndNoMessage() {
 	line := s.onlyFailedLine(logged)
 	s.Contains(line, "error_type=external_server")
 	s.Contains(line, `session="" `)
-	s.Contains(line, `provider_message=""`)
+	s.Contains(line, `provider_message="the record is locked"`)
 	s.NotContains(logged.String(), spec.ID)
-	s.NotContains(logged.String(), "the record is locked")
 }
 
 // TestWhatTheModelReadsAndEachErrorTypeAreTheBases is the control: every value is what the

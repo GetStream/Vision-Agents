@@ -124,9 +124,10 @@ type failure struct {
 // session's logger: the row's names and id, the provider's HTTP status, and what the provider
 // or the refusal said (providerMessage of err, the error the call returned). A call the model
 // reads connector_rate_limited, outcome_unknown or a step-up of returned no error, so its line
-// has no message. An incognito session's line has none either: the message can be the tool's
-// own answer, which Spec.Incognito keeps out of every record. A call that answered logs
-// nothing. The id is given here rather than by the store, so the line names the row it wrote.
+// has no message. An incognito session's line carries the message like any other's, by the
+// owner's decision (AI-1242, 2026-10-14), but names no session, as its row does (Spec.Incognito).
+// A call that answered logs nothing. The id is given here rather than by the store, so the line
+// names the row it wrote.
 func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how failure, err error) {
 	sessionID := d.spec.ID
 	var arguments []store.ArgumentShape
@@ -146,14 +147,10 @@ func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how f
 	if how.kind == "" {
 		return
 	}
-	message := ""
-	if !d.spec.Incognito {
-		message = providerMessage(err)
-	}
 	d.logger.Warn("connector call failed", "customer", row.CustomerID, "connection", row.ConnectionID,
 		"connector", row.ConnectorID, "binding", row.Binding, "tool", row.Tool, "session", row.SessionID,
 		"invocation", row.ID, "error_type", row.ErrorType, "latency_ms", row.LatencyMs,
-		"provider_status", how.status, "provider_message", message)
+		"provider_status", how.status, "provider_message", providerMessage(err))
 }
 
 // argumentShape is each top-level argument of a call's arguments with its JSON type and, for a
