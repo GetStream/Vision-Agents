@@ -167,36 +167,26 @@ func (s *LLMQuotaSuite) TestASessionABackendOpenedForAUserIsNeverRefused() {
 	s.NoError(err, "what the backend spent was not charged to the user's own day")
 }
 
-func (s *LLMQuotaSuite) TestAMockAnswerIsNotRefusedOnceTheDayIsSpent() {
-	spent, spender := s.session(1, 1, s.caller)
-	stream, err := spent.Create(s.ctx, llm.ResponseParams{ID: "spend", Input: prompt()})
-	s.Require().NoError(err)
-	s.answer(spender, stream, 0, 1_000, 1_000)
-	_, err = spent.Create(s.ctx, llm.ResponseParams{ID: "over", Input: prompt()})
+func (s *LLMQuotaSuite) TestAMockAnswerIsNeitherCheckedNorCounted() {
+	mocked, mocker := s.sessionAs(mock.ProviderName, 1, 0, s.caller)
+	real, realProvider := s.session(1, 0, s.caller)
+
+	for turn := range 3 {
+		stream, err := mocked.Create(s.ctx, llm.ResponseParams{
+			ID: fmt.Sprintf("m%d", turn), Input: prompt(),
+		})
+		s.Require().NoError(err, "a mock answer should not be refused on turn %d", turn)
+		s.answer(mocker, stream, turn, 1_000, 1_000)
+	}
+
+	stream, err := real.Create(s.ctx, llm.ResponseParams{ID: "real", Input: prompt()})
+	s.Require().NoError(err, "the mock answers were not charged to the user's day")
+	s.answer(realProvider, stream, 0, 1_000, 1_000)
+
+	_, err = real.Create(s.ctx, llm.ResponseParams{ID: "over", Input: prompt()})
 	s.Require().ErrorIs(err, quota.ErrExhausted, "the user's day is spent")
 
-	session, provider := s.sessionAs(mock.ProviderName, 1, 1, s.caller)
-
-	for turn := range 3 {
-		stream, err := session.Create(s.ctx, llm.ResponseParams{
-			ID: fmt.Sprintf("c%d", turn), Input: prompt(),
-		})
-		s.Require().NoError(err, "a mock answer should not be refused on turn %d", turn)
-		s.answer(provider, stream, turn, 1_000, 1_000)
-	}
-}
-
-func (s *LLMQuotaSuite) TestAMockAnswerIsNotCountedToTheUsersDay() {
-	session, provider := s.sessionAs(mock.ProviderName, 1, 1, s.caller)
-
-	for turn := range 3 {
-		stream, err := session.Create(s.ctx, llm.ResponseParams{
-			ID: fmt.Sprintf("c%d", turn), Input: prompt(),
-		})
-		s.Require().NoError(err, "a mock answer should not be refused on turn %d", turn)
-		s.answer(provider, stream, turn, 1_000, 1_000)
-	}
-	counted, _ := s.session(1, 1, s.caller)
-	_, err := counted.Create(s.ctx, llm.ResponseParams{ID: "real", Input: prompt()})
-	s.NoError(err, "the mock answers were not charged to the user's day")
+	stream, err = mocked.Create(s.ctx, llm.ResponseParams{ID: "m3", Input: prompt()})
+	s.Require().NoError(err, "a mock answer is not refused once the day is spent")
+	s.answer(mocker, stream, 3, 1_000, 1_000)
 }
