@@ -261,10 +261,8 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	// The limit is asked here rather than only when the session was opened, because a
 	// session answers many turns: a socket goes on sending frames and a call goes on
 	// talking long after whatever opened it was let through.
-	if s.counted() {
-		if _, err := s.quota.Allow(ctx, s.owner.CustomerID, s.owner.Caller); err != nil {
-			return nil, stack.Wrap(err)
-		}
+	if err := s.allow(ctx); err != nil {
+		return nil, err
 	}
 	if s.admit != nil {
 		if _, err := s.admit(ctx, s.owner.CustomerID); err != nil {
@@ -301,6 +299,18 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 // counted reports whether this session's answers count toward a daily limit. A mock
 // answer costs nothing and is what a load test asks for by the thousand.
 func (s *Session) counted() bool { return s.config.Provider != mock.ProviderName }
+
+// allow asks the daily limit whether this session may answer another turn. A session
+// that is not counted is never asked.
+func (s *Session) allow(ctx context.Context) error {
+	if !s.counted() {
+		return nil
+	}
+	if _, err := s.quota.Allow(ctx, s.owner.CustomerID, s.owner.Caller); err != nil {
+		return stack.Wrap(err)
+	}
+	return nil
+}
 
 // screened attaches a verdict to a stream, when there is both.
 func screened(stream *llm.Stream, verdict <-chan error) *llm.Stream {
