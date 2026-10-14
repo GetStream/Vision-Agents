@@ -174,12 +174,18 @@ func (s *FishSuite) TestNewFallsBackToEnv() {
 	s.Equal("voice-from-env", provider.options.Voice)
 }
 
-func (s *FishSuite) TestNewDefaultsToS2Pro() {
+func (s *FishSuite) TestNewDefaultsToDrama3() {
 	provider := s.newTTS(Options{})
-	s.Equal(DefaultModel, provider.Model())
+	s.Equal(Drama3Model, provider.Model())
 	s.Equal(ProviderName, provider.Provider())
 	s.Equal(DefaultSampleRate, provider.SampleRate())
 	s.False(provider.Streaming(), "one POST per utterance means whole sentences only")
+	s.True(provider.Performs(), "drama-3 acts bracketed stage directions")
+	s.Equal(AudioTagPrompt, provider.Prompt())
+
+	s2pro := s.newTTS(Options{Model: "s2-pro"})
+	s.False(s2pro.Performs())
+	s.Empty(s2pro.Prompt())
 }
 
 func (s *FishSuite) TestSynthesizeFailsBeforeStart() {

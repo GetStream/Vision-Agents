@@ -878,7 +878,7 @@ reading them out. A provider says whether it does, and only then is the model to
 write them. What it writes is stripped before it reaches the transcript or the
 conversation's history, so a direction is heard and never read.
 
-Two providers perform them, and they are not interchangeable.
+Three providers perform them, and they are not interchangeable.
 
 `elevenlabs/eleven_v3_conversational` acts any bracketed direction, over the Text to
 Dialogue socket rather than the streaming one. It is a different bargain from
@@ -895,6 +895,12 @@ instruction — how the line should sound, or who should say it — which no oth
 here does. Two languages only, English and Chinese, and it runs on our own Baseten
 deployment, so see `deploy/breeze-tts-2/README.md` before routing anything at it: the
 licence and the single-request engine both matter.
+
+`fish/drama-3` acts any bracketed direction, written the way you would brief an actor:
+`[calm, measured storyteller voice]` as readily as `[sighs]`. It is Fish's hosted API,
+the same `POST /v1/tts` as `fish/s2-pro` with the `model` header changed, and the default
+for the `fish` provider. Like every Fish model it synthesises a whole sentence per request,
+so it answers later than the socket voices. `fish/s2-pro` reads a bracket out as words.
 
 ### A voice described rather than chosen
 

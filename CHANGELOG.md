@@ -612,15 +612,24 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
-### Each app sets its own daily limit per end user
+### Stream staff set each app's daily limit per end user
 
-`PUT /v1/policies/app` and `/v1/policies/organization` take `quota`:
-`messages_per_user_per_day` and `tokens_per_user_per_day`. An app may set a number above the
-deployment's default or below it, and `0` is no cap. An organization's number is a ceiling for
-its apps. Left out, the deployment's `ROUTER_RATE_LIMIT_*` default applies, as before. A
-counted answer carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`.
-The answers in a session a backend opened are no longer charged to the user it named, `mock/*`
-answers are not counted, and an address is counted per app.
+Stream staff set what one end user of an app may spend in a UTC day with
+`PUT /v1/ops/customers/{customer_id}/quota` and the ops key: `messages_per_user_per_day` and
+`tokens_per_user_per_day`, each from `0` (no cap) to a bound that only catches a typo. An app
+reads its number as `quota` in `GET /v1/policies/app` and cannot change it: a policy write
+that changes it is a 400, and one that sends back what was read is fine. Left out, the
+deployment's `ROUTER_RATE_LIMIT_*` default applies, as before. A counted answer carries
+`X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`. The answers in a session
+a backend opened are no longer charged to the user it named, `mock/*` answers are not counted,
+and an address is counted per app.
+
+### Fish Audio Drama 3 is `fish/drama-3`, and the `fish` default
+
+Fish's hosted Drama 3 can be routed as `fish/drama-3`, with the same `FISH_API_KEY`, and a
+`fish` target that names no model now gets it instead of `s2-pro`. Like ElevenLabs v3 it acts
+bracketed directions such as `[laughs]` or `[whispers]` rather than reading them out, so the
+model writing the lines is told it may use them. `fish/s2-pro` is still served as before.
 
 ### A customer's website can call the router directly
 
