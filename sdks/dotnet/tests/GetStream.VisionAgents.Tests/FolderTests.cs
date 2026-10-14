@@ -233,6 +233,103 @@ public sealed class FolderTests : IDisposable
     }
 
     [Fact]
+    public void ConnectorsAreReadAsAliasesAndAsObjects()
+    {
+        Write("agent.yaml", "name: jean\nconnectors:\n  - linear\n  - name: issues\n    connector: linear\n    tools: [list_*]\n    connection: work\n    required: true\n  - name: slack\n    tools: null\n");
+
+        var connectors = Folder.Load(_root).Declaration.Connectors!;
+
+        Assert.Equal(
+            [
+                new ConnectorDeclaration("linear"),
+                new ConnectorDeclaration("issues", "linear", ["list_*"], "work", true),
+                new ConnectorDeclaration("slack"),
+            ],
+            connectors,
+            new ConnectorComparer());
+    }
+
+    [Fact]
+    public void ConnectorsLeftOutAreNullAndAnEmptyListIsEmpty()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Assert.Null(Folder.Load(_root).Declaration.Connectors);
+
+        Write("agent.yaml", "name: jean\nconnectors:\n");
+        Assert.Null(Folder.Load(_root).Declaration.Connectors);
+
+        Write("agent.yaml", "name: jean\nconnectors: []\n");
+        Assert.Empty(Folder.Load(_root).Declaration.Connectors!);
+    }
+
+    [Theory]
+    [InlineData("connectors:\n  - ~\n", "a connector needs a name")]
+    [InlineData("connectors:\n  - # linear\n", "a connector needs a name")]
+    [InlineData("connectors:\n  - \"\"\n", "a connector needs a name")]
+    [InlineData("connectors:\n  - connector: linear\n", "a connector needs a name")]
+    [InlineData("connectors:\n  - name: github\n    tools: []\n", "connector \"github\": tools: [] grants nothing; leave tools out for every tool")]
+    [InlineData("connectors:\n  - name: github\n    connection: \"\"\n", "connector \"github\": connection must be a connection id or label")]
+    public void AConnectorEntryThatCannotBeUsedIsRefusedWithItsReason(string declaration, string reason)
+    {
+        Write("agent.yaml", "name: jean\n" + declaration);
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Equal(Path.Combine(_root, "agent.yaml") + ": " + reason, refused.Message);
+    }
+
+    [Fact]
+    public void AConnectorAliasThatIsAlsoAPluginIsRefusedButAnotherConnectorIdIsNot()
+    {
+        Write("agent.yaml", "name: jean\nplugins: [linear]\nconnectors:\n  - issues\n  - linear\n");
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Equal(Path.Combine(_root, "agent.yaml") + ": \"linear\" is named under both connectors and plugins", refused.Message);
+
+        Write("agent.yaml", "name: jean\nplugins: [linear]\nconnectors:\n  - name: issues\n    connector: linear\n");
+
+        Assert.Equal("issues", Assert.Single(Folder.Load(_root).Declaration.Connectors!).Name);
+    }
+
+    [Fact]
+    public void AConnectorKeyNobodyKnowsIsRefusedByName()
+    {
+        Write("agent.yaml", "name: jean\nconnectors:\n  - name: github\n    plugin: github\n");
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Contains("'plugin'", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("connectors:\n  - name: github\n    connection:\n      id: c-1\n")]
+    [InlineData("connectors:\n  - name: github\n    tools: github\n")]
+    [InlineData("connectors:\n  - [github]\n")]
+    [InlineData("connectors: linear\n")]
+    public void AConnectorsShapeYamlCannotReadIsRefused(string declaration)
+    {
+        Write("agent.yaml", "name: jean\n" + declaration);
+
+        Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+    }
+
+    [Fact]
+    public void AnAgentWithConnectorsStillHashesTheFileAsWritten()
+    {
+        Write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\n");
+        Write("instructions.md", "You are Jean.\n");
+        Write("skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n");
+        Write("knowledge/pricing.md", "# Pricing\n\nA penny.\n");
+        var without = Folder.Load(_root).Hash();
+        Assert.Equal("02a7b2c8428f31e3a2b93ca2f5a6ec70", without);
+
+        Write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\nconnectors:\n  - linear\n");
+
+        Assert.NotEqual(without, Folder.Load(_root).Hash());
+    }
+
+    [Fact]
     public void ADirectoryHashesTheWayTheGoAndPythonSdksHashIt()
     {
         Write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\n");
@@ -388,6 +485,16 @@ public sealed class FolderTests : IDisposable
         Assert.Equal(Path.Combine(workspace, "agents", "support"), Folder.Find("support", deeper));
         Assert.Equal(Path.Combine(workspace, "examples", "voice", "docs"), Folder.Find("docs", deeper));
         Assert.Null(Folder.Find("stored-only", deeper));
+    }
+
+    private sealed class ConnectorComparer : IEqualityComparer<ConnectorDeclaration>
+    {
+        public bool Equals(ConnectorDeclaration? x, ConnectorDeclaration? y) =>
+            x is not null && y is not null
+            && (x.Name, x.Connector, x.Connection, x.Required) == (y.Name, y.Connector, y.Connection, y.Required)
+            && (x.Tools is null ? y.Tools is null : y.Tools is not null && x.Tools.SequenceEqual(y.Tools));
+
+        public int GetHashCode(ConnectorDeclaration obj) => obj.Name.GetHashCode(StringComparison.Ordinal);
     }
 
     private void Write(string name, string content)

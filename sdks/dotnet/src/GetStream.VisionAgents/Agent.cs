@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using GetStream.VisionAgents.Models;
 
 namespace GetStream.VisionAgents;
@@ -458,6 +459,10 @@ public sealed class Agent : IAsyncDisposable
     /// </remarks>
     public async Task<AgentConfig> SyncAsync(CancellationToken cancellationToken = default)
     {
+        if (Folder?.Declaration.Plugins.Count > 0)
+        {
+            Trace.TraceWarning("agent.yaml plugins are deprecated: rename plugins to connectors");
+        }
         var skills = _options.Harness?.Skills ?? [];
         var harness = _options.Harness?.Name ?? "";
         var subagent = _options.Harness?.Subagent ?? "";
@@ -486,6 +491,7 @@ public sealed class Agent : IAsyncDisposable
         if (Folder is not null)
         {
             Declare(request, Folder);
+            request.Connectors = await BindingsAsync(Folder.Declaration.Connectors, cancellationToken).ConfigureAwait(false);
         }
         request.Harness = VisionAgentsClient.Blank(harness) ?? request.Harness;
         request.Subagent = VisionAgentsClient.Blank(subagent) ?? request.Subagent;
@@ -808,6 +814,76 @@ public sealed class Agent : IAsyncDisposable
         request.Dispatch = declared.Dispatch is { } dispatch
             ? new AgentDispatch { IncomingCall = VisionAgentsClient.Blank(dispatch.IncomingCall), Text = VisionAgentsClient.Blank(dispatch.Text) }
             : null;
+    }
+
+    /// <summary>
+    /// The connectors agent.yaml names, in the shape the sync takes. Null when it says nothing,
+    /// so the stored bindings stay; empty when it lists none, which removes them.
+    /// </summary>
+    private async Task<List<AgentConnectorBinding>?> BindingsAsync(IReadOnlyList<ConnectorDeclaration>? declared, CancellationToken cancellationToken)
+    {
+        if (declared is null)
+        {
+            return null;
+        }
+        var bindings = new List<AgentConnectorBinding>(declared.Count);
+        foreach (var entry in declared)
+        {
+            var connector = entry.Connector == "" ? entry.Name : entry.Connector;
+            var binding = new AgentConnectorBinding
+            {
+                Name = entry.Name,
+                ConnectorId = connector,
+                ToolPatterns = [.. entry.Tools ?? ["*"]],
+                Required = entry.Required,
+                Connection = new AgentConnectorSelection { Type = "session" },
+            };
+            if (entry.Connection is { } token)
+            {
+                binding.Connection = new AgentConnectorSelection
+                {
+                    Type = "fixed",
+                    ConnectionId = await FixedConnectionAsync(entry.Name, connector, token, cancellationToken).ConfigureAwait(false),
+                };
+            }
+            bindings.Add(binding);
+        }
+        return bindings;
+    }
+
+    /// <summary>
+    /// The app connection <paramref name="token"/> names, by id or by the one label that
+    /// matches. An id wins over a label. Every page is read first: a label on an early page
+    /// must not hide the id on a later one, and a label is only unique once the list ends.
+    /// </summary>
+    private async Task<string> FixedConnectionAsync(string name, string connector, string token, CancellationToken cancellationToken)
+    {
+        var connections = new List<Connection>();
+        var asked = new HashSet<string>();
+        string? cursor = null;
+        while (asked.Add(cursor ?? ""))
+        {
+            var page = await Client.GetAsync<ConnectionPage>("/v1/agents/connections",
+                new Dictionary<string, string?> { ["owner_type"] = "app", ["connector_id"] = connector, ["cursor"] = cursor },
+                cancellationToken).ConfigureAwait(false);
+            connections.AddRange(page.Items ?? []);
+            if (string.IsNullOrEmpty(page.NextCursor))
+            {
+                break;
+            }
+            cursor = page.NextCursor;
+        }
+        if (connections.Find(connection => connection.Id == token) is { } byId)
+        {
+            return byId.Id;
+        }
+        var labelled = connections.Where(connection => connection.Label == token).ToList();
+        return labelled.Count switch
+        {
+            1 => labelled[0].Id,
+            0 => throw new ConfigurationException($"connector \"{name}\": no app connection with id or label \"{token}\""),
+            _ => throw new ConfigurationException($"connector \"{name}\": \"{token}\" matches {labelled.Count} app connections"),
+        };
     }
 
     private static SkillRequest SkillRequestOf(Skill skill) => new()

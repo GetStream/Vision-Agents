@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using GetStream.VisionAgents.Models;
 using YamlDotNet.Core;
+using YamlDotNet.Core.Events;
 using YamlDotNet.RepresentationModel;
 using YamlDotNet.Serialization;
 
@@ -62,6 +63,14 @@ public sealed record VideoDeclaration(string Source, int MaxFrames);
 /// <param name="Text">What it says.</param>
 /// <param name="Mode"><c>exact</c>, said word for word, or <c>variation</c>, which the model rewords on every call. Empty is exact.</param>
 public sealed record GreetingDeclaration(string Text, string Mode);
+
+/// <summary>One connector the agent binds, as agent.yaml declares it.</summary>
+/// <param name="Name">The alias the model sees the connector's tools under.</param>
+/// <param name="Connector">The connector id. Empty means <paramref name="Name"/>.</param>
+/// <param name="Tools">Names or path patterns of the tools offered. Null, left out or written null, means every tool.</param>
+/// <param name="Connection">An id or a label of one of the app's connections to the connector. Null is a session binding; set, it is fixed to the connection it names.</param>
+/// <param name="Required">Whether a session needs the connector. Null leaves it optional.</param>
+public sealed record ConnectorDeclaration(string Name, string Connector = "", IReadOnlyList<string>? Tools = null, string? Connection = null, bool? Required = null);
 
 /// <summary>
 /// What the agent leaves to the application's own dispatch worker, each <c>enabled</c> or
@@ -120,6 +129,12 @@ public sealed record Declaration
 
     /// <summary>The plugins the agent may use.</summary>
     public IReadOnlyList<string> Plugins { get; init; } = [];
+
+    /// <summary>
+    /// The connectors whose tools the agent may call. Null when agent.yaml says nothing, which
+    /// leaves the stored bindings; empty when it lists none, which removes them.
+    /// </summary>
+    public IReadOnlyList<ConnectorDeclaration>? Connectors { get; init; }
 
     /// <summary>Words the transcriber would otherwise get wrong.</summary>
     public IReadOnlyList<string> Keyterms { get; init; } = [];
@@ -516,6 +531,12 @@ public sealed class Folder
             }
             video = new VideoDeclaration(declared.Source ?? "", frames);
         }
+        var connectors = read.Connectors?.Select(entry => ConnectorOf(entry, path)).ToList();
+        // The model is offered each as <name>__<tool>, so the same name would be two tools.
+        if (connectors?.Find(connector => read.Plugins?.Contains(connector.Name) == true) is { } clash)
+        {
+            throw new ConfigurationException($"{path}: \"{clash.Name}\" is named under both connectors and plugins");
+        }
         return new Declaration
         {
             Name = read.Name ?? "",
@@ -532,11 +553,29 @@ public sealed class Folder
             Greeting = read.Greeting is { } greeting ? new GreetingDeclaration(greeting.Text ?? "", greeting.Mode ?? "") : null,
             Sandbox = read.Sandbox ?? "",
             Plugins = read.Plugins ?? [],
+            Connectors = connectors,
             Keyterms = read.Keyterms ?? [],
             Tags = read.Tags ?? [],
             Video = video,
             Dispatch = read.Dispatch is { } dispatch ? new DispatchDeclaration(dispatch.IncomingCall ?? "", dispatch.Text ?? "") : null,
         };
+    }
+
+    private static ConnectorDeclaration ConnectorOf(WrittenConnector? written, string path)
+    {
+        if (written?.Name is not { Length: > 0 } name)
+        {
+            throw new ConfigurationException($"{path}: a connector needs a name");
+        }
+        if (written.Tools is { Count: 0 })
+        {
+            throw new ConfigurationException($"{path}: connector \"{name}\": tools: [] grants nothing; leave tools out for every tool");
+        }
+        if (written.Connection is { Length: 0 })
+        {
+            throw new ConfigurationException($"{path}: connector \"{name}\": connection must be a connection id or label");
+        }
+        return new ConnectorDeclaration(name, written.Connector ?? "", written.Tools, written.Connection, written.Required);
     }
 
     /// <summary>
@@ -961,10 +1000,46 @@ public sealed class Folder
         [YamlMember(Alias = "greeting")] public WrittenGreeting? Greeting { get; set; }
         [YamlMember(Alias = "sandbox")] public string? Sandbox { get; set; }
         [YamlMember(Alias = "plugins")] public List<string>? Plugins { get; set; }
+        [YamlMember(Alias = "connectors")] public List<WrittenConnector?>? Connectors { get; set; }
         [YamlMember(Alias = "keyterms")] public List<string>? Keyterms { get; set; }
         [YamlMember(Alias = "tags")] public Dictionary<string, string>? Tags { get; set; }
         [YamlMember(Alias = "video")] public WrittenVideo? Video { get; set; }
         [YamlMember(Alias = "dispatch")] public WrittenDispatch? Dispatch { get; set; }
+    }
+
+    /// <summary>A connectors entry: the alias alone, or a mapping naming it with the rest.</summary>
+    private sealed class WrittenConnector : IYamlConvertible
+    {
+        public string? Name { get; private set; }
+        public string? Connector { get; private set; }
+        public List<string>? Tools { get; private set; }
+        public string? Connection { get; private set; }
+        public bool? Required { get; private set; }
+
+        void IYamlConvertible.Read(IParser parser, Type expectedType, ObjectDeserializer nestedObjectDeserializer)
+        {
+            if (parser.TryConsume<Scalar>(out var alias))
+            {
+                // A plain ~ or null is a null entry, which has no name, not an alias spelled null.
+                Name = alias.Style == ScalarStyle.Plain && alias.Value is "~" or "null" or "Null" or "NULL" ? null : alias.Value;
+                return;
+            }
+            // The mapping is read as its own type, so a key nobody knows is refused as it is anywhere else.
+            var body = (WrittenConnectorBody)nestedObjectDeserializer(typeof(WrittenConnectorBody))!;
+            (Name, Connector, Tools, Connection, Required) = (body.Name, body.Connector, body.Tools, body.Connection, body.Required);
+        }
+
+        void IYamlConvertible.Write(IEmitter emitter, ObjectSerializer nestedObjectSerializer) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class WrittenConnectorBody
+    {
+        [YamlMember(Alias = "name")] public string? Name { get; set; }
+        [YamlMember(Alias = "connector")] public string? Connector { get; set; }
+        [YamlMember(Alias = "tools")] public List<string>? Tools { get; set; }
+        [YamlMember(Alias = "connection")] public string? Connection { get; set; }
+        [YamlMember(Alias = "required")] public bool? Required { get; set; }
     }
 
     private sealed class WrittenVideo

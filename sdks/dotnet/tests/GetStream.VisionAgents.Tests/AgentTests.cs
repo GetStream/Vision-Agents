@@ -558,6 +558,181 @@ public sealed class AgentTests : IDisposable
     }
 
     [Fact]
+    public async Task ADirectoryThatSaysNothingOfConnectorsSendsNoneAndLooksNothingUp()
+    {
+        await using var router = await TestRouter.StartAsync();
+
+        var synced = await SyncDeclaringAsync(router, "llm: openai/gpt-5.6\n");
+
+        Assert.False(synced.AsObject().ContainsKey("connectors"));
+        Assert.Empty(router.To("GET", "/v1/agents/connections"));
+    }
+
+    [Fact]
+    public async Task AnEmptyConnectorsListIsSentAsEmptyToClearTheStoredBindings()
+    {
+        await using var router = await TestRouter.StartAsync();
+
+        var synced = await SyncDeclaringAsync(router, "connectors: []\n");
+
+        Assert.Empty(synced["connectors"]!.AsArray());
+    }
+
+    [Fact]
+    public async Task AConnectorNamedAloneIsASessionBindingOfEveryTool()
+    {
+        await using var router = await TestRouter.StartAsync();
+
+        var synced = await SyncDeclaringAsync(router, "connectors:\n  - linear\n");
+
+        var binding = Assert.Single(synced["connectors"]!.AsArray())!.AsObject();
+        Assert.Equal("linear", binding.Text("name"));
+        Assert.Equal("linear", binding.Text("connector_id"));
+        Assert.Equal(["*"], binding["tool_patterns"]!.AsArray().Select(pattern => pattern!.GetValue<string>()));
+        Assert.Empty(binding["tools"]!.AsArray());
+        Assert.Equal("session", binding["connection"].Text("type"));
+        Assert.Null(binding["connection"]!["connection_id"]);
+        Assert.Null(binding["required"]);
+        Assert.Empty(router.To("GET", "/v1/agents/connections"));
+    }
+
+    [Fact]
+    public async Task AConnectorObjectNamesItsConnectorOrDefaultsItToItsName()
+    {
+        await using var router = await TestRouter.StartAsync();
+
+        var synced = await SyncDeclaringAsync(router,
+            "connectors:\n  - name: github\n  - name: issues\n    connector: linear\n");
+
+        var bindings = synced["connectors"]!.AsArray();
+        Assert.Equal([("github", "github"), ("issues", "linear")], bindings.Select(binding => (binding.Text("name"), binding.Text("connector_id"))));
+    }
+
+    [Fact]
+    public async Task AConnectorsToolsAreSentAsWrittenAndLeftOutOrNullMeansEveryTool()
+    {
+        await using var router = await TestRouter.StartAsync();
+
+        var synced = await SyncDeclaringAsync(router,
+            "connectors:\n  - name: github\n    tools: [list_*, get_issue]\n    required: true\n" +
+            "  - name: linear\n  - name: slack\n    tools: null\n");
+
+        var bindings = synced["connectors"]!.AsArray();
+        Assert.Equal(["list_*", "get_issue"], bindings[0]!["tool_patterns"]!.AsArray().Select(pattern => pattern!.GetValue<string>()));
+        Assert.True(bindings[0]!["required"]!.GetValue<bool>());
+        Assert.Equal(["*"], bindings[1]!["tool_patterns"]!.AsArray().Select(pattern => pattern!.GetValue<string>()));
+        Assert.Equal(["*"], bindings[2]!["tool_patterns"]!.AsArray().Select(pattern => pattern!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task AConnectionIsFixedByItsIdAndAnIdOutranksAnotherConnectionsLabel()
+    {
+        await using var router = await TestRouter.StartAsync();
+        Connections(router, ("", Listed(null, ("c-2", "c-1"), ("c-1", "work"))));
+
+        var synced = await SyncDeclaringAsync(router, "connectors:\n  - name: github\n    connection: c-1\n");
+
+        var connection = Assert.Single(synced["connectors"]!.AsArray())!["connection"];
+        Assert.Equal(("fixed", "c-1"), (connection.Text("type"), connection.Text("connection_id")));
+        var asked = router.Only("GET", "/v1/agents/connections").Query;
+        Assert.Equal(("app", "github"), (asked["owner_type"], asked["connector_id"]));
+    }
+
+    [Fact]
+    public async Task AConnectionIsFixedByTheOneLabelThatMatches()
+    {
+        await using var router = await TestRouter.StartAsync();
+        Connections(router, ("", Listed(null, ("c-1", "work"), ("c-2", "home"))));
+
+        var synced = await SyncDeclaringAsync(router, "connectors:\n  - name: github\n    connection: home\n");
+
+        var connection = Assert.Single(synced["connectors"]!.AsArray())!["connection"];
+        Assert.Equal(("fixed", "c-2"), (connection.Text("type"), connection.Text("connection_id")));
+    }
+
+    [Fact]
+    public async Task EveryPageOfConnectionsIsReadSoALaterIdBeatsAnEarlierLabel()
+    {
+        await using var router = await TestRouter.StartAsync();
+        Connections(router,
+            ("", Listed("next", ("c-1", "c-2"))),
+            ("next", Listed(null, ("c-2", "work"), ("c-3", "work"))));
+
+        var byId = await SyncDeclaringAsync(router, "connectors:\n  - name: github\n    connection: c-2\n");
+        Assert.Equal("c-2", byId["connectors"]![0]!["connection"].Text("connection_id"));
+
+        Assert.Equal(["", "next"], router.To("GET", "/v1/agents/connections").Select(seen => seen.Query.GetValueOrDefault("cursor", "")));
+    }
+
+    [Fact]
+    public async Task ALabelOnTwoPagesIsRefusedAsAmbiguous()
+    {
+        await using var router = await TestRouter.StartAsync();
+        Connections(router,
+            ("", Listed("next", ("c-1", "work"))),
+            ("next", Listed(null, ("c-2", "work"))));
+
+        var refused = await Assert.ThrowsAsync<ConfigurationException>(() =>
+            SyncDeclaringAsync(router, "connectors:\n  - name: github\n    connection: work\n"));
+
+        Assert.Equal("""connector "github": "work" matches 2 app connections""", refused.Message);
+        Assert.Empty(router.To("POST", "/v1/agents/sync"));
+    }
+
+    [Fact]
+    public async Task AConnectionNothingMatchesIsRefusedAndNothingIsSynced()
+    {
+        await using var router = await TestRouter.StartAsync();
+        Connections(router, ("", Listed(null, ("c-1", "work"))));
+
+        var refused = await Assert.ThrowsAsync<ConfigurationException>(() =>
+            SyncDeclaringAsync(router, "connectors:\n  - name: github\n    connection: ghost\n"));
+
+        Assert.Equal("connector \"github\": no app connection with id or label \"ghost\"", refused.Message);
+        Assert.Empty(router.To("POST", "/v1/agents/sync"));
+    }
+
+    [Fact]
+    public async Task PluginsStillSyncAndTheDeprecationIsLoggedOncePerSync()
+    {
+        const string Warning = "agent.yaml plugins are deprecated: rename plugins to connectors";
+        var heard = new Heard();
+        System.Diagnostics.Trace.Listeners.Add(heard);
+        try
+        {
+            await using var router = await TestRouter.StartAsync();
+
+            var synced = await SyncDeclaringAsync(router, "plugins: [sentry]\n");
+
+            Assert.Equal("sentry", synced["plugins"]![0]!.GetValue<string>());
+            Assert.Single(heard.Warnings, line => line == Warning);
+        }
+        finally
+        {
+            System.Diagnostics.Trace.Listeners.Remove(heard);
+        }
+    }
+
+    [Fact]
+    public async Task AnAgentWithoutPluginsLogsNoDeprecation()
+    {
+        var heard = new Heard();
+        System.Diagnostics.Trace.Listeners.Add(heard);
+        try
+        {
+            await using var router = await TestRouter.StartAsync();
+
+            await SyncDeclaringAsync(router, "connectors:\n  - linear\n");
+
+            Assert.DoesNotContain(heard.Warnings, line => line.Contains("plugins are deprecated"));
+        }
+        finally
+        {
+            System.Diagnostics.Trace.Listeners.Remove(heard);
+        }
+    }
+
+    [Fact]
     public async Task APageAddedToTheKnowledgeBaseIsWaitedFor()
     {
         await using var router = await TestRouter.StartAsync();
@@ -578,6 +753,29 @@ public sealed class AgentTests : IDisposable
             agent.Knowledge.AddUrlAsync("https://example.com/plans", refreshHours: 0, cancellationToken: TestContext.Current.CancellationToken));
     }
 
+    private async Task<JsonNode> SyncDeclaringAsync(TestRouter router, string declaration)
+    {
+        var root = Path.Combine(_workspace, "agents", "jean");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "agent.yaml"), "name: jean\n" + declaration);
+        router.On("POST", "/v1/agents/sync", 200, new { unchanged = false, config = Fixtures.Config("jean", "cfg-1") });
+        using var client = Fixtures.Client(router);
+        await using var agent = new Agent(new AgentOptions { Config = root, Client = client });
+        await agent.SyncAsync(TestContext.Current.CancellationToken);
+        return router.Only("POST", "/v1/agents/sync").Body!;
+    }
+
+    /// <summary>Answers the connection list: each page by the cursor it is asked for, "" for the first.</summary>
+    private static void Connections(TestRouter router, params (string Cursor, object Page)[] pages) =>
+        router.On("GET", "/v1/agents/connections", seen => new Reply(200, pages.Single(page => page.Cursor == seen.Query.GetValueOrDefault("cursor", "")).Page));
+
+    private static object Listed(string? next, params (string Id, string Label)[] connections) => new
+    {
+        has_more = next is not null,
+        next_cursor = next,
+        items = connections.Select(connection => new { id = connection.Id, label = connection.Label, connector_id = "github" }),
+    };
+
     private static object Page(string state, int passages) => new
     {
         id = "k1", @namespace = "support", url = "https://example.com/plans", state, passages,
@@ -592,6 +790,32 @@ public sealed class AgentTests : IDisposable
             return happened;
         }
         throw new InvalidOperationException("the session ended with nothing said");
+    }
+
+    private sealed class Heard : System.Diagnostics.TraceListener
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _warnings = new();
+
+        public IReadOnlyCollection<string> Warnings => _warnings;
+
+        public override void TraceEvent(System.Diagnostics.TraceEventCache? cache, string source, System.Diagnostics.TraceEventType type, int id, string? message)
+        {
+            if (type == System.Diagnostics.TraceEventType.Warning && message is not null)
+            {
+                _warnings.Enqueue(message);
+            }
+        }
+
+        public override void TraceEvent(System.Diagnostics.TraceEventCache? cache, string source, System.Diagnostics.TraceEventType type, int id, string? format, params object?[]? args) =>
+            TraceEvent(cache, source, type, id, format is null ? null : args is { Length: > 0 } ? string.Format(format, args) : format);
+
+        public override void Write(string? message)
+        {
+        }
+
+        public override void WriteLine(string? message)
+        {
+        }
     }
 
     private sealed record City(string Name);
