@@ -62,6 +62,14 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
   --scenario restaurant.golden --k 1
 ```
 
+Evaluate a speech-to-speech model on the router (`stream.STS` in Python, function calling still in Python). One model listens, takes turns and speaks, in place of the STT, LLM and TTS above, so the pack's subagent and skills are not used and no router timeline is captured. The default is OpenAI's GPT-Live (`openai/gpt-live-1`); `VOICEBENCH_STS` names another STS target. The router is reached the same way as for `--target accelerated`:
+
+```bash
+CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
+  --pack restaurant --target sts --spawn --system gpt-live \
+  --scenario restaurant.golden --k 1
+```
+
 Evaluate acceleration through its public session API. The router is unmodified: Voicebench creates a session per trial, answers `tool_call` frames against the world server, and closes the session.
 
 ```bash

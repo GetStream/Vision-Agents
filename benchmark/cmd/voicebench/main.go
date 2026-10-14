@@ -101,7 +101,7 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	callID := fs.String("call-id", "", "call id / room name. Empty generates one per trial")
 	callType := fs.String("call-type", "default", "Stream call type")
 	transport := fs.String("transport", "stream", "media transport (stream, livekit)")
-	target := fs.String("target", "", "target system (python, acceleration, accelerated, livekit)")
+	target := fs.String("target", "", "target system (python, acceleration, accelerated, sts, livekit)")
 	targetURL := fs.String("target-url", "", "target HTTP base URL, or LiveKit URL for --target livekit")
 	targetModel := fs.String("target-model", "", "target model identifier for the reproducibility manifest")
 	targetVoice := fs.String("target-voice", "", "target voice identifier for the reproducibility manifest")
