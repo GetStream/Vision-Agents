@@ -456,7 +456,7 @@ class TestAgent < LocalRouterTest
                "- name: lunch\n  scenario: Order a club\n  assertion: One club\n  variations: 3\n")
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
 
-    VA::Agent.new(folder: root, client: client).sync
+    capture_io { VA::Agent.new(folder: root, client: client).sync }
 
     request = @router.last(:post, "/v1/agents/sync").json
     assert_equal({ "text" => "Bonjour", "mode" => "exact" }, request["greeting"])
@@ -467,6 +467,175 @@ class TestAgent < LocalRouterTest
     assert_equal [{ "name" => "lunch", "scenario" => "Order a club", "assertion" => "One club", "variations" => 3 }],
                  request["simulations"]
     assert_equal VA::Folder.load(root).fingerprint, request["hash"]
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def sync_declaring(yaml)
+    root = folder
+    File.write(File.join(root, "agent.yaml"), "name: jean\n#{yaml}")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+    VA::Agent.new(folder: root, client: client).sync
+    @router.last(:post, "/v1/agents/sync").json
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def serve_connections(items, pages: nil)
+    @router.on(:get, "/v1/agents/connections") do |request|
+      page = pages ? pages.fetch(request.query["cursor"]) : { "items" => items }
+      page
+    end
+  end
+
+  def test_sync_without_connectors_sends_none_and_leaves_the_fingerprint_alone
+    request = sync_declaring("")
+
+    # What the base sha sent for this folder, probed before the change.
+    assert_equal %w[guardrail hash instructions knowledge knowledge_urls name], request.keys.sort
+    assert_equal "62b29ef1a278751e9437b7d1b6c9cbe4", request["hash"]
+    assert_empty @router.seen(:get, "/v1/agents/connections")
+  end
+
+  def test_sync_sends_a_connector_named_alone_as_a_session_binding
+    request = sync_declaring("connectors:\n  - linear\n")
+
+    assert_equal [{ "name" => "linear", "connector_id" => "linear", "tools" => [], "tool_patterns" => ["*"],
+                    "connection" => { "type" => "session" } }], request["connectors"]
+    assert_empty @router.seen(:get, "/v1/agents/connections")
+  end
+
+  def test_sync_sends_a_connector_mapping_with_the_connector_its_tools_and_whether_it_is_required
+    request = sync_declaring(<<~YAML)
+      connectors:
+        - name: issues
+          connector: linear
+          tools: ["list_*", get_issue]
+          required: true
+        - name: docs
+          tools:
+        - name: wiki
+          required: false
+    YAML
+
+    assert_equal [{ "name" => "issues", "connector_id" => "linear", "tools" => [],
+                    "tool_patterns" => ["list_*", "get_issue"], "required" => true,
+                    "connection" => { "type" => "session" } },
+                  { "name" => "docs", "connector_id" => "docs", "tools" => [], "tool_patterns" => ["*"],
+                    "connection" => { "type" => "session" } },
+                  { "name" => "wiki", "connector_id" => "wiki", "tools" => [], "tool_patterns" => ["*"],
+                    "required" => false, "connection" => { "type" => "session" } }], request["connectors"]
+  end
+
+  def test_sync_sends_an_empty_connectors_list_so_the_stored_bindings_are_cleared
+    assert_equal [], sync_declaring("connectors: []\n")["connectors"]
+  end
+
+  def test_sync_fixes_a_connector_to_the_app_connection_with_that_id
+    serve_connections([{ "id" => "conn_a", "label" => "conn_b" }, { "id" => "conn_b", "label" => "prod" }])
+
+    request = sync_declaring("connectors:\n  - name: issues\n    connector: linear\n    connection: conn_b\n")
+
+    assert_equal({ "type" => "fixed", "connection_id" => "conn_b" }, request["connectors"].first["connection"])
+    assert_equal({ "owner_type" => "app", "connector_id" => "linear" },
+                 @router.last(:get, "/v1/agents/connections").query)
+  end
+
+  def test_sync_fixes_a_connector_to_the_one_connection_with_that_label
+    serve_connections([{ "id" => "conn_a", "label" => "staging" }, { "id" => "conn_b", "label" => "prod" }])
+
+    request = sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
+
+    assert_equal({ "type" => "fixed", "connection_id" => "conn_b" }, request["connectors"].first["connection"])
+    assert_equal "linear", @router.last(:get, "/v1/agents/connections").query["connector_id"]
+  end
+
+  def test_sync_reads_every_page_of_connections_before_choosing
+    serve_connections(nil, pages: {
+                        nil => { "items" => [{ "id" => "conn_a", "label" => "conn_b" }], "next_cursor" => "p2" },
+                        "p2" => { "items" => [{ "id" => "conn_b", "label" => "prod" }], "next_cursor" => "" }
+                      })
+
+    request = sync_declaring("connectors:\n  - name: linear\n    connection: conn_b\n")
+
+    assert_equal "conn_b", request["connectors"].first["connection"]["connection_id"]
+    assert_equal 2, @router.seen(:get, "/v1/agents/connections").size
+  end
+
+  def test_sync_stops_reading_pages_when_a_cursor_repeats
+    pages = {
+      nil => { "items" => [{ "id" => "conn_a", "label" => "staging" }], "next_cursor" => "p2" },
+      "p2" => { "items" => [{ "id" => "conn_b", "label" => "prod" }], "next_cursor" => "p2" }
+    }
+    call_count = 0
+    @router.on(:get, "/v1/agents/connections") do |request|
+      call_count += 1
+      next [400, LocalRouter.failure("loop_detected", "loop_detected", "too many list calls")] if call_count > 5
+      pages.fetch(request.query["cursor"])
+    end
+
+    request = sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
+
+    assert_equal "conn_b", request["connectors"].first["connection"]["connection_id"]
+    assert_equal 2, @router.seen(:get, "/v1/agents/connections").size
+  end
+
+  def test_sync_refuses_a_connection_that_no_app_connection_matches
+    serve_connections([{ "id" => "conn_a", "label" => "staging" }])
+
+    error = assert_raises(VA::ConfigurationError) do
+      sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
+    end
+
+    assert_equal 'connector "linear": no app connection with id or label "prod"', error.message
+    assert_empty @router.seen(:post, "/v1/agents/sync")
+  end
+
+  def test_sync_refuses_a_label_that_matches_several_app_connections
+    serve_connections([{ "id" => "conn_a", "label" => "prod" }, { "id" => "conn_b", "label" => "prod" }])
+
+    error = assert_raises(VA::ConfigurationError) do
+      sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
+    end
+
+    assert_equal 'connector "linear": "prod" matches 2 app connections', error.message
+    assert_empty @router.seen(:post, "/v1/agents/sync")
+  end
+
+  def test_sync_ignores_a_label_match_on_a_connection_with_no_id
+    serve_connections([{ "label" => "prod" }, { "id" => "conn_b", "label" => "prod" }])
+
+    request = sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
+
+    assert_equal "conn_b", request["connectors"].first["connection"]["connection_id"]
+  end
+
+  def test_sync_warns_once_that_plugins_are_deprecated_and_still_sends_them
+    request = nil
+    _, warned = capture_io { request = sync_declaring("plugins: [linear, slack]\n") }
+
+    assert_equal ["linear", "slack"], request["plugins"]
+    assert_equal "agent.yaml plugins are deprecated: rename plugins to connectors\n", warned
+  end
+
+  def test_sync_does_not_warn_when_there_are_no_plugins
+    _, warned = capture_io { sync_declaring("connectors: [linear]\n") }
+
+    assert_empty warned
+  end
+
+  def test_sync_warns_about_plugins_even_when_the_folder_is_unchanged
+    root = File.join(Dir.mktmpdir, "jean")
+    FileUtils.mkdir_p(root)
+    File.write(File.join(root, "agent.yaml"), "name: jean\nplugins: [linear]\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false, "config" => { "name" => "jean" } })
+    @router.on(:get, "/v1/agents/configs", body: [{ "name" => "jean", "id" => "cfg_1" }])
+    capture_io { VA::Agent.new(folder: root, client: client).sync }  # first sync stamps the folder
+
+    _, warned = capture_io { VA::Agent.new(folder: root, client: client).sync }  # second sync: unchanged
+
+    assert_equal 1, @router.seen(:post, "/v1/agents/sync").size
+    assert_equal "agent.yaml plugins are deprecated: rename plugins to connectors\n", warned
   ensure
     FileUtils.rm_rf(File.dirname(root))
   end

@@ -162,7 +162,7 @@ The router places the call for a session of its own, and the agent joins that se
 
 ```
 agents/jean/
-  agent.yaml            required: the name and what it runs on (llm, stt, tts, greeting, plugins, harness, tags, ...)
+  agent.yaml            required: the name and what it runs on (llm, stt, tts, greeting, connectors, harness, tags, ...)
   instructions.md
   guardrail.md
   skills/think.md
