@@ -579,6 +579,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 		if limiter, err = quota.New(liveClient.Redis(), limits, policies, logger); err != nil {
 			return err
 		}
+		if !limits.Enforced() {
+			logger.Info("no default daily limit is set, only the daily limits in app policies apply",
+				"setting", "rate_limit.messages_per_day")
+			break
+		}
 		logger.Info("capping what one end user may spend in a day, unless their app's policy says otherwise",
 			"messages", limits.MessagesPerDay, "tokens", limits.TokensPerDay)
 	}
