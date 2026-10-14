@@ -311,6 +311,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerConnectionRecords(api)
 	s.registerChannels(api)
 	s.registerDLC(api)
+	s.registerSuspensions(api)
 	return api
 }
 

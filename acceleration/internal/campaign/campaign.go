@@ -94,6 +94,9 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) error {
 	if campaign.FromNumber == "" {
 		return stack.Wrap(errors.New("campaign: a campaign needs one of your numbers to call from"))
 	}
+	if err := r.phone.Suspended(ctx, customerID); err != nil {
+		return err
+	}
 	// The config is read once, here, rather than per call: a campaign is one agent
 	// ringing many people, and editing it halfway through should not change who they
 	// are talking to.
@@ -217,6 +220,13 @@ func (r *Runner) ring(
 	spec := session.FromConfig(config)
 
 	placed, err := r.phone.Call(ctx, placing(campaign, contact))
+	if errors.Is(err, phone.ErrSuspended) {
+		// Nobody was rung, so the contact stays to be rung once the campaign is started
+		// again, and every router running this campaign stops at its next call.
+		r.logger.Info("paused a campaign of a suspended app", "campaign", campaign.ID)
+		r.stop(campaign, store.Paused)
+		return
+	}
 	if err != nil {
 		finished.State = store.Failed
 		finished.Error = err.Error()

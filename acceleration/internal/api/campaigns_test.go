@@ -41,6 +41,24 @@ func (s *CampaignsSuite) TestACampaignNamingAConfigNobodyHasIsRefused() {
 	s.Contains(failure, errUnknownConfig.Message)
 }
 
+func (s *CampaignsSuite) TestASuspendedAppCannotStartACampaign() {
+	created := s.campaign(1)
+	s.add(created.Id, map[string]any{"to_number": s.utils.number()})
+	s.Require().NoError(s.store.SuspendTelephony(context.Background(), &store.TelephonySuspension{
+		CustomerID: s.customerID(), Reason: "fraud", SuspendedBy: "ops@getstream.io",
+	}))
+	// The fixture's app is shared with other suites, which must not find it suspended.
+	s.T().Cleanup(func() {
+		s.Require().NoError(s.store.LiftTelephonySuspension(context.Background(), s.customerID()))
+	})
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil)
+
+	s.Equal(http.StatusForbidden, status)
+	s.Contains(failure, "suspended")
+	s.Equal(ContactStatePending, s.contacts(created.Id)[0].State, "nobody was rung")
+}
+
 func (s *CampaignsSuite) TestContactsAreRungInTheOrderTheyWereAdded() {
 	created := s.campaign(1)
 	first, second := s.utils.number(), s.utils.number()

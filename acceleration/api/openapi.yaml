@@ -6804,6 +6804,22 @@ components:
           description: Word-level timestamps. Recording only.
           type: boolean
       type: object
+    SuspendTelephonyRequest:
+      properties:
+        reason:
+          description: Why the app is suspended. The app is never shown it.
+          maxLength: 4096
+          minLength: 1
+          type: string
+        suspended_by:
+          description: Who is suspending it.
+          maxLength: 255
+          minLength: 1
+          type: string
+      required:
+        - reason
+        - suspended_by
+      type: object
     SyncAgentRequest:
       description: An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
       properties:
@@ -7049,6 +7065,27 @@ components:
         - request_count
         - share
         - value
+      type: object
+    TelephonySuspension:
+      properties:
+        customer_id:
+          description: The app that is suspended.
+          type: string
+        reason:
+          description: Why, for Stream staff. The app is never shown it.
+          type: string
+        suspended_at:
+          description: When it was suspended, or last changed.
+          format: date-time
+          type: string
+        suspended_by:
+          description: Who suspended it.
+          type: string
+      required:
+        - customer_id
+        - reason
+        - suspended_by
+        - suspended_at
       type: object
     TextContentPart:
       properties:
@@ -14246,6 +14283,104 @@ paths:
       security:
         - OpsKey: []
       summary: Make Stream's own app a customer's provider app
+  /v1/ops/customers/{customer_id}/telephony-suspension:
+    delete:
+      description: |-
+        Lets the app use the phone again. Its paused campaigns stay paused until the app starts them.
+
+        Stream staff only: it needs the ops key.
+      operationId: liftTelephonySuspension
+      parameters:
+        - description: The app.
+          in: path
+          name: customer_id
+          required: true
+          schema:
+            description: The app.
+            type: string
+      responses:
+        "204":
+          description: The suspension is lifted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Lift an app's telephony suspension
+    get:
+      description: |-
+        The suspension an app is under, or 404 when it is not suspended.
+
+        Stream staff only: it needs the ops key.
+      operationId: getTelephonySuspension
+      parameters:
+        - description: The app.
+          in: path
+          name: customer_id
+          required: true
+          schema:
+            description: The app.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelephonySuspension'
+          description: The suspension
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Get why an app's telephony is suspended
+    put:
+      description: |-
+        Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+
+        Stream staff only: it needs the ops key.
+      operationId: suspendTelephony
+      parameters:
+        - description: The app.
+          in: path
+          name: customer_id
+          required: true
+          schema:
+            description: The app.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuspendTelephonyRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelephonySuspension'
+          description: The suspension
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Suspend an app's telephony
   /v1/ops/use-cases:
     get:
       description: |-

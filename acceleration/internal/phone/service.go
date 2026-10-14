@@ -109,6 +109,22 @@ type Apps interface {
 // errNoStream is a service with no Stream app to make lines in.
 var errNoStream = errors.New("phone: no stream credentials")
 
+// Suspended returns ErrSuspended for an app Stream staff stopped from using the phone. A
+// suspension that cannot be read refuses too: it is there to stop fraud that costs money.
+func (s *Service) Suspended(ctx context.Context, customerID string) error {
+	if s.store == nil {
+		return nil
+	}
+	_, err := s.store.TelephonySuspension(ctx, customerID)
+	if errors.Is(err, store.ErrNotSuspended) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return stack.Wrap(ErrSuspended)
+}
+
 // streamFor is the app new lines for a customer are made in, and its pin.
 func (s *Service) streamFor(ctx context.Context, customer string) (*Stream, int64, error) {
 	if s.apps != nil {
@@ -308,6 +324,9 @@ type Purchase struct {
 func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber, error) {
 	if purchase.Owner.CustomerID == "" {
 		return store.PhoneNumber{}, stack.Wrap(errors.New("phone: a number must belong to a customer"))
+	}
+	if err := s.Suspended(ctx, purchase.Owner.CustomerID); err != nil {
+		return store.PhoneNumber{}, err
 	}
 	// An app Stream blocked could not use a number, so it does not get to pay for one.
 	if s.apps != nil {
@@ -527,6 +546,9 @@ func (s *Service) InboundBridge(ctx context.Context, vendor, e164 string) (Bridg
 	if err != nil {
 		return Bridge{}, err
 	}
+	if err := s.Suspended(ctx, stored.CustomerID); err != nil {
+		return Bridge{}, err
+	}
 	password, err := s.sealer.OpenWithAADVersion(stored.PasswordSealed, bridgeAAD(stored.CustomerID, e164), stored.KEKVersion)
 	if err != nil {
 		return Bridge{}, stack.Wrap(fmt.Errorf("phone: open the trunk password of %s: %w", e164, err))
@@ -584,6 +606,9 @@ type Placed struct {
 // rule the answered leg arrives with nothing pointing it at a call, so this creates both and
 // pins the rule to the call the agent is waiting in, the way Transfer does.
 func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error) {
+	if err := s.Suspended(ctx, request.Owner.CustomerID); err != nil {
+		return Placed{}, err
+	}
 	if request.To != "" {
 		if err := Dialable(request.To); err != nil {
 			return Placed{}, err
@@ -921,6 +946,9 @@ type TransferRequest struct {
 // the trunk is made, and keeping SIP credentials to reuse later is a worse trade than
 // making a second trunk.
 func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed, error) {
+	if err := s.Suspended(ctx, request.Owner.CustomerID); err != nil {
+		return Dialed{}, err
+	}
 	if request.To != "" {
 		if err := Dialable(request.To); err != nil {
 			return Dialed{}, err

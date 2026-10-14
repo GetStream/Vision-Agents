@@ -1983,3 +1983,14 @@ type CreatedPosition struct {
 	At time.Time `json:"t"`
 	ID string    `json:"id"`
 }
+
+// TelephonySuspension is an app Stream staff stopped from using the phone.
+type TelephonySuspension struct {
+	bun.BaseModel `bun:"table:telephony_suspensions,alias:ts"`
+
+	CustomerID string `bun:"customer_id,pk"`
+	// Reason is why, for the staff who read it later. The app is never shown it.
+	Reason      string    `bun:"reason,notnull"`
+	SuspendedBy string    `bun:"suspended_by,notnull"`
+	SuspendedAt time.Time `bun:"suspended_at,notnull"`
+}

@@ -46,6 +46,9 @@ var ErrAddressRequired = errors.New("phone: this number needs a verified address
 // the caller at a premium rate.
 var ErrDestinationRefused = errors.New("phone: calls to this number are refused")
 
+// ErrSuspended is an app Stream staff stopped from using the phone. Why stays with Stream.
+var ErrSuspended = errors.New("phone: this app's telephony is suspended; contact Stream support")
+
 // premiumPrefixes are the North American codes billed to the caller at a premium rate, which
 // is how toll fraud turns a stolen account into money.
 var premiumPrefixes = []string{"+1900", "+1976"}
