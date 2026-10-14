@@ -102,8 +102,9 @@ func New(client rueidis.Client, defaults Limits, source Source, logger *slog.Log
 // Allow reports whether the caller may ask for another response, and what they have left
 // of the limit nearest to refusing them. The Status is returned with a refusal too.
 //
-// A caller with nothing to count against is allowed: that is a customer's own backend
-// working for itself, which is trusted with its own tokens.
+// A caller with nothing to count against is allowed: one with neither a user nor an address,
+// and a customer's own process (Caller.ServerSide), which is trusted with its spend even
+// when it names a user.
 func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.Caller) (Status, error) {
 	if l == nil {
 		return Status{}, nil
