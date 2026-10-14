@@ -4950,6 +4950,7 @@ components:
           type: boolean
         quota:
           $ref: '#/components/schemas/Quota'
+          readOnly: true
         require_own_stream_app:
           description: 'Keep the app out of the router''s own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization''s off. An organization''s is set by the router''s operator and read here; sending it back unchanged is fine, and changing it is refused.'
           type: boolean
@@ -5111,18 +5112,20 @@ components:
           type: number
       type: object
     Quota:
-      description: What one end user may spend in a UTC day, counted per user and per address. The lower of the organization's and the app's number applies, and 0 is no cap, so it is never the lower one. A backend's own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset.
+      description: 'What one end user of the app may spend in a UTC day, counted per user and per address. Stream staff set it: in an app''s policy it is read-only, so sending back what was read is fine and changing it is refused. A backend''s own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset.'
       properties:
         messages_per_user_per_day:
-          description: How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the organization's number applies, or the router's default when it has none.
+          description: How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
           example: 20000
           format: int64
+          maximum: 10000000
           minimum: 0
           type: integer
         tokens_per_user_per_day:
-          description: How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the organization's number applies, or the router's default when it has none.
+          description: How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
           example: 50000000
           format: int64
+          maximum: 1000000000000
           minimum: 0
           type: integer
       type: object
@@ -14301,6 +14304,73 @@ paths:
       security:
         - OpsKey: []
       summary: Make Stream's own app a customer's provider app
+  /v1/ops/customers/{customer_id}/quota:
+    get:
+      description: |-
+        What one end user of the app may spend in a UTC day. A number left out is the router's default.
+
+        Stream staff only: it needs the ops key.
+      operationId: getCustomerQuota
+      parameters:
+        - description: The app.
+          in: path
+          name: customer_id
+          required: true
+          schema:
+            description: The app.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quota'
+          description: The app's daily limit
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Get an app's daily limit per end user
+    put:
+      description: |-
+        Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+
+        Stream staff only: it needs the ops key.
+      operationId: setCustomerQuota
+      parameters:
+        - description: The app.
+          in: path
+          name: customer_id
+          required: true
+          schema:
+            description: The app.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Quota'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quota'
+          description: The app's daily limit, as stored
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Set an app's daily limit per end user
   /v1/ops/customers/{customer_id}/telephony-suspension:
     delete:
       description: |-

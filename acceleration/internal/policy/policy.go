@@ -4,10 +4,10 @@
 //
 // An organization's policy is a floor its apps can tighten and cannot loosen: both budgets
 // apply, a data policy is the stricter of the two, prompt injection is screened if either
-// turns it on, only a model both allow may be routed to, the organization's tags win
-// over the app's, and a daily limit is the lower of the two that are set. That is the only
-// reading under which an organization's setting means anything, since an app that could
-// switch it off would make it a suggestion.
+// turns it on, only a model both allow may be routed to, and the organization's tags win
+// over the app's. That is the only reading under which an organization's setting means
+// anything, since an app that could switch it off would make it a suggestion. A daily limit
+// is the app's alone, set by Stream staff, so it has no organization's to meet.
 //
 // Decisions are cached per customer for a few seconds, because Admit is asked before every
 // routed session and every LLM response, and a budget is a sum over the request rows. The
@@ -69,8 +69,8 @@ type decision struct {
 	screen  bool
 	// ownApp is a customer that must act in a Stream app of its own.
 	ownApp bool
-	// messages and tokens are the daily limits per end user the policies set, nil where
-	// neither scope set one.
+	// messages and tokens are the daily limits per end user the app's policy sets, nil
+	// where it sets none.
 	messages *int64
 	tokens   *int64
 	// unread is a decision made without the policies, which could not be read.
@@ -101,11 +101,10 @@ func (e *Enforcer) Admit(ctx context.Context, customerID string) (routing.Admiss
 	return routing.Admission{DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags}, stack.Wrap(decided.refusal)
 }
 
-// Limits returns what one of a customer's end users may spend in a day: the lower of the
-// organization's and the app's where both set one, the one that is set, or defaults where
-// neither is. A limit of zero is no cap, so an app may lift the deployment's and only its
-// organization's holds it down. A policy that could not be read leaves defaults in place;
-// a spend that could not be read leaves the limits the policies set.
+// Limits returns what one of a customer's end users may spend in a day: the number the
+// app's policy sets, or defaults where it sets none. A limit of zero is no cap. A policy
+// that could not be read leaves defaults in place; a spend that could not be read leaves
+// the limits the policy sets.
 func (e *Enforcer) Limits(ctx context.Context, customerID string, defaults quota.Limits) quota.Limits {
 	if e == nil || customerID == "" {
 		return defaults
@@ -237,13 +236,9 @@ func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
 		// Either scope requiring it requires it: an app can ask for it and cannot opt out.
 		ownApp: enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
 	}
-	if organization.Quota != nil {
-		decided.messages = organization.Quota.MessagesPerUserPerDay
-		decided.tokens = organization.Quota.TokensPerUserPerDay
-	}
 	if app.Quota != nil {
-		decided.messages = lower(decided.messages, app.Quota.MessagesPerUserPerDay)
-		decided.tokens = lower(decided.tokens, app.Quota.TokensPerUserPerDay)
+		decided.messages = app.Quota.MessagesPerUserPerDay
+		decided.tokens = app.Quota.TokensPerUserPerDay
 	}
 	if organization.Budget != nil {
 		if decided.refusal, err = e.over(ctx, store.ScopeOrganization, organizationID, *organization.Budget); err != nil {
@@ -281,23 +276,6 @@ func (e *Enforcer) forget(customerID string) {
 }
 
 func enabled(flag *bool) bool { return flag != nil && *flag }
-
-// lower is the tighter of two daily limits, either of which may be unset. Zero is no cap,
-// so it is the looser of any two.
-func lower(a, b *int64) *int64 {
-	switch {
-	case a == nil:
-		return b
-	case b == nil:
-		return a
-	case *a == 0:
-		return b
-	case *b == 0:
-		return a
-	}
-	lowest := min(*a, *b)
-	return &lowest
-}
 
 func orDefault(limit *int64, fallback int64) int64 {
 	if limit == nil {

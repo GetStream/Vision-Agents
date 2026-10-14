@@ -131,48 +131,127 @@ func (s *PoliciesSuite) TestUsageIsRecordedUnderThePolicysTagsOverTheRequests() 
 	}, 5*time.Second, 50*time.Millisecond)
 }
 
-func (s *PoliciesSuite) TestAnAppsDailyLimitIsStoredAndReadBack() {
-	stored := s.put(map[string]any{"quota": map[string]any{
-		"messages_per_user_per_day": 20_000, "tokens_per_user_per_day": 0,
-	}})
-	s.Require().NotNil(stored.Quota)
+func (s *PoliciesSuite) TestAnAppCannotChangeTheDailyLimitStreamSetForIt() {
+	// An app that could set its own users' limit could give them any number.
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/policies/app",
+		map[string]any{"quota": map[string]any{"messages_per_user_per_day": 20_000}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "quota is set by Stream")
+
+	s.setQuota(map[string]any{"messages_per_user_per_day": 3})
+	status, failure = s.serverClient.failure(http.MethodPut, "/v1/policies/app",
+		map[string]any{"quota": map[string]any{"messages_per_user_per_day": 20_000}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "quota is set by Stream")
+	status, _ = s.serverClient.failure(http.MethodPut, "/v1/policies/app",
+		map[string]any{"quota": map[string]any{"messages_per_user_per_day": 3, "tokens_per_user_per_day": 0}})
+	s.Equal(http.StatusBadRequest, status, "a number Stream left out is not the app's to set")
 
 	var read Policy
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
 	s.Require().NotNil(read.Quota)
-	s.Equal(pointerTo(int64(20_000)), read.Quota.MessagesPerUserPerDay)
-	s.Equal(pointerTo(int64(0)), read.Quota.TokensPerUserPerDay, "zero is no cap, kept apart from left out")
+	s.Equal(pointerTo(int64(3)), read.Quota.MessagesPerUserPerDay)
 }
 
-func (s *PoliciesSuite) TestAnOrganizationsDailyLimitIsStoredAndReadBack() {
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/policies/organization",
-		map[string]any{"quota": map[string]any{"messages_per_user_per_day": 5_000}}, nil))
+func (s *PoliciesSuite) TestAnOrganizationHasNoDailyLimitToSet() {
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/policies/organization",
+		map[string]any{"quota": map[string]any{"messages_per_user_per_day": 5_000}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "quota is set by Stream")
+}
+
+func (s *PoliciesSuite) TestAnAppsPolicyReadAndWrittenBackKeepsItsDailyLimit() {
+	s.setQuota(map[string]any{"messages_per_user_per_day": 3, "tokens_per_user_per_day": 0})
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
+	s.Require().NotNil(read.Quota)
+	s.Equal(pointerTo(int64(0)), read.Quota.TokensPerUserPerDay, "zero is no cap, kept apart from left out")
+
+	written := s.put(map[string]any{"quota": read.Quota, "prompt_injection": true})
+	s.Equal(read.Quota, written.Quota, "sending back what was read is fine")
+
+	written = s.put(map[string]any{"prompt_injection": false})
+	s.Equal(read.Quota, written.Quota, "a policy that leaves the limit out keeps Stream's")
+}
+
+func (s *PoliciesSuite) TestOnlyStreamStaffMaySetAnAppsDailyLimit() {
+	path := "/v1/ops/customers/" + s.customerID() + "/quota"
+	body := map[string]any{"messages_per_user_per_day": 20_000}
+	wrong := &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {"guess"}}, kind: noCredential}
+
+	s.Equal(http.StatusUnauthorized, s.serverClient.do(http.MethodPut, path, body, nil), "the app's own backend")
+	s.Equal(http.StatusUnauthorized, wrong.do(http.MethodPut, path, body, nil))
+	s.Equal(http.StatusUnauthorized, s.serverClient.do(http.MethodGet, path, nil, nil))
 
 	var read Policy
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/organization", nil, &read))
-	s.Require().NotNil(read.Quota)
-	s.Equal(pointerTo(int64(5_000)), read.Quota.MessagesPerUserPerDay)
-	s.Nil(read.Quota.TokensPerUserPerDay, "left out is no opinion")
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
+	s.Nil(read.Quota)
 }
 
-func (s *PoliciesSuite) TestANegativeDailyLimitIsRefused() {
-	for _, field := range []string{"messages_per_user_per_day", "tokens_per_user_per_day"} {
-		status, body := s.serverClient.call(http.MethodPut, "/v1/policies/app",
-			map[string]any{"quota": map[string]any{field: -1}})
+func (s *PoliciesSuite) TestADailyLimitOutsideItsBoundsIsRefused() {
+	path := "/v1/ops/customers/" + s.customerID() + "/quota"
+	for field, over := range map[string]int64{
+		"messages_per_user_per_day": 10_000_001,
+		"tokens_per_user_per_day":   1_000_000_000_001,
+	} {
+		for _, sent := range []int64{-1, over} {
+			status, body := s.staff().call(http.MethodPut, path, map[string]any{field: sent})
 
-		s.Equal(http.StatusBadRequest, status, field)
-		s.Contains(string(body), `"code":"validation_failed"`, field)
-		s.Contains(string(body), field)
+			s.Equal(http.StatusBadRequest, status, field, sent)
+			s.Contains(string(body), `"code":"validation_failed"`, field, sent)
+			s.Contains(string(body), field, sent)
+		}
 	}
+	var quota Quota
+	s.Require().Equal(http.StatusOK, s.staff().do(http.MethodGet, path, nil, &quota))
+	s.Equal(Quota{}, quota)
+}
+
+func (s *PoliciesSuite) TestSettingAnAppsDailyLimitLeavesTheRestOfItsPolicy() {
+	s.put(map[string]any{
+		"budget":           map[string]any{"limit_micros": 5_000_000, "interval": "daily"},
+		"prompt_injection": true,
+		"tags":             map[string]string{"application": "support"},
+	})
+
+	set := s.setQuota(map[string]any{"messages_per_user_per_day": 3})
+	s.Equal(pointerTo(int64(3)), set.MessagesPerUserPerDay)
+
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
+	s.Require().NotNil(read.Budget)
+	s.Equal(int64(5_000_000), read.Budget.LimitMicros)
+	s.Equal(pointerTo(true), read.PromptInjection)
+	s.Equal(map[string]string{"application": "support"}, read.Tags)
+	s.Require().NotNil(read.Quota)
+	s.Equal(pointerTo(int64(3)), read.Quota.MessagesPerUserPerDay)
+	var staffRead Quota
+	s.Require().Equal(http.StatusOK, s.staff().do(http.MethodGet,
+		"/v1/ops/customers/"+s.customerID()+"/quota", nil, &staffRead))
+	s.Equal(*read.Quota, staffRead)
 }
 
 func (s *PoliciesSuite) TestAQuotaSettingNeitherNumberIsStoredAsNoQuota() {
-	stored := s.put(map[string]any{"quota": map[string]any{}})
-	s.Nil(stored.Quota)
+	s.setQuota(map[string]any{"messages_per_user_per_day": 3})
+	s.setQuota(map[string]any{})
 
 	var read Policy
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
 	s.Nil(read.Quota, "a quota with no number is no opinion")
+}
+
+// staff is Stream's own tool, holding the ops key and no app's credentials.
+func (s *PoliciesSuite) staff() *testClient {
+	return &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {suiteOpsKey}}, kind: noCredential}
+}
+
+// setQuota stores, as Stream staff, the app's daily limit per end user.
+func (s *PoliciesSuite) setQuota(body map[string]any) Quota {
+	var stored Quota
+	s.Require().Equal(http.StatusOK, s.staff().do(http.MethodPut,
+		"/v1/ops/customers/"+s.customerID()+"/quota", body, &stored))
+	return stored
 }
 
 // put stores the policy the body describes.

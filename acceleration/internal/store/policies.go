@@ -75,7 +75,8 @@ type Budget struct {
 // says nothing about training inherits whatever its organization said.
 type PolicyDocument struct {
 	Budget *Budget `json:"budget,omitempty"`
-	// Quota is what one end user of the app may spend in a UTC day.
+	// Quota is what one end user of the app may spend in a UTC day. Stream staff set it,
+	// on an app's document only.
 	Quota *Quota `json:"quota,omitempty"`
 	// DataPolicy is the floor every routed request is held to, on top of whatever the
 	// request itself asked for.
@@ -94,7 +95,7 @@ type PolicyDocument struct {
 }
 
 // Quota is what one end user of an app may spend in a UTC day. A nil field is no
-// opinion, so the organization's or the deployment's number shows through; zero is no cap.
+// opinion, so the deployment's number shows through; zero is no cap.
 type Quota struct {
 	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty"`
 	TokensPerUserPerDay   *int64 `json:"tokens_per_user_per_day,omitempty"`

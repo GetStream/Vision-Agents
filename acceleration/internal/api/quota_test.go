@@ -121,7 +121,7 @@ func (s *QuotaSuite) TestAnAppWithNoPolicyIsHeldToTheDeploymentsLimit() {
 func (s *QuotaSuite) TestAnAppsOwnLimitIsWhatItsUsersAreRefusedAt() {
 	s.useApp(s.data.createApp())
 	s.client = s.data.createUser()
-	s.putQuota("/v1/policies/app", 3)
+	s.putQuota(3)
 
 	s.Equal(3, s.messagesBeforeRefusal())
 
@@ -143,7 +143,7 @@ func (s *QuotaSuite) TestAnAppsOwnLimitIsWhatItsUsersAreRefusedAt() {
 func (s *QuotaSuite) TestAnAppsLimitOfZeroRefusesNobody() {
 	s.useApp(s.data.createApp())
 	s.client = s.data.createUser()
-	s.putQuota("/v1/policies/app", 0)
+	s.putQuota(0)
 
 	for range 3 {
 		s.spend(s.client)
@@ -154,19 +154,10 @@ func (s *QuotaSuite) TestAnAppsLimitOfZeroRefusesNobody() {
 	s.Empty(response.Header.Get("X-RateLimit-Limit"), "a caller with no cap is told nothing")
 }
 
-func (s *QuotaSuite) TestAnOrganizationsLimitCapsWhatItsAppSets() {
-	s.useApp(s.data.createApp())
-	s.client = s.data.createUser()
-	s.putQuota("/v1/policies/organization", 2)
-	s.putQuota("/v1/policies/app", 20_000)
-
-	s.Equal(2, s.messagesBeforeRefusal())
-}
-
 func (s *QuotaSuite) TestACountedAnswerSaysWhatIsLeftOfTheDay() {
 	s.useApp(s.data.createApp())
 	s.client = s.data.createUser()
-	s.putQuota("/v1/policies/app", 3)
+	s.putQuota(3)
 	s.spend(s.client)
 
 	response := s.client.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
@@ -186,10 +177,11 @@ func (s *QuotaSuite) TestABackendsAnswerCarriesNoRateLimit() {
 	s.Empty(response.Header.Get("X-RateLimit-Limit"))
 }
 
-// putQuota sets, at the scope given, the messages one user may ask for in a day.
-func (s *QuotaSuite) putQuota(path string, messages int64) {
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, path,
-		map[string]any{"quota": map[string]any{"messages_per_user_per_day": messages}}, nil))
+// putQuota sets, as Stream staff, the messages one user of the app may ask for in a day.
+func (s *QuotaSuite) putQuota(messages int64) {
+	staff := &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {suiteOpsKey}}, kind: noCredential}
+	s.Require().Equal(http.StatusOK, staff.do(http.MethodPut, "/v1/ops/customers/"+s.customerID()+"/quota",
+		map[string]any{"messages_per_user_per_day": messages}, nil))
 }
 
 // messagesBeforeRefusal spends the client's day one message at a time until a new session

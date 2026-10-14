@@ -347,7 +347,7 @@ func quotaOf(messages, tokens *int64) *store.Quota {
 	return &store.Quota{MessagesPerUserPerDay: messages, TokensPerUserPerDay: tokens}
 }
 
-func (s *PolicySuite) TestADailyLimitIsTheLowerOfTheOrganizationsAndTheAppsThatAreSet() {
+func (s *PolicySuite) TestADailyLimitIsTheAppsNumberElseTheDeployments() {
 	cases := []struct {
 		name              string
 		organization, app *store.Quota
@@ -356,21 +356,9 @@ func (s *PolicySuite) TestADailyLimitIsTheLowerOfTheOrganizationsAndTheAppsThatA
 		{name: "nobody set one, so it is the deployment's", want: deployment},
 		{
 			// Each number is decided on its own, so the tokens left out stay the deployment's.
-			name: "an app may set its users' limit above the deployment's",
+			name: "an app's limit may be above the deployment's",
 			app:  quotaOf(new(int64(20_000)), nil),
 			want: quota.Limits{MessagesPerDay: 20_000, TokensPerDay: deployment.TokensPerDay},
-		},
-		{
-			name:         "an organization's limit is a ceiling for its apps",
-			organization: quotaOf(new(int64(5_000)), nil),
-			app:          quotaOf(new(int64(20_000)), new(int64(100))),
-			want:         quota.Limits{MessagesPerDay: 5_000, TokensPerDay: 100},
-		},
-		{
-			name:         "an app may tighten its organization's limit",
-			organization: quotaOf(new(int64(5_000)), nil),
-			app:          quotaOf(new(int64(30)), nil),
-			want:         quota.Limits{MessagesPerDay: 30, TokensPerDay: deployment.TokensPerDay},
 		},
 		{
 			name: "an app's zero is no cap and lifts the deployment's",
@@ -378,23 +366,17 @@ func (s *PolicySuite) TestADailyLimitIsTheLowerOfTheOrganizationsAndTheAppsThatA
 			want: quota.Limits{},
 		},
 		{
-			name:         "an app's zero does not lift its organization's limit",
-			organization: quotaOf(new(int64(5_000)), nil),
-			app:          quotaOf(new(int64(0)), nil),
-			want:         quota.Limits{MessagesPerDay: 5_000, TokensPerDay: deployment.TokensPerDay},
+			// Only Stream staff set a limit, and only on an app, so an organization's is
+			// never read, whatever its document holds.
+			name:         "an organization's limit is not one",
+			organization: quotaOf(new(int64(5)), new(int64(5))),
+			app:          quotaOf(new(int64(20_000)), nil),
+			want:         quota.Limits{MessagesPerDay: 20_000, TokensPerDay: deployment.TokensPerDay},
 		},
 		{
-			// The app has a quota, and no opinion about messages.
-			name:         "an organization's zero lifts the deployment's for an app that says nothing",
-			organization: quotaOf(new(int64(0)), nil),
-			app:          quotaOf(nil, new(int64(100))),
-			want:         quota.Limits{MessagesPerDay: 0, TokensPerDay: 100},
-		},
-		{
-			name:         "an organization with no cap leaves its app's limit",
-			organization: quotaOf(new(int64(0)), nil),
-			app:          quotaOf(new(int64(30)), nil),
-			want:         quota.Limits{MessagesPerDay: 30, TokensPerDay: deployment.TokensPerDay},
+			name:         "an organization's limit is not one for an app that sets none",
+			organization: quotaOf(new(int64(5)), new(int64(5))),
+			want:         deployment,
 		},
 	}
 	for _, c := range cases {
