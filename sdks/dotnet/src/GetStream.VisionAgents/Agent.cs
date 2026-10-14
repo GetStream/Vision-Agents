@@ -877,7 +877,7 @@ public sealed class Agent : IAsyncDisposable
         {
             return byId.Id;
         }
-        var labelled = connections.Where(connection => connection.Label == token).ToList();
+        var labelled = connections.Where(connection => connection.Label == token && !string.IsNullOrEmpty(connection.Id)).ToList();
         return labelled.Count switch
         {
             1 => labelled[0].Id,

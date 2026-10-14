@@ -693,6 +693,52 @@ public sealed class AgentTests : IDisposable
     }
 
     [Fact]
+    public async Task ALabeledConnectionWithNoIdIsNotChosen()
+    {
+        // Go: skips connections whose id is nil (config.go:377); .NET must do the same
+        await using var router = await TestRouter.StartAsync();
+        // Listed("", "work") puts a connection with empty id and label "work"
+        Connections(router, ("", Listed(null, ("", "work"))));
+
+        var refused = await Assert.ThrowsAsync<ConfigurationException>(() =>
+            SyncDeclaringAsync(router, "connectors:\n  - name: github\n    connection: work\n"));
+
+        Assert.Equal("connector \"github\": no app connection with id or label \"work\"", refused.Message);
+        Assert.Empty(router.To("POST", "/v1/agents/sync"));
+    }
+
+    [Fact]
+    public async Task ARepeatedCursorStopsAfterTwoPagesNotMore()
+    {
+        // Guard: asked.Add(cursor) returns false when "next" is already in the set → exits after 2 GETs
+        await using var router = await TestRouter.StartAsync();
+        var gets = 0;
+        router.On("GET", "/v1/agents/connections", seen => {
+            gets++;
+            // Cap at 4 to make the test fail fast when the guard is removed (while true)
+            if (gets > 3) return new Reply(500, new { message = "too many pages" });
+            return new Reply(200, Listed("next", ("c-1", "work")));
+        });
+
+        var synced = await SyncDeclaringAsync(router, "connectors:\n  - name: github\n    connection: c-1\n");
+
+        Assert.Equal("c-1", synced["connectors"]![0]!["connection"].Text("connection_id"));
+        Assert.Equal(2, gets);
+    }
+
+    [Fact]
+    public async Task TheListQueryNarrowsByConnectorIdNotName()
+    {
+        // When connector: linear is declared, the GET uses connector_id=linear, not the name
+        await using var router = await TestRouter.StartAsync();
+        Connections(router, ("", Listed(null, ("c-1", "work"))));
+
+        await SyncDeclaringAsync(router, "connectors:\n  - name: issues\n    connector: linear\n    connection: work\n");
+
+        Assert.Equal("linear", router.Only("GET", "/v1/agents/connections").Query["connector_id"]);
+    }
+
+    [Fact]
     public async Task PluginsStillSyncAndTheDeprecationIsLoggedOncePerSync()
     {
         const string Warning = "agent.yaml plugins are deprecated: rename plugins to connectors";
@@ -701,11 +747,24 @@ public sealed class AgentTests : IDisposable
         try
         {
             await using var router = await TestRouter.StartAsync();
+            router.On("GET", "/v1/agents/configs", 200, new[] { Fixtures.Config("jean-plugins", "cfg-1") });
 
-            var synced = await SyncDeclaringAsync(router, "plugins: [sentry]\n");
+            var root = System.IO.Path.Combine(_workspace, "agents", "jean-plugins");
+            System.IO.Directory.CreateDirectory(root);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(root, "agent.yaml"), "name: jean-plugins\nplugins: [sentry]\n");
+            router.On("POST", "/v1/agents/sync", 200, new { unchanged = false, config = Fixtures.Config("jean-plugins", "cfg-1") });
+            using var client = Fixtures.Client(router);
+            await using var agent = new Agent(new AgentOptions { Config = root, Client = client });
 
-            Assert.Equal("sentry", synced["plugins"]![0]!.GetValue<string>());
-            Assert.Single(heard.Warnings, line => line == Warning);
+            await agent.SyncAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(1, heard.Warnings.Count(line => line == Warning));
+
+            // Second sync hits the stamp path; warning must still fire once more
+            await agent.SyncAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(2, heard.Warnings.Count(line => line == Warning));
+
+            // Only one POST: the second sync returned early via the stamp
+            Assert.Single(router.To("POST", "/v1/agents/sync"));
         }
         finally
         {

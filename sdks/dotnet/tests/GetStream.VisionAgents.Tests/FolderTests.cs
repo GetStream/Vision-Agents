@@ -510,4 +510,38 @@ public sealed class FolderTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllBytes(path, content);
     }
+
+    [Theory]
+    [InlineData("connectors: {}\n", "connectors must be a list")]
+    [InlineData("connectors: {a: b}\n", "connectors must be a list")]
+    [InlineData("connectors: linear\n", "connectors must be a list")]
+    public void ANonListConnectorsValueIsRefusedWithGoWording(string declaration, string reason)
+    {
+        Write("agent.yaml", "name: jean\n" + declaration);
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Equal(Path.Combine(_root, "agent.yaml") + ": " + reason, refused.Message);
+    }
+
+    [Fact]
+    public void AToolsMappingIsRefusedByYamlDotNet()
+    {
+        Write("agent.yaml", "name: jean\nconnectors:\n  - name: github\n    tools: {}\n");
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        // Go: yaml-library error "cannot unmarshal !!map into []string"; .NET keeps its own wording
+        Assert.Contains("Expected 'SequenceStart', got 'MappingStart'", refused.Message);
+    }
+
+    [Fact]
+    public void AQuotedNullAliasIsANameNotANullEntry()
+    {
+        Write("agent.yaml", "name: jean\nconnectors:\n  - \"null\"\n");
+
+        var connectors = Folder.Load(_root).Declaration.Connectors!;
+
+        Assert.Equal("null", Assert.Single(connectors).Name);
+    }
 }

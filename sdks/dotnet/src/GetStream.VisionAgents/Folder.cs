@@ -531,7 +531,7 @@ public sealed class Folder
             }
             video = new VideoDeclaration(declared.Source ?? "", frames);
         }
-        var connectors = read.Connectors?.Select(entry => ConnectorOf(entry, path)).ToList();
+        var connectors = read.Connectors?.Items?.Select(entry => ConnectorOf(entry, path)).ToList();
         // The model is offered each as <name>__<tool>, so the same name would be two tools.
         if (connectors?.Find(connector => read.Plugins?.Contains(connector.Name) == true) is { } clash)
         {
@@ -1000,11 +1000,45 @@ public sealed class Folder
         [YamlMember(Alias = "greeting")] public WrittenGreeting? Greeting { get; set; }
         [YamlMember(Alias = "sandbox")] public string? Sandbox { get; set; }
         [YamlMember(Alias = "plugins")] public List<string>? Plugins { get; set; }
-        [YamlMember(Alias = "connectors")] public List<WrittenConnector?>? Connectors { get; set; }
+        [YamlMember(Alias = "connectors")] public WrittenConnectorList? Connectors { get; set; }
         [YamlMember(Alias = "keyterms")] public List<string>? Keyterms { get; set; }
         [YamlMember(Alias = "tags")] public Dictionary<string, string>? Tags { get; set; }
         [YamlMember(Alias = "video")] public WrittenVideo? Video { get; set; }
         [YamlMember(Alias = "dispatch")] public WrittenDispatch? Dispatch { get; set; }
+    }
+
+    /// <summary>
+    /// The <c>connectors:</c> field value, refused unless it is a YAML sequence.
+    /// A plain null/~ is treated as absent. Any other non-sequence value (scalar, mapping)
+    /// is refused with "connectors must be a list", matching Go's wording (folder.go:305).
+    /// </summary>
+    private sealed class WrittenConnectorList : IYamlConvertible
+    {
+        public List<WrittenConnector?>? Items { get; private set; }
+
+        void IYamlConvertible.Read(IParser parser, Type expectedType, ObjectDeserializer nestedObjectDeserializer)
+        {
+            if (parser.TryConsume<SequenceStart>(out _))
+            {
+                Items = [];
+                while (!parser.TryConsume<SequenceEnd>(out _))
+                    Items.Add((WrittenConnector?)nestedObjectDeserializer(typeof(WrittenConnector)));
+                return;
+            }
+            // null/~ with no value → treat as absent (Items stays null)
+            if (parser.Current is Scalar { Style: ScalarStyle.Plain } s &&
+                s.Value is "" or "~" or "null" or "Null" or "NULL")
+            {
+                parser.MoveNext();
+                return;
+            }
+            // Any other value (scalar string, mapping) is not a list
+            parser.SkipThisAndNestedEvents();
+            throw new YamlException("connectors must be a list");
+        }
+
+        void IYamlConvertible.Write(IEmitter emitter, ObjectSerializer nestedObjectSerializer) =>
+            throw new NotSupportedException();
     }
 
     /// <summary>A connectors entry: the alias alone, or a mapping naming it with the rest.</summary>
