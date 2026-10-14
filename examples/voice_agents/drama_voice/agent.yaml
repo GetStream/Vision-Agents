@@ -1,0 +1,5 @@
+name: drama_voice
+description: A voice agent that speaks with Fish Audio Drama 3 and acts its stage directions.
+sts: ""
+tts: fish/drama-3
+voice: c70cfb98867a4bfb9ae20d2401257b92
