@@ -20,6 +20,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -74,6 +75,7 @@ type serverMessage struct {
 // STT is a streaming Parakeet speech-to-text session.
 type STT struct {
 	options Options
+	keys    *keypool.Pool
 	logger  *slog.Logger
 	emitter *stt.Emitter
 
@@ -111,12 +113,11 @@ func New(options Options) (*STT, error) {
 	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
 		return nil, stack.Wrap(fmt.Errorf("parakeet: url must be ws:// or wss://, got %s", options.URL))
 	}
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv("BASETEN_API_KEY")
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, "BASETEN_API_KEY").Pin()
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("parakeet: api key is required (set BASETEN_API_KEY)"))
 	}
+	options.APIKey = keys.Peek()
 	if options.Model == "" {
 		options.Model = DefaultModel
 	}
@@ -133,6 +134,7 @@ func New(options Options) (*STT, error) {
 
 	return &STT{
 		options:  options,
+		keys:     keys,
 		logger:   logger.With("provider", ProviderName, "model", options.Model),
 		emitter:  stt.NewEmitter(64),
 		finished: make(chan struct{}),
@@ -151,9 +153,9 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	dialer := &websocket.Dialer{HandshakeTimeout: s.options.HandshakeTimeout}
-	header := http.Header{"Authorization": []string{"Api-Key " + s.options.APIKey}}
-
-	conn, response, err := dialer.DialContext(ctx, s.options.URL, header)
+	conn, response, _, err := s.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+		return s.options.URL, http.Header{"Authorization": []string{"Api-Key " + key}}
+	})
 	if err != nil {
 		if response != nil {
 			return stack.Wrap(fmt.Errorf("parakeet: dial: %w (http %d)", err, response.StatusCode))

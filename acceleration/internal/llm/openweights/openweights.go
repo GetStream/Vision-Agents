@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -56,7 +57,7 @@ type Options struct {
 // so a model it guessed at would be a 404 rather than a sensible fallback.
 func (h Host) New(options Options) (*openaicompat.LLM, error) {
 	if options.APIKey == "" {
-		options.APIKey = os.Getenv(h.APIKeyEnvVar)
+		options.APIKey = keypool.Getenv(h.APIKeyEnvVar)
 	}
 	if options.APIKey == "" {
 		return nil, stack.Wrap(errors.New(h.Provider + ": " + h.APIKeyEnvVar + " is required"))

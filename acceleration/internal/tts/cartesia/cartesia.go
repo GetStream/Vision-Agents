@@ -24,6 +24,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
@@ -156,6 +157,7 @@ type utterance struct {
 // TTS is a streaming Cartesia text-to-speech session.
 type TTS struct {
 	options Options
+	keys    *keypool.Pool
 	logger  *slog.Logger
 	emitter *tts.Emitter
 
@@ -174,12 +176,11 @@ type TTS struct {
 
 // New validates the options and returns an unstarted provider.
 func New(options Options) (*TTS, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv("CARTESIA_API_KEY")
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, "CARTESIA_API_KEY").Pin()
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("cartesia: api key is required (set CARTESIA_API_KEY)"))
 	}
+	options.APIKey = keys.Peek()
 	if options.VoiceID == "" {
 		options.VoiceID = os.Getenv("CARTESIA_VOICE_ID")
 	}
@@ -212,6 +213,7 @@ func New(options Options) (*TTS, error) {
 
 	return &TTS{
 		options: options,
+		keys:    keys,
 		logger:  logger.With("provider", ProviderName, "model", options.Model),
 		emitter: tts.NewEmitter(64),
 		active:  map[string]*utterance{},
@@ -244,9 +246,9 @@ func (t *TTS) Start(ctx context.Context) error {
 // left over from a socket that has been replaced cannot consume the new one's frames.
 func (t *TTS) dial(ctx context.Context) error {
 	dialer := &websocket.Dialer{HandshakeTimeout: t.options.HandshakeTimeout}
-	header := http.Header{"X-API-Key": []string{t.options.APIKey}}
-
-	conn, response, err := dialer.DialContext(ctx, t.url(), header)
+	conn, response, _, err := t.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+		return t.url(), http.Header{"X-API-Key": []string{key}}
+	})
 	if err != nil {
 		if response != nil {
 			return stack.Wrap(fmt.Errorf("cartesia: dial: %w (http %d)", err, response.StatusCode))

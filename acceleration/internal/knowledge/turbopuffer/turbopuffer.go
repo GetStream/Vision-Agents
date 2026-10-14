@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -80,12 +81,11 @@ type Store struct {
 
 // New validates the options and returns a Store.
 func New(options Options) (*Store, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar)
+	if keys.Len() == 0 {
 		return nil, errors.New("turbopuffer: " + apiKeyEnvVar + " is required")
 	}
+	options.APIKey = keys.Peek()
 	if options.BaseURL == "" {
 		region := options.Region
 		if region == "" {
@@ -109,7 +109,7 @@ func New(options Options) (*Store, error) {
 	return &Store{
 		apiKey:  options.APIKey,
 		baseURL: strings.TrimSuffix(options.BaseURL, "/"),
-		client:  options.HTTPClient,
+		client:  keys.WrapClient(options.HTTPClient, keypool.Bearer),
 		logger:  options.Logger,
 	}, nil
 }

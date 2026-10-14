@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 )
@@ -40,7 +40,7 @@ type Cartesia struct {
 // NewCartesia validates the options and returns a cloner.
 func NewCartesia(options CartesiaOptions) (*Cartesia, error) {
 	if options.APIKey == "" {
-		options.APIKey = os.Getenv("CARTESIA_API_KEY")
+		options.APIKey = keypool.FromEnv("", "CARTESIA_API_KEY").Peek()
 	}
 	if options.APIKey == "" {
 		return nil, errors.New("voices: api key is required (set CARTESIA_API_KEY)")

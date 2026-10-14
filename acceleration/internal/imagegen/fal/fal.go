@@ -21,13 +21,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -88,9 +88,9 @@ type Options struct {
 
 // Provider draws with one FAL model. It satisfies imagegen.Provider.
 type Provider struct {
-	apiKey string
-	model  string
-	base   *url.URL
+	keys  *keypool.Pool
+	model string
+	base  *url.URL
 	// app is the path every address for this model's jobs sits under: the first two
 	// segments of the model id, which is how FAL names a job's status and result.
 	app    string
@@ -100,10 +100,8 @@ type Provider struct {
 
 // New validates the options and returns a Provider.
 func New(options Options) (*Provider, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar)
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("fal: " + apiKeyEnvVar + " is required"))
 	}
 	segments := strings.Split(options.Model, "/")
@@ -122,10 +120,10 @@ func New(options Options) (*Provider, error) {
 	}
 
 	return &Provider{
-		apiKey: options.APIKey,
-		model:  options.Model,
-		base:   base,
-		app:    "/" + segments[0] + "/" + segments[1],
+		keys:  keys,
+		model: options.Model,
+		base:  base,
+		app:   "/" + segments[0] + "/" + segments[1],
 		client: &http.Client{
 			Timeout: requestTimeout,
 			// A redirect is an address nobody checked.
@@ -191,7 +189,7 @@ func (p *Provider) Generate(ctx context.Context, request imagegen.Request) (imag
 		return imagegen.Result{}, failure(false, ctx.Err())
 	}
 
-	answer, err := p.call(ctx, http.MethodPost, p.base.JoinPath(p.model).String(), body, statusLimit)
+	answer, key, err := p.call(ctx, "", http.MethodPost, p.base.JoinPath(p.model).String(), body, statusLimit)
 	if err != nil {
 		return imagegen.Result{}, failure(false, err)
 	}
@@ -211,7 +209,7 @@ func (p *Provider) Generate(ctx context.Context, request imagegen.Request) (imag
 		}
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelTimeout)
 		defer cancel()
-		if _, err := p.call(cleanup, http.MethodPut, submitted.CancelURL, nil, statusLimit); err != nil {
+		if _, _, err := p.call(cleanup, key, http.MethodPut, submitted.CancelURL, nil, statusLimit); err != nil {
 			p.logger.Warn("could not cancel an image job", "request", submitted.RequestID, "error", err)
 		}
 	}()
@@ -225,7 +223,7 @@ func (p *Provider) Generate(ctx context.Context, request imagegen.Request) (imag
 		case <-ticker.C:
 		}
 
-		answer, err := p.call(ctx, http.MethodGet, submitted.StatusURL, nil, statusLimit)
+		answer, _, err := p.call(ctx, key, http.MethodGet, submitted.StatusURL, nil, statusLimit)
 		if err != nil {
 			return imagegen.Result{}, failure(true, err)
 		}
@@ -241,7 +239,7 @@ func (p *Provider) Generate(ctx context.Context, request imagegen.Request) (imag
 			continue
 		case "COMPLETED":
 			finished = true
-			answer, err := p.call(ctx, http.MethodGet, submitted.ResponseURL, nil, resultLimit)
+			answer, _, err := p.call(ctx, key, http.MethodGet, submitted.ResponseURL, nil, resultLimit)
 			if err != nil {
 				return imagegen.Result{}, failure(true, err)
 			}
@@ -355,37 +353,52 @@ func failure(accepted bool, err error) *imagegen.Error {
 	return imagegen.Fail(imagegen.CodeOf(err), accepted, err)
 }
 
-// call makes one request to the queue and returns what it answered.
-func (p *Provider) call(ctx context.Context, method, endpoint string, body []byte, limit int64) ([]byte, error) {
+// call makes one request to the queue on key and returns what it answered, and the key it
+// went on. With no key it takes one from the pool, and the next on a 429: that is for a
+// submission, since a job can only be asked about with the key that submitted it.
+func (p *Provider) call(ctx context.Context, key, method, endpoint string, body []byte, limit int64) ([]byte, string, error) {
 	if !p.pinned(endpoint) {
-		return nil, stack.Wrap(fmt.Errorf("fal: %s is not this model's queue", endpoint))
+		return nil, "", stack.Wrap(fmt.Errorf("fal: %s is not this model's queue", endpoint))
 	}
-	request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+	send := func(sent string) (*http.Response, error) {
+		request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, stack.Wrap(fmt.Errorf("fal: %w", err))
+		}
+		request.Header.Set("Authorization", "Key "+sent)
+		if body != nil {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		key = sent
+		response, err := p.client.Do(request)
+		if err != nil {
+			return nil, stack.Wrap(fmt.Errorf("fal: %w", err))
+		}
+		return response, nil
+	}
+	var response *http.Response
+	var err error
+	if key == "" {
+		response, err = p.keys.Send(ctx, send)
+	} else {
+		response, err = send(key)
+	}
 	if err != nil {
-		return nil, stack.Wrap(fmt.Errorf("fal: %w", err))
-	}
-	request.Header.Set("Authorization", "Key "+p.apiKey)
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-
-	response, err := p.client.Do(request)
-	if err != nil {
-		return nil, stack.Wrap(fmt.Errorf("fal: %w", err))
+		return nil, "", err
 	}
 	defer response.Body.Close()
 
 	answer, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
-		return nil, stack.Wrap(fmt.Errorf("fal: reading the answer: %w", err))
+		return nil, "", stack.Wrap(fmt.Errorf("fal: reading the answer: %w", err))
 	}
 	if int64(len(answer)) > limit {
-		return nil, stack.Wrap(fmt.Errorf("fal: the answer is larger than %d bytes", limit))
+		return nil, "", stack.Wrap(fmt.Errorf("fal: the answer is larger than %d bytes", limit))
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, stack.Wrap(&refusal{status: response.StatusCode, body: answer})
+		return nil, "", stack.Wrap(&refusal{status: response.StatusCode, body: answer})
 	}
-	return answer, nil
+	return answer, key, nil
 }
 
 // pinned reports whether an address is this model's app on the queue host this was built

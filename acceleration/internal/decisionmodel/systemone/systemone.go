@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -111,12 +112,11 @@ type Client struct {
 
 // New validates the options and returns a Client for endpoint.
 func New(endpoint Endpoint, options Options) (*Client, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(endpoint.APIKeyEnvVar)
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, endpoint.APIKeyEnvVar)
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New(endpoint.Provider + ": " + endpoint.APIKeyEnvVar + " is required"))
 	}
+	options.APIKey = keys.Peek()
 	if options.Model == "" {
 		options.Model = endpoint.DefaultModel
 	}
@@ -135,6 +135,7 @@ func New(endpoint Endpoint, options Options) (*Client, error) {
 	if options.HTTPClient == nil {
 		options.HTTPClient = &http.Client{Timeout: options.Timeout}
 	}
+	options.HTTPClient = keys.WrapClient(options.HTTPClient, keypool.Bearer)
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}

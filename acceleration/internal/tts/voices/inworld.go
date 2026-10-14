@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
 )
@@ -37,7 +37,7 @@ type Inworld struct {
 // NewInworld validates the options and returns a library reader.
 func NewInworld(options InworldOptions) (*Inworld, error) {
 	if options.APIKey == "" {
-		options.APIKey = os.Getenv("INWORLD_API_KEY")
+		options.APIKey = keypool.FromEnv("", "INWORLD_API_KEY").Peek()
 	}
 	if options.APIKey == "" {
 		return nil, errors.New("voices: api key is required (set INWORLD_API_KEY)")

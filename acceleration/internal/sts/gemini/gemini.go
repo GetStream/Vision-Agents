@@ -21,8 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +30,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -295,6 +296,7 @@ type resumptionUpdate struct {
 // STS is a Gemini Live conversation.
 type STS struct {
 	options Options
+	keys    *keypool.Pool
 	logger  *slog.Logger
 	emitter *sts.Emitter
 
@@ -335,12 +337,11 @@ type STS struct {
 
 // New validates the options and returns an unstarted provider.
 func New(settings Options) (*STS, error) {
-	if settings.APIKey == "" {
-		settings.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if settings.APIKey == "" {
+	keys := keypool.FromEnv(settings.APIKey, apiKeyEnvVar).Pin()
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(fmt.Errorf("gemini: api key is required (set %s)", apiKeyEnvVar))
 	}
+	settings.APIKey = keys.Peek()
 	if settings.Model == "" {
 		settings.Model = DefaultModel
 	}
@@ -363,6 +364,7 @@ func New(settings Options) (*STS, error) {
 
 	return &STS{
 		options: settings,
+		keys:    keys,
 		logger:  logger.With("provider", ProviderName, "model", settings.Model),
 		emitter: sts.NewEmitter(sts.EmitterBuffer),
 		calls:   map[string]string{},
@@ -413,7 +415,9 @@ func (s *STS) Start(ctx context.Context) error {
 // handle.
 func (s *STS) connect(ctx context.Context, handle string) (*websocket.Conn, error) {
 	dialer := &websocket.Dialer{HandshakeTimeout: s.options.HandshakeTimeout}
-	conn, response, err := dialer.DialContext(ctx, s.endpoint(), nil)
+	conn, response, _, err := s.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+		return s.endpoint(key), nil
+	})
 	if err != nil {
 		if response != nil {
 			return nil, stack.Wrap(fmt.Errorf("gemini: dial: %w (http %d)", err, response.StatusCode))
@@ -547,13 +551,13 @@ func (s *STS) SampleRate() int { return OutputSampleRate }
 // Capabilities implements sts.STS.
 func (s *STS) Capabilities() sts.Capabilities { return CapabilitiesFor(s.options.Model) }
 
-// endpoint is the socket with the key attached, which is how this API authenticates.
-func (s *STS) endpoint() string {
+// endpoint is the socket with key attached, which is how this API authenticates.
+func (s *STS) endpoint(key string) string {
 	separator := "?"
 	if strings.Contains(s.options.URL, "?") {
 		separator = "&"
 	}
-	return s.options.URL + separator + "key=" + url.QueryEscape(s.options.APIKey)
+	return s.options.URL + separator + "key=" + url.QueryEscape(key)
 }
 
 // handshake configures the session and waits for the server to accept it.

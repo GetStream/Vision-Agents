@@ -18,12 +18,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -77,12 +77,11 @@ type Provider struct {
 
 // New validates the options and returns a Provider.
 func New(options Options) (*Provider, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar)
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("google: " + apiKeyEnvVar + " is required"))
 	}
+	options.APIKey = keys.Peek()
 	if options.Model == "" {
 		return nil, stack.Wrap(errors.New("google: a model is required"))
 	}
@@ -94,10 +93,10 @@ func New(options Options) (*Provider, error) {
 		apiKey:  options.APIKey,
 		model:   options.Model,
 		baseURL: strings.TrimSuffix(options.BaseURL, "/"),
-		client: &http.Client{
+		client: keys.WrapClient(&http.Client{
 			Timeout:       requestTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
+		}, keypool.Header("x-goog-api-key", "")),
 	}, nil
 }
 

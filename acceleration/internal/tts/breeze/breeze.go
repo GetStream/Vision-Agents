@@ -27,6 +27,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
@@ -121,6 +122,7 @@ type serverMessage struct {
 // TTS is a streaming Breeze TTS 2 text-to-speech session.
 type TTS struct {
 	options Options
+	keys    *keypool.Pool
 	logger  *slog.Logger
 	emitter *tts.Emitter
 
@@ -153,12 +155,11 @@ func New(options Options) (*TTS, error) {
 	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
 		return nil, stack.Wrap(fmt.Errorf("breeze: url must be ws:// or wss://, got %s", options.URL))
 	}
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv("BASETEN_API_KEY")
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, "BASETEN_API_KEY").Pin()
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("breeze: api key is required (set BASETEN_API_KEY)"))
 	}
+	options.APIKey = keys.Peek()
 	if options.Model == "" {
 		options.Model = DefaultModel
 	}
@@ -181,6 +182,7 @@ func New(options Options) (*TTS, error) {
 
 	return &TTS{
 		options:  options,
+		keys:     keys,
 		logger:   logger.With("provider", ProviderName, "model", options.Model),
 		emitter:  tts.NewEmitter(64),
 		speaking: map[string]*tts.Synthesis{},
@@ -200,9 +202,9 @@ func (t *TTS) Start(ctx context.Context) error {
 	t.mu.Unlock()
 
 	dialer := &websocket.Dialer{HandshakeTimeout: t.options.HandshakeTimeout}
-	header := http.Header{"Authorization": []string{"Api-Key " + t.options.APIKey}}
-
-	conn, response, err := dialer.DialContext(ctx, t.options.URL, header)
+	conn, response, _, err := t.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+		return t.options.URL, http.Header{"Authorization": []string{"Api-Key " + key}}
+	})
 	if err != nil {
 		if response != nil {
 			return stack.Wrap(fmt.Errorf("breeze: dial: %w (http %d)", err, response.StatusCode))
