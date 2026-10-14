@@ -105,6 +105,24 @@ pub struct VideoSettings {
     pub max_frames: i64,
 }
 
+/// One connector `agent.yaml` binds. It is written as the alias alone, or as a mapping
+/// naming it with the connector, the tools and a connection.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConnectorSettings {
+    /// The alias the model sees tools under.
+    pub name: String,
+    /// The connector id. Empty means the name.
+    pub connector: String,
+    /// Names or path.Match patterns, sent as `tool_patterns`. `None`, whether the key was left
+    /// out or null, means every tool. An empty list is refused: it would grant nothing.
+    pub tools: Option<Vec<String>>,
+    /// An id or a label of one of the app's connections to the connector. `None` is a session
+    /// binding; set, it is fixed to the connection it names.
+    pub connection: Option<String>,
+    /// Whether a session needs this connector. `None` leaves it optional.
+    pub required: Option<bool>,
+}
+
 /// What `agent.yaml` declares.
 ///
 /// A field left out leaves whatever the stored config has, so a model chosen in the
@@ -128,6 +146,10 @@ pub struct Settings {
     pub greeting: Option<types::Greeting>,
     pub sandbox: Option<types::Sandbox>,
     pub plugins: Vec<String>,
+    /// The connectors whose tools the agent may call. `None` when the declaration says
+    /// nothing, which leaves the bindings stored; empty when the file lists none, which
+    /// removes them.
+    pub connectors: Option<Vec<ConnectorSettings>>,
     pub keyterms: Vec<String>,
     pub tags: BTreeMap<String, String>,
     pub video: Option<VideoSettings>,
@@ -453,6 +475,7 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             "mode" => settings.mode = named(&text()?, "mode")?,
             "sandbox" => settings.sandbox = named(&text()?, "sandbox")?,
             "plugins" => settings.plugins = strings(&value, &key)?,
+            "connectors" => settings.connectors = connectors(&value)?,
             "keyterms" => settings.keyterms = strings(&value, &key)?,
             "tags" => settings.tags = mapping(&value, &key)?,
             "video" => settings.video = video(&value)?,
@@ -460,7 +483,90 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             _ => return Err(format!("{key:?} is not a setting agent.yaml knows")),
         }
     }
+    // The model is offered each as <name>__<tool>, so the same name would be two tools.
+    for connector in settings.connectors.iter().flatten() {
+        if settings.plugins.contains(&connector.name) {
+            return Err(format!(
+                "{:?} is named under both connectors and plugins",
+                connector.name
+            ));
+        }
+    }
     Ok(settings)
+}
+
+fn connectors(value: &Yaml) -> std::result::Result<Option<Vec<ConnectorSettings>>, String> {
+    let items = match value {
+        Yaml::Null => return Ok(None),
+        Yaml::Array(items) => items,
+        _ => return Err("connectors must be a list".into()),
+    };
+    items
+        .iter()
+        .map(connector)
+        .collect::<std::result::Result<_, _>>()
+        .map(Some)
+}
+
+fn connector(item: &Yaml) -> std::result::Result<ConnectorSettings, String> {
+    let mut connector = ConnectorSettings::default();
+    match item {
+        Yaml::Hash(fields) => {
+            for (key, value) in fields {
+                let key = scalar(key).unwrap_or_default();
+                let text = || scalar(value).ok_or(format!("connectors.{key} is a string"));
+                match key.as_str() {
+                    "name" => connector.name = text()?,
+                    "connector" => connector.connector = text()?,
+                    "tools" => {
+                        connector.tools = match value {
+                            Yaml::Null => None,
+                            _ => Some(strings(value, "connectors.tools")?),
+                        }
+                    }
+                    "connection" => {
+                        connector.connection = match value {
+                            Yaml::Null => None,
+                            // Refused below by name, with the rest of the entry's checks.
+                            _ => Some(scalar(value).unwrap_or_default()),
+                        }
+                    }
+                    "required" => {
+                        connector.required = match value {
+                            Yaml::Null => None,
+                            Yaml::Boolean(required) => Some(*required),
+                            _ => return Err("connectors.required is a boolean".into()),
+                        }
+                    }
+                    _ => {
+                        return Err(format!(
+                            "{key:?} is not a connector setting; name, connector, tools, connection and required are"
+                        ));
+                    }
+                }
+            }
+        }
+        Yaml::Null | Yaml::String(_) | Yaml::Integer(_) | Yaml::Real(_) | Yaml::Boolean(_) => {
+            connector.name = scalar(item).unwrap_or_default()
+        }
+        _ => return Err("a connector is a name or a mapping".into()),
+    }
+    if connector.name.is_empty() {
+        return Err("a connector needs a name".into());
+    }
+    if connector.tools.as_ref().is_some_and(Vec::is_empty) {
+        return Err(format!(
+            "connector {:?}: tools: [] grants nothing; leave tools out for every tool",
+            connector.name
+        ));
+    }
+    if connector.connection.as_ref().is_some_and(String::is_empty) {
+        return Err(format!(
+            "connector {:?}: connection must be a connection id or label",
+            connector.name
+        ));
+    }
+    Ok(connector)
 }
 
 /// A string enum as the spec spells it, or `None` for an empty value.
