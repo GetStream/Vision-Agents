@@ -333,7 +333,10 @@ Two things are counted, per UTC day, and reaching either refuses the next respon
 
 These numbers are the deployment's default. Stream staff set an app's own with the ops key,
 `PUT /v1/ops/customers/{customer_id}/quota` (`messages_per_user_per_day`,
-`tokens_per_user_per_day`), above the default or below it, and `0` is no cap. An app reads it
+`tokens_per_user_per_day`, and `changed_by`, which is required, and an optional `reason`),
+above the default or below it, and `0` is no cap. Every change is kept with who made it, when,
+and the numbers before and after, and `GET /v1/ops/customers/{customer_id}/quota/changes` lists
+them newest first. An app reads it
 as `quota` in its policy and cannot change it, since an app could otherwise give its users any
 number. Organizations have none. Each number is decided on its own.
 

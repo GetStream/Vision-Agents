@@ -177,7 +177,7 @@ func (s *PoliciesSuite) TestAnAppsPolicyReadAndWrittenBackKeepsItsDailyLimit() {
 
 func (s *PoliciesSuite) TestOnlyStreamStaffMaySetAnAppsDailyLimit() {
 	path := "/v1/ops/customers/" + s.customerID() + "/quota"
-	body := map[string]any{"messages_per_user_per_day": 20_000}
+	body := map[string]any{"messages_per_user_per_day": 20_000, "changed_by": "ops@getstream.io"}
 	wrong := &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {"guess"}}, kind: noCredential}
 
 	s.Equal(http.StatusUnauthorized, s.serverClient.do(http.MethodPut, path, body, nil), "the app's own backend")
@@ -196,7 +196,7 @@ func (s *PoliciesSuite) TestADailyLimitOutsideItsBoundsIsRefused() {
 		"tokens_per_user_per_day":   1_000_000_000_001,
 	} {
 		for _, sent := range []int64{-1, over} {
-			status, body := s.staff().call(http.MethodPut, path, map[string]any{field: sent})
+			status, body := s.staff().call(http.MethodPut, path, map[string]any{field: sent, "changed_by": "ops@getstream.io"})
 
 			s.Equal(http.StatusBadRequest, status, field, sent)
 			s.Contains(string(body), `"code":"validation_failed"`, field, sent)
@@ -248,6 +248,7 @@ func (s *PoliciesSuite) staff() *testClient {
 
 // setQuota stores, as Stream staff, the app's daily limit per end user.
 func (s *PoliciesSuite) setQuota(body map[string]any) Quota {
+	body["changed_by"] = "ops@getstream.io"
 	var stored Quota
 	s.Require().Equal(http.StatusOK, s.staff().do(http.MethodPut,
 		"/v1/ops/customers/"+s.customerID()+"/quota", body, &stored))

@@ -169,6 +169,17 @@ func (e *Enforcer) Save(ctx context.Context, scope store.PolicyScope, id string,
 	return nil
 }
 
+// ChangeAppQuota replaces an app's daily limit per end user, records who changed it, and
+// drops the decisions it may have changed.
+func (e *Enforcer) ChangeAppQuota(ctx context.Context, customerID, changedBy, reason string, quota *store.Quota) (store.AppQuotaChange, error) {
+	change, err := e.config.ChangeAppQuota(ctx, customerID, changedBy, reason, quota)
+	if err != nil {
+		return store.AppQuotaChange{}, err
+	}
+	e.forget(customerID)
+	return change, nil
+}
+
 // Spent returns what a scope has spent in the budget's current interval, and when that
 // interval ends.
 func (e *Enforcer) Spent(ctx context.Context, scope store.PolicyScope, id string, budget store.Budget) (int64, time.Time, error) {

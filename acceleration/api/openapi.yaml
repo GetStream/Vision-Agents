@@ -5129,6 +5129,49 @@ components:
           minimum: 0
           type: integer
       type: object
+    QuotaChange:
+      properties:
+        changed_at:
+          description: When it was made.
+          format: date-time
+          type: string
+        changed_by:
+          description: Who made the change.
+          type: string
+        id:
+          type: string
+        new:
+          $ref: '#/components/schemas/Quota'
+          description: The limit after the change. A number left out is the router's default.
+        previous:
+          $ref: '#/components/schemas/Quota'
+          description: The limit before the change. A number left out was the router's default.
+        reason:
+          description: Why, as staff gave it. Empty when they gave none.
+          type: string
+      required:
+        - id
+        - changed_by
+        - reason
+        - changed_at
+        - previous
+        - new
+      type: object
+    QuotaChangePage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/QuotaChange'
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page. Absent on the last one.
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
     RCSProfile:
       properties:
         agent_overview:
@@ -5968,6 +6011,34 @@ components:
         source:
           description: Track or processor source. Omitted requires one unambiguous available source.
           type: string
+      type: object
+    SetCustomerQuotaRequest:
+      properties:
+        changed_by:
+          description: Who is changing it. Kept with the change.
+          maxLength: 255
+          minLength: 1
+          type: string
+        messages_per_user_per_day:
+          description: How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
+          example: 20000
+          format: int64
+          maximum: 10000000
+          minimum: 0
+          type: integer
+        reason:
+          description: Why, for Stream staff. Kept with the change. The app is never shown it.
+          maxLength: 4096
+          type: string
+        tokens_per_user_per_day:
+          description: How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
+          example: 50000000
+          format: int64
+          maximum: 1000000000000
+          minimum: 0
+          type: integer
+      required:
+        - changed_by
       type: object
     SetPluginClientRequest:
       description: The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback.
@@ -14337,7 +14408,7 @@ paths:
       summary: Get an app's daily limit per end user
     put:
       description: |-
-        Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+        Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds. Every change is recorded with who made it, when, and the numbers before and after.
 
         Stream staff only: it needs the ops key.
       operationId: setCustomerQuota
@@ -14353,8 +14424,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Quota'
-        required: true
+              $ref: '#/components/schemas/SetCustomerQuotaRequest'
       responses:
         "200":
           content:
@@ -14371,6 +14441,54 @@ paths:
       security:
         - OpsKey: []
       summary: Set an app's daily limit per end user
+  /v1/ops/customers/{customer_id}/quota/changes:
+    get:
+      description: |-
+        Every change Stream staff made, newest first: who made it, why, when, and the limit before and after.
+
+        Stream staff only: it needs the ops key.
+      operationId: listCustomerQuotaChanges
+      parameters:
+        - description: The app.
+          in: path
+          name: customer_id
+          required: true
+          schema:
+            description: The app.
+            type: string
+        - description: Up to 200. Omitted is 25.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 25.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page. Omitted is the first page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuotaChangePage'
+          description: A page of changes
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: List the changes made to an app's daily limit per end user
   /v1/ops/customers/{customer_id}/telephony-suspension:
     delete:
       description: |-

@@ -5722,6 +5722,34 @@ type Quota struct {
 	TokensPerUserPerDay *int64 `json:"tokens_per_user_per_day,omitempty"`
 }
 
+// QuotaChange defines model for QuotaChange.
+type QuotaChange struct {
+	// ChangedAt When it was made.
+	ChangedAt time.Time `json:"changed_at"`
+
+	// ChangedBy Who made the change.
+	ChangedBy string `json:"changed_by"`
+	Id        string `json:"id"`
+
+	// New What one end user of the app may spend in a UTC day, counted per user and per address. Stream staff set it: in an app's policy it is read-only, so sending back what was read is fine and changing it is refused. A backend's own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset.
+	New Quota `json:"new"`
+
+	// Previous What one end user of the app may spend in a UTC day, counted per user and per address. Stream staff set it: in an app's policy it is read-only, so sending back what was read is fine and changing it is refused. A backend's own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset.
+	Previous Quota `json:"previous"`
+
+	// Reason Why, as staff gave it. Empty when they gave none.
+	Reason string `json:"reason"`
+}
+
+// QuotaChangePage defines model for QuotaChangePage.
+type QuotaChangePage struct {
+	HasMore bool          `json:"has_more"`
+	Items   []QuotaChange `json:"items"`
+
+	// NextCursor Pass as cursor for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
 // RCSProfile defines model for RCSProfile.
 type RCSProfile struct {
 	AgentOverview *string `json:"agent_overview,omitempty"`
@@ -6303,6 +6331,25 @@ type SessionVideo struct {
 
 	// Source Track or processor source. Omitted requires one unambiguous available source.
 	Source *string `json:"source,omitempty"`
+}
+
+// SetCustomerQuotaRequest defines model for SetCustomerQuotaRequest.
+type SetCustomerQuotaRequest struct {
+	// ChangedBy Who is changing it. Kept with the change.
+	ChangedBy string `json:"changed_by"`
+
+	// MessagesPerUserPerDay How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
+	//
+	// Example: 20000
+	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty"`
+
+	// Reason Why, for Stream staff. Kept with the change. The app is never shown it.
+	Reason *string `json:"reason,omitempty"`
+
+	// TokensPerUserPerDay How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
+	//
+	// Example: 50000000
+	TokensPerUserPerDay *int64 `json:"tokens_per_user_per_day,omitempty"`
 }
 
 // SetPluginClientRequest The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback.
@@ -8008,6 +8055,15 @@ type ListDataChangesParams struct {
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListCustomerQuotaChangesParams defines parameters for ListCustomerQuotaChanges.
+type ListCustomerQuotaChangesParams struct {
+	// Limit Up to 200. Omitted is 25.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // ListUseCasesForReviewParams defines parameters for ListUseCasesForReview.
 type ListUseCasesForReviewParams struct {
 	// Status Omitted is submitted: what waits on Stream.
@@ -8327,7 +8383,7 @@ type DetectJSONRequestBody = DetectionRequest
 type GenerateImageJSONRequestBody = ImageGenerationRequest
 
 // SetCustomerQuotaJSONRequestBody defines body for SetCustomerQuota for application/json ContentType.
-type SetCustomerQuotaJSONRequestBody = Quota
+type SetCustomerQuotaJSONRequestBody = SetCustomerQuotaRequest
 
 // SuspendTelephonyJSONRequestBody defines body for SuspendTelephony for application/json ContentType.
 type SuspendTelephonyJSONRequestBody = SuspendTelephonyRequest
@@ -10634,7 +10690,7 @@ type ClientInterface interface {
 
 	// SetCustomerQuotaWithBody Set an app's daily limit per end user
 	//
-	// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+	// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds. Every change is recorded with who made it, when, and the numbers before and after.
 	//
 	// Stream staff only: it needs the ops key.
 	//
@@ -10645,7 +10701,7 @@ type ClientInterface interface {
 
 	// SetCustomerQuota Set an app's daily limit per end user
 	//
-	// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+	// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds. Every change is recorded with who made it, when, and the numbers before and after.
 	//
 	// Stream staff only: it needs the ops key.
 	//
@@ -10653,6 +10709,15 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /v1/ops/customers/{customer_id}/quota (the `SetCustomerQuota` operationId).
 	SetCustomerQuota(ctx context.Context, customerId string, body SetCustomerQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListCustomerQuotaChanges List the changes made to an app's daily limit per end user
+	//
+	// Every change Stream staff made, newest first: who made it, why, when, and the limit before and after.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Corresponds with GET /v1/ops/customers/{customer_id}/quota/changes (the `ListCustomerQuotaChanges` operationId).
+	ListCustomerQuotaChanges(ctx context.Context, customerId string, params *ListCustomerQuotaChangesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// LiftTelephonySuspension Lift an app's telephony suspension
 	//
@@ -15356,7 +15421,7 @@ func (c *Client) GetCustomerQuota(ctx context.Context, customerId string, reqEdi
 
 // SetCustomerQuotaWithBody Set an app's daily limit per end user
 //
-// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds. Every change is recorded with who made it, when, and the numbers before and after.
 //
 // Stream staff only: it needs the ops key.
 //
@@ -15377,7 +15442,7 @@ func (c *Client) SetCustomerQuotaWithBody(ctx context.Context, customerId string
 
 // SetCustomerQuota Set an app's daily limit per end user
 //
-// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds. Every change is recorded with who made it, when, and the numbers before and after.
 //
 // Stream staff only: it needs the ops key.
 //
@@ -15386,6 +15451,25 @@ func (c *Client) SetCustomerQuotaWithBody(ctx context.Context, customerId string
 // Corresponds with PUT /v1/ops/customers/{customer_id}/quota (the `SetCustomerQuota` operationId).
 func (c *Client) SetCustomerQuota(ctx context.Context, customerId string, body SetCustomerQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetCustomerQuotaRequest(c.Server, customerId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListCustomerQuotaChanges List the changes made to an app's daily limit per end user
+//
+// Every change Stream staff made, newest first: who made it, why, when, and the limit before and after.
+//
+// Stream staff only: it needs the ops key.
+//
+// Corresponds with GET /v1/ops/customers/{customer_id}/quota/changes (the `ListCustomerQuotaChanges` operationId).
+func (c *Client) ListCustomerQuotaChanges(ctx context.Context, customerId string, params *ListCustomerQuotaChangesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCustomerQuotaChangesRequest(c.Server, customerId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -24182,6 +24266,79 @@ func NewSetCustomerQuotaRequestWithBody(server string, customerId string, conten
 	return req, nil
 }
 
+// NewListCustomerQuotaChangesRequest constructs an http.Request for the ListCustomerQuotaChanges method
+func NewListCustomerQuotaChangesRequest(server string, customerId string, params *ListCustomerQuotaChangesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "customer_id", customerId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/customers/%s/quota/changes", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewLiftTelephonySuspensionRequest constructs an http.Request for the LiftTelephonySuspension method
 func NewLiftTelephonySuspensionRequest(server string, customerId string) (*http.Request, error) {
 	var err error
@@ -29265,7 +29422,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetCustomerQuotaWithBodyWithResponse Set an app's daily limit per end user
 	//
-	// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+	// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds. Every change is recorded with who made it, when, and the numbers before and after.
 	//
 	// Stream staff only: it needs the ops key.
 	//
@@ -29276,7 +29433,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetCustomerQuotaWithResponse Set an app's daily limit per end user
 	//
-	// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+	// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds. Every change is recorded with who made it, when, and the numbers before and after.
 	//
 	// Stream staff only: it needs the ops key.
 	//
@@ -29284,6 +29441,17 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /v1/ops/customers/{customer_id}/quota (the `SetCustomerQuota` operationId).
 	SetCustomerQuotaWithResponse(ctx context.Context, customerId string, body SetCustomerQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*SetCustomerQuotaResponse, error)
+
+	// ListCustomerQuotaChangesWithResponse List the changes made to an app's daily limit per end user
+	//
+	// Every change Stream staff made, newest first: who made it, why, when, and the limit before and after.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/ops/customers/{customer_id}/quota/changes (the `ListCustomerQuotaChanges` operationId).
+	ListCustomerQuotaChangesWithResponse(ctx context.Context, customerId string, params *ListCustomerQuotaChangesParams, reqEditors ...RequestEditorFn) (*ListCustomerQuotaChangesResponse, error)
 
 	// LiftTelephonySuspensionWithResponse Lift an app's telephony suspension
 	//
@@ -41607,6 +41775,68 @@ func (r SetCustomerQuotaResponse) ContentType() string {
 	return ""
 }
 
+type ListCustomerQuotaChangesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *QuotaChangePage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCustomerQuotaChangesResponse) GetJSON200() *QuotaChangePage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListCustomerQuotaChangesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListCustomerQuotaChangesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListCustomerQuotaChangesResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCustomerQuotaChangesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCustomerQuotaChangesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCustomerQuotaChangesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCustomerQuotaChangesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type LiftTelephonySuspensionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -49531,7 +49761,7 @@ func (c *ClientWithResponses) GetCustomerQuotaWithResponse(ctx context.Context, 
 
 // SetCustomerQuotaWithBodyWithResponse Set an app's daily limit per end user
 //
-// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds. Every change is recorded with who made it, when, and the numbers before and after.
 //
 // Stream staff only: it needs the ops key.
 //
@@ -49548,7 +49778,7 @@ func (c *ClientWithResponses) SetCustomerQuotaWithBodyWithResponse(ctx context.C
 
 // SetCustomerQuotaWithResponse Set an app's daily limit per end user
 //
-// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds.
+// Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds. Every change is recorded with who made it, when, and the numbers before and after.
 //
 // Stream staff only: it needs the ops key.
 //
@@ -49561,6 +49791,23 @@ func (c *ClientWithResponses) SetCustomerQuotaWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseSetCustomerQuotaResponse(rsp)
+}
+
+// ListCustomerQuotaChangesWithResponse List the changes made to an app's daily limit per end user
+//
+// Every change Stream staff made, newest first: who made it, why, when, and the limit before and after.
+//
+// Stream staff only: it needs the ops key.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/ops/customers/{customer_id}/quota/changes (the `ListCustomerQuotaChanges` operationId).
+func (c *ClientWithResponses) ListCustomerQuotaChangesWithResponse(ctx context.Context, customerId string, params *ListCustomerQuotaChangesParams, reqEditors ...RequestEditorFn) (*ListCustomerQuotaChangesResponse, error) {
+	rsp, err := c.ListCustomerQuotaChanges(ctx, customerId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCustomerQuotaChangesResponse(rsp)
 }
 
 // LiftTelephonySuspensionWithResponse Lift an app's telephony suspension
@@ -60173,6 +60420,53 @@ func ParseSetCustomerQuotaResponse(rsp *http.Response) (*SetCustomerQuotaRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Quota
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListCustomerQuotaChangesResponse parses an HTTP response from a ListCustomerQuotaChangesWithResponse call
+func ParseListCustomerQuotaChangesResponse(rsp *http.Response) (*ListCustomerQuotaChangesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCustomerQuotaChangesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest QuotaChangePage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

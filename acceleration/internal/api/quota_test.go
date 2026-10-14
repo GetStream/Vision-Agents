@@ -140,6 +140,19 @@ func (s *QuotaSuite) TestAnAppsOwnLimitIsWhatItsUsersAreRefusedAt() {
 	s.Equal("rate_limited", refused.Error.Code)
 }
 
+func (s *QuotaSuite) TestAChangedLimitAppliesAtOnceOnTheNodeThatStoredIt() {
+	s.useApp(s.data.createApp())
+	s.client = s.data.createUser()
+	s.backend = s.serverClient.actingFor(s.client)
+	s.spendTheDay()
+	s.Equal(http.StatusTooManyRequests, s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(nil), nil),
+		"the router's default of one message is spent, and the decision is now cached")
+
+	s.putQuota(5)
+
+	s.Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions", textSession(nil), nil))
+}
+
 func (s *QuotaSuite) TestAnAppsLimitOfZeroRefusesNobody() {
 	s.useApp(s.data.createApp())
 	s.client = s.data.createUser()
@@ -181,7 +194,7 @@ func (s *QuotaSuite) TestABackendsAnswerCarriesNoRateLimit() {
 func (s *QuotaSuite) putQuota(messages int64) {
 	staff := &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {suiteOpsKey}}, kind: noCredential}
 	s.Require().Equal(http.StatusOK, staff.do(http.MethodPut, "/v1/ops/customers/"+s.customerID()+"/quota",
-		map[string]any{"messages_per_user_per_day": messages}, nil))
+		map[string]any{"messages_per_user_per_day": messages, "changed_by": "ops@getstream.io"}, nil))
 }
 
 // messagesBeforeRefusal spends the client's day one message at a time until a new session
