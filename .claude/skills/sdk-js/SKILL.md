@@ -305,3 +305,12 @@ Reject it if it:
 `sessions.query`, `sessions.search`, `responses.list` and `items.list` take a `cursor` and return
 the page, `{items, has_more, next_cursor}`. `items.unwind` follows `next_cursor` until `has_more`
 is false. See the `pagination` skill.
+
+## Releasing
+
+Only a commit scoped `sdk-js` releases this package: `feat(sdk-js):` a minor, `fix(sdk-js):` or
+`perf(sdk-js):` a patch, and a breaking one a minor while it is 0.x. A JS change under any other
+scope (`feat(router):`, `AI-1234: …`) is in the next release but never causes one, so scope it
+`sdk-js` if it should ship. The rules are in `sdks/js/release.config.mjs`; the workflow is
+`.github/workflows/release-sdk-js.yml`, dispatched by hand, and publishes to npm's `beta`
+dist-tag; `latest` is promoted by hand. See "Releasing" in the README.
