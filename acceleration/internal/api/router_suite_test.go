@@ -397,8 +397,7 @@ func (s *RouterSuite) SetupSuite() {
 
 	policies := s.policies(logger)
 	s.limiter = s.quota(liveClient, policies, logger)
-	limiter := s.limiter
-	streams := s.routers(limiter, policies, logger)
+	streams := s.routers(s.limiter, policies, logger)
 	// Built before it is served on, because a node says where it is before it has
 	// anything to say it is running.
 	listener := httptest.NewUnstartedServer(nil)
@@ -511,7 +510,7 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorSecrets:   connectorSecrets,
 		PublicURL:          s.publicURL,
 		DashboardURL:       s.dashboardURL,
-		Quota:              limiter,
+		Quota:              s.limiter,
 		DataRetention:      time.Hour,
 		PluginHTTP:         s.mcpTransport(),
 		Stream:             s.stream,
@@ -1190,8 +1189,9 @@ func (c *testClient) raw(method, path string, body any) *http.Response {
 	response, err := c.suite.server.Client().Do(request)
 	require.NoError(err)
 	defer response.Body.Close()
-	_, err = readAll(response)
+	read, err := readAll(response)
 	require.NoError(err)
+	response.Body = io.NopCloser(bytes.NewReader(read))
 	return response
 }
 

@@ -111,8 +111,7 @@ func (s *QuotaSuite) TestABackendsRepliesForAUserAreNotChargedToTheirDay() {
 }
 
 func (s *QuotaSuite) TestAnAppWithNoPolicyIsHeldToTheDeploymentsLimit() {
-	// Control: on the base, a fresh app with no policy and this suite's default of one was
-	// refused after one message was debited (probe in author-1.md).
+	// An app that set nothing is refused at the deployment's default.
 	s.useApp(s.data.createApp())
 	s.client = s.data.createUser()
 
@@ -131,10 +130,8 @@ func (s *QuotaSuite) TestAnAppsOwnLimitIsWhatItsUsersAreRefusedAt() {
 	s.NotEmpty(response.Header.Get("Retry-After"))
 	s.Equal("3", response.Header.Get("X-RateLimit-Limit"))
 	s.Equal("0", response.Header.Get("X-RateLimit-Remaining"))
-	status, payload := s.client.call(http.MethodPost, "/v1/agents/sessions", textSession(nil))
-	s.Require().Equal(http.StatusTooManyRequests, status)
 	var refused ErrorResponse
-	s.Require().NoError(json.Unmarshal(payload, &refused))
+	s.Require().NoError(json.NewDecoder(response.Body).Decode(&refused))
 	s.Equal("rate_limited", refused.Error.Code)
 }
 
