@@ -155,12 +155,11 @@ func (l *Limiter) Debit(ctx context.Context, customerID string, caller routing.C
 	if len(keys) == 0 {
 		return
 	}
+	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
 	if !l.limits(ctx, customerID).Enforced() {
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
-	defer cancel()
 
 	seconds := int64(retention.Seconds())
 	commands := make([]rueidis.Completed, 0, len(keys)*3)

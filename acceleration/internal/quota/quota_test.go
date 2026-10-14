@@ -326,3 +326,26 @@ func (s *QuotaSuite) TestAnAppsLimitHoldsWhereTheDeploymentHasNone() {
 
 	s.ErrorIs(s.allow(limiter, s.customer, s.caller), ErrExhausted)
 }
+
+// stalledSource is a Source whose store answers only once the lookup is given up on, or
+// after a minute when nothing gives it up.
+type stalledSource struct{}
+
+func (stalledSource) Limits(ctx context.Context, _ string, _ Limits) Limits {
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Minute):
+	}
+	return Limits{MessagesPerDay: 1}
+}
+
+func (s *QuotaSuite) TestADebitWaitsNoLongerThanItsTimeoutForTheLimits() {
+	// The debit runs on the goroutine draining a finished response, which a stalled policy
+	// store must not hold past the debit's own timeout.
+	limiter := s.limiterWith(Limits{}, stalledSource{})
+	started := time.Now()
+
+	limiter.Debit(context.Background(), s.customer, s.caller, 10)
+
+	s.Less(time.Since(started), writeTimeout+time.Second)
+}
