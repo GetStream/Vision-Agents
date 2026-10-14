@@ -239,6 +239,56 @@ class TestFolder < Minitest::Test
     end
   end
 
+  def test_connectors_are_read_as_written
+    write("agent.yaml", "name: jean\nconnectors:\n  - linear\n  - name: issues\n    connector: linear\n" \
+                        "    tools: [list_*]\n    connection: prod\n    required: true\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal [{ "name" => "linear", "connector" => "", "tools" => nil, "connection" => nil, "required" => nil },
+                  { "name" => "issues", "connector" => "linear", "tools" => ["list_*"], "connection" => "prod",
+                    "required" => true }], folder.settings["connectors"]
+  end
+
+  def test_a_connector_the_file_cannot_bind_is_refused_with_its_reason
+    {
+      "connectors:\n  - \n" => "a connector needs a name",
+      "connectors:\n  - connector: linear\n" => "a connector needs a name",
+      "connectors:\n  - name: ''\n" => "a connector needs a name",
+      "connectors: linear\n" => "connectors must be a list",
+      "connectors: {}\n" => "connectors must be a list",
+      "connectors: {a: b}\n" => "connectors must be a list",
+      "connectors:\n  - name: x\n    tools: {}\n" => 'connector "x": tools should be a list',
+      "connectors:\n  - name: linear\n    tools: []\n" =>
+        'connector "linear": tools: [] grants nothing; leave tools out for every tool',
+      "connectors:\n  - name: linear\n    tools: list_issues\n" => 'connector "linear": tools should be a list',
+      "connectors:\n  - name: linear\n    connection: {id: conn_a}\n" =>
+        'connector "linear": connection must be a connection id or label',
+      "connectors:\n  - name: linear\n    connection: ''\n" =>
+        'connector "linear": connection must be a connection id or label',
+      "connectors:\n  - name: linear\n    required: sometimes\n" =>
+        'connector "linear": required should be true or false',
+      "connectors:\n  - name: linear\n    toools: [x]\n" => "a connector has no toools",
+      "plugins: [linear]\nconnectors:\n  - linear\n" => '"linear" is named under both connectors and plugins'
+    }.each do |yaml, message|
+      write("agent.yaml", "name: jean\n#{yaml}")
+
+      error = assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
+
+      assert_includes error.message, message
+    end
+  end
+
+  def test_the_fingerprint_hashes_agent_yaml_as_written_connectors_included
+    write("agent.yaml", "name: jean\n")
+    plain = VA::Folder.load(@root).fingerprint
+    write("agent.yaml", "name: jean\nconnectors: [linear]\n")
+
+    assert_equal VA::Folder.fingerprint("name: jean\nconnectors: [linear]", "", "", [], [], []),
+                 VA::Folder.load(@root).fingerprint
+    refute_equal plain, VA::Folder.load(@root).fingerprint
+  end
+
   def test_a_directory_without_a_declaration_is_not_an_agent
     write("instructions.md", "You are Jean.\n")
 
@@ -256,5 +306,29 @@ class TestFolder < Minitest::Test
     assert_equal "abc", recorded["hash"]
     assert_match(/\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00\z/, recorded["synced_at"])
     assert_equal "abc", folder.stamp
+  end
+
+  def test_a_connector_and_plugin_sharing_connector_id_but_not_name_coexist
+    write("agent.yaml", "name: jean\nplugins: [linear]\nconnectors:\n  - name: issues\n    connector: linear\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal "issues", folder.settings["connectors"].first["name"]
+  end
+
+  def test_connectors_null_loads_without_error_and_is_not_stored
+    write("agent.yaml", "name: jean\nconnectors: null\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_nil folder.settings["connectors"]
+  end
+
+  def test_a_non_string_connector_entry_is_treated_as_its_string_value
+    write("agent.yaml", "name: jean\nconnectors:\n  - 123\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal "123", folder.settings["connectors"].first["name"]
   end
 end

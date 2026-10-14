@@ -40,6 +40,8 @@ module GetStream
       # How long an outbound call's block waits for the person to answer.
       ANSWER_WAIT = 60
 
+      PLUGINS_DEPRECATED = "agent.yaml plugins are deprecated: rename plugins to connectors"
+
       attr_reader :name, :config, :folder, :user_id, :tools, :client, :session, :cost_tracking,
                   :memory_filter
 
@@ -234,6 +236,7 @@ module GetStream
       #
       # @return [Hash] the SyncAgentResult: unchanged, and the config as stored.
       def sync
+        warn PLUGINS_DEPRECATED if @folder&.settings&.dig("plugins")&.any?
         hash = fingerprint
         if @folder&.stamp == hash
           stored = @client.get("/v1/agents/configs", query: { name: @config }).find { |each| each["name"] == @config }
@@ -375,6 +378,7 @@ module GetStream
           harness: presence(@harness) || presence(settings["harness"]),
           search: presence(settings["search"]), greeting: settings["greeting"],
           plugins: settings["plugins"]&.then { |p| p unless p.empty? },
+          connectors: settings["connectors"]&.map { |entry| connector_binding(entry) },
           keyterms: settings["keyterms"]&.then { |k| k unless k.empty? },
           video: video && { source: video["source"], max_frames: video["max_frames"] }.compact,
           dispatch: settings["dispatch"],
@@ -382,6 +386,51 @@ module GetStream
           sandbox: @sandbox&.provider || presence(settings["sandbox"]),
           tags: (tags unless tags.empty?)
         }
+      end
+
+      # A connector agent.yaml names, as the sync takes it. Left out of agent.yaml, nothing is
+      # sent and the stored bindings stay; an empty list removes them.
+      def connector_binding(entry)
+        connector = entry["connector"].empty? ? entry["name"] : entry["connector"]
+        connection = { type: "session" }
+        connection = { type: "fixed", connection_id: fixed_connection(entry, connector) } if entry["connection"]
+        { name: entry["name"], connector_id: connector, tools: [], tool_patterns: entry["tools"] || ["*"],
+          required: entry["required"], connection: connection }.compact
+      end
+
+      # The id of the app connection a connector entry names, by id or by the one label that
+      # matches. An id wins over a label. Every page is read first: a label on an early page
+      # must not hide the id on a later one, and a label is only unique once the list ends.
+      def fixed_connection(entry, connector)
+        token = entry["connection"]
+        connections = app_connections(connector)
+        return token if connections.any? { |each| each["id"] == token }
+
+        matches = connections.select { |each| each["label"] == token && each["id"] }
+        case matches.size
+        when 1 then matches.first["id"]
+        when 0 then raise ConfigurationError, "connector #{entry["name"].inspect}: no app connection with id or label #{token.inspect}"
+        else
+          raise ConfigurationError,
+                "connector #{entry["name"].inspect}: #{token.inspect} matches #{matches.size} app connections"
+        end
+      end
+
+      def app_connections(connector)
+        connections = []
+        asked = []
+        cursor = nil
+        loop do
+          break if asked.include?(cursor)
+
+          asked << cursor
+          page = @client.get("/v1/agents/connections",
+                             query: { owner_type: "app", connector_id: connector, cursor: cursor }.compact)
+          connections.concat(page["items"] || [])
+          cursor = page["next_cursor"]
+          break if cursor.to_s.empty?
+        end
+        connections
       end
 
       def presence(value)
