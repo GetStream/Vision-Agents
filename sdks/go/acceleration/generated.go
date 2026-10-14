@@ -6854,6 +6854,15 @@ type SttOptions struct {
 	Words *bool `json:"words,omitempty"`
 }
 
+// SuspendTelephonyRequest defines model for SuspendTelephonyRequest.
+type SuspendTelephonyRequest struct {
+	// Reason Why the app is suspended. The app is never shown it.
+	Reason string `json:"reason"`
+
+	// SuspendedBy Who is suspending it.
+	SuspendedBy string `json:"suspended_by"`
+}
+
 // SyncAgentRequest An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 type SyncAgentRequest struct {
 	// BaseChange The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
@@ -6997,6 +7006,21 @@ type TagValueSummary struct {
 
 	// Value Example: support
 	Value string `json:"value"`
+}
+
+// TelephonySuspension defines model for TelephonySuspension.
+type TelephonySuspension struct {
+	// CustomerId The app that is suspended.
+	CustomerId string `json:"customer_id"`
+
+	// Reason Why, for Stream staff. The app is never shown it.
+	Reason string `json:"reason"`
+
+	// SuspendedAt When it was suspended, or last changed.
+	SuspendedAt time.Time `json:"suspended_at"`
+
+	// SuspendedBy Who suspended it.
+	SuspendedBy string `json:"suspended_by"`
 }
 
 // TextContentPart defines model for TextContentPart.
@@ -8285,6 +8309,9 @@ type DetectJSONRequestBody = DetectionRequest
 
 // GenerateImageJSONRequestBody defines body for GenerateImage for application/json ContentType.
 type GenerateImageJSONRequestBody = ImageGenerationRequest
+
+// SuspendTelephonyJSONRequestBody defines body for SuspendTelephony for application/json ContentType.
+type SuspendTelephonyJSONRequestBody = SuspendTelephonyRequest
 
 // ReviewUseCaseJSONRequestBody defines body for ReviewUseCase for application/json ContentType.
 type ReviewUseCaseJSONRequestBody = ReviewUseCaseRequest
@@ -10576,6 +10603,46 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `SetOperatorProviderApp` operationId).
 	SetOperatorProviderApp(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LiftTelephonySuspension Lift an app's telephony suspension
+	//
+	// Lets the app use the phone again. Its paused campaigns stay paused until the app starts them.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Corresponds with DELETE /v1/ops/customers/{customer_id}/telephony-suspension (the `LiftTelephonySuspension` operationId).
+	LiftTelephonySuspension(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTelephonySuspension Get why an app's telephony is suspended
+	//
+	// The suspension an app is under, or 404 when it is not suspended.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Corresponds with GET /v1/ops/customers/{customer_id}/telephony-suspension (the `GetTelephonySuspension` operationId).
+	GetTelephonySuspension(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SuspendTelephonyWithBody Suspend an app's telephony
+	//
+	// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+	SuspendTelephonyWithBody(ctx context.Context, customerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SuspendTelephony Suspend an app's telephony
+	//
+	// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+	SuspendTelephony(ctx context.Context, customerId string, body SuspendTelephonyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListUseCasesForReview List use cases waiting on Stream
 	//
@@ -15208,6 +15275,86 @@ func (c *Client) DeleteOperatorProviderApp(ctx context.Context, customerId strin
 // Corresponds with PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `SetOperatorProviderApp` operationId).
 func (c *Client) SetOperatorProviderApp(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetOperatorProviderAppRequest(c.Server, customerId, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LiftTelephonySuspension Lift an app's telephony suspension
+//
+// Lets the app use the phone again. Its paused campaigns stay paused until the app starts them.
+//
+// Stream staff only: it needs the ops key.
+//
+// Corresponds with DELETE /v1/ops/customers/{customer_id}/telephony-suspension (the `LiftTelephonySuspension` operationId).
+func (c *Client) LiftTelephonySuspension(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLiftTelephonySuspensionRequest(c.Server, customerId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetTelephonySuspension Get why an app's telephony is suspended
+//
+// The suspension an app is under, or 404 when it is not suspended.
+//
+// Stream staff only: it needs the ops key.
+//
+// Corresponds with GET /v1/ops/customers/{customer_id}/telephony-suspension (the `GetTelephonySuspension` operationId).
+func (c *Client) GetTelephonySuspension(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTelephonySuspensionRequest(c.Server, customerId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SuspendTelephonyWithBody Suspend an app's telephony
+//
+// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+func (c *Client) SuspendTelephonyWithBody(ctx context.Context, customerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSuspendTelephonyRequestWithBody(c.Server, customerId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SuspendTelephony Suspend an app's telephony
+//
+// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+func (c *Client) SuspendTelephony(ctx context.Context, customerId string, body SuspendTelephonyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSuspendTelephonyRequest(c.Server, customerId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -23843,6 +23990,121 @@ func NewSetOperatorProviderAppRequest(server string, customerId string, id strin
 	return req, nil
 }
 
+// NewLiftTelephonySuspensionRequest constructs an http.Request for the LiftTelephonySuspension method
+func NewLiftTelephonySuspensionRequest(server string, customerId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "customer_id", customerId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/customers/%s/telephony-suspension", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetTelephonySuspensionRequest constructs an http.Request for the GetTelephonySuspension method
+func NewGetTelephonySuspensionRequest(server string, customerId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "customer_id", customerId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/customers/%s/telephony-suspension", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSuspendTelephonyRequest calls the generic SuspendTelephony builder with application/json body
+func NewSuspendTelephonyRequest(server string, customerId string, body SuspendTelephonyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSuspendTelephonyRequestWithBody(server, customerId, "application/json", bodyReader)
+}
+
+// NewSuspendTelephonyRequestWithBody constructs an http.Request for the SuspendTelephony method, with any body, and a specified content type
+func NewSuspendTelephonyRequestWithBody(server string, customerId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "customer_id", customerId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ops/customers/%s/telephony-suspension", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListUseCasesForReviewRequest constructs an http.Request for the ListUseCasesForReview method
 func NewListUseCasesForReviewRequest(server string, params *ListUseCasesForReviewParams) (*http.Request, error) {
 	var err error
@@ -28797,6 +29059,50 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app (the `SetOperatorProviderApp` operationId).
 	SetOperatorProviderAppWithResponse(ctx context.Context, customerId string, id string, reqEditors ...RequestEditorFn) (*SetOperatorProviderAppResponse, error)
+
+	// LiftTelephonySuspensionWithResponse Lift an app's telephony suspension
+	//
+	// Lets the app use the phone again. Its paused campaigns stay paused until the app starts them.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/ops/customers/{customer_id}/telephony-suspension (the `LiftTelephonySuspension` operationId).
+	LiftTelephonySuspensionWithResponse(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*LiftTelephonySuspensionResponse, error)
+
+	// GetTelephonySuspensionWithResponse Get why an app's telephony is suspended
+	//
+	// The suspension an app is under, or 404 when it is not suspended.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/ops/customers/{customer_id}/telephony-suspension (the `GetTelephonySuspension` operationId).
+	GetTelephonySuspensionWithResponse(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*GetTelephonySuspensionResponse, error)
+
+	// SuspendTelephonyWithBodyWithResponse Suspend an app's telephony
+	//
+	// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+	SuspendTelephonyWithBodyWithResponse(ctx context.Context, customerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SuspendTelephonyResponse, error)
+
+	// SuspendTelephonyWithResponse Suspend an app's telephony
+	//
+	// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+	//
+	// Stream staff only: it needs the ops key.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+	SuspendTelephonyWithResponse(ctx context.Context, customerId string, body SuspendTelephonyJSONRequestBody, reqEditors ...RequestEditorFn) (*SuspendTelephonyResponse, error)
 
 	// ListUseCasesForReviewWithResponse List use cases waiting on Stream
 	//
@@ -40952,6 +41258,206 @@ func (r SetOperatorProviderAppResponse) ContentType() string {
 	return ""
 }
 
+type LiftTelephonySuspensionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r LiftTelephonySuspensionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r LiftTelephonySuspensionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r LiftTelephonySuspensionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r LiftTelephonySuspensionResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r LiftTelephonySuspensionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LiftTelephonySuspensionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LiftTelephonySuspensionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LiftTelephonySuspensionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetTelephonySuspensionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TelephonySuspension
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTelephonySuspensionResponse) GetJSON200() *TelephonySuspension {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetTelephonySuspensionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetTelephonySuspensionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetTelephonySuspensionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetTelephonySuspensionResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTelephonySuspensionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTelephonySuspensionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTelephonySuspensionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTelephonySuspensionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SuspendTelephonyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TelephonySuspension
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SuspendTelephonyResponse) GetJSON200() *TelephonySuspension {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SuspendTelephonyResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SuspendTelephonyResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SuspendTelephonyResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SuspendTelephonyResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r SuspendTelephonyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SuspendTelephonyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SuspendTelephonyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SuspendTelephonyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListUseCasesForReviewResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -48655,6 +49161,74 @@ func (c *ClientWithResponses) SetOperatorProviderAppWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseSetOperatorProviderAppResponse(rsp)
+}
+
+// LiftTelephonySuspensionWithResponse Lift an app's telephony suspension
+//
+// Lets the app use the phone again. Its paused campaigns stay paused until the app starts them.
+//
+// Stream staff only: it needs the ops key.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/ops/customers/{customer_id}/telephony-suspension (the `LiftTelephonySuspension` operationId).
+func (c *ClientWithResponses) LiftTelephonySuspensionWithResponse(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*LiftTelephonySuspensionResponse, error) {
+	rsp, err := c.LiftTelephonySuspension(ctx, customerId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLiftTelephonySuspensionResponse(rsp)
+}
+
+// GetTelephonySuspensionWithResponse Get why an app's telephony is suspended
+//
+// The suspension an app is under, or 404 when it is not suspended.
+//
+// Stream staff only: it needs the ops key.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/ops/customers/{customer_id}/telephony-suspension (the `GetTelephonySuspension` operationId).
+func (c *ClientWithResponses) GetTelephonySuspensionWithResponse(ctx context.Context, customerId string, reqEditors ...RequestEditorFn) (*GetTelephonySuspensionResponse, error) {
+	rsp, err := c.GetTelephonySuspension(ctx, customerId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTelephonySuspensionResponse(rsp)
+}
+
+// SuspendTelephonyWithBodyWithResponse Suspend an app's telephony
+//
+// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+func (c *ClientWithResponses) SuspendTelephonyWithBodyWithResponse(ctx context.Context, customerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SuspendTelephonyResponse, error) {
+	rsp, err := c.SuspendTelephonyWithBody(ctx, customerId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSuspendTelephonyResponse(rsp)
+}
+
+// SuspendTelephonyWithResponse Suspend an app's telephony
+//
+// Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+//
+// Stream staff only: it needs the ops key.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/ops/customers/{customer_id}/telephony-suspension (the `SuspendTelephony` operationId).
+func (c *ClientWithResponses) SuspendTelephonyWithResponse(ctx context.Context, customerId string, body SuspendTelephonyJSONRequestBody, reqEditors ...RequestEditorFn) (*SuspendTelephonyResponse, error) {
+	rsp, err := c.SuspendTelephony(ctx, customerId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSuspendTelephonyResponse(rsp)
 }
 
 // ListUseCasesForReviewWithResponse List use cases waiting on Stream
@@ -59130,6 +59704,164 @@ func ParseSetOperatorProviderAppResponse(rsp *http.Response) (*SetOperatorProvid
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLiftTelephonySuspensionResponse parses an HTTP response from a LiftTelephonySuspensionWithResponse call
+func ParseLiftTelephonySuspensionResponse(rsp *http.Response) (*LiftTelephonySuspensionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LiftTelephonySuspensionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetTelephonySuspensionResponse parses an HTTP response from a GetTelephonySuspensionWithResponse call
+func ParseGetTelephonySuspensionResponse(rsp *http.Response) (*GetTelephonySuspensionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTelephonySuspensionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TelephonySuspension
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSuspendTelephonyResponse parses an HTTP response from a SuspendTelephonyWithResponse call
+func ParseSuspendTelephonyResponse(rsp *http.Response) (*SuspendTelephonyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SuspendTelephonyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TelephonySuspension
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

@@ -2804,6 +2804,40 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/ops/customers/{customer_id}/telephony-suspension": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get why an app's telephony is suspended
+         * @description The suspension an app is under, or 404 when it is not suspended.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly get: operations["getTelephonySuspension"];
+        /**
+         * Suspend an app's telephony
+         * @description Stops an app using the phone, for abuse or fraud. While it is suspended the app buys no numbers, places no calls or transfers, answers no incoming call and starts no campaign, and its running campaigns pause at their next call. Calls already in progress are left alone. Suspending an app already suspended replaces the reason.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly put: operations["suspendTelephony"];
+        readonly post?: never;
+        /**
+         * Lift an app's telephony suspension
+         * @description Lets the app use the phone again. Its paused campaigns stay paused until the app starts them.
+         *
+         *     Stream staff only: it needs the ops key.
+         */
+        readonly delete: operations["liftTelephonySuspension"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/ops/use-cases": {
         readonly parameters: {
             readonly query?: never;
@@ -7632,6 +7666,12 @@ export type components = {
             /** @description Word-level timestamps. Recording only. */
             readonly words?: boolean;
         };
+        readonly SuspendTelephonyRequest: {
+            /** @description Why the app is suspended. The app is never shown it. */
+            readonly reason: string;
+            /** @description Who is suspending it. */
+            readonly suspended_by: string;
+        };
         /** @description An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it. */
         readonly SyncAgentRequest: {
             /** @description The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again. */
@@ -7764,6 +7804,19 @@ export type components = {
             readonly share: number;
             /** @example support */
             readonly value: string;
+        };
+        readonly TelephonySuspension: {
+            /** @description The app that is suspended. */
+            readonly customer_id: string;
+            /** @description Why, for Stream staff. The app is never shown it. */
+            readonly reason: string;
+            /**
+             * Format: date-time
+             * @description When it was suspended, or last changed.
+             */
+            readonly suspended_at: string;
+            /** @description Who suspended it. */
+            readonly suspended_by: string;
         };
         readonly TextContentPart: {
             readonly text: string;
@@ -14010,6 +14063,89 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly getTelephonySuspension: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The app. */
+                readonly customer_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The suspension */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TelephonySuspension"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly suspendTelephony: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The app. */
+                readonly customer_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SuspendTelephonyRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The suspension */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TelephonySuspension"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly liftTelephonySuspension: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The app. */
+                readonly customer_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The suspension is lifted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
         };
     };

@@ -465,12 +465,17 @@ var (
 		Message: "The phone vendor could not complete the request. Try again, or contact support if it keeps failing."}
 	errCallNotConfirmed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
 		Message: "The phone vendor did not confirm the call, so it can still ring. Do not place it again at once. Contact support if this keeps happening."}
+	errTelephonySuspended = APIError{Type: ErrorTypePermission, Code: codeTelephonySuspended,
+		Message: "This app's telephony is suspended. Contact Stream support."}
 )
 
 // phoneFailure is the answer to a phone operation that failed. A vendor's own error is logged
 // in full and answered without its words, which can hold an account id. Anything else is the
 // router's or Stream's and says what the client can fix.
 func phoneFailure(logger *slog.Logger, err error) error {
+	if errors.Is(err, phone.ErrSuspended) {
+		return errTelephonySuspended
+	}
 	if errors.Is(err, phone.ErrAddressRequired) {
 		logger.Info("a phone number needs an address", "error", err)
 		return errNumberNeedsAddress

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -135,6 +136,13 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	if err != nil {
 		s.logger.Debug("no number reaches an arriving call",
 			"call", event.CallCid, "stream_app", origin.app, "error", err)
+		return
+	}
+	// A suspension that cannot be read leaves the call unanswered too: it is there to stop
+	// fraud that costs money.
+	if _, err := s.store.TelephonySuspension(r.Context(), number.CustomerID); !errors.Is(err, store.ErrNotSuspended) {
+		s.logger.Info("left an arriving call to a suspended app unanswered",
+			"call", event.CallCid, "customer", number.CustomerID, "error", err)
 		return
 	}
 	// Only a call that rings a number is worth recording as delivered: every video call in

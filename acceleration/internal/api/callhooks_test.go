@@ -61,6 +61,19 @@ func (s *CallHooksSuite) TestAnArrivingCallReachesTheWorkerOfWhoeverHoldsTheNumb
 	}
 }
 
+func (s *CallHooksSuite) TestACallToASuspendedAppIsNotAnswered() {
+	s.hold("default", s.callID)
+	s.Require().NoError(s.store.SuspendTelephony(context.Background(), &store.TelephonySuspension{
+		CustomerID: s.customerID(), Reason: "fraud", SuspendedBy: "ops@getstream.io",
+	}))
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
+
+	s.nothingReaches(worker.Calls(), "a suspended app's agent answered a call")
+}
+
 func (s *CallHooksSuite) TestACallOnACustomNamedLineStillFindsItsOwner() {
 	// A number attached to a call of its own is the case the stored binding exists for:
 	// nothing about "the-support-line" says which number it belongs to.
