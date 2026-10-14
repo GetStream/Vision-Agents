@@ -304,4 +304,28 @@ class TestFolder < Minitest::Test
     assert_match(/\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00\z/, recorded["synced_at"])
     assert_equal "abc", folder.stamp
   end
+
+  def test_a_connector_and_plugin_sharing_connector_id_but_not_name_coexist
+    write("agent.yaml", "name: jean\nplugins: [linear]\nconnectors:\n  - name: issues\n    connector: linear\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal "issues", folder.settings["connectors"].first["name"]
+  end
+
+  def test_connectors_null_loads_without_error_and_is_not_stored
+    write("agent.yaml", "name: jean\nconnectors: null\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_nil folder.settings["connectors"]
+  end
+
+  def test_a_non_string_connector_entry_is_treated_as_its_string_value
+    write("agent.yaml", "name: jean\nconnectors:\n  - 123\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal "123", folder.settings["connectors"].first["name"]
+  end
 end

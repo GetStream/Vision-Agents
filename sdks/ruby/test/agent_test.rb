@@ -562,6 +562,18 @@ class TestAgent < LocalRouterTest
     assert_equal 2, @router.seen(:get, "/v1/agents/connections").size
   end
 
+  def test_sync_stops_reading_pages_when_a_cursor_repeats
+    serve_connections(nil, pages: {
+                        nil => { "items" => [{ "id" => "conn_a", "label" => "staging" }], "next_cursor" => "p2" },
+                        "p2" => { "items" => [{ "id" => "conn_b", "label" => "prod" }], "next_cursor" => "p2" }
+                      })
+
+    request = sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
+
+    assert_equal "conn_b", request["connectors"].first["connection"]["connection_id"]
+    assert_equal 2, @router.seen(:get, "/v1/agents/connections").size
+  end
+
   def test_sync_refuses_a_connection_that_no_app_connection_matches
     serve_connections([{ "id" => "conn_a", "label" => "staging" }])
 
@@ -584,6 +596,14 @@ class TestAgent < LocalRouterTest
     assert_empty @router.seen(:post, "/v1/agents/sync")
   end
 
+  def test_sync_ignores_a_label_match_on_a_connection_with_no_id
+    serve_connections([{ "label" => "prod" }, { "id" => "conn_b", "label" => "prod" }])
+
+    request = sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
+
+    assert_equal "conn_b", request["connectors"].first["connection"]["connection_id"]
+  end
+
   def test_sync_warns_once_that_plugins_are_deprecated_and_still_sends_them
     request = nil
     _, warned = capture_io { request = sync_declaring("plugins: [linear, slack]\n") }
@@ -596,6 +616,22 @@ class TestAgent < LocalRouterTest
     _, warned = capture_io { sync_declaring("connectors: [linear]\n") }
 
     assert_empty warned
+  end
+
+  def test_sync_warns_about_plugins_even_when_the_folder_is_unchanged
+    root = File.join(Dir.mktmpdir, "jean")
+    FileUtils.mkdir_p(root)
+    File.write(File.join(root, "agent.yaml"), "name: jean\nplugins: [linear]\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false, "config" => { "name" => "jean" } })
+    @router.on(:get, "/v1/agents/configs", body: [{ "name" => "jean", "id" => "cfg_1" }])
+    capture_io { VA::Agent.new(folder: root, client: client).sync }  # first sync stamps the folder
+
+    _, warned = capture_io { VA::Agent.new(folder: root, client: client).sync }  # second sync: unchanged
+
+    assert_equal 1, @router.seen(:post, "/v1/agents/sync").size
+    assert_equal "agent.yaml plugins are deprecated: rename plugins to connectors\n", warned
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
   end
 
   def test_simulations_are_sent_only_when_the_folder_has_a_directory_for_them
