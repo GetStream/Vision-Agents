@@ -234,7 +234,8 @@ func newRouter(t *testing.T) *router {
 		}
 		defer connection.Close()
 		for {
-			if _, _, err := connection.ReadMessage(); err != nil {
+			var frame map[string]any
+			if err := connection.ReadJSON(&frame); err != nil || frame["type"] == "close" {
 				return
 			}
 		}
