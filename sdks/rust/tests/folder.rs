@@ -629,3 +629,119 @@ fn a_stamp_records_what_was_synced() {
         "{synced_at}"
     );
 }
+
+fn connectors(declaration: &str) -> Result<Vec<vision_agents::folder::ConnectorSettings>, String> {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", declaration);
+    Folder::load(&root)
+        .map(|folder| {
+            folder
+                .settings
+                .connectors
+                .expect("connectors were declared")
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[test]
+fn a_connector_is_the_alias_alone_or_a_mapping() {
+    let declared = connectors(
+        "connectors:
+  - github
+  - name: issues
+    connector: linear
+    tools: [search, create_*]
+    connection: work
+    required: true
+  - name: slack
+    tools:
+",
+    )
+    .unwrap();
+
+    assert_eq!(
+        declared,
+        vec![
+            vision_agents::folder::ConnectorSettings {
+                name: "github".into(),
+                ..Default::default()
+            },
+            vision_agents::folder::ConnectorSettings {
+                name: "issues".into(),
+                connector: "linear".into(),
+                tools: Some(vec!["search".into(), "create_*".into()]),
+                connection: Some("work".into()),
+                required: Some(true),
+            },
+            vision_agents::folder::ConnectorSettings {
+                name: "slack".into(),
+                ..Default::default()
+            },
+        ]
+    );
+}
+
+#[test]
+fn saying_nothing_about_connectors_is_not_listing_none() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    assert_eq!(Folder::load(&root).unwrap().settings.connectors, None);
+
+    write(&root, "agent.yaml", "connectors: []\n");
+    assert_eq!(
+        Folder::load(&root).unwrap().settings.connectors,
+        Some(Vec::new())
+    );
+}
+
+#[test]
+fn a_connector_that_names_nothing_grants_nothing_or_connects_nowhere_is_refused() {
+    for (declaration, wording) in [
+        ("connectors:\n  -\n", "a connector needs a name"),
+        ("connectors:\n  - ''\n", "a connector needs a name"),
+        (
+            "connectors:\n  - connector: github\n",
+            "a connector needs a name",
+        ),
+        (
+            "connectors:\n  - name: github\n    tools: []\n",
+            "connector \"github\": tools: [] grants nothing; leave tools out for every tool",
+        ),
+        (
+            "connectors:\n  - name: github\n    connection: ''\n",
+            "connector \"github\": connection must be a connection id or label",
+        ),
+        (
+            "connectors:\n  - name: github\n    connection:\n      id: c1\n",
+            "connector \"github\": connection must be a connection id or label",
+        ),
+        ("connectors: github\n", "connectors must be a list"),
+        (
+            "connectors:\n  - name: github\n    tool: [search]\n",
+            "\"tool\" is not a connector setting",
+        ),
+        (
+            "plugins: [github]\nconnectors: [github]\n",
+            "\"github\" is named under both connectors and plugins",
+        ),
+    ] {
+        let error = connectors(declaration).unwrap_err();
+
+        assert!(
+            error.contains(wording),
+            "{declaration:?} was refused as {error:?}, not {wording:?}"
+        );
+    }
+}
+
+#[test]
+fn connectors_are_hashed_as_written() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\nconnectors:\n  - github\n");
+
+    // md5(1) of the declaration, then a newline for each of the two empty parts.
+    assert_eq!(
+        Folder::load(&root).unwrap().hash(),
+        "c6be0c5bb3f7882ba3be686f1c057a14"
+    );
+}

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -8,10 +8,10 @@ use tokio::sync::Mutex;
 use crate::client::Client;
 use crate::dispatch::{Dispatch, InboundCall, InboundMessage};
 use crate::error::{Error, Result};
-use crate::folder::{self, Folder};
+use crate::folder::{self, ConnectorSettings, Folder};
 use crate::harness::Harness;
 use crate::knowledge::Knowledge;
-use crate::operations::ListAgentConfigsQuery;
+use crate::operations::{ListAgentConfigsQuery, ListConnectionsQuery};
 use crate::session::{Session, WatchOptions};
 use crate::stream::StreamApp;
 use crate::tools::Tools;
@@ -569,6 +569,13 @@ impl Agent {
     async fn sync_folder(&self, folder: &Folder) -> Result<types::AgentConfig> {
         let client = self.router()?;
         let name = self.config.clone().unwrap_or_else(|| self.name.clone());
+        // Still sent as before, until the router stops taking them.
+        if !folder.settings.plugins.is_empty() {
+            eprintln!(
+                "WARN agent.yaml plugins are deprecated: rename plugins to connectors agent={name} plugins={:?}",
+                folder.settings.plugins
+            );
+        }
         let hash = self.folder_hash(folder);
         if folder::read_stamp(&folder.path) == hash
             && let Some(stored) = stored_config(client, &name).await?
@@ -591,6 +598,10 @@ impl Agent {
         let mut tags = settings.tags.clone();
         tags.extend(self.cost_tracking.clone());
         let (harness, subagent, sandbox) = self.stored_harness();
+        let connectors = match &settings.connectors {
+            Some(entries) => Some(connector_bindings(client, entries).await?),
+            None => None,
+        };
 
         let body = types::SyncAgentRequest {
             name,
@@ -653,6 +664,7 @@ impl Agent {
                 source: text(&video.source),
             }),
             dispatch: settings.dispatch.clone(),
+            connectors,
             ..Default::default()
         };
         let synced = client.sync_agent(&body).await?;
@@ -739,6 +751,91 @@ pub fn user_id_of(name: &str) -> String {
 }
 
 /// Splits the filter into who the memories are about and what narrows them.
+/// The connectors agent.yaml names, in the shape the sync takes.
+async fn connector_bindings(
+    client: &Client,
+    entries: &[ConnectorSettings],
+) -> Result<Vec<types::AgentConnectorBinding>> {
+    let mut bindings = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let connector_id = if entry.connector.is_empty() {
+            entry.name.clone()
+        } else {
+            entry.connector.clone()
+        };
+        let connection = match &entry.connection {
+            None => types::AgentConnectorSelection {
+                connection_id: None,
+                type_: types::AgentConnectorSelectionType::Session,
+            },
+            Some(token) => types::AgentConnectorSelection {
+                connection_id: Some(
+                    fixed_connection(client, &entry.name, &connector_id, token).await?,
+                ),
+                type_: types::AgentConnectorSelectionType::Fixed,
+            },
+        };
+        bindings.push(types::AgentConnectorBinding {
+            name: entry.name.clone(),
+            connector_id,
+            tools: Vec::new(),
+            tool_patterns: Some(entry.tools.clone().unwrap_or_else(|| vec!["*".into()])),
+            required: entry.required,
+            connection,
+            events: None,
+            policy: None,
+            timeout_ms: None,
+        });
+    }
+    Ok(bindings)
+}
+
+/// The app connection `token` names, by id or by the one label that matches. An id wins over
+/// a label. Every page is read first: a label on an early page must not hide the id on a
+/// later one, and a label is only unique once the list ends.
+async fn fixed_connection(
+    client: &Client,
+    name: &str,
+    connector_id: &str,
+    token: &str,
+) -> Result<String> {
+    let mut connections = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut asked = BTreeSet::new();
+    while asked.insert(cursor.clone()) {
+        let page = client
+            .list_connections(&ListConnectionsQuery {
+                owner_type: Some("app".into()),
+                connector_id: Some(connector_id.into()),
+                cursor: cursor.clone(),
+                ..Default::default()
+            })
+            .await?;
+        connections.extend(page.items.unwrap_or_default());
+        match page.next_cursor {
+            Some(next) if !next.is_empty() => cursor = Some(next),
+            _ => break,
+        }
+    }
+    if let Some(connection) = connections.iter().find(|connection| connection.id == token) {
+        return Ok(connection.id.clone());
+    }
+    let labelled: Vec<&types::Connection> = connections
+        .iter()
+        .filter(|connection| connection.label.as_deref() == Some(token))
+        .collect();
+    match labelled.as_slice() {
+        [one] => Ok(one.id.clone()),
+        [] => Err(Error::configuration(format!(
+            "connector {name:?}: no app connection with id or label {token:?}"
+        ))),
+        many => Err(Error::configuration(format!(
+            "connector {name:?}: {token:?} matches {} app connections",
+            many.len()
+        ))),
+    }
+}
+
 fn memory_of(filter: &BTreeMap<String, String>) -> Option<types::SessionMemory> {
     if filter.is_empty() {
         return None;
