@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 )
 
 // ForwardedHeader is where a proxy records who it forwarded a request for.
@@ -128,4 +130,19 @@ func addressString(address netip.Addr) string {
 		return ""
 	}
 	return address.String()
+}
+
+// callerIP is the address a caller's day is counted against besides their user id.
+//
+// Behind the proxy with no trusted ranges, every request arrives from the proxy, so counting
+// a named user by address would put every end user in one bucket and turn a per-user limit
+// into a global one. The proxy has already named the user, so that is the bucket counted
+// there, until the proxy's ranges are configured and the address means somebody again. A
+// guest the proxy names nobody for keeps the address: without it they would be counted
+// against nothing at all.
+func (s *Server) callerIP(r *http.Request, userID string) string {
+	if s.authMode == auth.Proxy && len(s.trusted) == 0 && userID != "" {
+		return ""
+	}
+	return clientIP(r, s.trusted)
 }
