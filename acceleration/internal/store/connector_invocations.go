@@ -106,7 +106,11 @@ func (s *Store) RecordConnectorInvocation(ctx context.Context, invocation *Conne
 	default:
 		return stack.Wrap(fmt.Errorf("store: %q is not an invocation error type", invocation.ErrorType))
 	}
-	invocation.ID = newID()
+	// A caller that names the call before the row exists (the session's log line, AI-1242)
+	// keeps its id.
+	if invocation.ID == "" {
+		invocation.ID = newID()
+	}
 	// Truncated to what Postgres keeps, so the row handed back is the row a read returns.
 	invocation.StartedAt = invocation.StartedAt.UTC().Truncate(time.Microsecond)
 	var err error
