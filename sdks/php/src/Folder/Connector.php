@@ -149,9 +149,9 @@ final readonly class Connector
             return $labelled[0];
         }
         if ($labelled === []) {
-            throw new ConfigurationException("connector \"{$this->name}\": no app connection with id or label \"{$token}\"");
+            throw new ConfigurationException("agents: connector \"{$this->name}\": no app connection with id or label \"{$token}\"");
         }
-        throw new ConfigurationException("connector \"{$this->name}\": \"{$token}\" matches " . count($labelled) . ' app connections');
+        throw new ConfigurationException("agents: connector \"{$this->name}\": \"{$token}\" matches " . count($labelled) . ' app connections');
     }
 
     private static function text(string $key, mixed $value): string

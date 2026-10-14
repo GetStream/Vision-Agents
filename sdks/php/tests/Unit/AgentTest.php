@@ -469,6 +469,21 @@ final class AgentTest extends TestCase
         self::assertEquals(['connection_id' => 'conn_b', 'type' => 'fixed'], $this->sentConnectors()[0]['connection']);
     }
 
+    public function testSyncQueriesConnectionsByConnectorId(): void
+    {
+        $this->folder();
+        $this->router->answer('GET', '/v1/agents/connections', 200, ['has_more' => false, 'items' => [
+            Rows::connection('conn_a', 'linear', 'prod'),
+        ]]);
+
+        $this->syncConnectors("\n  - name: issues\n    connector: linear\n    connection: prod");
+
+        self::assertEquals(
+            ['connector_id' => 'linear', 'owner_type' => 'app'],
+            $this->router->to('GET', '/v1/agents/connections')[0]->params(),
+        );
+    }
+
     public function testSyncReadsEveryPageBeforeChoosingAConnection(): void
     {
         $this->folder();
@@ -490,18 +505,34 @@ final class AgentTest extends TestCase
         self::assertSame(['c2'], [$this->router->to('GET', '/v1/agents/connections')[1]->params()['cursor']]);
     }
 
+    public function testSyncStopsWhenRouterRepeatsNextCursor(): void
+    {
+        $this->folder();
+        $this->router->answer('GET', '/v1/agents/connections', 200, [
+            'has_more' => true,
+            'next_cursor' => 'c1',
+            'items' => [Rows::connection('conn_a', 'linear', 'prod')],
+        ]);
+
+        $this->syncConnectors("\n  - name: linear\n    connection: conn_a");
+
+        self::assertCount(2, $this->router->to('GET', '/v1/agents/connections'));
+    }
+
     public function testSyncRefusesALabelThatMatchesNoConnection(): void
     {
         $this->folder();
         $this->router->answer('GET', '/v1/agents/connections', 200, ['has_more' => false, 'items' => [Rows::connection('conn_a', 'linear', 'staging')]]);
 
-        $this->expectException(ConfigurationException::class);
-        $this->expectExceptionMessage('connector "linear": no app connection with id or label "prod"');
+        $caught = null;
         try {
             $this->syncConnectors("\n  - name: linear\n    connection: prod");
-        } finally {
-            self::assertSame([], $this->router->to('POST', '/v1/agents/sync'), 'nothing is stored');
+        } catch (ConfigurationException $caught) {
+            // message checked below
         }
+        self::assertInstanceOf(ConfigurationException::class, $caught, 'expected ConfigurationException');
+        self::assertSame('agents: connector "linear": no app connection with id or label "prod"', $caught->getMessage());
+        self::assertSame([], $this->router->to('POST', '/v1/agents/sync'), 'nothing is stored');
     }
 
     public function testSyncRefusesALabelThatMatchesSeveralConnections(): void
@@ -512,9 +543,14 @@ final class AgentTest extends TestCase
             Rows::connection('conn_b', 'linear', 'prod'),
         ]]);
 
-        $this->expectException(ConfigurationException::class);
-        $this->expectExceptionMessage('connector "linear": "prod" matches 2 app connections');
-        $this->syncConnectors("\n  - name: linear\n    connection: prod");
+        $caught = null;
+        try {
+            $this->syncConnectors("\n  - name: linear\n    connection: prod");
+        } catch (ConfigurationException $caught) {
+            // message checked below
+        }
+        self::assertInstanceOf(ConfigurationException::class, $caught);
+        self::assertSame('agents: connector "linear": "prod" matches 2 app connections', $caught->getMessage());
     }
 
     public function testSyncWarnsOnceThatPluginsAreDeprecatedAndStillSendsThem(): void
