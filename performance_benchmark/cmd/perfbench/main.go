@@ -88,6 +88,7 @@ func ramp(args []string) error {
 	factor := flags.Int("factor", 2, "what each step multiplies the last by")
 	maximum := flags.Int("max", 64, "where to stop, whatever is still holding")
 	hold := flags.Duration("hold", 90*time.Second, "how long each step talks for")
+	joinRate := flags.Float64("join-rate", 0, "conversations a step opens per second; 0 opens them all at once")
 	namespace := flags.String("namespace", "", "the router's namespace, for pod readings; empty with a hosted -target uses its own")
 	kubeContext := flags.String("kube-context", "", "the kubectl context the namespace is in; empty is the current one")
 	selector := flags.String("selector", "", "which pods are the router; empty with a hosted -target uses its release's")
@@ -139,6 +140,7 @@ func ramp(args []string) error {
 		Factor:       *factor,
 		Max:          *maximum,
 		Hold:         *hold,
+		JoinRate:     *joinRate,
 		Target:       url,
 		Cluster:      bench.Cluster{Namespace: *namespace, Selector: *selector, Context: *kubeContext},
 		Logger:       logger,

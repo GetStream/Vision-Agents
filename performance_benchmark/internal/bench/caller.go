@@ -70,12 +70,15 @@ type Caller struct {
 	Logger *slog.Logger
 }
 
-// Converse holds one conversation for the given stretch and reports how it went.
-func (c Caller) Converse(ctx context.Context, hold time.Duration) conversation {
+// Converse holds one conversation until the given moment and reports how it went.
+func (c Caller) Converse(ctx context.Context, until time.Time) conversation {
 	held := conversation{}
 
+	// A user of its own per conversation: Stream holds one user to 50 connections, so a
+	// step of more under one agent user measures that limit rather than the router.
 	agent, err := agents.New(agents.Options{
 		Name:   c.Agent,
+		UserID: c.agentID(),
 		LLM:    c.pipeline(),
 		Logger: c.Logger,
 	})
@@ -117,7 +120,7 @@ func (c Caller) Converse(ctx context.Context, hold time.Duration) conversation {
 	}
 	held.trackMs = msSince(joinedAt)
 
-	held.turns, err = c.talk(ctx, media, hold)
+	held.turns, err = c.talk(ctx, media, until)
 	held.dropped = media.Dropped()
 	if err != nil {
 		return c.failed(held, "call.audio", err)
@@ -126,8 +129,8 @@ func (c Caller) Converse(ctx context.Context, hold time.Duration) conversation {
 }
 
 // talk says a sentence, waits for the answer, and goes again until the time is up.
-func (c Caller) talk(ctx context.Context, media transport.Media, hold time.Duration) ([]turn, error) {
-	ctx, cancel := context.WithTimeout(ctx, hold)
+func (c Caller) talk(ctx context.Context, media transport.Media, until time.Time) ([]turn, error) {
+	ctx, cancel := context.WithDeadline(ctx, until)
 	defer cancel()
 
 	speech := audio.Tone(audio.FrameSamples, toneHz, toneAmplitude)
