@@ -169,7 +169,7 @@ func (s *LLMQuotaSuite) TestASessionABackendOpenedForAUserIsNeverRefused() {
 
 func (s *LLMQuotaSuite) TestAMockAnswerIsNeitherCheckedNorCounted() {
 	mocked, mocker := s.sessionAs(mock.ProviderName, 1, 0, s.caller)
-	real, realProvider := s.session(1, 0, s.caller)
+	counted, counter := s.session(1, 0, s.caller)
 
 	for turn := range 3 {
 		stream, err := mocked.Create(s.ctx, llm.ResponseParams{
@@ -179,11 +179,11 @@ func (s *LLMQuotaSuite) TestAMockAnswerIsNeitherCheckedNorCounted() {
 		s.answer(mocker, stream, turn, 1_000, 1_000)
 	}
 
-	stream, err := real.Create(s.ctx, llm.ResponseParams{ID: "real", Input: prompt()})
+	stream, err := counted.Create(s.ctx, llm.ResponseParams{ID: "real", Input: prompt()})
 	s.Require().NoError(err, "the mock answers were not charged to the user's day")
-	s.answer(realProvider, stream, 0, 1_000, 1_000)
+	s.answer(counter, stream, 0, 1_000, 1_000)
 
-	_, err = real.Create(s.ctx, llm.ResponseParams{ID: "over", Input: prompt()})
+	_, err = counted.Create(s.ctx, llm.ResponseParams{ID: "over", Input: prompt()})
 	s.Require().ErrorIs(err, quota.ErrExhausted, "the user's day is spent")
 
 	stream, err = mocked.Create(s.ctx, llm.ResponseParams{ID: "m3", Input: prompt()})
