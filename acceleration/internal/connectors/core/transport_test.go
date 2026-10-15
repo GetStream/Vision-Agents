@@ -231,11 +231,11 @@ func (s *TransportsSuite) TestAnExchangeKeepsTheFirstKiBOfA5xxsBodyAndTheCallerR
 	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
 
 	s.Require().NoError(err)
+	s.Equal(page, s.read(response))
 	s.Equal(page[:1024], exchange.ErrorBody())
 	s.Equal("120", exchange.RetryAfterHeader())
 	s.Zero(exchange.RetryAfter(), "only a 429's Retry-After holds calls")
 	s.Empty(exchange.WWWAuthenticate())
-	s.Equal(page, s.read(response))
 }
 
 // TestAnExchangeKeepsA429sRetryAfterAsWritten: beside the wait the scheme read from it.
@@ -265,12 +265,17 @@ func (s *TransportsSuite) TestAnExchangeKeepsNothingOfA2xx() {
 }
 
 // TestAnExchangeForgetsTheBodyOnceAnotherRequestIsAnswered: as the status, it is the last
-// answer's.
+// answer's, with its challenge and Retry-After.
 func (s *TransportsSuite) TestAnExchangeForgetsTheBodyOnceAnotherRequestIsAnswered() {
-	s.provider.answer(http.StatusServiceUnavailable, http.Header{"Retry-After": {"120"}}, "down")
+	s.provider.answer(http.StatusServiceUnavailable, http.Header{"Retry-After": {"120"},
+		"Www-Authenticate": {`Bearer realm="crm"`}}, "down")
 	ctx, exchange := core.WithExchange(context.Background())
-	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
 	s.Require().NoError(err)
+	s.read(response)
+	s.Require().Equal("down", exchange.ErrorBody())
+	s.Require().Equal(`Bearer realm="crm"`, exchange.WWWAuthenticate())
+	s.Require().Equal("120", exchange.RetryAfterHeader())
 	s.provider.respondWith(nil)
 
 	_, err = s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
@@ -278,13 +283,14 @@ func (s *TransportsSuite) TestAnExchangeForgetsTheBodyOnceAnotherRequestIsAnswer
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, exchange.Status())
 	s.Empty(exchange.ErrorBody())
+	s.Empty(exchange.WWWAuthenticate())
 	s.Empty(exchange.RetryAfterHeader())
 }
 
 // TestABodyCutOffBeforeItsKiBStillFailsTheCallersRead: the provider promises 3000 bytes and
 // sends 500. The caller sees the failure the Exchange's read met, not a clean end.
 func (s *TransportsSuite) TestABodyCutOffBeforeItsKiBStillFailsTheCallersRead() {
-	s.provider.respondWith(func(w http.ResponseWriter) {
+	s.provider.respondWith(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", "3000")
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = io.WriteString(w, strings.Repeat("x", 500))
@@ -294,10 +300,10 @@ func (s *TransportsSuite) TestABodyCutOffBeforeItsKiBStillFailsTheCallersRead() 
 	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
 
 	s.Require().NoError(err)
-	s.Equal(strings.Repeat("x", 500), exchange.ErrorBody())
 	read, err := io.ReadAll(response.Body)
 	s.ErrorIs(err, io.ErrUnexpectedEOF)
 	s.Equal(strings.Repeat("x", 500), string(read))
+	s.Equal(strings.Repeat("x", 500), exchange.ErrorBody())
 }
 
 // TestAnAnswerIsNotReadEarlyWithoutAnExchange: a request whose context carries none gets its
@@ -305,7 +311,7 @@ func (s *TransportsSuite) TestABodyCutOffBeforeItsKiBStillFailsTheCallersRead() 
 func (s *TransportsSuite) TestAnAnswerIsNotReadEarlyWithoutAnExchange() {
 	release := make(chan struct{})
 	defer close(release)
-	s.provider.respondWith(func(w http.ResponseWriter) {
+	s.provider.respondWith(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.(http.Flusher).Flush()
 		<-release
@@ -329,6 +335,168 @@ func (s *TransportsSuite) TestAnAnswerIsNotReadEarlyWithoutAnExchange() {
 	case <-time.After(closedWithin):
 		s.Fail("the answer waited for its body")
 	}
+}
+
+// stallFor is how long a provider in these tests holds a body it has not finished: well past
+// what any wait of the transport's may last, so a test that waits for it fails. A choice.
+const stallFor = 3 * time.Second
+
+// heldWithin is how long a test lets an answer whose body stalls take to reach the caller, or
+// a Close of it to return: the transport reads nothing before the caller does, and a Close
+// waits closeReadWait (50 ms) and net/http's own 50 ms, so a tenth of stallFor. A choice.
+const heldWithin = stallFor / 10
+
+// stall is a provider answer with status that sends sent, then holds the rest of its body
+// (holdUntilDone).
+func stall(status int, sent string) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, sent)
+		w.(http.Flusher).Flush()
+		holdUntilDone(r)
+	}
+}
+
+// holdUntilDone holds a handler until r's client is gone or stallFor passes.
+func holdUntilDone(r *http.Request) {
+	select {
+	case <-r.Context().Done():
+	case <-time.After(stallFor):
+	}
+}
+
+// TestA4xxOr5xxWhoseBodyStallsReachesTheCallerAtOnce: under an Exchange, as the connection
+// proxy sends (api/connection_proxy.go), a 404, 500 or 502 that sends part of its body and
+// stalls reaches the caller with its headers, and its Close waits only a moment for the rest
+// of the KiB, as on 11102295, where Do returned at once (rprobe-proxy.txt in the AI-1243 ledger).
+// The Exchange keeps what came.
+func (s *TransportsSuite) TestA4xxOr5xxWhoseBodyStallsReachesTheCallerAtOnce() {
+	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError, http.StatusBadGateway} {
+		s.Run(http.StatusText(status), func() {
+			s.provider.respondWith(stall(status, "partial"))
+			ctx, exchange := core.WithExchange(context.Background())
+
+			started := time.Now()
+			response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+			s.Require().NoError(err)
+			s.Less(time.Since(started), heldWithin, "the answer waited for its body")
+			s.Equal(status, response.StatusCode)
+			closing := time.Now()
+			s.Require().NoError(response.Body.Close())
+			s.Less(time.Since(closing), heldWithin, "Close waited for the body")
+			s.Equal("partial", exchange.ErrorBody())
+		})
+	}
+}
+
+// TestA5xxClosedUnreadKeepsTheStartOfItsBody: the MCP client closes a 500's, 502's, 503's or
+// 504's body unread (go-sdk v1.8.0 mcp/streamable.go checkResponse); the KiB that came at once
+// is kept all the same.
+func (s *TransportsSuite) TestA5xxClosedUnreadKeepsTheStartOfItsBody() {
+	page := "<html>" + strings.Repeat("bad gateway ", 256) + "</html>"
+	s.provider.answer(http.StatusBadGateway, nil, page)
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	s.Equal(page[:1024], exchange.ErrorBody())
+}
+
+// TestAClosedBodyIsNotReadNearTheRequestsDeadline: with 90 ms left, less than twice
+// closeReadWait, Close reads nothing more, so the call still ends before its deadline. The
+// provider sends its body 20 ms after the headers, inside the wait Close would have.
+func (s *TransportsSuite) TestAClosedBodyIsNotReadNearTheRequestsDeadline() {
+	s.provider.respondWith(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		w.(http.Flusher).Flush()
+		time.Sleep(20 * time.Millisecond)
+		_, _ = io.WriteString(w, "late")
+		w.(http.Flusher).Flush()
+		holdUntilDone(r)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Millisecond)
+	defer cancel()
+	ctx, exchange := core.WithExchange(ctx)
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	_ = response.Body.Close()
+	time.Sleep(40 * time.Millisecond)
+	s.Empty(exchange.ErrorBody())
+}
+
+// TestAnExchangeKeepsA400sBody: every status from 400 up is a failure whose body is kept.
+func (s *TransportsSuite) TestAnExchangeKeepsA400sBody() {
+	s.provider.answer(http.StatusBadRequest, nil, "the arguments are wrong")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal("the arguments are wrong", s.read(response))
+	s.Equal("the arguments are wrong", exchange.ErrorBody())
+}
+
+// TestAnExchangeJoinsTheChallengesOfAnAnswer: two WWW-Authenticate headers are one list
+// (RFC 9110 section 5.3).
+func (s *TransportsSuite) TestAnExchangeJoinsTheChallengesOfAnAnswer() {
+	s.provider.answer(http.StatusForbidden, http.Header{"Www-Authenticate": {`Bearer realm="crm"`, `Basic realm="crm"`}}, "")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(`Bearer realm="crm", Basic realm="crm"`, exchange.WWWAuthenticate())
+}
+
+// TestAnExchangeKeepsNoPathQueryOrTokenTheProviderEchoes: Express's default 404, Spring
+// Boot's error JSON (its DefaultErrorAttributes: timestamp, status, error, path), and a
+// provider that repeats the token it refused or the URL it was sent.
+func (s *TransportsSuite) TestAnExchangeKeepsNoPathQueryOrTokenTheProviderEchoes() {
+	cases := []struct{ name, url, said, kept string }{
+		{"express 404", "/primary/mcp", "<pre>Cannot POST /primary/mcp</pre>", "<pre>Cannot POST [redacted]</pre>"},
+		{"spring error json", "/primary/mcp",
+			`{"timestamp":"2026-10-14T20:34:46.485+00:00","status":404,"error":"Not Found","path":"/primary/mcp"}`,
+			`{"timestamp":"2026-10-14T20:34:46.485+00:00","status":404,"error":"Not Found","path":"[redacted]"}`},
+		{"echoed token", "/mcp", "invalid token token-1", "invalid token [redacted]"},
+		{"echoed url", "/mcp?access_token=" + queryToken, "no route for POST /mcp?access_token=" + queryToken,
+			"no route for POST [redacted]"},
+		{"echoed query", "/mcp?access_token=" + queryToken, "unknown parameters access_token=" + queryToken,
+			"unknown parameters [redacted]"},
+		{"escaped path", "/a%20b/mcp?x=1", "Cannot POST /a%20b/mcp, that is /a b/mcp",
+			"Cannot POST [redacted], that is [redacted]"},
+		{"root path", "/", "see a/b", "see a/b"},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			s.provider.answer(http.StatusNotFound, nil, c.said)
+			ctx, exchange := core.WithExchange(context.Background())
+
+			response, err := s.postWith(ctx, s.client(), s.provider.URL+c.url)
+
+			s.Require().NoError(err)
+			s.Equal(c.said, s.read(response), "the caller reads the body as it came")
+			s.Equal(c.kept, exchange.ErrorBody())
+		})
+	}
+}
+
+// TestAnExchangeKeepsNoStartOfATokenItsKiBEndsInside: the KiB ends on the first 4 bytes of
+// the token the provider repeats, which are cut off with it.
+func (s *TransportsSuite) TestAnExchangeKeepsNoStartOfATokenItsKiBEndsInside() {
+	before := strings.Repeat("a", 1020)
+	s.provider.answer(http.StatusBadRequest, nil, before+"token-1 is not valid")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.read(response)
+	s.Equal(before, exchange.ErrorBody())
 }
 
 func (s *TransportsSuite) TestACorrelationIsWhatTheContextCarries() {
@@ -930,7 +1098,7 @@ type provider struct {
 	connsGone  int
 
 	// respond, when set, answers every request in place of the cases in serve.
-	respond func(http.ResponseWriter)
+	respond func(http.ResponseWriter, *http.Request)
 }
 
 type receivedRequest struct {
@@ -973,7 +1141,7 @@ func (p *provider) serve(w http.ResponseWriter, r *http.Request) {
 		before()
 	}
 	if respond != nil {
-		respond(w)
+		respond(w, r)
 		return
 	}
 	switch {
@@ -1039,7 +1207,7 @@ func (p *provider) limit(retryAfter string) {
 
 // answer answers every request with status, header and body, whatever token it carries.
 func (p *provider) answer(status int, header http.Header, body string) {
-	p.respondWith(func(w http.ResponseWriter) {
+	p.respondWith(func(w http.ResponseWriter, _ *http.Request) {
 		for name, values := range header {
 			w.Header()[name] = values
 		}
@@ -1049,7 +1217,7 @@ func (p *provider) answer(status int, header http.Header, body string) {
 }
 
 // respondWith answers every request with fn.
-func (p *provider) respondWith(fn func(http.ResponseWriter)) {
+func (p *provider) respondWith(fn func(http.ResponseWriter, *http.Request)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.respond = fn

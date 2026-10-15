@@ -367,6 +367,10 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 			}
 			w.WriteHeader(fixed.status)
 			_, _ = io.WriteString(w, fixed.body)
+			if fixed.then != nil {
+				w.(http.Flusher).Flush()
+				fixed.then(w, r)
+			}
 			return
 		}
 		if limited && message.Method == "tools/call" {
@@ -492,6 +496,8 @@ type fixedAnswer struct {
 	status int
 	header http.Header
 	body   string
+	// then, when set, goes on with the body once body is sent: it stalls or drips the rest.
+	then func(http.ResponseWriter, *http.Request)
 }
 
 // answer has account answer tools/call with status, header and body, until forget.
@@ -499,6 +505,15 @@ func (p *accountsProvider) answer(account string, status int, header http.Header
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.answers[account] = fixedAnswer{status: status, header: header, body: body}
+}
+
+// answerThen is answer, with then going on with the body once body is sent.
+func (p *accountsProvider) answerThen(account string, status int, header http.Header, body string,
+	then func(http.ResponseWriter, *http.Request),
+) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.answers[account] = fixedAnswer{status: status, header: header, body: body, then: then}
 }
 
 // lift ends every limit.

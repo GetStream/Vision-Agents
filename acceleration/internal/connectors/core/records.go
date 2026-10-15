@@ -50,9 +50,9 @@ type Exchange struct {
 	// host is the URL host, with its port when the URL names one, of the last request that
 	// left; "" when none did.
 	host string
-	// errorBody is at most maxErrorExcerpt bytes from the start of the last answer's body, and
-	// challenge and retryAfterHeader its WWW-Authenticate and Retry-After, as the provider
-	// wrote them; all "" unless that answer was a 4xx or a 5xx.
+	// errorBody is at most maxErrorExcerpt bytes from the start of the last answer's body,
+	// redacted (ErrorBody), and challenge and retryAfterHeader its WWW-Authenticate and
+	// Retry-After, as the provider wrote them; all "" unless that answer was a 4xx or a 5xx.
 	errorBody, challenge, retryAfterHeader string
 	// scopeRequired is the provider asking for more access than the grant has, nil when no
 	// answer did.
@@ -103,8 +103,10 @@ func (e *Exchange) Host() string {
 	return e.host
 }
 
-// ErrorBody is at most 1 KiB from the start of the last answer's body, as the provider wrote
-// it, when that answer was a 4xx or a 5xx; "" otherwise. It may end inside a UTF-8 sequence.
+// ErrorBody is at most 1 KiB from the start of the last answer's body, when that answer was a
+// 4xx or a 5xx; "" otherwise. It is what the answer's reader read of it, or what came within
+// a short wait of a Close before then (recordedBody), with the request's path and query and
+// the credential's secret replaced (redaction). It may end inside a UTF-8 sequence.
 func (e *Exchange) ErrorBody() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -190,17 +192,24 @@ func (e *Exchange) answered(status int, err error) {
 	e.errorBody, e.challenge, e.retryAfterHeader = "", "", ""
 }
 
-// failedWith records the start of the body, and the WWW-Authenticate and Retry-After, of the
-// 4xx or 5xx that answered the last request.
-func (e *Exchange) failedWith(body []byte, header http.Header) {
+// failedWith records the WWW-Authenticate and Retry-After of the 4xx or 5xx that answered the
+// last request. Its body comes later, as it is read (bodyRead).
+func (e *Exchange) failedWith(header http.Header) {
 	if e == nil {
 		return
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.errorBody = string(body)
 	e.challenge = strings.Join(header.Values("WWW-Authenticate"), ", ")
 	e.retryAfterHeader = header.Get("Retry-After")
+}
+
+// bodyRead records what has been read so far of the start of the body of the 4xx or 5xx that
+// answered the last request (recordedBody).
+func (e *Exchange) bodyRead(body string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.errorBody = body
 }
 
 // limited records the wait the 429 that answered the last request asked for.

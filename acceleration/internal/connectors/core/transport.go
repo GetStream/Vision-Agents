@@ -31,6 +31,12 @@ const maxDrainedBody = 2 << 10
 // (session.providerMessageBytes). The body stays readable for the caller.
 const maxErrorExcerpt = 1 << 10
 
+// closeReadWait caps how long a Close of a 4xx's or a 5xx's body that was read short of
+// maxErrorExcerpt waits for the rest of it (recordedBody.Close). It is net/http's own wait for
+// the rest of a body closed unread, before it gives the connection up (maxPostCloseReadTime,
+// net/http/transport.go:2425 in go1.27.0), which that Close then spends as well.
+const closeReadWait = 50 * time.Millisecond
+
 // maxAttempts is how often one request is sent with a credential the provider may refuse:
 // the design's «On a 401 the Router calls Invalidate, refreshes and retries once»
 // (docs/connectors/channels.md on connectors/planning, «The proxy»; subtasks.md T44, «On a 401
@@ -206,12 +212,13 @@ func (c *credentialed) RoundTrip(request *http.Request) (*http.Response, error) 
 			exchange.answered(0, err)
 		} else {
 			exchange.answered(response.StatusCode, nil)
-			// The start of a 4xx's or a 5xx's body is kept for the dispatcher's log line,
-			// read now: the MCP source closes a 401's or a 403's body unread, and the SDK a
-			// 500's, 502's, 503's or 504's (go-sdk v1.8.0, mcp/streamable.go checkResponse). Only for a request whose
-			// context carries an Exchange, as the 429 below.
+			// The start of a 4xx's or a 5xx's body is kept for the dispatcher's log line, as
+			// its reader reads it: nothing is read here, so the answer reaches the caller as
+			// soon as its headers do (recordedBody). Only for a request whose context carries
+			// an Exchange, as the 429 below.
 			if exchange != nil && response.StatusCode >= http.StatusBadRequest {
-				exchange.failedWith(excerpt(response), response.Header)
+				exchange.failedWith(response.Header)
+				response.Body = recordBody(request, response.Body, exchange, redactionOf(request, credential))
 			}
 			// A 429 (RFC 6585 section 4) is read for the session's dispatcher, which holds
 			// further calls until its Retry-After passes (Limiter). Every scheme's Classify
@@ -284,19 +291,6 @@ func (c *credentialed) classify(response *http.Response) Outcome {
 		io.Closer
 	}{io.MultiReader(bytes.NewReader(read), response.Body), response.Body}
 	return c.scheme.Classify(response, read, err)
-}
-
-// excerpt is at most maxErrorExcerpt bytes from the start of response's body, put back in
-// front of the rest, as classify does, so the caller reads the whole body. A read that failed
-// fails the caller's too: net/http's body returns its first error on every later read
-// (bodyEOFSignal.Read, net/http/transport.go:3064 in go1.26.2).
-func excerpt(response *http.Response) []byte {
-	read, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorExcerpt))
-	response.Body = struct {
-		io.Reader
-		io.Closer
-	}{io.MultiReader(bytes.NewReader(read), response.Body), response.Body}
-	return read
 }
 
 // replay is a copy of request to send again, with a body of its own from GetBody, which

@@ -5,6 +5,7 @@ package session
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -321,6 +322,136 @@ func (s *CallLogSuite) TestWhatTheModelReadsOfAnErrorAnswerIsTheBases() {
 			s.outcome(app, "", c.failed, c.errorType)(s.call(d, "crm__whoami", "{}"))
 		})
 	}
+}
+
+// TestAnErrorAnswerWhoseBodyStallsIsTheBases: a 4xx or a 5xx whose body stalls or drips,
+// under a binding timeout of 1 s. What the model reads, the error, the row's error_type and
+// how soon the call is back are what the same calls gave on 11102295 (rprobe-base.txt in the
+// AI-1243 ledger): the MCP client closes a 500's, 502's or 503's body unread and the call is
+// back at once, external_server; it reads a 400's to the end, so that one is outcome_unknown
+// there too. The line keeps what came of the body at once.
+func (s *CallLogSuite) TestAnErrorAnswerWhoseBodyStallsIsTheBases() {
+	rejected := `mcp: crm__whoami: calling "tools/call": rejected by transport: sending "tools/call": `
+	cases := []struct {
+		name, body, said, failed, errorType, logged string
+		status                                      int
+		then                                        func(http.ResponseWriter, *http.Request)
+		back                                        time.Duration
+	}{
+		{"500 stalls at once", "", "", rejected + "Internal Server Error", "external_server", `provider_body=""`,
+			http.StatusInternalServerError, holdUntilGone, 500 * time.Millisecond},
+		{"500 sends 100 B then stalls", strings.Repeat("e", 100), "", rejected + "Internal Server Error",
+			"external_server", "provider_body=" + strings.Repeat("e", 100), http.StatusInternalServerError,
+			holdUntilGone, 500 * time.Millisecond},
+		{"502 html stalls", "<html><body>bad gateway", "", rejected + "Bad Gateway", "external_server",
+			`provider_body="<html><body>bad gateway"`, http.StatusBadGateway, holdUntilGone, 500 * time.Millisecond},
+		{"503 drips 40 B over 4 s", "", "", rejected + "Service Unavailable", "external_server", "provider_status=503",
+			http.StatusServiceUnavailable, drip(40), 500 * time.Millisecond},
+		{"400 stalls, read to the end on the base too", `{"jsonrpc":"2.0"`, outcomeUnknown("crm__whoami"), "",
+			"outcome_unknown", "provider_status=400", http.StatusBadRequest, holdUntilGone, 2 * time.Second},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			app := s.connection("", "primary")
+			binding := s.fixed("crm", app, "whoami")
+			binding.TimeoutMs = 1000
+			d, logged := s.logging(s.spec(s.config(binding), "", nil))
+			s.provider.answerThen("primary", c.status, http.Header{"Content-Type": {"text/plain"}}, c.body, c.then)
+
+			started := time.Now()
+			said, err := s.call(d, "crm__whoami", "{}")
+
+			s.Less(time.Since(started), c.back)
+			s.outcome(app, c.said, c.failed, c.errorType)(said, err)
+			s.Contains(s.onlyFailedLine(logged), c.logged)
+		})
+	}
+}
+
+// holdUntilGone holds a provider's answer until the router is gone or five seconds pass.
+func holdUntilGone(_ http.ResponseWriter, r *http.Request) {
+	select {
+	case <-r.Context().Done():
+	case <-time.After(5 * time.Second):
+	}
+}
+
+// drip sends n bytes of a body, one every 100 ms, until the router is gone.
+func drip(n int) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		for range n {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+			_, _ = io.WriteString(w, "d")
+			w.(http.Flusher).Flush()
+		}
+	}
+}
+
+// TestALineKeepsNoPathOrTokenTheProviderEchoes: Express's default 404 names the path it was
+// sent, and a 400 repeats the token it refused (AI-1243).
+func (s *CallLogSuite) TestALineKeepsNoPathOrTokenTheProviderEchoes() {
+	cases := []struct {
+		name, body, logged string
+		status             int
+	}{
+		{"express 404", "<pre>Cannot POST /primary/mcp</pre>", `provider_body="<pre>Cannot POST [redacted]</pre>"`,
+			http.StatusNotFound},
+		{"spring error json", `{"status":404,"error":"Not Found","path":"/primary/mcp"}`,
+			`provider_body="{\"status\":404,\"error\":\"Not Found\",\"path\":\"[redacted]\"}"`, http.StatusNotFound},
+		{"echoed token", "invalid token " + tokenOf("primary"), `provider_body="invalid token [redacted]"`,
+			http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			app := s.connection("", "primary")
+			d, logged := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
+			s.provider.answer("primary", c.status, http.Header{"Content-Type": {"text/html"}}, c.body)
+
+			_, err := s.call(d, "crm__whoami", "{}")
+
+			s.Require().Error(err)
+			s.Contains(s.onlyFailedLine(logged), c.logged)
+			for _, secret := range []string{"/primary/mcp", tokenOf("primary")} {
+				s.NotContains(logged.String(), secret)
+			}
+		})
+	}
+}
+
+// TestA400LogsItsBody: the MCP client reads a 400's body to the end, and the line has it.
+func (s *CallLogSuite) TestA400LogsItsBody() {
+	app := s.connection("", "primary")
+	d, logged := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
+	s.provider.answer("primary", http.StatusBadRequest, http.Header{"Content-Type": {"text/plain"}}, "the arguments are wrong")
+
+	_, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().Error(err)
+	line := s.onlyFailedLine(logged)
+	s.Contains(line, "provider_status=400")
+	s.Contains(line, `provider_body="the arguments are wrong"`)
+}
+
+// TestEachHeaderIsCutToAKiB: a WWW-Authenticate and a Retry-After of 2 KiB each are logged to
+// their first KiB.
+func (s *CallLogSuite) TestEachHeaderIsCutToAKiB() {
+	app := s.connection("", "primary")
+	d, logged := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
+	challenge := "Bearer realm=" + strings.Repeat("r", 2048)
+	wait := strings.Repeat("9", 2048)
+	s.provider.answer("primary", http.StatusBadGateway, http.Header{"Www-Authenticate": {challenge},
+		"Retry-After": {wait}}, "down")
+
+	_, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().Error(err)
+	line := s.onlyFailedLine(logged)
+	s.Contains(line, `www_authenticate="`+challenge[:providerMessageBytes]+`"`)
+	s.True(strings.HasSuffix(line, " retry_after="+wait[:providerMessageBytes]), "the line ends with the cut Retry-After")
 }
 
 // providerHost is the host and port the suite's provider listens on.
