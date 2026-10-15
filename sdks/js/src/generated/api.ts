@@ -829,7 +829,7 @@ export type paths = {
         };
         /**
          * List a connection's tool calls
-         * @description Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+         * @description Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, except the start of the provider's error for a call that failed, and an incognito session's calls name no session. Who may read them is who may read the connection.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -4827,7 +4827,7 @@ export type components = {
             readonly config_id: string;
             readonly connection_id: string;
             readonly connector_id: string;
-            /** @description Why the call failed: what the call's error said, else the start of the provider's error body, at most 1 KiB. Every URL in it keeps only its scheme and host, and the body has the connection's credential and the request's path taken out. A call the router held for the provider's rate limit says rate limited by the router: retry after <seconds>s. Absent for a call that answered, and for a call recorded before the router kept it. */
+            /** @description Why the call failed: the start of the provider's error body when it answered with a 4xx or a 5xx, else what the call's error said, at most 1 KiB. Every URL in it keeps only its scheme and host, and the connection's credential and the request's path are taken out. A call the router held for the provider's rate limit says rate limited by the router: retry after <seconds>s. Absent for a call that answered, and for a call recorded before the router kept it. */
             readonly error_message?: string;
             /** @description How the call failed. Absent for a call that answered. */
             readonly error_type?: components["schemas"]["InvocationErrorType"];

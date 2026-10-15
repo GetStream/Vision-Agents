@@ -615,9 +615,10 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 ### A connection's call log says why a call failed
 
 `GET /v1/agents/connections/{id}/invocations` gives each failed call a `provider_status`, the
-HTTP status the provider answered it with, and an `error_message`: what the call's error said,
-or else the start of the provider's error body, at most 1 KiB, with every URL cut to its host
-and the connection's credential and the request's path taken out. A call the router held for a
+HTTP status the provider answered it with, and an `error_message`: the start of the provider's
+error body when it answered with a 4xx or a 5xx, or else what the call's error said, at most
+1 KiB, with every URL cut to its host and the connection's credential and the request's path
+taken out. A call the router held for a
 provider's rate limit, and so never sent, keeps `error_type: denied` and says
 `rate limited by the router: retry after <seconds>s`. Both are absent for a call that answered
 and for calls recorded before this release. What the model reads of a call is unchanged.

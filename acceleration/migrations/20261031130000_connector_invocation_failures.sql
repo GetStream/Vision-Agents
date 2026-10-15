@@ -7,8 +7,8 @@
 --     NULL when no request was answered: the router refused or held the call, or the provider
 --     could not be reached.
 --   - error_message is what the call's "connector call failed" log line says of it
---     (session.dispatcher.record): the redacted error the call returned, else the redacted
---     start of the provider's 4xx or 5xx body, at most 1 KiB. '' for a call that answered,
+--     (session.dispatcher.record): the redacted start of the provider's 4xx or 5xx body, else
+--     the redacted error the call returned, at most 1 KiB. '' for a call that answered,
 --     and for every row written before this migration.
 --
 -- Expand only: both are nullable or have a default, so a router built before this one still
