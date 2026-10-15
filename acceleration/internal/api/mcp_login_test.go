@@ -13,11 +13,14 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 )
 
+// The servers are public IP literals (Google Public DNS 8.8.8.8 and 8.8.4.4, Cloudflare
+// 1.1.1.1), since a config refuses a host that does not resolve to a public address and
+// these resolve no name. The suite's transport dials pluginMCP whatever the host.
 const (
-	crmURL   = "https://crm.example.com/mcp"
-	notesURL = "https://notes.example.com/mcp"
+	crmURL   = "https://8.8.8.8/mcp"
+	notesURL = "https://8.8.4.4/mcp"
 	// plainURL is a server that answers and advertises no login.
-	plainURL = "https://plain.example.com/open"
+	plainURL = "https://1.1.1.1/open"
 )
 
 // MCPLoginSuite covers the MCP servers a config names by URL that log in: what is saved,
@@ -151,9 +154,9 @@ func (s *MCPLoginSuite) TestTheAppLogsIntoAServerNamedByURLAsItDoesIntoAPlugin()
 		s.logins(created.Id), "each user logs into notes, so the app has only crm to finish")
 
 	authorize := s.authorize(created.Id, "crm")
-	s.Equal("crm.example.com", authorize.Host)
+	s.Equal("8.8.8.8", authorize.Host)
 	s.Equal("/as/authorize", authorize.Path)
-	s.Equal("registered-crm.example.com", authorize.Query().Get("client_id"))
+	s.Equal("registered-8.8.8.8", authorize.Query().Get("client_id"))
 	s.Equal("contacts.read", authorize.Query().Get("scope"))
 	s.Equal(crmURL, authorize.Query().Get("resource"))
 	s.Equal("S256", authorize.Query().Get("code_challenge_method"))

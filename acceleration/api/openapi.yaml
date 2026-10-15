@@ -4285,7 +4285,7 @@ components:
           maxItems: 128
           type: array
         url:
-          description: Its Streamable HTTP endpoint, over https.
+          description: 'Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses.'
           maxLength: 2048
           minLength: 1
           type: string
