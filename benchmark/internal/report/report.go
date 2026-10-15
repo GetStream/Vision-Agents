@@ -63,6 +63,7 @@ type RunManifest struct {
 	CallerVoice              string            `json:"caller_voice"`
 	GoVersion                string            `json:"go_version"`
 	NetworkProfile           string            `json:"network_profile,omitempty"`
+	Seed                     *uint64           `json:"seed,omitempty"`
 	ScoringASR               string            `json:"scoring_asr,omitempty"`
 	NormalizerVersion        string            `json:"normalizer_version,omitempty"`
 	JudgeCalibrationHash     string            `json:"judge_calibration_hash,omitempty"`

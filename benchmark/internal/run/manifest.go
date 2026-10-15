@@ -86,6 +86,7 @@ func buildManifest(cfg Config, scenarios []scenario.Scenario) report.RunManifest
 		GitCommit:                commit,
 		GitDirty:                 dirty,
 		ScenarioHash:             digest(scenarioJSON),
+		Seed:                     cfg.Seed,
 		ContractHash:             contractHash(cfg.Root, cfg.Pack),
 		Transport:                envOrValue(cfg.Transport, transportStream),
 		Target:                   target,
