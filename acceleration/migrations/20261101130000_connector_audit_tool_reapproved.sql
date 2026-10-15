@@ -8,9 +8,10 @@
 --   - The CHECK on action is dropped and added again with tool_reapproved beside the five it
 --     had. This is the one change here that is not expand-only, and it narrows nothing: every
 --     row meets the old CHECK, whose values the new one keeps, so every row meets the new one.
---     Both statements run in goose's one transaction, so no moment allows another action.
---     Adding the CHECK reads every row under the ACCESS EXCLUSIVE lock the drop takes; how
---     many rows that is in production is unverified.
+--     It is added NOT VALID, as 20261009130000 adds its CHECK: the table is not read again
+--     to prove what the old CHECK already did, and the CHECK still refuses an unknown action
+--     for every row written from now on. Both statements run in goose's one transaction, so
+--     no moment allows another action.
 --   - tools names the approved tools: each one's name, the schema digest approved and the
 --     one it was pinned at before, or none when it was not pinned for the grant. NULL for
 --     every other action and for every row written before this migration. Expand-only: a
@@ -18,7 +19,7 @@
 
 ALTER TABLE connector_audit DROP CONSTRAINT connector_audit_action_check;
 ALTER TABLE connector_audit ADD CONSTRAINT connector_audit_action_check CHECK (action IN
-    ('grant_created', 'grant_refreshed', 'grant_revoked', 'proxy_call', 'token_export', 'tool_reapproved'));
+    ('grant_created', 'grant_refreshed', 'grant_revoked', 'proxy_call', 'token_export', 'tool_reapproved')) NOT VALID;
 ALTER TABLE connector_audit ADD COLUMN tools JSONB;
 
 -- +goose Down

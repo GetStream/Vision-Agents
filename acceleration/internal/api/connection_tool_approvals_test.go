@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -154,4 +155,83 @@ func (s *SessionConnectorsSuite) TestAToolApprovedAgainIsOfferedToTheNextSession
 	ran := s.toolRanOn(backend, s.client.opens("/v1/agents/sessions/"+after.Id+"/events"), after.Id)
 	s.Equal(connectorEcho, ran["tool"])
 	s.Equal(connectorEchoText, ran["result"])
+}
+
+// racedApprove runs the approve while the test holds the connection's row: the approve's 409 for a pin that moved and its 404 for a
+// connection deleted while it ran, at the API. The test holds the connection row FOR UPDATE so
+// the approve waits on its FOR SHARE, changes the row or the pin, and commits.
+func (s *ConnectionToolsSuite) racedApprove(id string, change string, args ...any) (int, string) {
+	approval := s.approval(id, "echo")
+	ctx := context.Background()
+	tx, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, "SELECT 1 FROM connector_connections WHERE id = ? FOR UPDATE", id)
+	s.Require().NoError(err)
+	type answer struct {
+		status  int
+		failure string
+	}
+	done := make(chan answer, 1)
+	go func() {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/connections/"+id+"/tools/approve", approval)
+		done <- answer{status, failure}
+	}()
+	s.Require().Eventually(func() bool {
+		var waiting int
+		_ = s.store.DB().QueryRowContext(ctx, "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "+
+			"AND wait_event_type = 'Lock' AND query LIKE '%FOR SHARE%'").Scan(&waiting)
+		return waiting > 0
+	}, 10*time.Second, 10*time.Millisecond)
+	_, err = tx.ExecContext(ctx, change, args...)
+	s.Require().NoError(err)
+	s.Require().NoError(tx.Commit())
+	got := <-done
+	return got.status, got.failure
+}
+
+func (s *ConnectionToolsSuite) TestAPinMovedDuringTheApproveIsAConflict() {
+	id := s.connected(bearer.Name)
+	s.pin(id, map[string]string{"echo": "pinned-before-it-changed"})
+	s.validate(id)
+
+	status, failure := s.racedApprove(id, "UPDATE connector_tool_pins SET schema_digest = 'another-approve-came-first' "+
+		"WHERE connection_id = ? AND tool_name = 'echo'", id)
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, "nothing was approved")
+	s.Equal(map[string]string{"echo": "another-approve-came-first"}, s.pins(id))
+}
+
+func (s *ConnectionToolsSuite) TestAConnectionDeletedDuringTheApproveIsNotFound() {
+	id := s.connected(bearer.Name)
+	s.pin(id, map[string]string{"echo": "pinned-before-it-changed"})
+	s.validate(id)
+
+	status, _ := s.racedApprove(id, "UPDATE connector_connections SET deleted_at = now() WHERE id = ?", id)
+
+	s.Equal(http.StatusNotFound, status)
+}
+
+// A backend acting for another user, or for nobody, does not reach Alice's
+// connection, and nothing is pinned.
+func (s *SessionConnectorsSuite) TestOnlyTheOwnersBackendApprovesTheirTools() {
+	connector := s.connector()
+	mine, echo := s.connection(s.client, connector)
+	connection, err := s.store.ConnectorConnection(context.Background(), s.customerID(), mine)
+	s.Require().NoError(err)
+	_, err = s.store.PinConnectorTools(context.Background(), mine, connection.ConnectedAt,
+		map[string]string{"echo": "pinned-before-it-changed"})
+	s.Require().NoError(err)
+	body := map[string]any{"tools": []map[string]any{echo}}
+
+	s.Equal(http.StatusNotFound, s.serverClient.actingFor(s.data.createUser()).do(http.MethodPost,
+		"/v1/agents/connections/"+mine+"/tools/approve", body, nil))
+	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+mine+"/tools/approve", body, nil))
+
+	pins, err := s.store.ConnectorToolPins(context.Background(), mine, connection.ConnectedAt)
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"echo": "pinned-before-it-changed"}, pins)
+	s.Equal(http.StatusOK, s.serverClient.actingFor(s.client).do(http.MethodPost,
+		"/v1/agents/connections/"+mine+"/tools/approve", body, nil))
 }

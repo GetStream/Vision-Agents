@@ -350,6 +350,11 @@ func (s *MigrationOrderSuite) TestTheAuditCheckKeepsEveryRowAndTakesToolReapprov
 	s.Equal(5, s.auditRows(db))
 	s.Require().NoError(audit(AuditToolReapproved))
 	s.Require().ErrorContains(audit("tool_approved"), "connector_audit_action_check")
+	// Added NOT VALID: the old CHECK already held for every row, so none is read again.
+	var validated bool
+	s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT convalidated FROM pg_constraint "+
+		"WHERE conname = 'connector_audit_action_check' AND conrelid = 'connector_audit'::regclass").Scan(&validated))
+	s.False(validated)
 	s.goose()
 	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", beforeToolReapproved))
 	s.Equal(6, s.auditRows(db))
