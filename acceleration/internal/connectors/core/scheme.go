@@ -250,8 +250,13 @@ type Outcome struct {
 	Claims     string
 	RetryAfter time.Duration
 	// Code is the error code the provider answered with, such as invalid_grant (RFC 6749
-	// section 5.2), for a log line; empty when it named none. Never its description or body.
+	// section 5.2), for a log line; empty when it named none. Never its body.
 	Code string
+	// Description is the error_description the provider answered with (RFC 6749 section 5.2),
+	// for a log line, as LoggedDescription keeps it: what the request carried that it echoes
+	// redacted, its URLs kept to their host, at most DescriptionBytes; empty when it gave none.
+	// The classification never reads it, and no error text the caller or the model sees holds it.
+	Description string
 }
 
 // OutcomeError is a failed AccessCredential or Revoke with the outcome it was classified as, so the

@@ -297,8 +297,8 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 		committed  *core.CredentialState
 		// ended is the outcome a renewal failed with, which names why a grant ended, and code
 		// the provider's own word for it.
-		ended core.OutcomeKind
-		code  string
+		ended             core.OutcomeKind
+		code, description string
 	)
 	err := r.credentials.Update(ctx, ref, func(state *core.CredentialState, checkpoint func() error) (bool, error) {
 		committed = state
@@ -355,7 +355,7 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 			credential, cache = got, true
 		case errors.As(err, &outcome):
 			state.Status, state.LastError, failure = statusAfter(outcome, err)
-			ended, code = outcome.Outcome.Kind, outcome.Outcome.Code
+			ended, code, description = outcome.Outcome.Kind, outcome.Outcome.Code, outcome.Outcome.Description
 			// A renewal that failed before the old access credential expired hands that one
 			// back beside the error, for this call only (core.Scheme.Retrieve).
 			if got.Scheme != "" {
@@ -377,7 +377,7 @@ func (r *Resolver) retrieve(ctx context.Context, ref core.ConnectionRef, connect
 		held := core.FingerprintsOf(r.schemes, before.Credentials)
 		r.logger.Info("connector credential event", append([]any{"event", "refresh_failed",
 			"connection", ref.ConnectionID, "connector", connection.ConnectorID, "revision", committed.Revision,
-			"outcome", ended, "provider_code", code, "status", committed.Status},
+			"outcome", ended, "provider_code", code, "error_description", description, "status", committed.Status},
 			core.CredentialChange{Previous: held, Current: held}.LogAttrs()...)...)
 	}
 	// A connection that was connected when fn ran and is committed otherwise lost its grant

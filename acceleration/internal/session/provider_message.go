@@ -1,10 +1,6 @@
 package session
 
-import (
-	"net/url"
-	"regexp"
-	"unicode/utf8"
-)
+import "github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 
 // providerMessageBytes bounds provider_message on a "connector call failed" line
 // (dispatcher.record): 1 KiB, the ticket's choice (AI-1242), enough for a provider's error
@@ -33,66 +29,16 @@ func providerMessage(err error, redact func(string) string) string {
 	if err == nil {
 		return ""
 	}
-	text := anyURL.ReplaceAllStringFunc(err.Error(), origin)
+	text := core.KeepHosts(err.Error())
 	if redact != nil {
 		text = redact(text)
 	}
-	return cutAtRune(text, providerMessageBytes)
+	return core.CutAtRune(text, providerMessageBytes)
 }
 
-// providerText is text a provider wrote, such as the start of its error body
-// (core.Exchange.ErrorBody), with every http or https URL in it kept to its scheme and host,
-// cut to providerMessageBytes at a UTF-8 boundary: what providerMessage does to an error's text
-// with no redact.
-func providerText(text string) string {
-	return cutAtRune(anyURL.ReplaceAllStringFunc(text, origin), providerMessageBytes)
-}
-
-// providerBody is the start of a 4xx's or a 5xx's body as its log line has it: what the
-// transport kept (core.Exchange.ErrorBody) without the UTF-8 sequence its 1 KiB cut may end
-// inside, through providerText.
+// providerBody is the start of a 4xx's or a 5xx's body as its log line has it (core.LoggedBody):
+// what the transport kept (core.Exchange.ErrorBody) without the UTF-8 sequence its 1 KiB cut may
+// end inside, with every http or https URL in it kept to its scheme and host.
 func providerBody(body string) string {
-	return providerText(wholeRunes(body))
-}
-
-// wholeRunes is text without the UTF-8 sequence its last bytes start and do not finish; text
-// that ends on a whole rune, or is not UTF-8, is unchanged.
-func wholeRunes(text string) string {
-	for back := 1; back < utf8.UTFMax && back <= len(text); back++ {
-		if start := len(text) - back; utf8.RuneStart(text[start]) {
-			if !utf8.FullRuneInString(text[start:]) {
-				return text[:start]
-			}
-			return text
-		}
-	}
-	return text
-}
-
-// anyURL is an http or https URL in an error's text, up to the space or quote that ends it.
-var anyURL = regexp.MustCompile(`(?i)https?://[^\s"]+`)
-
-// origin is raw's scheme and host, without the userinfo, path, query or fragment it had;
-// "<url>" when raw does not parse as a URL with a host.
-func origin(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" {
-		return "<url>"
-	}
-	return parsed.Scheme + "://" + parsed.Host
-}
-
-// cutAtRune is text cut to at most limit bytes, never splitting a UTF-8 sequence: the cut
-// moves back to the start of the rune it falls in, at most utf8.UTFMax-1 bytes, so text that
-// is not UTF-8 is still cut near limit. core.CutResult does the same for a result, at
-// core.MaxResultBytes and with a marker the model reads, so it does not fit here.
-func cutAtRune(text string, limit int) string {
-	if len(text) <= limit {
-		return text
-	}
-	end := limit
-	for end > limit-(utf8.UTFMax-1) && !utf8.RuneStart(text[end]) {
-		end--
-	}
-	return text[:end]
+	return core.LoggedBody(body)
 }

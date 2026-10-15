@@ -133,6 +133,11 @@ func redactionOf(request *http.Request, credential AccessCredential) redaction {
 	if json.Unmarshal(credential.Secret(), &secret) == nil {
 		found = appendStrings(found, secret)
 	}
+	return redactionFrom(found)
+}
+
+// redactionFrom is the redaction of each of found longer than a byte, in order.
+func redactionFrom(found []string) redaction {
 	var r redaction
 	for _, s := range found {
 		// Why: a one-byte value, the path "/" of a URL with none, would take every such byte
