@@ -107,6 +107,12 @@ Dashboard: open the agent › **Tools** › **Connectors** › **Add connector**
 
 The agent sees each tool as `<binding name>__<tool>`, for example `github__get_me`.
 
+`github` (revision 5) offers GitHub's Actions tools beside its default ones: `actions_list`,
+`actions_get`, `actions_run_trigger` and `get_job_logs`. The manifest asks for them with the
+`X-MCP-Toolsets: default,actions` header. A binding's `tools` still narrows them: a tool that is
+not granted is never offered. A connection made before revision 5 lists them after its next
+consent or token save.
+
 With the API, the binding goes in `connectors[]` of the agent config
 (`AgentConnectorBinding`):
 

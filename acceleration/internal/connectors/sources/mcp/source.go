@@ -235,11 +235,11 @@ func (s *Source) open(ctx context.Context, b core.ResolvedBinding, client *http.
 // connect opens a session with the MCP server at endpoint through base, and reads every
 // tools/list page.
 func connect(ctx context.Context, b core.ResolvedBinding, base *http.Client, endpoint string) (*mcp.ClientSession, []*mcp.Tool, error) {
-	// A copy whose transport caps each response and then hands the request to the
-	// connection's own transport, unchanged: the credential, the 401 renewal and the egress
-	// checks all still run. The redirect policy and the timeout stay base's.
+	// A copy whose transport adds the manifest's headers, caps each response and then hands
+	// the request to the connection's own transport: the credential, the 401 renewal and the
+	// egress checks all still run. The redirect policy and the timeout stay base's.
 	client := *base
-	client.Transport = capped{base: base.Transport}
+	client.Transport = capped{base: base.Transport, headers: sourceRule(b.Manifest).Headers}
 	session, err := mcp.NewClient(implementation, nil).Connect(ctx, &mcp.StreamableClientTransport{
 		Endpoint:   endpoint,
 		HTTPClient: &client,
@@ -346,8 +346,6 @@ func (denyLoader) Load(string) (any, error) {
 	return nil, errors.New("mcp: a tool schema may not refer to an external schema")
 }
 
-// capped hands each request to base and caps what can be read of the response at
-// maxResponseBytes.
 // refuseAuthorization is the SDK's OAuthHandler for a session whose credential the router
 // applies itself (core.Transports). It adds no header and authorizes nothing, so a 401 or a
 // 403 is the error of the call it answered, and the session stays open. Without a handler
@@ -372,14 +370,24 @@ func (refuseAuthorization) Authorize(_ context.Context, _ *http.Request, respons
 	return fmt.Errorf("mcp: the server refused the request with %d %s", response.StatusCode, http.StatusText(response.StatusCode))
 }
 
+// capped sets headers, the manifest's sources[].headers, on a copy of each request, hands it to
+// base and caps what can be read of the response at maxResponseBytes.
 type capped struct {
-	base http.RoundTripper
+	base    http.RoundTripper
+	headers map[string]string
 }
 
 func (c capped) RoundTrip(request *http.Request) (*http.Response, error) {
 	base := c.base
 	if base == nil {
 		base = http.DefaultTransport
+	}
+	if len(c.headers) > 0 {
+		// A RoundTripper «should not modify the request» (net/http, RoundTripper).
+		request = request.Clone(request.Context())
+		for name, value := range c.headers {
+			request.Header.Set(name, value)
+		}
 	}
 	response, err := base.RoundTrip(request)
 	if err != nil {

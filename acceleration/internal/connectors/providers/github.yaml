@@ -10,6 +10,7 @@
 # Opened October 9, 2026:
 #   [readme]  https://github.com/github/github-mcp-server/blob/eb47a99ddb866ca2b8a162920e6bda9521f33ebb/README.md
 # Opened October 15, 2026:
+#   [toolsets] https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md
 #   [rest]    https://docs.github.com/en/rest/using-the-rest-api/getting-started-with-the-rest-api
 #   [restauth] https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api
 #   [versions] https://docs.github.com/en/rest/about-the-rest-api/api-versions
@@ -31,7 +32,9 @@ id: github
 # A new revision for any change to what this file says; see AGENTS.md. 2 renames
 # client.policy to client.registration. 3 adds bearer (AI-990). 4 (AI-1308) adds
 # endpoints.api_base, so a backend can call GitHub's REST API through the connection proxy.
-revision: 4
+# 5 (AI-1309) adds the X-MCP-Toolsets header on the mcp source, so GitHub offers its Actions
+# tools beside the default ones.
+revision: 5
 # [proto]:78-80
 name: GitHub
 category: Developer tools
@@ -133,3 +136,12 @@ refresh:
 sources:
   - kind: mcp
     endpoint: mcp
+    # [toolsets] «Optional Headers»: «X-MCP-Toolsets: Comma-separated list of toolsets to
+    # enable», and /mcp/ alone is the default toolset. The header rather than the /x/actions
+    # path, which «can only be a single toolset», so endpoints.mcp and resource stay
+    # /mcp/ and the tokens of existing connections keep working. Live tools/list with a
+    # personal access token at 2026-10-15T19:15:12Z: no header and «default» 49 tools each;
+    # «actions» 4 (actions_get, actions_list, actions_run_trigger, get_job_logs);
+    # «default,actions» 53, the 49 and the 4.
+    headers:
+      X-MCP-Toolsets: default,actions

@@ -567,6 +567,42 @@ func (s *ManifestSuite) TestAToolNeedingNoScopeIsRejected() {
 	s.ErrorContains(err, "sources[0].tools[0].needs_scopes: is required")
 }
 
+// headerSource is a manifest with an mcp source whose headers are extra.
+func headerSource(extra string) []byte {
+	return minimal("endpoints:\n  mcp: https://mcp.example.com/mcp\nsources:\n  - kind: mcp\n    endpoint: mcp\n    headers:\n" + extra)
+}
+
+func (s *ManifestSuite) TestASourcesHeadersReachTheResolvedManifest() {
+	m, err := ParseManifest(headerSource("      X-MCP-Toolsets: default,actions\n"))
+	s.Require().NoError(err)
+
+	resolved, err := m.Resolve("oauth2_code", nil, nil)
+
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"X-MCP-Toolsets": "default,actions"}, resolved.Sources[0].Headers)
+}
+
+func (s *ManifestSuite) TestASourceCannotSetAHeaderTheCredentialTheConnectionOrMCPWrites() {
+	for _, name := range []string{"Authorization", "Proxy-Authorization", "cookie", "Host", "Content-Length", "Connection", "Proxy-Connection", "Keep-Alive", "TE", "Trailer", "Transfer-Encoding", "Upgrade", "Accept", "Content-Type", "Last-Event-ID", "Mcp-Session-Id", "MCP-Protocol-Version", "Mcp-Method"} {
+		_, err := ParseManifest(headerSource("      " + name + ": x\n"))
+		s.ErrorContains(err, "sources[0].headers."+name+": is written by the credential, the HTTP connection or the MCP transport", name)
+	}
+}
+
+func (s *ManifestSuite) TestASourceHeaderNamedTwiceInAnotherCaseIsRejected() {
+	_, err := ParseManifest(headerSource("      X-Toolsets: a\n      x-toolsets: b\n"))
+	s.ErrorContains(err, "sources[0].headers.x-toolsets: is named twice, in another case")
+}
+
+func (s *ManifestSuite) TestASourceHeaderNeedsAHeaderNameAndAOneLineValue() {
+	_, err := ParseManifest(headerSource("      \"X Toolsets\": a\n"))
+	s.ErrorContains(err, `sources[0].headers.X Toolsets: "X Toolsets" is not a header name`)
+	for _, value := range []string{`""`, `"a\r\nX-Injected: b"`, `" a"`, `"a\tb"`, `"a  b"`} {
+		_, err = ParseManifest(headerSource("      X-Toolsets: " + value + "\n"))
+		s.ErrorContains(err, "sources[0].headers.X-Toolsets: is not visible ASCII words separated by single spaces", value)
+	}
+}
+
 func (s *ManifestSuite) TestAnUnknownClientAuthMethodIsRejected() {
 	_, err := ParseManifest(minimal("client:\n  auth_method: client_secret_jwt\n"))
 	s.ErrorContains(err, `client.auth_method: "client_secret_jwt" is not one of`)
