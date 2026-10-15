@@ -13,7 +13,7 @@ require (
 	buf.build/go/protovalidate v1.2.0 // indirect
 	buf.build/go/protoyaml v0.7.0 // indirect
 	cel.dev/expr v0.25.2 // indirect
-	github.com/GetStream/getstream-go-webrtc v0.0.0-20261015010711-d2932a1ad5a5 // indirect
+	github.com/GetStream/getstream-go-webrtc v0.0.0-20261015135610-e1adb0e63b09 // indirect
 	github.com/GetStream/getstream-go/v5 v5.2.0 // indirect
 	github.com/GetStream/protocol v1.49.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
