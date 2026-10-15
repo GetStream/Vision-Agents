@@ -24,6 +24,8 @@ const (
 	defaultMaxClients = 256
 	// requestTimeout bounds one request to Stream, as the SDK's own default does.
 	requestTimeout = 30 * time.Second
+	// maxIdleConns is how many connections to Stream are kept open between requests.
+	maxIdleConns = 256
 )
 
 // Bound is an identity and the client that acts with it.
@@ -94,7 +96,13 @@ type resolved struct {
 func NewClients(source Source, options ClientsOptions) *Clients {
 	httpClient := options.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: requestTimeout, Transport: http.DefaultTransport.(*http.Transport).Clone()}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		// Every session talks to the same few Stream hosts at once. Past the default two idle
+		// connections a host, each request beyond them pays a TLS handshake for a connection
+		// that is closed again as soon as it is done.
+		transport.MaxIdleConns = maxIdleConns
+		transport.MaxIdleConnsPerHost = maxIdleConns
+		httpClient = &http.Client{Timeout: requestTimeout, Transport: transport}
 	}
 	maxClients := options.MaxClients
 	if maxClients <= 0 {
