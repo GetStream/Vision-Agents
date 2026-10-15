@@ -12,6 +12,7 @@ const (
 	AccelerationName = "acceleration"
 	AcceleratedName  = "accelerated"
 	LiveKitName      = "livekit"
+	STSName          = "sts"
 )
 
 // Target is a system Voicebench can start for one benchmark call.
@@ -86,6 +87,24 @@ var definitions = map[string]Definition{
 				},
 				Bin: cfg.Bin,
 			}
+		},
+	},
+	STSName: {
+		Transport: "stream",
+		System:    "sts",
+		build: func(cfg Config) Target {
+			return &STS{Accelerated{
+				Python: Python{
+					Root:     cfg.Root,
+					Pack:     cfg.Pack,
+					URL:      cfg.URL,
+					Spawn:    cfg.Spawn,
+					WorldURL: cfg.WorldURL,
+					Pipeline: "sts",
+					Logger:   cfg.Logger,
+				},
+				Bin: cfg.Bin,
+			}}
 		},
 	},
 	LiveKitName: {

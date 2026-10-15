@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
@@ -390,6 +391,35 @@ func (s *OAuth2CodeSuite) TestEachRefusedRefreshIsTheOutcomeItsAnswerMeans() {
 		s.Equal(before, []byte(stored.Payload), row.personality)
 		s.Equal(core.StoredCredentials{}, returned, row.personality)
 	}
+}
+
+// TestARefusedRefreshKeepsTheProvidersDescriptionWithoutWhatTheRequestCarried: the
+// description is for the resolver's log line (AI-1245), with the refresh token and the client
+// secret it echoes redacted, its URL kept to the host and cut to 256 bytes. The outcome's kind
+// and the error's text are base 8666b26d's for the same answer (probe-base.txt).
+func (s *OAuth2CodeSuite) TestARefusedRefreshKeepsTheProvidersDescriptionWithoutWhatTheRequestCarried() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.preregistered(srv)
+	scheme, stored := s.connected(srv, resolved, nil)
+	refresh := s.refreshToken(stored)
+	srv.Use(fakeprovider.DescribedRefusal)
+
+	s.now = s.now.Add(fakeprovider.AccessTTL)
+	_, _, err := scheme.Retrieve(s.ctx, stored, resolved, core.RetrieveOptions{})
+
+	outcome := s.outcome(err)
+	s.Equal(core.OutcomeInvalidGrant, outcome.Kind)
+	s.Equal("invalid_grant", outcome.Code)
+	s.Equal("invalid_grant: oauth2code: refresh: oauth2code: token endpoint answered HTTP 400: invalid_grant", err.Error())
+	s.True(strings.HasPrefix(outcome.Description,
+		"refresh token [redacted] of the client with secret [redacted] is revoked: see https://idp.example éé"), outcome.Description)
+	s.LessOrEqual(len(outcome.Description), core.DescriptionBytes)
+	s.True(utf8.ValidString(outcome.Description))
+	s.False(strings.Contains(outcome.Description, refresh), "the refresh token is redacted")
+	s.False(strings.Contains(outcome.Description, srv.ClientSecret), "the client secret is redacted")
+	var refused *oauth2code.TokenError
+	s.Require().ErrorAs(err, &refused)
+	s.Equal(outcome.Description, refused.Description)
 }
 
 // TestARefreshThatFailsBeforeExpiryStillHandsOutTheValidToken is the table of refusals

@@ -141,7 +141,10 @@ module GetStream
 
       SETTING_STRINGS = %w[name description mode stt tts sts voice llm harness subagent search sandbox].freeze
       SETTING_LISTS = %w[plugins keyterms].freeze
-      SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[greeting tags video dispatch connectors]).freeze
+      SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[greeting tags video dispatch connectors sandbox_options]).freeze
+      SANDBOX_LISTS = %w[setup allowed_domains network_allow_list].freeze
+      SANDBOX_SIZES = %w[cpu memory_gb disk_gb].freeze
+      SANDBOX_KEYS = (SANDBOX_LISTS + SANDBOX_SIZES + %w[image timeout network]).freeze
       GREETING_KEYS = %w[text mode].freeze
       VIDEO_KEYS = %w[source max_frames].freeze
       DISPATCH_KEYS = %w[incoming_call text].freeze
@@ -293,7 +296,52 @@ module GetStream
         when "video" then video(value, file)
         when "dispatch" then dispatch(value, file)
         when "connectors" then connectors(value, file)
+        when "sandbox_options" then sandbox_options(value, file)
         end
+      end
+
+      # How the sandbox is built and what code in it may reach, as the sync takes it. Outbound
+      # network is blocked unless network or an allow list opens it.
+      def self.sandbox_options(value, file)
+        raise ConfigurationError, "#{file}: sandbox_options should be a mapping" unless value.is_a?(Hash)
+
+        unknown = value.keys.map(&:to_s) - SANDBOX_KEYS
+        raise ConfigurationError, "#{file}: sandbox_options has no #{unknown.join(", ")}" unless unknown.empty?
+
+        value.to_h do |key, setting|
+          key = key.to_s
+          case key
+          when *SANDBOX_LISTS
+            raise ConfigurationError, "#{file}: sandbox_options.#{key} should be a list" unless setting.nil? || setting.is_a?(Array)
+
+            [key, (setting || []).map(&:to_s)]
+          when *SANDBOX_SIZES
+            unless setting.is_a?(Integer) && !setting.negative?
+              raise ConfigurationError, "#{file}: sandbox_options.#{key} must be a whole number"
+            end
+
+            [key, setting]
+          when "network"
+            raise ConfigurationError, "#{file}: sandbox_options.network must be true or false" unless [true, false].include?(setting)
+
+            [key, setting]
+          when "timeout" then ["timeout_ms", sandbox_timeout(setting, file)]
+          else [key, setting.to_s]
+          end
+        end
+      end
+
+      def self.sandbox_timeout(value, file)
+        seconds = begin
+          deadline(value.to_s)
+        rescue ConfigurationError
+          0
+        end
+        unless seconds.positive? && seconds <= 30 * 60
+          raise ConfigurationError, "#{file}: sandbox_options.timeout must be a duration up to 30m"
+        end
+
+        (seconds * 1000).round
       end
 
       # The connectors whose tools the agent may call, each a name alone or a mapping. A null

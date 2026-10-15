@@ -232,7 +232,9 @@ class TestFolder < Minitest::Test
     ["name: jean\nlmm: openai/gpt-5.6\n", "video:\n  max_frames: 9\n", "keyterms: Vision Agents\n",
      "dispatch:\n  sms: enabled\n", "speed: 1.1\n", "thinking_llm: llm-thinking\n", "agent_plugins: [linear]\n",
      "user_plugins: [linear]\n", "progressive_tools: true\n", "greeting: Hello\n",
-     "greeting:\n  text: Hello\n  tone: warm\n"].each do |yaml|
+     "greeting:\n  text: Hello\n  tone: warm\n", "sandbox_options:\n  memory: 4\n",
+     "sandbox_options:\n  timeout: 2h\n", "sandbox_options:\n  cpu: two\n",
+     "sandbox_options:\n  network: maybe\n"].each do |yaml|
       write("agent.yaml", yaml)
 
       assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }

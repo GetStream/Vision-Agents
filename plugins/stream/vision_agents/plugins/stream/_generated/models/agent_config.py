@@ -63,11 +63,12 @@ class AgentConfig:
         mcp_servers (list[McpServer] | Unset):
         plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors.
         plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector.
-        sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
-            code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
+        sandbox (Sandbox | Unset): Where the agent may run code it writes. A text agent runs it itself; a voice agent
+            hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works
             everything out in its head.
-        sandbox_options (SandboxOptions | Unset): How the sandbox is built and how long code may run in it. Only
-            meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+        sandbox_options (SandboxOptions | Unset): How the sandbox is built, what it may reach and how long code may run
+            in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second
+            run.
         search (str | Unset):
         skills (list[str] | Unset):
         sts (str | Unset): A speech-to-speech target: one native audio model that hears the caller and speaks back.

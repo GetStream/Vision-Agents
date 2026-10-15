@@ -2,6 +2,7 @@ package elevenlabs
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
@@ -1105,4 +1107,24 @@ func (s *ElevenLabsSuite) TestCloseUnblocksStartedWhenEventBufferIsFull() {
 
 func (s *ElevenLabsSuite) TestSatisfiesTTSInterface() {
 	var _ tts.TTS = s.newTTS(Options{})
+}
+
+func (s *ElevenLabsSuite) TestAKeyWithNoQuotaLeftIsRestedForTheSessionsAfter() {
+	spent, spare := "elevenlabs-"+rand.Text(), "elevenlabs-"+rand.Text()
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{APIKey: spent + "," + spare})
+	defer provider.Close()
+	payload, err := json.Marshal(map[string]any{
+		"message": "This request exceeds your API key quota.", "error": "quota_exceeded", "code": 1008,
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(conn.WriteMessage(websocket.TextMessage, payload))
+	s.collect(provider, func(event tts.Event) bool {
+		_, failed := event.(tts.Disconnected)
+		return failed
+	})
+	pool := keypool.FromEnv(spent + "," + spare)
+	s.Equal([]string{spare, spare}, []string{pool.Next(), pool.Next()},
+		"later sessions must use the key that still has quota")
 }

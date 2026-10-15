@@ -27,6 +27,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
@@ -36,6 +37,10 @@ const ProviderName = "elevenlabs"
 
 // DefaultModel is the low-latency model, which is what a live conversation wants.
 const DefaultModel = "eleven_flash_v2_5"
+
+// quotaExceeded is the error a frame carries when the key the socket was opened on has no
+// quota left. The key rests, so the sessions after this one are opened on another.
+const quotaExceeded = "quota_exceeded"
 
 // DefaultVoiceID is a voice from the public voice library, so the provider works without a
 // voice having been picked. It is deliberately not one of the older premade voices: those
@@ -163,6 +168,7 @@ type utterance struct {
 // socket is one physical WebSocket generation. A replacement connection always gets a
 // fresh value so an old reader can never clear or settle work belonging to the new one.
 type socket struct {
+	key       string
 	conn      *websocket.Conn
 	writeMu   sync.Mutex
 	ready     chan struct{}
@@ -228,6 +234,7 @@ func (a *dialAttempt) finish() bool {
 // TTS is a streaming ElevenLabs text-to-speech session.
 type TTS struct {
 	options Options
+	keys    *keypool.Pool
 	logger  *slog.Logger
 	emitter *tts.Emitter
 
@@ -253,13 +260,12 @@ type TTS struct {
 // normalize fills in the defaults and reports what cannot be defaulted. Both endpoints
 // take the same options, so they settle them the same way and differ only in the model
 // they fall back to.
-func normalize(options Options, fallbackModel string) (Options, *slog.Logger, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv("ELEVENLABS_API_KEY")
+func normalize(options Options, fallbackModel string) (Options, *keypool.Pool, *slog.Logger, error) {
+	keys := keypool.FromEnv(options.APIKey, "ELEVENLABS_API_KEY").Pin()
+	if keys.Len() == 0 {
+		return options, nil, nil, stack.Wrap(errors.New("elevenlabs: api key is required (set ELEVENLABS_API_KEY)"))
 	}
-	if options.APIKey == "" {
-		return options, nil, stack.Wrap(errors.New("elevenlabs: api key is required (set ELEVENLABS_API_KEY)"))
-	}
+	options.APIKey = keys.Peek()
 	if options.VoiceID == "" {
 		options.VoiceID = os.Getenv("ELEVENLABS_VOICE_ID")
 	}
@@ -273,7 +279,7 @@ func normalize(options Options, fallbackModel string) (Options, *slog.Logger, er
 		options.SampleRate = DefaultSampleRate
 	}
 	if !slices.Contains(supportedSampleRates, options.SampleRate) {
-		return options, nil, stack.Wrap(fmt.Errorf("elevenlabs: sample rate %d is not one of %v",
+		return options, nil, nil, stack.Wrap(fmt.Errorf("elevenlabs: sample rate %d is not one of %v",
 			options.SampleRate, supportedSampleRates))
 	}
 	if options.BaseURL == "" {
@@ -289,12 +295,12 @@ func normalize(options Options, fallbackModel string) (Options, *slog.Logger, er
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return options, logger, nil
+	return options, keys, logger, nil
 }
 
 // New validates the options and returns an unstarted provider.
 func New(options Options) (*TTS, error) {
-	options, logger, err := normalize(options, DefaultModel)
+	options, keys, logger, err := normalize(options, DefaultModel)
 	if err != nil {
 		return nil, err
 	}
@@ -310,6 +316,7 @@ func New(options Options) (*TTS, error) {
 
 	return &TTS{
 		options:     options,
+		keys:        keys,
 		logger:      logger.With("provider", ProviderName, "model", options.Model),
 		emitter:     tts.NewEmitter(64),
 		terminalIDs: map[string]struct{}{},
@@ -749,9 +756,10 @@ func (t *TTS) connectLocked(dialContext context.Context) (*socket, bool, error) 
 		t.dialConnMu.Unlock()
 		return conn, nil
 	}
-	header := http.Header{"xi-api-key": []string{t.options.APIKey}}
 	stopDialCancel := context.AfterFunc(ctx, attempt.close)
-	conn, response, err := dialer.DialContext(ctx, t.url(), header)
+	conn, response, key, err := t.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+		return t.url(), http.Header{"xi-api-key": []string{key}}
+	})
 	t.dialConnMu.Lock()
 	if t.dialAttempt == attempt {
 		t.dialAttempt = nil
@@ -777,7 +785,7 @@ func (t *TTS) connectLocked(dialContext context.Context) (*socket, bool, error) 
 		return nil, false, stack.Wrap(errors.New("elevenlabs: dial canceled"))
 	}
 
-	sock := &socket{conn: conn, ready: make(chan struct{}), done: make(chan struct{})}
+	sock := &socket{conn: conn, key: key, ready: make(chan struct{}), done: make(chan struct{})}
 	t.mu.Lock()
 	if t.shutdown || t.ctx.Err() != nil || (dialContext != nil && dialContext.Err() != nil) {
 		t.mu.Unlock()
@@ -825,6 +833,9 @@ func (t *TTS) readLoop(sock *socket) {
 		if err := json.Unmarshal(raw, &message); err != nil {
 			t.logger.Warn("the voice sent a frame that could not be read", "error", err, "bytes", len(raw))
 			continue
+		}
+		if message.Error == quotaExceeded {
+			t.keys.Cooldown(sock.key, keypool.MaxCooldown)
 		}
 		t.handleMessage(sock, message)
 	}

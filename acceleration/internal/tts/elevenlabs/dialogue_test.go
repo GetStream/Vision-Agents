@@ -2,6 +2,7 @@ package elevenlabs
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
@@ -325,4 +327,26 @@ func (s *DialogueSuite) TestAServerErrorIsReported() {
 	failure := events[len(events)-1].(tts.Error)
 	s.ErrorContains(failure.Err, "voice not found")
 	s.True(failure.Fatal, "the server named the close code it is about to send")
+}
+
+func (s *DialogueSuite) TestAKeyWithNoQuotaLeftIsRestedForTheSessionsAfter() {
+	spent, spare := "elevenlabs-"+rand.Text(), "elevenlabs-"+rand.Text()
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{APIKey: spent + "," + spare, VoiceID: "v1"})
+	defer provider.Close()
+
+	payload, err := json.Marshal(map[string]any{
+		"message": "This request exceeds your API key quota.", "error": "quota_exceeded", "code": 1008,
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(conn.WriteMessage(websocket.TextMessage, payload))
+	s.collect(provider, func(event tts.Event) bool {
+		_, failed := event.(tts.Error)
+		return failed
+	})
+
+	pool := keypool.FromEnv(spent + "," + spare)
+	s.Equal([]string{spare, spare}, []string{pool.Next(), pool.Next()},
+		"the sessions after are opened on the key that has quota")
 }

@@ -63,6 +63,20 @@ func TestACustomersWebsiteMayCallTheAPIWithItsOwnCredential(t *testing.T) {
 	}
 }
 
+func TestACustomersWebsiteMayReadTheQuotaOfAnAnswer(t *testing.T) {
+	for _, mode := range []auth.Mode{auth.APIKey, auth.Proxy} {
+		handler := withCORS(mode, http.NotFoundHandler())
+		request := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+		request.Header.Set("Origin", customerSite)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+
+		for _, header := range []string{"X-Quota-Limit", "X-Quota-Remaining", "X-Quota-Reset", "Retry-After"} {
+			require.Contains(t, response.Header().Get("Access-Control-Expose-Headers"), header, mode)
+		}
+	}
+}
+
 func TestACustomersWebsiteMayOpenASessionSocket(t *testing.T) {
 	for _, mode := range []auth.Mode{auth.APIKey, auth.Proxy} {
 		_, err := dialSession(t, mode, customerSite)

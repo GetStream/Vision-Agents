@@ -227,6 +227,10 @@ final class FolderTest extends TestCase
         yield 'too many frames' => ["video:\n  max_frames: 9\n"];
         yield 'keyterms not a list' => ["keyterms: Vision Agents\n"];
         yield 'unknown dispatch key' => ["dispatch:\n  outgoing_call: enabled\n"];
+        yield 'unknown sandbox_options key' => ["sandbox_options:\n  memory: 4\n"];
+        yield 'sandbox timeout past 30m' => ["sandbox_options:\n  timeout: 2h\n"];
+        yield 'sandbox size that is not a number' => ["sandbox_options:\n  cpu: two\n"];
+        yield 'sandbox network that is not a boolean' => ["sandbox_options:\n  network: maybe\n"];
     }
 
     public function testReadsDispatchAsWritten(): void

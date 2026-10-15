@@ -378,6 +378,13 @@ type SandboxSettings struct {
 	CPU      int `yaml:"cpu"`
 	MemoryGB int `yaml:"memory_gb"`
 	DiskGB   int `yaml:"disk_gb"`
+	// Network lets code in the sandbox reach the internet. Off, and with no allow list, every
+	// outbound connection is blocked.
+	Network bool `yaml:"network"`
+	// AllowedDomains and NetworkAllowList, domains and CIDR ranges, are all code in the
+	// sandbox may reach once either is set, network on or not.
+	AllowedDomains   []string `yaml:"allowed_domains"`
+	NetworkAllowList []string `yaml:"network_allow_list"`
 
 	timeout time.Duration
 }

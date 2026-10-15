@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +24,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -152,12 +152,13 @@ type LLM struct {
 
 // New builds the provider, reading the API key from the environment when it is not given.
 func New(options Options) (*LLM, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APIKey == "" {
+	// Pinned, because a turn continues the stored response before it, which only the
+	// project whose key stored it can find.
+	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar).Pin()
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("openai: " + apiKeyEnvVar + " is required"))
 	}
+	options.APIKey = keys.Peek()
 	if options.Model == "" {
 		options.Model = defaultModel
 	}
@@ -184,9 +185,7 @@ func New(options Options) (*LLM, error) {
 	clientOptions := []option.RequestOption{
 		option.WithAPIKey(options.APIKey),
 		option.WithBaseURL(options.BaseURL),
-	}
-	if options.HTTPClient != nil {
-		clientOptions = append(clientOptions, option.WithHTTPClient(options.HTTPClient))
+		option.WithHTTPClient(keys.WrapDoer(options.HTTPClient, keypool.Bearer)),
 	}
 
 	return &LLM{

@@ -180,10 +180,29 @@ type Caller struct {
 	UserID string
 	// IP is where the request came from, as far as the trusted proxies can tell.
 	IP string
+	// ServerSide is a customer's own process, trusted with its spend even when it names a
+	// user, so no daily limit is counted against it.
+	ServerSide bool
 }
 
-// Anonymous reports whether there is nobody to count a limit against.
-func (c Caller) Anonymous() bool { return c.UserID == "" && c.IP == "" }
+// IsZero says nobody was named: a turn that was heard, not typed.
+func (c Caller) IsZero() bool {
+	return c == Caller{}
+}
+
+type callerKey struct{}
+
+// WithCaller says who sent what ctx carries: the request, or the turn of a session it asks
+// a model to answer.
+func WithCaller(ctx context.Context, caller Caller) context.Context {
+	return context.WithValue(ctx, callerKey{}, caller)
+}
+
+// CallerFrom returns who WithCaller said sent what ctx carries, and false when nobody said.
+func CallerFrom(ctx context.Context) (Caller, bool) {
+	caller, ok := ctx.Value(callerKey{}).(Caller)
+	return caller, ok
+}
 
 // Request is what a caller wants served.
 type Request struct {

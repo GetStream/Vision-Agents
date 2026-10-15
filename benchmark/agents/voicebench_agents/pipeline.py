@@ -11,6 +11,9 @@ DEFAULT_ACCELERATED_STT = "deepgram/flux-general-en"
 DEFAULT_ACCELERATED_TTS = "elevenlabs/eleven_v4_turbo"
 DEFAULT_ACCELERATED_MODEL = "gemma/gemma-4-26B-A4B-it"
 DEFAULT_CUSTOMER_ID = "voicebench"
+# The speech-to-speech model the sts pipeline runs: one model on the router in place of the
+# STT, LLM and TTS above.
+DEFAULT_STS = "openai/gpt-live-1"
 
 ACCELERATED_AGENTS = Path(__file__).resolve().parent.parent / "accelerated"
 
@@ -73,7 +76,7 @@ async def sync_accelerated_pack(pack: str) -> None:
 
 
 def build_llm(kind: str, pack: str):
-    """Return a realtime OpenAI LLM or an acceleration bundle.
+    """Return a realtime OpenAI LLM, an acceleration bundle or a routed STS model.
 
     Accelerated modality names come from VOICEBENCH_MODEL / _STT / _TTS /
     _VOICE. Unset names use the bench's default pipeline.
@@ -89,6 +92,11 @@ def build_llm(kind: str, pack: str):
             voice=os.environ.get("VOICEBENCH_VOICE", "").strip(),
             customer_id=_customer_id(),
             keyterms=PACK_KEYTERMS.get(pack, []),
+        )
+    if kind == "sts":
+        return stream.STS(
+            target=_env("VOICEBENCH_STS", DEFAULT_STS),
+            customer_id=_customer_id(),
         )
     if kind != "realtime":
         raise ValueError(f"unknown pipeline {kind!r}")

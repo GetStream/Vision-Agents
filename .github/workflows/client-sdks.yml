@@ -7,7 +7,6 @@ on:
       - 'sdks/swift/**'
       - 'sdks/dart/**'
       - 'examples/voice_agents/swift_demo/app/**'
-      - 'examples/video_agents/flower_spotter/app/**'
       - 'acceleration/api/openapi.yaml'
       - '.github/workflows/client-sdks.yml'
   pull_request:
@@ -17,7 +16,6 @@ on:
       - 'sdks/swift/**'
       - 'sdks/dart/**'
       - 'examples/voice_agents/swift_demo/app/**'
-      - 'examples/video_agents/flower_spotter/app/**'
       - 'acceleration/api/openapi.yaml'
       - '.github/workflows/client-sdks.yml'
 
@@ -147,10 +145,6 @@ jobs:
       - name: Build swift_demo
         working-directory: examples/voice_agents/swift_demo/app
         run: xcodebuild -project SwiftDemo.xcodeproj -scheme SwiftDemo -destination 'generic/platform=iOS Simulator' build
-
-      - name: Build flower_spotter
-        working-directory: examples/video_agents/flower_spotter/app
-        run: xcodebuild -project FlowerSpotter.xcodeproj -scheme FlowerSpotter -destination 'generic/platform=iOS Simulator' build
 
 concurrency:
   group: ci-client-sdks-${{ github.workflow }}-${{ github.ref }}

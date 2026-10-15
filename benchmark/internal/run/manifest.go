@@ -31,6 +31,8 @@ func buildManifest(cfg Config, scenarios []scenario.Scenario) report.RunManifest
 			model = "gpt-realtime-2"
 		case target == "accelerated" && cfg.SpawnTarget:
 			model = envOr("VOICEBENCH_MODEL", benchtarget.DefaultAcceleratedModel)
+		case target == benchtarget.STSName && cfg.SpawnTarget:
+			model = envOr("VOICEBENCH_STS", benchtarget.DefaultSTS)
 		case target == "livekit" && cfg.SpawnTarget:
 			if envOr("VOICEBENCH_LIVEKIT_PIPELINE", benchtarget.DefaultLiveKitPipeline) == "realtime" {
 				model = envOr("VOICEBENCH_LIVEKIT_MODEL", benchtarget.DefaultLiveKitRealtimeModel)
@@ -68,6 +70,10 @@ func buildManifest(cfg Config, scenarios []scenario.Scenario) report.RunManifest
 		if subagent == "" {
 			subagent = benchtarget.DefaultAcceleratedSubagent
 		}
+	}
+	// One speech-to-speech model is the whole pipeline: the cascade's names in .env do not apply.
+	if target == benchtarget.STSName && cfg.SpawnTarget {
+		stt, tts, llm, subagent = "", "", model, ""
 	}
 	if target == "livekit" && cfg.SpawnTarget && envOr("VOICEBENCH_LIVEKIT_PIPELINE", benchtarget.DefaultLiveKitPipeline) != "realtime" {
 		stt = envOr("VOICEBENCH_LIVEKIT_STT", benchtarget.DefaultLiveKitSTT)

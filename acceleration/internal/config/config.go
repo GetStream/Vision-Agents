@@ -51,7 +51,12 @@ type Config struct {
 	// Addr is where to listen, which behind a load balancer is not where anyone reaches
 	// the router. PublicURL is that, and the telephony vendors that fetch a call plan on
 	// answer need it.
-	Addr      string `koanf:"addr"`
+	Addr string `koanf:"addr"`
+	// ListenFD is a listening socket this process inherited, served in place of Addr. A
+	// supervisor that keeps the socket open across processes passes it, so a new router
+	// takes connections from the same queue the old one did and none is refused between
+	// them. Zero means listen on Addr.
+	ListenFD  int    `koanf:"listen_fd"`
 	PublicURL string `koanf:"public_url"`
 	LogLevel  string `koanf:"log_level"`
 	// DashboardURL is where a finished plugin login sends the browser.
@@ -74,6 +79,7 @@ type Config struct {
 	Postgres      Postgres     `koanf:"postgres"`
 	Redis         Redis        `koanf:"redis"`
 	Node          Node         `koanf:"node"`
+	Shutdown      Shutdown     `koanf:"shutdown"`
 	Auth          Auth         `koanf:"auth"`
 	RateLimit     RateLimit    `koanf:"rate_limit"`
 	DataMove      DataMove     `koanf:"data_move"`
@@ -118,6 +124,19 @@ type Node struct {
 	// address its peers use. Empty means this host's own address and the port from Addr,
 	// which is right wherever a pod's address is reachable from its peers.
 	Advertise string `koanf:"advertise"`
+	// Listen is a second address, where only this node's peers reach it. Empty means they
+	// reach it on Addr. It is what two processes sharing one Addr need, since a peer
+	// asking about a session on Addr could land on the other.
+	Listen string `koanf:"listen"`
+}
+
+// Shutdown is how a router stops.
+type Shutdown struct {
+	// Drain is how long a stopping router keeps the sessions it holds, after it stops
+	// taking new work, before it ends the rest. Zero ends them as soon as HTTP has
+	// drained. A voice call lasts minutes, so a deployment that lets an old process
+	// finish its calls sets this to the longest one it will wait for.
+	Drain time.Duration `koanf:"drain"`
 }
 
 // Auth decides who the router believes a caller is.
@@ -137,8 +156,8 @@ type Auth struct {
 	OpsKey string `koanf:"ops_key"`
 }
 
-// RateLimit caps what one of a customer's end users may spend in a day. Either at 0 turns
-// that half off.
+// RateLimit caps what one of a customer's end users may spend in a day, for a customer
+// whose policies set no number of their own. Either at 0 turns that half off.
 type RateLimit struct {
 	MessagesPerDay int64 `koanf:"messages_per_day"`
 	TokensPerDay   int64 `koanf:"tokens_per_day"`
@@ -328,6 +347,9 @@ var variables = map[string]string{
 	"redis.username":      "ROUTER_REDIS_USERNAME",
 	"redis.password":      "ROUTER_REDIS_PASSWORD",
 	"node.advertise":      "ROUTER_NODE_ADVERTISE",
+	"node.listen":         "ROUTER_NODE_LISTEN",
+	"listen_fd":           "ROUTER_LISTEN_FD",
+	"shutdown.drain":      "ROUTER_SHUTDOWN_DRAIN",
 	"auth.mode":           "ROUTER_AUTH_MODE",
 	"auth.kek":            "ROUTER_AUTH_KEK",
 	"auth.ops_key":        "ROUTER_AUTH_OPS_KEY",
@@ -647,6 +669,9 @@ func (c Config) export() error {
 		"redis.username":                c.Redis.Username,
 		"redis.password":                c.Redis.Password,
 		"node.advertise":                c.Node.Advertise,
+		"node.listen":                   c.Node.Listen,
+		"listen_fd":                     listenFD(c.ListenFD),
+		"shutdown.drain":                c.Shutdown.Drain.String(),
 		"auth.mode":                     c.Auth.Mode,
 		"auth.kek":                      c.Auth.KEK,
 		"auth.ops_key":                  c.Auth.OpsKey,
@@ -715,6 +740,15 @@ func splitList(raw string) []string {
 		}
 	}
 	return entries
+}
+
+// listenFD writes an inherited socket back, or nothing for none: descriptor zero is standard
+// input, never a listener.
+func listenFD(fd int) string {
+	if fd == 0 {
+		return ""
+	}
+	return fmt.Sprint(fd)
 }
 
 // appID writes an app id back, or nothing for one nobody set.

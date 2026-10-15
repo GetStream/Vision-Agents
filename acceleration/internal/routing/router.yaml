@@ -1652,6 +1652,44 @@ tts:
         per_million_chars: 0.125
         per_audio_hour: 0.82
 
+    # Fish's hosted Drama 3 (35B MoE, 3B active), directed in plain words via square brackets.
+    - provider: fish
+      model: drama-3
+      description: "Fish's hosted Drama 3, expressive and directable in 83 languages."
+      languages:
+        [
+          ar,
+          de,
+          en,
+          es,
+          fi,
+          fr,
+          hi,
+          id,
+          it,
+          ja,
+          ko,
+          nl,
+          pl,
+          pt,
+          ru,
+          sv,
+          th,
+          tr,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: high-quality
+      # Their terms allow content and usage data to develop, train or enhance the models
+      # on every self-serve tier, and the privacy policy keeps content for as long as the
+      # service has a use for it. Zero data retention is an Enterprise line item.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+      price:
+        per_million_chars: 50.0
+
     # Fish's hosted S2 Pro. 80+ languages; the common ones are listed.
     - provider: fish
       model: s2-pro

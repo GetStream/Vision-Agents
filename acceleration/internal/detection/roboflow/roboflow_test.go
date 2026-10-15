@@ -2,6 +2,7 @@ package roboflow
 
 import (
 	"context"
+	"crypto/rand"
 	_ "embed"
 	"encoding/json"
 	"io"
@@ -39,6 +40,8 @@ type RoboflowSuite struct {
 	mu     sync.Mutex
 	answer []byte
 	calls  []asked
+	// limitedKey, when set, is a key the server answers 429 to.
+	limitedKey string
 }
 
 func TestRoboflowSuite(t *testing.T) {
@@ -51,6 +54,14 @@ func (s *RoboflowSuite) SetupSuite() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.calls = append(s.calls, asked{path: r.URL.Path, query: r.URL.Query(), body: body})
+		var sent struct {
+			APIKey string `json:"api_key"`
+		}
+		_ = json.Unmarshal(body, &sent)
+		if s.limitedKey != "" && (r.URL.Query().Get("api_key") == s.limitedKey || sent.APIKey == s.limitedKey) {
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return
+		}
 		_, _ = w.Write(s.answer)
 	}))
 }
@@ -60,6 +71,7 @@ func (s *RoboflowSuite) SetupTest() {
 	defer s.mu.Unlock()
 	s.answer = modelTwoPeople
 	s.calls = nil
+	s.limitedKey = ""
 }
 
 func (s *RoboflowSuite) answering(body []byte) {
@@ -128,6 +140,26 @@ func (s *RoboflowSuite) TestTheFaceWorkflowGivesEveryFaceItsOwnEmbedding() {
 	s.Equal("/workflows/run", s.seen()[0].path)
 	s.Contains(sent, "specification", "the face Workflow is sent whole")
 	s.Equal("rf-key", sent["api_key"])
+}
+
+func (s *RoboflowSuite) TestARateLimitedKeyHandsTheWorkflowToTheNextKey() {
+	s.answering(workflowTwoFaces)
+	first, second := "rf-"+rand.Text(), "rf-"+rand.Text()
+	s.limitedKey = first
+	provider, err := New(Options{APIKey: first + "," + second, Model: ModelFaces, BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	found, err := provider.Detect(context.Background(), frame())
+
+	s.Require().NoError(err)
+	s.Len(found.Detections, 2)
+	var keys []any
+	for _, call := range s.seen() {
+		var sent map[string]any
+		s.Require().NoError(json.Unmarshal(call.body, &sent))
+		keys = append(keys, sent["api_key"])
+	}
+	s.Equal([]any{first, second}, keys)
 }
 
 func (s *RoboflowSuite) TestASavedWorkflowIsCalledByItsWorkspaceAndId() {

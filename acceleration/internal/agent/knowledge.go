@@ -109,15 +109,27 @@ func (a *Agent) lookup(ctx context.Context, call llm.ToolCall) (string, bool, er
 	if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
 		return "", false, fmt.Errorf("agent: could not read the lookup arguments: %w", err)
 	}
-	question := strings.TrimSpace(arguments.Query)
-	if question == "" {
-		return "", false, errors.New("agent: a lookup needs something to look for")
-	}
+	said, err := a.knowledgeAnswer(ctx, call.ID, arguments.Query)
+	return said, false, err
+}
 
+// subagentLookup is how delegated work reads the knowledge base, nil when there is none.
+func (a *Agent) subagentLookup() func(ctx context.Context, turnID, query string) (string, error) {
+	if a.knowledge == nil {
+		return nil
+	}
+	return a.knowledgeAnswer
+}
+
+func (a *Agent) knowledgeAnswer(ctx context.Context, turnID, query string) (string, error) {
+	question := strings.TrimSpace(query)
+	if question == "" {
+		return "", errors.New("agent: a lookup needs something to look for")
+	}
 	found, err := a.knowledge.Search(ctx, question)
 	if err != nil {
-		return "", false, fmt.Errorf("agent: look up %q: %w", question, err)
+		return "", fmt.Errorf("agent: look up %q: %w", question, err)
 	}
-	a.emitter.Send(LookedUp{TurnID: call.ID, Query: question, Documents: len(found)})
-	return knowledge.Prompt(found), false, nil
+	a.emitter.Send(LookedUp{TurnID: turnID, Query: question, Documents: len(found)})
+	return knowledge.Prompt(found), nil
 }

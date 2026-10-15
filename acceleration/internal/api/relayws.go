@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 )
 
@@ -406,7 +407,9 @@ func (s *Server) runRelayedCommands(found *session.Session, proxy *proxyWatcher)
 			found.Report(err, "command")
 			continue
 		}
-		s.applyCommand(found, proxy.owner, command)
+		// The other node holds the socket's address, so only its user is counted here.
+		sender := routing.Caller{UserID: proxy.owner.UserID, ServerSide: proxy.owner.Kind == auth.KindServer}
+		s.applyCommand(found, proxy.owner, sender, command)
 	}
 }
 

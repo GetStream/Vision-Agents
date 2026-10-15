@@ -155,6 +155,8 @@ func (w *worked) answer(t *testing.T, connection *websocket.Conn, id string) {
 			case replies <- frame:
 			default:
 			}
+		case "close":
+			return
 		}
 	}
 }

@@ -48,11 +48,13 @@ func (i *Inbound) Track(track *webrtc.TrackRemote) error {
 		decoder.Close()
 		return nil
 	}
-	if previous, ok := i.decoders[track.ID()]; ok {
-		previous.Close()
-	}
+	previous := i.decoders[track.ID()]
 	i.decoders[track.ID()] = decoder
 	i.mu.Unlock()
+	// Close waits for the decoder's goroutine, which takes i.mu in push.
+	if previous != nil {
+		previous.Close()
+	}
 	return nil
 }
 

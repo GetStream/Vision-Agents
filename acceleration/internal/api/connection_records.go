@@ -24,7 +24,10 @@ type ConnectionInvocation struct {
 	StartedAt    time.Time            `json:"started_at"`
 	LatencyMs    int64                `json:"latency_ms" doc:"From the call reaching the router to its answer, the router's own checks included."`
 	ErrorType    *InvocationErrorType `json:"error_type,omitempty" doc:"How the call failed. Absent for a call that answered."`
-	Arguments    []InvocationArgument `json:"arguments,omitempty" doc:"The shape of what the call was asked, sorted by name. Absent for a call asked with no arguments, for an incognito session's call, for arguments that were not a JSON object, and for a call recorded before the router kept it."`
+	// The row's provider_status and error_message (20261031130000_connector_invocation_failures.sql).
+	ProviderStatus *int                 `json:"provider_status,omitempty" doc:"The HTTP status the provider answered the call's last request with. Absent for a call that answered, and for one no request of which was answered: the router refused or held it, or the provider could not be reached."`
+	ErrorMessage   string               `json:"error_message,omitempty" doc:"Why the call failed: the start of the provider's error body when it answered with a 4xx or a 5xx, else what the call's error said, at most 1 KiB. Every URL in it keeps only its scheme and host, and the connection's credential and the request's path are taken out. A call the router held for the provider's rate limit says rate limited by the router: retry after <seconds>s. Absent for a call that answered, and for a call recorded before the router kept it."`
+	Arguments      []InvocationArgument `json:"arguments,omitempty" doc:"The shape of what the call was asked, sorted by name. Absent for a call asked with no arguments, for an incognito session's call, for arguments that were not a JSON object, and for a call recorded before the router kept it."`
 }
 
 func (*ConnectionInvocation) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -174,7 +177,8 @@ func (s *Server) registerConnectionRecords(api huma.API) {
 		Summary:     "List a connection's tool calls",
 		Description: "Every tool call sessions ran through the connection, newest first: the " +
 			"binding, the tool, the latency and how it failed. What a call was asked and " +
-			"answered is never kept, and an incognito session's calls name no session. Who may " +
+			"answered is never kept, except the start of the provider's error for a call that " +
+			"failed, and an incognito session's calls name no session. Who may " +
 			"read them is who may read the connection.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
@@ -238,7 +242,7 @@ func (s *Server) listConnectionInvocations(ctx context.Context, request *listCon
 		item := ConnectionInvocation{
 			ID: row.ID, ConnectionID: row.ConnectionID, ConnectorID: row.ConnectorID, ConfigID: row.ConfigID,
 			Binding: row.Binding, Tool: row.Tool, SessionID: row.SessionID, StartedAt: row.StartedAt,
-			LatencyMs: row.LatencyMs,
+			LatencyMs: row.LatencyMs, ProviderStatus: row.ProviderStatus, ErrorMessage: row.ErrorMessage,
 		}
 		if row.ErrorType != "" {
 			failure := InvocationErrorType(row.ErrorType)

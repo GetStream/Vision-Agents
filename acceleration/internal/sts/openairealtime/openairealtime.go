@@ -22,7 +22,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +29,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -375,6 +375,7 @@ func (e *apiError) Error() string {
 // STS is one realtime session.
 type STS struct {
 	options      Options
+	keys         *keypool.Pool
 	dialect      Dialect
 	capabilities sts.Capabilities
 	logger       *slog.Logger
@@ -411,12 +412,11 @@ func New(settings Options) (*STS, error) {
 	if settings.Vendor.Provider == "" {
 		return nil, stack.Wrap(errors.New("openairealtime: a vendor is required"))
 	}
-	if settings.APIKey == "" && settings.Vendor.APIKeyEnvVar != "" {
-		settings.APIKey = os.Getenv(settings.Vendor.APIKeyEnvVar)
-	}
-	if settings.APIKey == "" {
+	keys := keypool.FromEnv(settings.APIKey, settings.Vendor.APIKeyEnvVar).Pin()
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(fmt.Errorf("%s: api key is required (set %s)", settings.Vendor.Provider, settings.Vendor.APIKeyEnvVar))
 	}
+	settings.APIKey = keys.Peek()
 	if settings.Model == "" {
 		settings.Model = settings.Vendor.Model
 	}
@@ -454,6 +454,7 @@ func New(settings Options) (*STS, error) {
 
 	return &STS{
 		options:      settings,
+		keys:         keys,
 		dialect:      dialectOf(settings.Vendor, settings.Model),
 		capabilities: capabilities,
 		logger:       logger.With("provider", settings.Vendor.Provider, "model", settings.Model),
@@ -536,8 +537,9 @@ func (s *STS) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	dialer := &websocket.Dialer{HandshakeTimeout: s.options.HandshakeTimeout}
-	header := http.Header{"Authorization": []string{"Bearer " + s.options.APIKey}}
-	conn, response, err := dialer.DialContext(ctx, s.endpoint(), header)
+	conn, response, _, err := s.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+		return s.endpoint(), http.Header{"Authorization": []string{"Bearer " + key}}
+	})
 	if err != nil {
 		if response != nil {
 			return stack.Wrap(fmt.Errorf("%s: dial: %w (http %d)", s.options.Vendor.Provider, err, response.StatusCode))

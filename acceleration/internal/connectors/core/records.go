@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -34,7 +36,11 @@ func CorrelationOf(ctx context.Context) Correlation {
 // session's dispatcher to say how the call failed (store.ConnectorInvocation.ErrorType): a
 // tool source's error does not say whether a request left, and an MCP client reports a 401
 // as the words of its status. Transports fills it for every request whose context carries it,
-// and leaves it alone otherwise. It holds no header, body or credential.
+// and leaves it alone otherwise. For the dispatcher's log line it also keeps the host the last
+// request went to and, of an answer that was a 4xx or a 5xx, the start of its body and its
+// WWW-Authenticate and Retry-After headers (AI-1243). It holds no request header or body, no
+// path or query, no other response header, and no credential: what Redact takes out of a text
+// is held only inside a function, which no formatting verb or log handler prints.
 type Exchange struct {
 	mu         sync.Mutex
 	sent       bool
@@ -42,9 +48,19 @@ type Exchange struct {
 	credential error
 	timedOut   bool
 	retryAfter time.Duration
+	// host is the URL host, with its port when the URL names one, of the last request that
+	// left; "" when none did.
+	host string
+	// errorBody is at most maxErrorExcerpt bytes from the start of the last answer's body,
+	// redacted (ErrorBody), and challenge and retryAfterHeader its WWW-Authenticate and
+	// Retry-After, as the provider wrote them; all "" unless that answer was a 4xx or a 5xx.
+	errorBody, challenge, retryAfterHeader string
 	// scopeRequired is the provider asking for more access than the grant has, nil when no
 	// answer did.
 	scopeRequired *Outcome
+	// redact is Redact's redaction for the last request that left, nil when none did. A
+	// function, so that %v of an Exchange prints no secret (AGENTS.md «Secrets never print»).
+	redact func(string) string
 }
 
 type exchangeKey struct{}
@@ -81,6 +97,54 @@ func (e *Exchange) RetryAfter() time.Duration {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.retryAfter
+}
+
+// Host is the host the last request that left went to, with its port when its URL names one;
+// "" when none left. Never its path, query or userinfo.
+func (e *Exchange) Host() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.host
+}
+
+// ErrorBody is at most 1 KiB from the start of the last answer's body, when that answer was a
+// 4xx or a 5xx; "" otherwise. It is what the answer's reader read of it, or what came within
+// a short wait of a Close before then (recordedBody), with the request's path and query and
+// the credential's secret replaced (redaction). It may end inside a UTF-8 sequence.
+func (e *Exchange) ErrorBody() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.errorBody
+}
+
+// Redact is text, such as the error a tool source returned for the call, with what ErrorBody
+// takes out of a body taken out of it: the last request's path and query, together and apart,
+// and each string of the credential it was sent with (redactionOf). Text is unchanged when no
+// request left. Example: the MCP client's error for a JSON-RPC error that says
+// "invalid token <the token> for /primary/mcp" says "invalid token [redacted] for [redacted]".
+func (e *Exchange) Redact(text string) string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.redact == nil {
+		return text
+	}
+	return e.redact(text)
+}
+
+// WWWAuthenticate is the WWW-Authenticate of the last answer, its values joined with ", "
+// (RFC 9110 section 5.3), when that answer was a 4xx or a 5xx; "" otherwise.
+func (e *Exchange) WWWAuthenticate() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.challenge
+}
+
+// RetryAfterHeader is the Retry-After of the last answer as the provider wrote it, when that
+// answer was a 4xx or a 5xx; "" otherwise. RetryAfter is the wait a 429's asked for.
+func (e *Exchange) RetryAfterHeader() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.retryAfterHeader
 }
 
 // CredentialError is why the Resolver gave the last request no credential, nil when it gave
@@ -120,14 +184,16 @@ func (e *Exchange) refused(err error) {
 	e.credential = err
 }
 
-// sending records that a request is leaving with a credential.
-func (e *Exchange) sending() {
+// sending records that a request to host is leaving with a credential, and what of it and
+// that credential Redact takes out (redaction).
+func (e *Exchange) sending(host string, redact redaction) {
 	if e == nil {
 		return
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.sent = true
+	e.sent, e.host = true, host
+	e.redact = func(text string) string { return redact.apply(text, true) }
 }
 
 // answered records how a request that left ended: with the provider's status, or with err.
@@ -143,6 +209,27 @@ func (e *Exchange) answered(status int, err error) {
 		return
 	}
 	e.status, e.retryAfter = status, 0
+	e.errorBody, e.challenge, e.retryAfterHeader = "", "", ""
+}
+
+// failedWith records the WWW-Authenticate and Retry-After of the 4xx or 5xx that answered the
+// last request. Its body comes later, as it is read (bodyRead).
+func (e *Exchange) failedWith(header http.Header) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.challenge = strings.Join(header.Values("WWW-Authenticate"), ", ")
+	e.retryAfterHeader = header.Get("Retry-After")
+}
+
+// bodyRead records what has been read so far of the start of the body of the 4xx or 5xx that
+// answered the last request (recordedBody).
+func (e *Exchange) bodyRead(body string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.errorBody = body
 }
 
 // limited records the wait the 429 that answered the last request asked for.

@@ -1,10 +1,12 @@
 package openai
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -359,4 +361,45 @@ func (s *OpenAISuite) TestAnArgumentNamedPropertiesIsAProperty() {
 	}})
 
 	s.Nil(sent.Strict)
+}
+
+// TestNumberedKeysShareTheLoadAndARateLimitedOneRests reads a pool from OPENAI_API_KEY_1 and
+// _2. The first is refused with 429, so the turn is answered on the second, and the next turn
+// skips the first while it rests.
+func (s *OpenAISuite) TestNumberedKeysShareTheLoadAndARateLimitedOneRests() {
+	first, second := "openai-"+rand.Text(), "openai-"+rand.Text()
+	s.T().Setenv(apiKeyEnvVar+"_1", first)
+	s.T().Setenv(apiKeyEnvVar+"_2", second)
+	keys := make(chan string, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		keys <- key
+		if key == first {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"slow down"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"status\":\"completed\"}}\n\n")
+	}))
+	defer server.Close()
+	provider, err := New(Options{BaseURL: server.URL})
+	s.Require().NoError(err)
+	defer provider.Close()
+
+	for range 2 {
+		stream, err := provider.Create(s.T().Context(), llm.ResponseParams{
+			Input: []llm.Message{{Role: llm.User, Content: "hello"}},
+		})
+		s.Require().NoError(err)
+		_, err = llm.Collect(stream)
+		s.Require().NoError(err)
+	}
+
+	close(keys)
+	var seen []string
+	for key := range keys {
+		seen = append(seen, key)
+	}
+	s.Equal([]string{first, second, second}, seen)
 }

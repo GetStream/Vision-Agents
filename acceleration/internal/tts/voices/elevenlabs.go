@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
 )
@@ -34,7 +34,7 @@ type ElevenLabs struct {
 // NewElevenLabs validates the options and returns a cloner.
 func NewElevenLabs(options ElevenLabsOptions) (*ElevenLabs, error) {
 	if options.APIKey == "" {
-		options.APIKey = os.Getenv("ELEVENLABS_API_KEY")
+		options.APIKey = keypool.FromEnv("", "ELEVENLABS_API_KEY").Peek()
 	}
 	if options.APIKey == "" {
 		return nil, errors.New("voices: api key is required (set ELEVENLABS_API_KEY)")

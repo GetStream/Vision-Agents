@@ -7,7 +7,7 @@ import (
 )
 
 func TestNames(t *testing.T) {
-	want := []string{AcceleratedName, AccelerationName, LiveKitName, PythonName}
+	want := []string{AcceleratedName, AccelerationName, LiveKitName, PythonName, STSName}
 	if got := Names(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
@@ -24,6 +24,30 @@ func TestBuildAccelerated(t *testing.T) {
 	}
 	if got.Pipeline != "accelerated" {
 		t.Fatalf("pipeline %q", got.Pipeline)
+	}
+}
+
+func TestBuildSTS(t *testing.T) {
+	built, err := Build(STSName, Config{URL: "http://127.0.0.1:8000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := built.(*STS)
+	if !ok {
+		t.Fatalf("got %T", built)
+	}
+	if got.Pipeline != "sts" {
+		t.Fatalf("pipeline %q", got.Pipeline)
+	}
+}
+
+func TestSTSPipelineEnvDefaultsToGPTLive(t *testing.T) {
+	t.Setenv("VOICEBENCH_STS", "")
+	t.Setenv("STREAM_ACCELERATION_CUSTOMER_ID", "")
+	got := stsPipelineEnv()
+	want := []string{"VOICEBENCH_STS=openai/gpt-live-1", "STREAM_ACCELERATION_CUSTOMER_ID=voicebench"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
 	}
 }
 

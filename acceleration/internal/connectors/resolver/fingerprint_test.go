@@ -95,6 +95,42 @@ func (s *ResolverSuite) TestARefusedRefreshIsLoggedWithTheProvidersCodeAndTheTok
 	s.noTokenLogged(access, refresh)
 }
 
+// TestARefusedRefreshLogsTheProvidersDescriptionRedactedAndCut: the failure line also says
+// the provider's error_description (AI-1245), without the refresh token or the client secret
+// it echoes, its URL kept to the host, at most 256 bytes.
+func (s *ResolverSuite) TestARefusedRefreshLogsTheProvidersDescriptionRedactedAndCut() {
+	ref := s.f.connected()
+	access, refresh := s.f.tokens(ref)
+	s.f.srv.Use(fakeprovider.DescribedRefusal)
+	s.f.due()
+
+	_, err := s.f.router(s.f.srv.Client()).Resolve(s.f.ctx, ref, core.CredentialRequest{})
+
+	s.Require().ErrorIs(err, resolver.ErrNotConnected)
+	failed := s.line("event=refresh_failed")
+	s.Contains(failed, " provider_code=invalid_grant")
+	_, description, found := strings.Cut(failed, ` error_description="`)
+	s.Require().True(found, failed)
+	description, _, found = strings.Cut(description, `" status=`)
+	s.Require().True(found, failed)
+	s.True(strings.HasPrefix(description,
+		"refresh token [redacted] of the client with secret [redacted] is revoked: see https://idp.example éé"), description)
+	s.LessOrEqual(len(description), core.DescriptionBytes)
+	s.noTokenLogged(access, refresh, s.f.srv.ClientSecret)
+}
+
+// TestARefreshThatWorksLogsNoDescription: only a refusal's line carries one.
+func (s *ResolverSuite) TestARefreshThatWorksLogsNoDescription() {
+	ref := s.f.connected()
+	s.f.due()
+
+	_, err := s.f.router(s.f.srv.Client()).Resolve(s.f.ctx, ref, core.CredentialRequest{})
+
+	s.Require().NoError(err)
+	s.NotContains(s.f.logs.String(), "error_description")
+	s.NotContains(s.f.logs.String(), "refresh_failed")
+}
+
 // TestARevokedGrantIsLoggedByTheTokensThatEnded: a provider's signal ends the grant, and the
 // line names the tokens it ended.
 func (s *ResolverSuite) TestARevokedGrantIsLoggedByTheTokensThatEnded() {

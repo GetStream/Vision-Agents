@@ -26,13 +26,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -180,6 +180,7 @@ type serverError struct {
 // STT is one Inworld STT-1 session.
 type STT struct {
 	options Options
+	keys    *keypool.Pool
 	logger  *slog.Logger
 	emitter *stt.Emitter
 
@@ -209,12 +210,11 @@ type STT struct {
 
 // New validates the options and returns an unstarted provider.
 func New(options Options) (*STT, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar).Pin()
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(fmt.Errorf("inworld: api key is required (set %s)", apiKeyEnvVar))
 	}
+	options.APIKey = keys.Peek()
 	if options.Model == "" {
 		options.Model = DefaultModel
 	}
@@ -244,6 +244,7 @@ func New(options Options) (*STT, error) {
 
 	return &STT{
 		options:  options,
+		keys:     keys,
 		logger:   logger.With("provider", ProviderName, "model", options.Model),
 		emitter:  stt.NewEmitter(64),
 		finished: make(chan struct{}),
@@ -263,9 +264,9 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	dialer := &websocket.Dialer{HandshakeTimeout: s.options.HandshakeTimeout}
-	header := http.Header{"Authorization": []string{"Basic " + s.options.APIKey}}
-
-	conn, response, err := dialer.DialContext(ctx, s.options.URL, header)
+	conn, response, _, err := s.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+		return s.options.URL, http.Header{"Authorization": []string{"Basic " + key}}
+	})
 	if err != nil {
 		if response != nil {
 			return stack.Wrap(fmt.Errorf("inworld: dial: %w (http %d)", err, response.StatusCode))

@@ -16,6 +16,10 @@ import (
 // socket. A conversation produces a handful per turn, so anybody keeping up never fills it.
 const events = 64
 
+// hangupWithin bounds how long Leave waits for the backend to end the session it was told to
+// close. The backend closes the socket once the session has ended, well inside this.
+const hangupWithin = 5 * time.Second
+
 // ErrNotOnCall is returned by an action on a pipeline that has not joined anything, or has
 // already left.
 var ErrNotOnCall = errors.New("stream: the agent is not on a call")
@@ -386,7 +390,9 @@ func (p *Pipeline) Leave(ctx context.Context) error {
 
 	var failure error
 	if socket != nil && socket.IsOpen() {
-		failure = socket.Send(Frame{"type": "close"})
+		if failure = socket.Send(Frame{"type": "close"}); failure == nil {
+			p.awaitHangup(ctx)
+		}
 	} else if backend, err := p.backend.Resolve(); err == nil {
 		if client, err := backend.Client(); err == nil {
 			_, failure = client.StopSessionWithResponse(ctx, session.Id)
@@ -569,6 +575,27 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 }
 
 // stopWatching drops the socket and everything reading it.
+// awaitHangup waits for the backend to close the socket after the close frame, or for
+// hangupWithin, whichever is first.
+//
+// Closing the connection straight after writing the frame can lose it: a proxy between the
+// two ends may reset its side before forwarding what was still in flight, leaving the
+// session running with nobody on it.
+func (p *Pipeline) awaitHangup(ctx context.Context) {
+	closed := make(chan struct{})
+	go func() {
+		p.watcher.Wait()
+		close(closed)
+	}()
+	waiting := time.NewTimer(hangupWithin)
+	defer waiting.Stop()
+	select {
+	case <-closed:
+	case <-waiting.C:
+	case <-ctx.Done():
+	}
+}
+
 func (p *Pipeline) stopWatching() {
 	p.mu.Lock()
 	stop := p.stop

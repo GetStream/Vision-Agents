@@ -56,6 +56,7 @@ works before asking for a long one.
 | Check the setup end to end | `-max 1 -hold 20s` |
 | A number to quote | `-max 128 -hold 120s`, twice, and take the lower |
 | A local router | `-target http://localhost:8080 -namespace ""` |
+| The benchmark release, which nobody else uses (`accelerate-benchmark`, two pods, overlap deploys) | `-target benchmark` |
 | Finer steps near the ceiling | `-start <last held> -factor 1` is refused; use `-start`/`-max` around it with `-factor 2` |
 
 A step breaks when more than 5% of conversations never get the agent onto the call, more than

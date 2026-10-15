@@ -19,12 +19,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/detection"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -81,7 +81,7 @@ type Options struct {
 // Provider finds objects with one Roboflow model or Workflow. It satisfies
 // detection.Provider.
 type Provider struct {
-	apiKey  string
+	keys    *keypool.Pool
 	model   string
 	baseURL string
 	client  *http.Client
@@ -89,10 +89,8 @@ type Provider struct {
 
 // New validates the options and returns a Provider.
 func New(options Options) (*Provider, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(APIKeyEnvVar)
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, APIKeyEnvVar)
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("roboflow: " + APIKeyEnvVar + " is required"))
 	}
 	if options.Model != ModelFaces && options.Model != ModelWorkflow {
@@ -105,7 +103,7 @@ func New(options Options) (*Provider, error) {
 		options.BaseURL = DefaultBaseURL
 	}
 	return &Provider{
-		apiKey:  options.APIKey,
+		keys:    keys,
 		model:   options.Model,
 		baseURL: strings.TrimSuffix(options.BaseURL, "/"),
 		client: &http.Client{
@@ -192,13 +190,15 @@ func (p *Provider) Detect(ctx context.Context, request detection.Request) (detec
 		return detection.Result{}, detection.Fail(detection.UnsupportedOption,
 			fmt.Errorf("roboflow: the hosted model %s returns boxes and nothing else", p.model))
 	}
-	query := url.Values{"api_key": {p.apiKey}}
-	if request.MinConfidence != nil {
-		query.Set("confidence", strconv.FormatFloat(*request.MinConfidence, 'f', -1, 64))
+	build := func(key string) (string, []byte, error) {
+		query := url.Values{"api_key": {key}}
+		if request.MinConfidence != nil {
+			query.Set("confidence", strconv.FormatFloat(*request.MinConfidence, 'f', -1, 64))
+		}
+		return p.baseURL + "/" + p.model + "?" + query.Encode(), []byte(encoded), nil
 	}
-	endpoint := p.baseURL + "/" + p.model + "?" + query.Encode()
 	var answer predictions
-	if err := p.post(ctx, endpoint, "application/x-www-form-urlencoded", []byte(encoded), &answer); err != nil {
+	if err := p.post(ctx, "application/x-www-form-urlencoded", build, &answer); err != nil {
 		return detection.Result{}, err
 	}
 	return boxesOf(answer, nil, request), nil
@@ -206,19 +206,19 @@ func (p *Provider) Detect(ctx context.Context, request detection.Request) (detec
 
 // workflow runs a saved Workflow at path, or the specification when one is given.
 func (p *Provider) workflow(ctx context.Context, path string, specification json.RawMessage, encoded string, request detection.Request) (detection.Result, error) {
-	body := map[string]any{
-		"api_key": p.apiKey,
-		"inputs":  map[string]any{"image": map[string]string{"type": "base64", "value": encoded}},
-	}
-	if specification != nil {
-		body["specification"] = specification
-	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return detection.Result{}, detection.Fail(detection.ProviderFailed, err)
+	build := func(key string) (string, []byte, error) {
+		body := map[string]any{
+			"api_key": key,
+			"inputs":  map[string]any{"image": map[string]string{"type": "base64", "value": encoded}},
+		}
+		if specification != nil {
+			body["specification"] = specification
+		}
+		payload, err := json.Marshal(body)
+		return p.baseURL + path, payload, err
 	}
 	var answer workflowResponse
-	if err := p.post(ctx, p.baseURL+path, "application/json", payload, &answer); err != nil {
+	if err := p.post(ctx, "application/json", build, &answer); err != nil {
 		return detection.Result{}, err
 	}
 	if len(answer.Outputs) == 0 || answer.Outputs[0].Predictions == nil {
@@ -254,18 +254,32 @@ func boxesOf(answer predictions, embeddings [][]float32, request detection.Reque
 	return result
 }
 
-// post sends one call and decodes the answer into out.
-func (p *Provider) post(ctx context.Context, endpoint, contentType string, body []byte, out any) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return detection.Fail(detection.ProviderFailed, errors.New("roboflow: the request could not be built"))
+// post sends one call, built by build for a key from the pool and again for the next key
+// on a 429, and decodes the answer into out.
+func (p *Provider) post(ctx context.Context, contentType string, build func(key string) (string, []byte, error), out any) error {
+	var used string
+	var buildErr error
+	response, err := p.keys.Send(ctx, func(key string) (*http.Response, error) {
+		used = key
+		endpoint, body, err := build(key)
+		if err != nil {
+			buildErr = err
+			return nil, err
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			buildErr = errors.New("roboflow: the request could not be built")
+			return nil, buildErr
+		}
+		request.Header.Set("Content-Type", contentType)
+		return p.client.Do(request)
+	})
+	if buildErr != nil {
+		return detection.Fail(detection.ProviderFailed, buildErr)
 	}
-	request.Header.Set("Content-Type", contentType)
-
-	response, err := p.client.Do(request)
 	if err != nil {
 		// The URL carries the key, and an error from the client repeats the URL.
-		return detection.Fail(detection.CodeOf(err), errors.New("roboflow: "+strings.ReplaceAll(err.Error(), p.apiKey, "REDACTED")))
+		return detection.Fail(detection.CodeOf(err), errors.New("roboflow: "+strings.ReplaceAll(err.Error(), used, "REDACTED")))
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
