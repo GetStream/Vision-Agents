@@ -114,7 +114,14 @@ func (r *reviewer) Review(call store.Call, target string, said []spoken) {
 		ctx, cancel := context.WithTimeout(r.ctx, reviewTimeout)
 		defer cancel()
 
-		if err := r.review(ctx, call, target, said); err != nil {
+		err := r.review(ctx, call, target, said)
+		switch {
+		case err == nil:
+		case r.ctx.Err() != nil:
+			// Close cut it short, which a shutdown does on purpose: whatever the review
+			// failed with once that happened is the shutdown, not a fault.
+			r.logger.Warn("a shutdown abandoned the call's review", "call", call.ID, "error", err)
+		default:
 			r.logger.Error("could not review the call", "call", call.ID, "error", err)
 		}
 	}()
