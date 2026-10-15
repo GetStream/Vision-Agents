@@ -429,6 +429,24 @@ class TestAgent < LocalRouterTest
     FileUtils.rm_rf(File.dirname(root))
   end
 
+  def test_sync_sends_how_the_sandbox_is_built_and_what_it_may_reach
+    root = folder
+    File.write(File.join(root, "agent.yaml"),
+               "name: jean\nsandbox: daytona\nsandbox_options:\n  setup: [pip install bpy==5.2.2]\n  timeout: 5m\n" \
+               "  memory_gb: 4\n  network: true\n  allowed_domains: [api.example.com]\n" \
+               "  network_allow_list: [10.0.0.0/8]\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client).sync
+
+    assert_equal({ "setup" => ["pip install bpy==5.2.2"], "timeout_ms" => 300_000, "memory_gb" => 4,
+                   "network" => true, "allowed_domains" => ["api.example.com"],
+                   "network_allow_list" => ["10.0.0.0/8"] },
+                 @router.last(:post, "/v1/agents/sync").json["sandbox_options"])
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
   def test_sync_sends_the_files_a_skill_folder_brings
     root = folder
     FileUtils.mkdir_p(File.join(root, "skills/pdf/reference"))

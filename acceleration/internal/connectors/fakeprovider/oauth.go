@@ -416,6 +416,12 @@ func (s *Server) refreshGrant(w http.ResponseWriter, r *http.Request, c *client)
 		return
 	}
 	presented := r.PostForm.Get("refresh_token")
+	if s.is(DescribedRefusal) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_grant", "error_description": "refresh token " +
+			presented + " of the client with secret " + c.secret + " is revoked: see https://idp.example/errors/" + presented +
+			"?client_secret=" + c.secret + " " + strings.Repeat("é", 200)})
+		return
+	}
 	rt := s.refresh[presented]
 	if rt == nil || rt.grant.revoked || rt.grant.clientID != c.id {
 		s.tokenError(w, http.StatusBadRequest, "invalid_grant", "invalid_refresh_token")

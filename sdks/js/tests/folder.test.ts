@@ -258,7 +258,7 @@ describe("loadFolder", () => {
     assert.deepEqual(empty.settings?.channels, {});
   });
 
-  it("refuses mcp_servers or channels it would otherwise have to guess at", async () => {
+  it("refuses mcp_servers, channels or sandbox_options it would otherwise have to guess at", async () => {
     const server = "mcp_servers:\n  - name: notes\n    url: https://example.com/mcp\n";
     for (const [declaration, reason] of [
       ["mcp_servers:\n  - https://example.com/mcp\n", /an mcp server is a mapping with a name and a url/],
@@ -275,6 +275,11 @@ describe("loadFolder", () => {
       ['channels:\n  sms: "+15551234567"\n', /channels\.sms should be a mapping with a number/],
       ["channels:\n  identity:\n    - link\n", /channels\.identity is one value, not a list/],
       ["channels:\n    sms:\n      number: x\n  identity: link\n", /belongs to no channel/],
+      ["sandbox_options: big\n", /sandbox_options should be a mapping/],
+      ["sandbox_options:\n  memory: 4\n", /unknown sandbox_options setting "memory"/],
+      ["sandbox_options:\n  timeout: 2h\n", /sandbox_options\.timeout must be a duration up to 30m/],
+      ["sandbox_options:\n  cpu: two\n", /sandbox_options\.cpu must be a whole number/],
+      ["sandbox_options:\n  network: maybe\n", /sandbox_options\.network must be true or false/],
     ] as const) {
       await assert.rejects(
         async () => loadFolder(await agentDir({ "agent.yaml": declaration })),

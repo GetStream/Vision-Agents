@@ -2,6 +2,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
@@ -524,29 +525,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 	connectorLimiter := newConnectorLimiter(connectorTransports, liveClient, logger)
 
-	// A daily limit is counted in Redis, so a deployment without one caps nothing. That is
-	// the right way round: the limit protects against a customer's end users spending more
-	// than they were meant to, and refusing every request because the counter is missing
-	// would be a worse outage than the one it prevents.
-	var limiter *quota.Limiter
-	limits := quota.Limits{
-		MessagesPerDay: settings.RateLimit.MessagesPerDay,
-		TokensPerDay:   settings.RateLimit.TokensPerDay,
-	}
-	switch {
-	case !limits.Enforced():
-		logger.Warn("no daily limit configured, an end user may spend without bound",
-			"setting", "rate_limit.messages_per_day")
-	case liveClient == nil:
-		logger.Warn("no redis configured, daily limits will not be enforced", "setting", "redis.addr")
-	default:
-		if limiter, err = quota.New(liveClient.Redis(), limits, logger); err != nil {
-			return err
-		}
-		logger.Info("capping what one end user may spend in a day",
-			"messages", limits.MessagesPerDay, "tokens", limits.TokensPerDay)
-	}
-
 	// What every request is measured against -- the key it presented, the app behind it,
 	// their policies and what they have configured -- read through Redis and the cache
 	// rueidis keeps beside it. Without Redis it is Postgres on every read, which is what
@@ -593,6 +571,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		gate = policies
+	}
+
+	limiter, err := newDailyLimiter(liveClient, quota.Limits{
+		MessagesPerDay: settings.RateLimit.MessagesPerDay,
+		TokensPerDay:   settings.RateLimit.TokensPerDay,
+	}, policies, logger)
+	if err != nil {
+		return err
 	}
 
 	if settings.Agent.SpeculativeReplies {
@@ -1326,7 +1312,10 @@ type stopping struct {
 	held      func() int
 	telephony *phone.Service
 	drain     time.Duration
-	logger    *slog.Logger
+	// grace is how long the requests still open on a closing listener get to finish; zero
+	// means shutdownGrace.
+	grace  time.Duration
+	logger *slog.Logger
 }
 
 // drainPoll is how often a draining router looks at how many sessions it still holds.
@@ -1335,19 +1324,20 @@ const drainPoll = 250 * time.Millisecond
 // stopServing stops taking work, then lets what is running finish.
 //
 // Without a drain it hangs up the calls through customers' own SIP trunks, then drains HTTP,
-// both inside shutdownGrace: the drain gets whatever the hangup left of it. With one, the
+// both inside the grace: the drain gets whatever the hangup left of it. With one, the
 // public listener closes first and the sessions this process holds, phone calls included,
 // keep going until they end or the drain runs out, still answering their peers' requests.
 // A second signal stops waiting. The sessions left are ended by the caller's
 // sessions.Shutdown either way.
 func stopServing(s stopping) error {
 	s.drainWork()
+	grace := cmp.Or(s.grace, shutdownGrace)
 	if s.drain <= 0 {
-		deadline := time.Now().Add(shutdownGrace)
+		deadline := time.Now().Add(grace)
 		closePhone(s.telephony, s.logger)
 		shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
 		defer cancel()
-		return errors.Join(s.public.Shutdown(shutdownCtx), shutdown(shutdownCtx, s.peers))
+		return errors.Join(shutdown(shutdownCtx, s.public, s.logger), shutdown(shutdownCtx, s.peers, s.logger))
 	}
 
 	again := make(chan os.Signal, 1)
@@ -1356,7 +1346,7 @@ func stopServing(s stopping) error {
 	timeout := time.NewTimer(s.drain)
 	defer timeout.Stop()
 
-	httpCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	httpCtx, cancel := context.WithTimeout(context.Background(), grace)
 	if err := s.public.Shutdown(httpCtx); err != nil {
 		s.logger.Warn("requests were still running when the public listener closed", "error", err)
 	}
@@ -1378,9 +1368,9 @@ func stopServing(s stopping) error {
 	}
 
 	closePhone(s.telephony, s.logger)
-	peerCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	peerCtx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
-	return shutdown(peerCtx, s.peers)
+	return shutdown(peerCtx, s.peers, s.logger)
 }
 
 // running is how many sessions a router holds; one without sessions holds none.
@@ -1413,12 +1403,19 @@ func servePprof(addr string, logger *slog.Logger) {
 	}
 }
 
-// shutdown drains a server that may not exist.
-func shutdown(ctx context.Context, server *http.Server) error {
+// shutdown drains a server that may not exist. A request still open when ctx runs out is
+// a warning, not an error: a deploy outlasting a slow request is how a deploy goes, and an
+// error here would page Sentry and exit 1 on every such rollout.
+func shutdown(ctx context.Context, server *http.Server, logger *slog.Logger) error {
 	if server == nil {
 		return nil
 	}
-	return server.Shutdown(ctx)
+	err := server.Shutdown(ctx)
+	if errors.Is(err, context.DeadlineExceeded) {
+		logger.Warn("requests were still running when the grace ran out", "error", err)
+		return nil
+	}
+	return err
 }
 
 // pruneDataChanges drops the recorded changes nobody can resume from any more, hourly
@@ -1783,4 +1780,42 @@ func buildDLC(
 		return nil, nil, err
 	}
 	return service, gate, nil
+}
+
+// newDailyLimiter caps what one end user may spend in a day, or returns nil when nothing
+// can be capped.
+//
+// A daily limit is counted in Redis, so a deployment without one caps nothing. That is the
+// right way round: the limit protects against a customer's end users spending more than
+// they were meant to, and refusing every request because the counter is missing would be a
+// worse outage than the one it prevents. The deployment's numbers are only the default: an
+// app sets its own in its policy, so a deployment with no default still caps an app that
+// sets one.
+func newDailyLimiter(liveClient *live.Client, limits quota.Limits, policies *policy.Enforcer, logger *slog.Logger) (*quota.Limiter, error) {
+	// A nil *Enforcer in the interface is not a nil Source.
+	var source quota.Source
+	if policies != nil {
+		source = policies
+	}
+	switch {
+	case !limits.Enforced() && source == nil:
+		logger.Warn("no daily limit configured, an end user may spend without bound",
+			"setting", "rate_limit.messages_per_day")
+		return nil, nil
+	case liveClient == nil:
+		logger.Warn("no redis configured, daily limits will not be enforced", "setting", "redis.addr")
+		return nil, nil
+	}
+	limiter, err := quota.New(liveClient.Redis(), limits, source, logger)
+	if err != nil {
+		return nil, err
+	}
+	if !limits.Enforced() {
+		logger.Info("no default daily limit is set, only the daily limits in app policies apply",
+			"setting", "rate_limit.messages_per_day")
+		return limiter, nil
+	}
+	logger.Info("capping what one end user may spend in a day, unless their app's policy says otherwise",
+		"messages", limits.MessagesPerDay, "tokens", limits.TokensPerDay)
+	return limiter, nil
 }

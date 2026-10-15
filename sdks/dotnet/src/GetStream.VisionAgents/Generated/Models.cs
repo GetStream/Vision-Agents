@@ -1024,6 +1024,39 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AnalyzeReviewsRequest
+    {
+
+        /// <summary>
+        /// Only calls that started at or after this, inclusive.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("from")]
+        public System.DateTimeOffset From { get; set; } = default!;
+
+        /// <summary>
+        /// The model that analyses, a "provider/model" name or a shortcut. Left out, multilingual-high-accuracy.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("target")]
+        public string? Target { get; set; } = default!;
+
+        /// <summary>
+        /// Only calls that started before this, exclusive.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("to")]
+        public System.DateTimeOffset To { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     /// <summary>
     /// What the router does for the calling app. It never carries a secret.
     /// </summary>
@@ -7789,6 +7822,72 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ReviewAnalysis
+    {
+
+        /// <summary>
+        /// How many badly reviewed calls were read. Zero means there were none, and nothing was asked.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("calls_read")]
+        public long CallsRead { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("causes")]
+        public System.Collections.Generic.List<ReviewCause> Causes { get; set; } = new System.Collections.Generic.List<ReviewCause>();
+
+        /// <summary>
+        /// The whole, in two sentences.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("summary")]
+        public string Summary { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ReviewCause
+    {
+
+        /// <summary>
+        /// The calls it explains, which are the sessions that ran them. Only ids that were read.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("call_ids")]
+        public System.Collections.Generic.List<string> CallIds { get; set; } = new System.Collections.Generic.List<string>();
+
+        /// <summary>
+        /// What went wrong in those calls.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("explanation")]
+        public string Explanation { get; set; } = default!;
+
+        /// <summary>
+        /// What to change in the agent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("fix")]
+        public string Fix { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("title")]
+        public string Title { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class ReviewPage
     {
 
@@ -8050,11 +8149,17 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+    /// How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class SandboxOptions
     {
+
+        /// <summary>
+        /// Domains code in the sandbox may reach, such as api.example.com. Set, nothing else is reachable, even with network on. Not with network_allow_list.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("allowed_domains")]
+        public System.Collections.Generic.List<string>? AllowedDomains { get; set; } = default!;
 
         /// <summary>
         /// CPUs for the sandbox. Zero is the provider's default.
@@ -8079,6 +8184,18 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("memory_gb")]
         public long? MemoryGb { get; set; } = default!;
+
+        /// <summary>
+        /// Whether code in the sandbox may reach the internet. Off by default, and then every outbound connection is blocked unless allowed_domains or network_allow_list names where it may go.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("network")]
+        public bool? Network { get; set; } = default!;
+
+        /// <summary>
+        /// CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set, nothing else is reachable, even with network on. Not with allowed_domains.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("network_allow_list")]
+        public System.Collections.Generic.List<string>? NetworkAllowList { get; set; } = default!;
 
         /// <summary>
         /// Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it.
@@ -10197,6 +10314,33 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SuspendTelephonyRequest
+    {
+
+        /// <summary>
+        /// Why the app is suspended. The app is never shown it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
+
+        /// <summary>
+        /// Who is suspending it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("suspended_by")]
+        public string SuspendedBy { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     /// <summary>
     /// An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
     /// </summary>
@@ -10511,6 +10655,45 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("value")]
         public string Value { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class TelephonySuspension
+    {
+
+        /// <summary>
+        /// The app that is suspended.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("customer_id")]
+        public string CustomerId { get; set; } = default!;
+
+        /// <summary>
+        /// Why, for Stream staff. The app is never shown it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
+
+        /// <summary>
+        /// When it was suspended, or last changed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("suspended_at")]
+        public System.DateTimeOffset SuspendedAt { get; set; } = default!;
+
+        /// <summary>
+        /// Who suspended it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("suspended_by")]
+        public string SuspendedBy { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

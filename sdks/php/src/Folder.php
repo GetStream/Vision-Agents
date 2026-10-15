@@ -345,8 +345,10 @@ final readonly class Folder
 
     /**
      * A Go duration such as 1m30s or 500ms, or a bare number of seconds, in seconds.
+     *
+     * @internal
      */
-    private static function deadline(string $value): float
+    public static function deadline(string $value): float
     {
         if (is_numeric($value)) {
             return (float) $value;

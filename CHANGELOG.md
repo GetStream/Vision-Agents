@@ -610,7 +610,45 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 `deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
 
+### Go: `ListConnectionsParams.OwnerType` is a pointer
+
+`owner_type` is optional on `listConnections`, so the Go client's `ListConnectionsParams.OwnerType`
+is `*ConnectionOwnerType`, and nil means the app's own. Code that set `OwnerType: acceleration.ConnectionOwnerTypeApp`
+no longer compiles. Pass `&app` for a variable holding the value, or leave the field nil for the app.
+
 ## New Features
+
+### Listing connections without `owner_type` lists the app's own
+
+`GET /v1/agents/connections` takes `owner_type` as optional. Left out, it lists the app's own
+connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` still
+needs `X-Stream-User-Id`.
+
+### A built-in Notion connector
+
+The connector catalog (`GET /v1/agents/connectors`) has `notion`: Notion's hosted MCP server at `https://mcp.notion.com/mcp`. A connection signs in with `oauth2_code`. The router registers its own client with Notion (`dcr`) and asks for the `default` scope, so no app registers anything first. The agent can search, read and update the pages and databases that the person who signed in can access (AI-1292).
+
+### Each app sets its own daily limit per end user
+
+An app sets what one of its end users may spend in a UTC day as `quota` in its policy,
+`PUT /v1/policies/app`: `messages_per_user_per_day` and `tokens_per_user_per_day`, each from
+`0` (no cap) to a bound that only catches a typo. Left out, the deployment's
+`ROUTER_RATE_LIMIT_*` default applies, as before. An organization has none: a `quota` sent to
+`PUT /v1/policies/organization` is a 400. A counted answer carries `X-Quota-Limit`,
+`X-Quota-Remaining` and `X-Quota-Reset`. Each answer is counted on whoever sent the
+turn: in a session a backend opened in a user's name, the backend's turns are not counted and
+the user's own are. `mock/*` answers are not counted, and an address is counted per app.
+
+### A connection's call log says why a call failed
+
+`GET /v1/agents/connections/{id}/invocations` gives each failed call a `provider_status`, the
+HTTP status the provider answered it with, and an `error_message`: the start of the provider's
+error body when it answered with a 4xx or a 5xx, or else what the call's error said, at most
+1 KiB, with every URL cut to its host and the connection's credential and the request's path
+taken out. A call the router held for a
+provider's rate limit, and so never sent, keeps `error_type: denied` and says
+`rate limited by the router: retry after <seconds>s`. Both are absent for a call that answered
+and for calls recorded before this release. What the model reads of a call is unchanged.
 
 ### Fish Audio Drama 3 is `fish/drama-3`, and the `fish` default
 
@@ -1914,6 +1952,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A router stopping with a request still open when its 10 s shutdown grace runs out logs a warning and exits 0. It reported `context deadline exceeded` to Sentry and exited 1, so a rollout that outlasted one slow request paged as a failure (AI-1283).
 - The daily message and token limits count per user behind the proxy again. With `ROUTER_TRUSTED_PROXIES` unset, every request's address was the proxy's, so all end users shared one address allowance and the deployment as a whole was cut off after 200 responses a day. In `proxy` auth mode with no trusted ranges a named user is now counted only by user, and a guest still by address; set `ROUTER_TRUSTED_PROXIES` to count by the forwarded client address as well.
 - A request with a data policy can be answered by Gemini 3.8 Flash, the model `llm-fast` prefers. It declared no data policy, so any request that asked for no training passed it over.
 - The router starts on a database that already applied the migrations shipped before customer-hosted models. That migration was numbered earlier than one already applied, and goose refuses to start when it finds an unapplied migration below the database version. It now runs after that version. A database that already created `custom_models` under the old number keeps the table.

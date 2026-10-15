@@ -80,6 +80,41 @@ public sealed record ConnectorDeclaration(string Name, string Connector = "", IR
 public sealed record DispatchDeclaration(string IncomingCall, string Text);
 
 /// <summary>
+/// How the sandbox is built and what code in it may reach. A null field was not written and
+/// is left out of the sync. Outbound network is blocked unless <see cref="Network"/> or an
+/// allow list opens it.
+/// </summary>
+public sealed record SandboxDeclaration
+{
+    /// <summary>The container image to start from, which must have Python.</summary>
+    public string? Image { get; init; }
+
+    /// <summary>Shell commands run once on top of the image when it is built.</summary>
+    public IReadOnlyList<string>? Setup { get; init; }
+
+    /// <summary>How long one run of code may take, at most 30 minutes.</summary>
+    public TimeSpan? Timeout { get; init; }
+
+    /// <summary>CPUs for the sandbox. Zero is the provider's default.</summary>
+    public long? Cpu { get; init; }
+
+    /// <summary>Memory for the sandbox, in GiB. Zero is the provider's default.</summary>
+    public long? MemoryGb { get; init; }
+
+    /// <summary>Disk for the sandbox, in GiB. Zero is the provider's default.</summary>
+    public long? DiskGb { get; init; }
+
+    /// <summary>Whether code in the sandbox may reach the internet.</summary>
+    public bool? Network { get; init; }
+
+    /// <summary>Domains code in the sandbox may reach. Set, nothing else is reachable.</summary>
+    public IReadOnlyList<string>? AllowedDomains { get; init; }
+
+    /// <summary>CIDR ranges code in the sandbox may reach. Set, nothing else is reachable.</summary>
+    public IReadOnlyList<string>? NetworkAllowList { get; init; }
+}
+
+/// <summary>
 /// What <c>agent.yaml</c> declares: what the agent is called and what it runs on.
 /// </summary>
 /// <remarks>
@@ -126,6 +161,9 @@ public sealed record Declaration
 
     /// <summary>Where the subagent may run code it writes.</summary>
     public string Sandbox { get; init; } = "";
+
+    /// <summary>How the sandbox is built and what it may reach, null when agent.yaml has no <c>sandbox_options:</c> block.</summary>
+    public SandboxDeclaration? SandboxOptions { get; init; }
 
     /// <summary>The plugins the agent may use.</summary>
     public IReadOnlyList<string> Plugins { get; init; } = [];
@@ -552,12 +590,54 @@ public sealed class Folder
             Search = read.Search ?? "",
             Greeting = read.Greeting is { } greeting ? new GreetingDeclaration(greeting.Text ?? "", greeting.Mode ?? "") : null,
             Sandbox = read.Sandbox ?? "",
+            SandboxOptions = read.SandboxOptions is { } options ? SandboxOf(options, path) : null,
             Plugins = read.Plugins ?? [],
             Connectors = connectors,
             Keyterms = read.Keyterms ?? [],
             Tags = read.Tags ?? [],
             Video = video,
             Dispatch = read.Dispatch is { } dispatch ? new DispatchDeclaration(dispatch.IncomingCall ?? "", dispatch.Text ?? "") : null,
+        };
+    }
+
+    private static SandboxDeclaration SandboxOf(WrittenSandboxOptions written, string path)
+    {
+        TimeSpan? timeout = null;
+        if (written.Timeout is { } given)
+        {
+            TimeSpan parsed;
+            try
+            {
+                parsed = ParseDeadline(given);
+            }
+            catch (ConfigurationException)
+            {
+                parsed = TimeSpan.Zero;
+            }
+            if (parsed <= TimeSpan.Zero || parsed > TimeSpan.FromMinutes(30))
+            {
+                throw new ConfigurationException($"{path}: sandbox_options.timeout must be a duration up to 30m");
+            }
+            timeout = parsed;
+        }
+        foreach (var (name, size) in new[] { ("cpu", written.Cpu), ("memory_gb", written.MemoryGb), ("disk_gb", written.DiskGb) })
+        {
+            if (size < 0)
+            {
+                throw new ConfigurationException($"{path}: sandbox_options.{name} must be a whole number");
+            }
+        }
+        return new SandboxDeclaration
+        {
+            Image = written.Image,
+            Setup = written.Setup,
+            Timeout = timeout,
+            Cpu = written.Cpu,
+            MemoryGb = written.MemoryGb,
+            DiskGb = written.DiskGb,
+            Network = written.Network,
+            AllowedDomains = written.AllowedDomains,
+            NetworkAllowList = written.NetworkAllowList,
         };
     }
 
@@ -999,6 +1079,7 @@ public sealed class Folder
         [YamlMember(Alias = "search")] public string? Search { get; set; }
         [YamlMember(Alias = "greeting")] public WrittenGreeting? Greeting { get; set; }
         [YamlMember(Alias = "sandbox")] public string? Sandbox { get; set; }
+        [YamlMember(Alias = "sandbox_options")] public WrittenSandboxOptions? SandboxOptions { get; set; }
         [YamlMember(Alias = "plugins")] public List<string>? Plugins { get; set; }
         [YamlMember(Alias = "connectors")] public WrittenConnectorList? Connectors { get; set; }
         [YamlMember(Alias = "keyterms")] public List<string>? Keyterms { get; set; }
@@ -1092,6 +1173,19 @@ public sealed class Folder
     {
         [YamlMember(Alias = "incoming_call")] public string? IncomingCall { get; set; }
         [YamlMember(Alias = "text")] public string? Text { get; set; }
+    }
+
+    private sealed class WrittenSandboxOptions
+    {
+        [YamlMember(Alias = "image")] public string? Image { get; set; }
+        [YamlMember(Alias = "setup")] public List<string>? Setup { get; set; }
+        [YamlMember(Alias = "timeout")] public string? Timeout { get; set; }
+        [YamlMember(Alias = "cpu")] public long? Cpu { get; set; }
+        [YamlMember(Alias = "memory_gb")] public long? MemoryGb { get; set; }
+        [YamlMember(Alias = "disk_gb")] public long? DiskGb { get; set; }
+        [YamlMember(Alias = "network")] public bool? Network { get; set; }
+        [YamlMember(Alias = "allowed_domains")] public List<string>? AllowedDomains { get; set; }
+        [YamlMember(Alias = "network_allow_list")] public List<string>? NetworkAllowList { get; set; }
     }
 
     private sealed class WrittenSimulation

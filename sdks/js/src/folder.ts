@@ -590,7 +590,7 @@ const LISTS = new Set(["plugins", "keyterms"]);
  * ```
  *
  * Parsed by hand for the same reason urls.yaml is: the declaration is flat but for two lists
- * and four small mappings, and a YAML library would land in every browser bundle. A key
+ * and five small mappings, and a YAML library would land in every browser bundle. A key
  * nobody knows is refused rather than dropped, since a misspelled `llm` that goes quietly is
  * a config running on a model the file does not name.
  */
@@ -654,6 +654,8 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       if (lines) {
         declared.channels = lines;
       }
+    } else if (key === "sandbox_options") {
+      declared.sandboxOptions = sandboxOptions(indented, inline, where);
     } else {
       throw new ConfigurationError(
         `${where} declares ${JSON.stringify(key)}, which is not something an agent has`,
@@ -929,6 +931,94 @@ function channels(
     }
   }
   return declared;
+}
+
+const SANDBOX_LISTS = new Set(["setup", "allowed_domains", "network_allow_list"]);
+const SANDBOX_SIZES = new Set(["cpu", "memory_gb", "disk_gb"]);
+const SANDBOX_TIMEOUT_MS = 30 * 60_000;
+
+/**
+ * Reads `sandbox_options:`, how the sandbox is built and what code in it may reach:
+ *
+ * ```yaml
+ * sandbox_options:
+ *   image: python:3.13-slim-bookworm
+ *   setup: [pip install bpy==5.2.2]
+ *   timeout: 5m
+ *   memory_gb: 4
+ *   network: true
+ *   allowed_domains: [api.example.com]
+ * ```
+ */
+function sandboxOptions(lines: string[], inline: string, where: string): Schemas["SandboxOptions"] {
+  if (scalar(inline) !== undefined) {
+    throw new ConfigurationError(`${where}: sandbox_options should be a mapping`);
+  }
+
+  const keys = new Map<string, Written>();
+  let keyColumn = -1;
+  let value: Written | undefined;
+  for (const line of lines) {
+    const trimmed = line.replace(/\s+#.*$/, "").trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const column = line.length - line.trimStart().length;
+    if (keyColumn < 0) {
+      keyColumn = column;
+    }
+    if (value && (column > keyColumn || trimmed.startsWith("-"))) {
+      value.nested.push(trimmed);
+      continue;
+    }
+    const entry = /^([A-Za-z_][\w-]*):(?:\s+(.*))?$/.exec(trimmed);
+    if (column !== keyColumn || !entry) {
+      throw new ConfigurationError(`${where}: ${JSON.stringify(trimmed)} belongs to no sandbox_options setting`);
+    }
+    value = { inline: (entry[2] ?? "").trim(), nested: [] };
+    keys.set(entry[1] as string, value);
+  }
+
+  const options: { -readonly [key in keyof Schemas["SandboxOptions"]]: Schemas["SandboxOptions"][key] } = {};
+  for (const [key, written] of keys) {
+    const name = `sandbox_options.${key}`;
+    if (SANDBOX_LISTS.has(key)) {
+      const items = written.inline
+        ? flowList(written.inline, name, where)
+        : written.nested.map((item) => listItem(item, name, where));
+      options[key as "setup"] = items.filter((item) => item);
+      continue;
+    }
+    if (written.nested.length) {
+      throw new ConfigurationError(`${where}: ${name} is one value, not a list`);
+    }
+    const given = scalar(written.inline);
+    if (given === undefined) {
+      continue;
+    }
+    if (key === "image") {
+      options.image = given;
+    } else if (key === "network") {
+      if (given !== "true" && given !== "false") {
+        throw new ConfigurationError(`${where}: ${name} must be true or false`);
+      }
+      options.network = given === "true";
+    } else if (key === "timeout") {
+      const timeout = parseDeadline(given, where);
+      if (timeout <= 0 || timeout > SANDBOX_TIMEOUT_MS) {
+        throw new ConfigurationError(`${where}: ${name} must be a duration up to 30m`);
+      }
+      options.timeout_ms = timeout;
+    } else if (SANDBOX_SIZES.has(key)) {
+      if (!/^\d+$/.test(given)) {
+        throw new ConfigurationError(`${where}: ${name} must be a whole number`);
+      }
+      options[key as "cpu"] = Number(given);
+    } else {
+      throw new ConfigurationError(`${where}: unknown sandbox_options setting ${JSON.stringify(key)}`);
+    }
+  }
+  return options;
 }
 
 function connectorOf(

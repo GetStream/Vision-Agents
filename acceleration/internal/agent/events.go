@@ -307,7 +307,9 @@ type ToolRan struct {
 	Arguments string
 	// Result is what the model was told about the outcome.
 	Result string
-	Err    error
+	// Files are what code the tool ran handed back, published where the person sees them.
+	Files []sandbox.Attachment
+	Err   error
 }
 
 func (ToolRan) isAgentEvent() {}

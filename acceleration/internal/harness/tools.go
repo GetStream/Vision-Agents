@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -87,6 +88,13 @@ func (t Tools) Requests() []llm.Tool {
 		})
 	}
 	return rendered
+}
+
+// SandboxTool is run_code as the model holding a written conversation is offered it, when
+// there is no subagent to hand code to.
+func SandboxTool() Tool {
+	tool := sandbox.Tool()
+	return Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters}
 }
 
 // usePolicy is what a reply model is told about using the tools it is offered. A model that

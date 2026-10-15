@@ -829,7 +829,7 @@ export type paths = {
         };
         /**
          * List a connection's tool calls
-         * @description Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+         * @description Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, except the start of the provider's error for a call that failed, and an incognito session's calls name no session. Who may read them is who may read the connection.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -1797,7 +1797,7 @@ export type paths = {
          *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
          *     `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider rejected the token or key a bearer or api_key connection holds, or the connection reads a connector revision marked broken; only saving its credentials again fixes it, so no login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
          *     `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
-         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id.
+         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a client opens launch_url in a popup and posts it handoff_token, as for createAuthorization. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.
          *     A respond command carrying request_id emits command_accepted with a nested command receipt (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
          *     An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `request_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
          *     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
@@ -4827,6 +4827,8 @@ export type components = {
             readonly config_id: string;
             readonly connection_id: string;
             readonly connector_id: string;
+            /** @description Why the call failed: the start of the provider's error body when it answered with a 4xx or a 5xx, else what the call's error said, at most 1 KiB. Every URL in it keeps only its scheme and host, and the connection's credential and the request's path are taken out. A call the router held for the provider's rate limit says rate limited by the router: retry after <seconds>s. Absent for a call that answered, and for a call recorded before the router kept it. */
+            readonly error_message?: string;
             /** @description How the call failed. Absent for a call that answered. */
             readonly error_type?: components["schemas"]["InvocationErrorType"];
             readonly id: string;
@@ -4835,6 +4837,11 @@ export type components = {
              * @description From the call reaching the router to its answer, the router's own checks included.
              */
             readonly latency_ms: number;
+            /**
+             * Format: int64
+             * @description The HTTP status the provider answered the call's last request with. Absent for a call that answered, and for one no request of which was answered: the router refused or held it, or the provider could not be reached.
+             */
+            readonly provider_status?: number;
             /** @description The session that called it. Absent for an incognito session, whose calls are tied to no conversation. */
             readonly session_id?: string;
             /** Format: date-time */
@@ -4875,7 +4882,7 @@ export type components = {
         readonly ConnectionPage: {
             readonly has_more: boolean;
             readonly items: readonly components["schemas"]["Connection"][] | null;
-            /** @description Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one. */
+            /** @description Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app). Absent on the last one. */
             readonly next_cursor?: string;
         };
         /** @description A connection to create, pending until an account is connected. An unknown field is refused rather than ignored. */
@@ -6540,6 +6547,7 @@ export type components = {
             readonly data_policy?: components["schemas"]["DataPolicy"];
             /** @description Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on. */
             readonly prompt_injection?: boolean;
+            readonly quota?: components["schemas"]["Quota"];
             /** @description Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused. */
             readonly require_own_stream_app?: boolean;
             /**
@@ -6664,6 +6672,21 @@ export type components = {
              * @example 3.75
              */
             readonly per_million_output_tokens?: number;
+        };
+        /** @description What one end user of the app may spend in a UTC day, counted per user and per address. Only an app's policy has one: an organization's that sets it is refused. A turn is counted on the day of the user who sent it, and a backend's own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset. */
+        readonly Quota: {
+            /**
+             * Format: int64
+             * @description How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
+             * @example 20000
+             */
+            readonly messages_per_user_per_day?: number;
+            /**
+             * Format: int64
+             * @description How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
+             * @example 50000000
+             */
+            readonly tokens_per_user_per_day?: number;
         };
         readonly RCSProfile: {
             readonly agent_overview?: string;
@@ -6812,12 +6835,14 @@ export type components = {
             readonly tts?: components["schemas"]["TtsOptions"];
         };
         /**
-         * @description Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+         * @description Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
          * @enum {string}
          */
         readonly Sandbox: "daytona";
-        /** @description How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run. */
+        /** @description How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run. */
         readonly SandboxOptions: {
+            /** @description Domains code in the sandbox may reach, such as api.example.com. Set, nothing else is reachable, even with network on. Not with network_allow_list. */
+            readonly allowed_domains?: readonly string[];
             /**
              * Format: int64
              * @description CPUs for the sandbox. Zero is the provider's default.
@@ -6835,6 +6860,10 @@ export type components = {
              * @description Memory for the sandbox, in GiB. Zero is the provider's default.
              */
             readonly memory_gb?: number;
+            /** @description Whether code in the sandbox may reach the internet. Off by default, and then every outbound connection is blocked unless allowed_domains or network_allow_list names where it may go. */
+            readonly network?: boolean;
+            /** @description CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set, nothing else is reachable, even with network on. Not with allowed_domains. */
+            readonly network_allow_list?: readonly string[];
             /** @description Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it. */
             readonly setup?: readonly string[];
             /**
@@ -9818,15 +9847,15 @@ export interface operations {
     };
     readonly listConnections: {
         readonly parameters: {
-            readonly query: {
+            readonly query?: {
                 /** @description Keeps one connector's. */
                 readonly connector_id?: string;
                 /** @description The next_cursor of the previous page. Omitted is the first page. */
                 readonly cursor?: string;
                 /** @description Up to 200. Omitted is 25. */
                 readonly limit?: number;
-                /** @description app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. */
-                readonly owner_type: components["schemas"]["ConnectionOwnerType"];
+                /** @description app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. Omitted is app. */
+                readonly owner_type?: components["schemas"]["ConnectionOwnerType"];
             };
             readonly header?: never;
             readonly path?: never;

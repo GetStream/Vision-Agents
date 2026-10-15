@@ -649,6 +649,7 @@ impl Agent {
             search: text(&settings.search),
             greeting: settings.greeting.clone(),
             sandbox: sandbox.or(settings.sandbox),
+            sandbox_options: settings.sandbox_options.clone(),
             plugins: (!settings.plugins.is_empty()).then(|| {
                 settings
                     .plugins

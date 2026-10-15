@@ -145,6 +145,9 @@ pub struct Settings {
     /// What the agent opens the call with. `None` leaves the stored one.
     pub greeting: Option<types::Greeting>,
     pub sandbox: Option<types::Sandbox>,
+    /// How the sandbox is built and what code in it may reach. Outbound network is blocked
+    /// unless `network` or an allow list opens it. `None` leaves the stored options.
+    pub sandbox_options: Option<types::SandboxOptions>,
     pub plugins: Vec<String>,
     /// The connectors whose tools the agent may call. `None` when the declaration says
     /// nothing, which leaves the bindings stored; empty when the file lists none, which
@@ -474,6 +477,7 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             "greeting" => settings.greeting = greeting(&value)?,
             "mode" => settings.mode = named(&text()?, "mode")?,
             "sandbox" => settings.sandbox = named(&text()?, "sandbox")?,
+            "sandbox_options" => settings.sandbox_options = sandbox_options(&value)?,
             "plugins" => settings.plugins = strings(&value, &key)?,
             "connectors" => settings.connectors = connectors(&value)?,
             "keyterms" => settings.keyterms = strings(&value, &key)?,
@@ -667,6 +671,59 @@ fn dispatch(value: &Yaml) -> std::result::Result<Option<types::AgentDispatch>, S
         *setting = named(&text, "dispatch setting; enabled or disabled is")?;
     }
     Ok(Some(dispatch))
+}
+
+fn sandbox_options(value: &Yaml) -> std::result::Result<Option<types::SandboxOptions>, String> {
+    let Yaml::Hash(fields) = value else {
+        return if value.is_null() {
+            Ok(None)
+        } else {
+            Err("sandbox_options is a mapping".into())
+        };
+    };
+    let mut options = types::SandboxOptions::default();
+    for (key, value) in fields {
+        let key = scalar(key).unwrap_or_default();
+        let name = format!("sandbox_options.{key}");
+        match key.as_str() {
+            "image" => options.image = Some(scalar(value).ok_or(format!("{name} is a string"))?),
+            "setup" => options.setup = Some(strings(value, &name)?),
+            "allowed_domains" => options.allowed_domains = Some(strings(value, &name)?),
+            "network_allow_list" => options.network_allow_list = Some(strings(value, &name)?),
+            "network" => {
+                options.network = match value {
+                    Yaml::Boolean(network) => Some(*network),
+                    _ => return Err(format!("{name} must be true or false")),
+                }
+            }
+            "timeout" => {
+                let timeout = scalar(value)
+                    .and_then(|text| parse_deadline(&text).ok())
+                    .filter(|timeout| {
+                        !timeout.is_zero() && *timeout <= Duration::from_secs(30 * 60)
+                    })
+                    .ok_or(format!("{name} must be a duration up to 30m"))?;
+                options.timeout_ms = Some(timeout.as_millis() as i64);
+            }
+            "cpu" | "memory_gb" | "disk_gb" => {
+                let size = match value {
+                    Yaml::Integer(size) if *size >= 0 => Some(*size),
+                    _ => return Err(format!("{name} must be a whole number")),
+                };
+                match key.as_str() {
+                    "cpu" => options.cpu = size,
+                    "memory_gb" => options.memory_gb = size,
+                    _ => options.disk_gb = size,
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "{key:?} is not a sandbox_options setting; image, setup, timeout, cpu, memory_gb, disk_gb, network, allowed_domains and network_allow_list are"
+                ));
+            }
+        }
+    }
+    Ok(Some(options))
 }
 
 fn strings(value: &Yaml, key: &str) -> std::result::Result<Vec<String>, String> {

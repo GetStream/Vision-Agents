@@ -394,8 +394,7 @@ example `<ask skill="vision" frames="2">What changed?</ask>`.
 
 Roboflow continues processing independently. Its observations retain raw frames and
 separately timestamped predictions; unavailable prediction/frame alignment is stated
-explicitly. See the [flower spotter](../../examples/video_agents/flower_spotter) and
-[standalone image example](../../examples/video_agents/describe_image).
+explicitly. See the [standalone image example](../../examples/video_agents/describe_image).
 
 On the session socket, `get_video_frames` is a reserved capture request carrying a task
 ID, source, acceptance timestamp and limit. The matching `tool_result` carries ordered

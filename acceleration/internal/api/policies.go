@@ -27,6 +27,7 @@ var (
 // injection, which models may be used and how usage is labelled.
 type Policy struct {
 	Budget              *Budget           `json:"budget,omitempty"`
+	Quota               *Quota            `json:"quota,omitempty"`
 	DataPolicy          *DataPolicy       `json:"data_policy,omitempty"`
 	PromptInjection     *bool             `json:"prompt_injection,omitempty" doc:"Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on."`
 	AllowedModels       *[]string         `json:"allowed_models,omitempty" example:"[\"deepseek/DeepSeek-V4-Flash-0731\"]" doc:"The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one."`
@@ -54,6 +55,26 @@ func (*Budget) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schem
 		"interval. Once it is spent every new session and every LLM response is refused until " +
 		"the next interval. Checks are cached for a few seconds, so a busy app can overshoot " +
 		"by what it spends in that time."
+	return schema
+}
+
+// Quota is what one end user of the app may spend in a UTC day. The app sets it, and an
+// organization has none.
+type Quota struct {
+	// The maximums only catch a typo: a person who asked for a response every ten seconds
+	// round the clock would still be under 10,000 a day, so 10,000,000 is a thousand of
+	// them, and 10^12 tokens is a thousand times 10,000,000 responses of 100,000 tokens.
+	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty" minimum:"0" maximum:"10000000" example:"20000" doc:"How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies."`
+	TokensPerUserPerDay   *int64 `json:"tokens_per_user_per_day,omitempty" minimum:"0" maximum:"1000000000000" example:"50000000" doc:"How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies."`
+}
+
+func (*Quota) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What one end user of the app may spend in a UTC day, counted per " +
+		"user and per address. Only an app's policy has one: an organization's that sets it " +
+		"is refused. A turn is counted on the day of the user who sent it, and a backend's " +
+		"own are never counted. A request over the limit is a 429 rate_limited with " +
+		"Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining " +
+		"and X-Quota-Reset."
 	return schema
 }
 
@@ -206,11 +227,16 @@ func (s *Server) updateOrganizationPolicy(ctx context.Context, request *policyRe
 // savePolicy validates and stores a policy, and returns it as it now reads.
 func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id string, sent Policy) (Policy, error) {
 	document := store.PolicyDocument{
+		Quota:               quotaOf(sent.Quota),
 		DataPolicy:          dataPolicyOf(sent.DataPolicy),
 		PromptInjection:     sent.PromptInjection,
 		AllowedModels:       sent.AllowedModels,
 		Tags:                sent.Tags,
 		RequireOwnStreamApp: sent.RequireOwnStreamApp,
+	}
+	// A daily limit is what one end user of an app may spend, so it is set on each app.
+	if scope == store.ScopeOrganization && sent.Quota != nil {
+		return Policy{}, errors.New("an organization has no daily limit per end user: set quota on each app")
 	}
 	// Any app's backend can write its organization's policy, so the one setting that keeps
 	// every app of an organization out of the shared Stream app is the operator's alone. It
@@ -274,6 +300,7 @@ func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id strin
 		return Policy{}, err
 	}
 	policy := Policy{
+		Quota:               quotaFor(document.Quota),
 		DataPolicy:          dataPolicyFor(document.DataPolicy),
 		PromptInjection:     document.PromptInjection,
 		AllowedModels:       document.AllowedModels,
@@ -293,6 +320,28 @@ func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id strin
 		}
 	}
 	return policy, nil
+}
+
+// quotaOf is a sent quota as it is stored. One that sets neither number is no opinion.
+func quotaOf(sent *Quota) *store.Quota {
+	if sent == nil || sent.MessagesPerUserPerDay == nil && sent.TokensPerUserPerDay == nil {
+		return nil
+	}
+	return &store.Quota{
+		MessagesPerUserPerDay: sent.MessagesPerUserPerDay,
+		TokensPerUserPerDay:   sent.TokensPerUserPerDay,
+	}
+}
+
+// quotaFor is a stored quota as it reads out.
+func quotaFor(stored *store.Quota) *Quota {
+	if stored == nil {
+		return nil
+	}
+	return &Quota{
+		MessagesPerUserPerDay: stored.MessagesPerUserPerDay,
+		TokensPerUserPerDay:   stored.TokensPerUserPerDay,
+	}
 }
 
 // routes reports whether a "provider/model" is one some modality here routes to. A

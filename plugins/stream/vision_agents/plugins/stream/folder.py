@@ -101,6 +101,12 @@ class SandboxSettings:
     cpu: int = 0
     memory_gb: int = 0
     disk_gb: int = 0
+    network: bool = False
+    """Whether code may reach the internet. Off, and with no allow list, nothing is reachable."""
+    allowed_domains: list[str] = field(default_factory=list)
+    """Domains code may reach. Set, nothing else is reachable, network on or not."""
+    network_allow_list: list[str] = field(default_factory=list)
+    """CIDR ranges code may reach. Set, nothing else is reachable, network on or not."""
 
 
 @dataclass
@@ -798,12 +804,32 @@ def _channel(path: Path, kind: str, value: object) -> ChannelSettings | None:
 def _sandbox_options(path: Path, value: object) -> SandboxSettings:
     if not isinstance(value, dict):
         raise ValueError(f"{path} should give sandbox_options as a mapping")
-    extra = set(value) - {"image", "setup", "timeout", "cpu", "memory_gb", "disk_gb"}
+    extra = set(value) - {
+        "image",
+        "setup",
+        "timeout",
+        "cpu",
+        "memory_gb",
+        "disk_gb",
+        "network",
+        "allowed_domains",
+        "network_allow_list",
+    }
     if extra:
         raise ValueError(f"{path} unknown sandbox_options setting: {sorted(extra)[0]}")
+    network = value.get("network", False)
+    if not isinstance(network, bool):
+        raise ValueError(f"{path} sandbox_options.network must be true or false")
     options = SandboxSettings(
         image=_word(value.get("image")),
         setup=_terms(path, "sandbox_options.setup", value.get("setup")),
+        network=network,
+        allowed_domains=_terms(
+            path, "sandbox_options.allowed_domains", value.get("allowed_domains")
+        ),
+        network_allow_list=_terms(
+            path, "sandbox_options.network_allow_list", value.get("network_allow_list")
+        ),
     )
     timeout = value.get("timeout")
     if timeout is not None:

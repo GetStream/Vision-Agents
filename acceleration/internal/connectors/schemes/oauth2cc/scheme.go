@@ -333,7 +333,12 @@ func (s *Scheme) mint(ctx context.Context, m core.ResolvedManifest, client paylo
 	}
 	outcome := s.refusal(response, raw, err)
 	if err == nil {
-		err = &oauth2code.TokenError{Status: response.StatusCode, Code: errorCode(raw)}
+		// The provider's word for why and its description, for the resolver's log line, as
+		// oauth2code's refresh gives them. The description is redacted of the client secret
+		// the request carried, which a provider may echo.
+		refused := &oauth2code.TokenError{Status: response.StatusCode, Code: errorCode(raw),
+			Description: oauth2code.ErrorDescription(raw, client.ClientSecret)}
+		outcome.Code, outcome.Description, err = refused.Code, refused.Description, refused
 	}
 	return payload{}, nil, &core.OutcomeError{Outcome: outcome, Err: stack.Wrap(fmt.Errorf("oauth2cc: token: %w", err))}
 }

@@ -155,8 +155,8 @@ type Auth struct {
 	OpsKey string `koanf:"ops_key"`
 }
 
-// RateLimit caps what one of a customer's end users may spend in a day. Either at 0 turns
-// that half off.
+// RateLimit caps what one of a customer's end users may spend in a day, for a customer
+// whose policies set no number of their own. Either at 0 turns that half off.
 type RateLimit struct {
 	MessagesPerDay int64 `koanf:"messages_per_day"`
 	TokensPerDay   int64 `koanf:"tokens_per_day"`
