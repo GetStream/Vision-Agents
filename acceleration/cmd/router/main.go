@@ -1414,12 +1414,22 @@ func buildSessions(
 		}
 	}
 
+	var interruptionClient *agent.InterruptionClient
+	if endpoint := strings.TrimSpace(settings.Interruption.Endpoint); endpoint != "" {
+		client, err := agent.NewInterruptionClient(endpoint, settings.Interruption.TokenFile, settings.Interruption.Threshold, settings.Interruption.Timeout)
+		if err != nil {
+			logger.Warn("adaptive interruption is disabled", "reason", "invalid configuration")
+		} else {
+			interruptionClient = client
+		}
+	}
 	return session.NewManager(session.ManagerOptions{
 		LLM:          streams.LLM,
 		STT:          streams.STT,
 		TTS:          streams.TTS,
 		STS:          streams.STS,
 		EOT:          eotClient,
+		Interruption: interruptionClient,
 		EOTMode:      agent.EOTMode(settings.EOT.Mode),
 		EOTThreshold: settings.EOT.Threshold,
 		Memory:       remembering,

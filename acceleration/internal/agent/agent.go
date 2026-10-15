@@ -161,7 +161,8 @@ type Options struct {
 	VideoSource    string
 	VideoMaxFrames int
 	// EOT is an optional raw acoustic endpoint score for settled voice candidates.
-	EOT *audioturn.Client
+	EOT          *audioturn.Client
+	Interruption *InterruptionClient
 	// EOTMode selects whether EOT gates or directly resolves eligible quiet-floor turns.
 	EOTMode      EOTMode
 	EOTThreshold float64
@@ -503,6 +504,7 @@ type Agent struct {
 	following sync.Mutex
 
 	running   sync.WaitGroup
+	adaptive  adaptiveInterruptions
 	closeOnce sync.Once
 }
 
@@ -673,7 +675,7 @@ func New(options Options) (*Agent, error) {
 	settling.previewing = agent.previewsEarly
 	// Only a call has a caller's audio to tell silence from, and it is listened to for the hold a
 	// reply is put on and for the quiet a reply is started on.
-	if !options.Text && (replySilence > 0 || (previewQuiet > 0 && previewDebounce > 0 && agent.previewsReplies())) {
+	if !options.Text && (options.Interruption != nil || replySilence > 0 || (previewQuiet > 0 && previewDebounce > 0 && agent.previewsReplies())) {
 		agent.voiced = newVoiceActivity()
 		settling.quietFor = func(participantID string) time.Duration {
 			return agent.voiced.quietFor(participantID, time.Now())
@@ -1302,7 +1304,9 @@ func (a *Agent) consumeEdge() {
 		a.retainEOTAudio(inbound.Participant.ID, inbound.Audio.SampleRate, inbound.Audio.Channels,
 			inbound.Audio.Samples)
 		if a.voiced != nil {
-			a.voiced.observe(inbound.Participant.ID, inbound.Audio, time.Now())
+			now := time.Now()
+			a.voiced.observe(inbound.Participant.ID, inbound.Audio, now)
+			a.observeInterruption(inbound.Participant, inbound.Audio, now)
 		}
 		listener, err := a.listen(inbound.Participant)
 		if err != nil {
