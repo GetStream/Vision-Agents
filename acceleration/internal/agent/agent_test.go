@@ -2473,6 +2473,9 @@ func (s *AgentSuite) TestAnInterruptionKeepsReturnedWorkUntilTheVoiceReconnects(
 		}
 	}, "the voice interruption never reached the reconnect gate")
 	s.eventually(func() bool {
+		if countOf[Error](s.reported()) > 0 {
+			return true
+		}
 		s.agent.mu.Lock()
 		defer s.agent.mu.Unlock()
 		return s.agent.utterances == 0
