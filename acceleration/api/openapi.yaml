@@ -737,6 +737,34 @@ components:
       required:
         - stream
       type: object
+    ApprovedConnectionTool:
+      properties:
+        name:
+          type: string
+        previous_schema_digest:
+          description: The digest it was pinned at before. Absent when it was not pinned for the connection's grant.
+          type: string
+        schema_digest:
+          description: The digest the tool is pinned at now.
+          type: string
+      required:
+        - name
+        - schema_digest
+      type: object
+    ApprovedConnectionTools:
+      properties:
+        connection_id:
+          type: string
+        tools:
+          description: The tools approved, by name, sorted.
+          items:
+            $ref: '#/components/schemas/ApprovedConnectionTool'
+          nullable: true
+          type: array
+      required:
+        - connection_id
+        - tools
+      type: object
     AttachNumberRequest:
       properties:
         allowed_ips:
@@ -2169,6 +2197,20 @@ components:
         - input_schema
         - schema_digest
       type: object
+    ConnectionToolApproval:
+      properties:
+        name:
+          description: The tool's name at the provider, as GET .../tools lists it.
+          minLength: 1
+          type: string
+        schema_digest:
+          description: 'Its schema_digest as GET .../tools lists it now: what the caller approves.'
+          minLength: 1
+          type: string
+      required:
+        - name
+        - schema_digest
+      type: object
     ConnectionTools:
       description: 'The tools a connection offered when it was last validated, in one piece: the provider''s own list, not a page of one.'
       properties:
@@ -2190,6 +2232,21 @@ components:
         - connection_id
         - tools
       type: object
+    ConnectionToolsApproval:
+      additionalProperties: false
+      description: The tools of a connection to approve at the schema the provider lists now. An unknown field is refused rather than ignored.
+      properties:
+        tools:
+          description: The tools to approve, each named once. Up to 128.
+          items:
+            $ref: '#/components/schemas/ConnectionToolApproval'
+          maxItems: 128
+          minItems: 1
+          nullable: true
+          type: array
+      required:
+        - tools
+      type: object
     ConnectionUse:
       properties:
         binding:
@@ -2208,7 +2265,7 @@ components:
       description: Whether a connection's credential works, found by asking the provider for its tools.
       properties:
         changed_tools:
-          description: 'With needs_reapproval: the tools the provider now lists at a schema other than the one the connection''s current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back.'
+          description: 'With needs_reapproval: the tools the provider now lists at a schema other than the one the connection''s current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again with POST .../tools/approve, or an OAuth connection reconnects. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back.'
           items:
             type: string
           nullable: true
@@ -2252,7 +2309,7 @@ components:
           type: array
       type: object
     ConnectionValidationStatus:
-      description: 'connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection''s current grant, so sessions leave it out until it is approved again; changed_tools names them, and a new grant (a consent) approves them. failed: the provider could not be reached or listed nothing usable; error says why.'
+      description: 'connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection''s current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable; error says why.'
       enum:
         - connected
         - pending
@@ -2332,13 +2389,14 @@ components:
         - created_at
       type: object
     ConnectorAuditAction:
-      description: 'grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app''s backend exported its access credential. proxy_call: a direct call went to the provider through the connection.'
+      description: 'grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app''s backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app''s backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.'
       enum:
         - grant_created
         - grant_refreshed
         - grant_revoked
         - token_export
         - proxy_call
+        - tool_reapproved
       type: string
     ConnectorAuditCredential:
       description: 'The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the token''s SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.'
@@ -2416,6 +2474,12 @@ components:
         target:
           description: The host a proxy_call reached. Absent for a grant.
           type: string
+        tools:
+          description: A tool_reapproved row's tools, by name, sorted, each with the digest approved and the one it was pinned at before. Absent for every other action.
+          items:
+            $ref: '#/components/schemas/ApprovedConnectionTool'
+          nullable: true
+          type: array
       required:
         - id
         - connection_id
@@ -10419,10 +10483,57 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
       summary: List a connection's tools
+  /v1/agents/connections/{id}/tools/approve:
+    post:
+      description: |-
+        Pins tools of the connection at the schema the provider lists now, for the connection's current grant. A session pins a tool granted by name or by pattern the first time it offers it, and leaves it out while the provider lists it at another schema, which validate reports as needs_reapproval with the changed_tools. This is how a bearer or api_key connection gets them back; an OAuth one may reconnect instead, which begins a new grant.
+
+        Each tool named must be one GET .../tools lists, which a validate refreshes, at the schema_digest sent: a tool it does not list is a 400, and one it lists at another digest a 409. The pins move together, and only while each is still what it was when read and the grant has not changed since; otherwise a 409. A refused approve writes nothing. The next session offers the tools, and the next validate answers connected when no other tool changed; last_validation keeps what the last validate found until then. One audit row, tool_reapproved, names the tools and their digests. A schema_digest an agent config grants is not a pin: change the config instead. Who may approve them is who may read the connection.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: approveConnectionTools
+      parameters:
+        - description: The connection, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The connection, as returned when it was created.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectionToolsApproval'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovedConnectionTools'
+          description: The tools approved
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+      summary: Approve a connection's tools again
   /v1/agents/connections/{id}/validate:
     post:
       description: |-
-        Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
+        Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again, POST .../tools/approve does. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: validateConnection

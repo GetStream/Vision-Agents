@@ -13,9 +13,10 @@ namespace GetStream\VisionAgents\Generated;
  * the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and
  * a consent that asks for them helps. needs_reapproval: the tools were listed, and the
  * provider changed the schema of a tool sessions pinned for the connection's current grant, so
- * sessions leave it out until it is approved again; changed_tools names them, and a new grant
- * (a consent) approves them. failed: the provider could not be reached or listed nothing
- * usable; error says why.
+ * sessions leave it out until it is approved again; changed_tools names them, and POST
+ * .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a
+ * new grant. failed: the provider could not be reached or listed nothing usable; error says
+ * why.
  */
 enum ConnectionValidationStatus: string
 {

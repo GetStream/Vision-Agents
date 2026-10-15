@@ -33,6 +33,8 @@ from .agent_stats import AgentStats
 from .agent_tools import AgentTools
 from .analyze_reviews_request import AnalyzeReviewsRequest
 from .app_settings import AppSettings
+from .approved_connection_tool import ApprovedConnectionTool
+from .approved_connection_tools import ApprovedConnectionTools
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
 from .audit_action import AuditAction
@@ -116,8 +118,10 @@ from .connection_request_inputs import ConnectionRequestInputs
 from .connection_status import ConnectionStatus
 from .connection_token import ConnectionToken
 from .connection_tool import ConnectionTool
+from .connection_tool_approval import ConnectionToolApproval
 from .connection_tool_input_schema import ConnectionToolInputSchema
 from .connection_tools import ConnectionTools
+from .connection_tools_approval import ConnectionToolsApproval
 from .connection_use import ConnectionUse
 from .connection_validation import ConnectionValidation
 from .connection_validation_request import ConnectionValidationRequest
@@ -478,6 +482,8 @@ __all__ = (
     "AgentTools",
     "AnalyzeReviewsRequest",
     "AppSettings",
+    "ApprovedConnectionTool",
+    "ApprovedConnectionTools",
     "AttachNumberRequest",
     "AttachedNumber",
     "AuditAction",
@@ -557,8 +563,10 @@ __all__ = (
     "ConnectionStatus",
     "ConnectionToken",
     "ConnectionTool",
+    "ConnectionToolApproval",
     "ConnectionToolInputSchema",
     "ConnectionTools",
+    "ConnectionToolsApproval",
     "ConnectionUse",
     "ConnectionValidation",
     "ConnectionValidationRequest",

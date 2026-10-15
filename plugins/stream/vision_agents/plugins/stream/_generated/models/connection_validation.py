@@ -25,13 +25,13 @@ class ConnectionValidation:
             or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and
             the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps.
             needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the
-            connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and a
-            new grant (a consent) approves them. failed: the provider could not be reached or listed nothing usable; error
-            says why.
+            connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and
+            POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant.
+            failed: the provider could not be reached or listed nothing usable; error says why.
         changed_tools (list[str] | None | Unset): With needs_reapproval: the tools the provider now lists at a schema
             other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until
-            they are approved again. A pinned tool the provider no longer lists is not one: approving it again cannot bring
-            it back.
+            they are approved again with POST .../tools/approve, or an OAuth connection reconnects. A pinned tool the
+            provider no longer lists is not one: approving it again cannot bring it back.
         checked_at (datetime.datetime | Unset): When the tools were listed. Absent until a validate listed them.
         code (str | Unset): What a program branches on when the status is not connected: connector_scope_required with
             needs_scopes; connector_tool_schema_changed with needs_reapproval; connector_credential_rejected with
