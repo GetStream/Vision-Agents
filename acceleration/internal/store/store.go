@@ -32,6 +32,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/migrations"
 )
 
+// maxConns is how many Postgres connections one router holds at most.
+const maxConns = 40
+
 // Store reads and writes router statistics.
 type Store struct {
 	db       *bun.DB
@@ -53,6 +56,13 @@ func Open(dsn string) (*Store, error) {
 	}
 
 	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
+	// database/sql keeps two idle connections by default, so every burst of writes past two
+	// dials Postgres and shakes hands over TLS again, and under load those handshakes are
+	// what times out. The pool is kept instead, and bounded so that two pods, each running
+	// overlapping generations, stay well inside the server's connection limit.
+	sqldb.SetMaxOpenConns(maxConns)
+	sqldb.SetMaxIdleConns(maxConns)
+	sqldb.SetConnMaxIdleTime(5 * time.Minute)
 	db := bun.NewDB(sqldb, pgdialect.New())
 	// A span per query, so a request's trace says which reads it waited on. Queries are
 	// recorded unformatted: the arguments of these are customer ids and api keys.
