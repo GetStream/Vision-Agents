@@ -28,6 +28,24 @@ func (s *CallLogSuite) TestAFailedCallsRowKeepsTheStatusAndTheMessageOfItsLine()
 	s.Contains(s.onlyFailedLine(logged), `provider_message="the record is locked"`)
 }
 
+// TestARowKeepsTheErrorRatherThanTheBody: a 403 with a JSON body, whose error the MCP client
+// words from the status; the row keeps the error, as the line's provider_message.
+func (s *CallLogSuite) TestARowKeepsTheErrorRatherThanTheBody() {
+	app := s.connection("", "primary")
+	d, logged := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
+	s.provider.answer("primary", http.StatusForbidden, http.Header{"Content-Type": {"application/json"}},
+		`{"error":"forbidden","message":"this app may not read contacts"}`)
+
+	_, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().Error(err)
+	row := s.row(app)
+	s.Equal(statusOf(http.StatusForbidden), row.ProviderStatus)
+	s.Equal(`mcp: crm__whoami: calling "tools/call": sending "tools/call": rejected by transport: `+
+		"mcp: the server refused the request with 403 Forbidden", row.ErrorMessage)
+	s.Contains(s.onlyFailedLine(logged), `provider_body="{\"error\":\"forbidden\"`)
+}
+
 // TestARowWithNoErrorKeepsTheProvidersBody: a 429 with a body and a Retry-After, which the
 // limiter holds, returns no error, so the row keeps the start of the body.
 func (s *CallLogSuite) TestARowWithNoErrorKeepsTheProvidersBody() {

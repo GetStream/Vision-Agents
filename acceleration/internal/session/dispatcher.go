@@ -171,11 +171,10 @@ func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how f
 	if message == "" {
 		message = providerMessage(err)
 	}
-	if how.kind != "" {
-		row.ErrorMessage = cmp.Or(message, body)
-		if how.status != 0 {
-			row.ProviderStatus = &how.status
-		}
+	// A call that answered has no failure to say: no status, no message.
+	row.ErrorMessage = cmp.Or(message, body)
+	if how.status != 0 {
+		row.ProviderStatus = &how.status
 	}
 	d.invocations.Record(row)
 	if how.kind == "" {
