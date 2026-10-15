@@ -622,11 +622,20 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### A backend lists every user's connections
+
+`GET /v1/agents/connections?owner_type=user` from a server-side caller that sends no
+`X-Stream-User-Id` lists the user-owned connections of every user of the app, newest first,
+paged by cursor and narrowed by `connector_id` as the other lists are. Each one names its user
+in `owner.user_id`. It was a 400 before. With `X-Stream-User-Id` it still lists that user's
+only, and an end user's device is still refused the operation. This is for an admin view,
+such as the Volt dashboard's.
+
 ### Listing connections without `owner_type` lists the app's own
 
 `GET /v1/agents/connections` takes `owner_type` as optional. Left out, it lists the app's own
-connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` still
-needs `X-Stream-User-Id`.
+connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` lists the
+user `X-Stream-User-Id` names, or every user's without it.
 
 ### Approve a connection's changed tools again
 

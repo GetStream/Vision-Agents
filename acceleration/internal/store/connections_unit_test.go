@@ -126,6 +126,17 @@ func TestListingConnectionsNeedsAValidOwner(t *testing.T) {
 	require.ErrorContains(t, err, "a user owner has one")
 }
 
+func TestEveryUsersConnectionsNameNoOwner(t *testing.T) {
+	for _, filter := range []ConnectionFilter{
+		{OwnerType: OwnerUser, OwnerID: "alice", EveryUser: true},
+		{OwnerType: OwnerApp, EveryUser: true},
+	} {
+		_, err := (&Store{}).ConnectorConnectionsByOwner(context.Background(), "acme-app", filter)
+
+		require.ErrorContains(t, err, "every user's connections are owner", "%+v", filter)
+	}
+}
+
 func TestAnAttemptOfAnUnknownKindIsRefused(t *testing.T) {
 	attempt := &ConnectorAuthorizationAttempt{
 		ID: "attempt", CustomerID: "acme-app", ConnectionID: "connection", StateHash: AuthorizationStateHash("state"),
