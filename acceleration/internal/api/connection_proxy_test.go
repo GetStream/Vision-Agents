@@ -363,6 +363,22 @@ func (s *ConnectionProxySuite) TestAnErrorAnswerToACallThatForwardedAQueryIsLogg
 	s.False(strings.Contains(s.logged.String(), secret), "the query's value is not logged")
 }
 
+// TestAnErrorAnswerToACallWhoseQueryHeldOnlyTheRoutersParametersIsLoggedWithItsStart: the router's
+// own parameters are not forwarded, so a call whose query held nothing else forwarded no query
+// and keeps its excerpt: the condition is on the query the provider got, not on the one the
+// caller sent (R3.1).
+func (s *ConnectionProxySuite) TestAnErrorAnswerToACallWhoseQueryHeldOnlyTheRoutersParametersIsLoggedWithItsStart() {
+	id := s.connected(s.connector(""), bearer.Name)
+
+	response, answer := s.sendRaw(s.serverClient, http.MethodGet,
+		proxy(id, echoNotFoundPath+"?api_key=router-key&token=router-token"), "", nil)
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+	s.Empty(s.echoed(answer).Query, "the provider got no query")
+	line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
+	s.Contains(line, `provider_body="{\"method\":\"GET\",\"path\":\"[redacted]\",\"query\":\"\",`)
+}
+
 // TestAStalled5xxReachesTheCallerAsItComes: a 502 whose body sends 8 KiB, then stalls until the
 // test ends the stall, gives the caller its first KiB while the stall lasts, as base 8666b26d
 // does (reviewer probe: 5 ms), so the line logged after the copy holds nothing back (R1.3). An
