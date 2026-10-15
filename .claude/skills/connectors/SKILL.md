@@ -71,6 +71,22 @@ The same with the API (operations in `acceleration/api/openapi.yaml`):
 | A token or key | `PUT /v1/agents/connections/{id}/credentials` |
 | Check it | `POST /v1/agents/connections/{id}/validate`, then `GET /v1/agents/connections/{id}/tools` |
 
+### Direct calls from your backend
+
+Your backend can call the provider's own API with a connection's credential:
+`/v1/agents/connections/{id}/proxy/<path>` sends `<path>` under the connector's `api_base`.
+Only a connector whose manifest has an `api_base` takes direct calls.
+
+| Built-in | `api_base` | Example path |
+|---|---|---|
+| `github` (revision 4) | `https://api.github.com` | `repos/octo/hello/issues` |
+| `slack_bot` (revision 5) | `https://slack.com/api` | `chat.postMessage` |
+
+Every other built-in, `linear` included, is MCP-only: a direct call answers 400 «connector
+"linear" has no api_base endpoint». Why Linear has none is in `linear.yaml`. A connection keeps
+the revision it was made on, so a `github` connection made before revision 4 takes direct calls
+only after its next consent or token save.
+
 ## 3. Give an agent the tools
 
 Dashboard: open the agent › **Tools** › **Connectors** › **Add connector**.
