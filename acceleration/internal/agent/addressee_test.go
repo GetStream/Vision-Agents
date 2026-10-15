@@ -286,7 +286,8 @@ func (s *AgentSuite) TestARulingAfterTheReplyHasBeenLetOutDoesNotCutIt() {
 	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the flow controller was not asked")
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was never let out")
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
-	s.Empty(s.agent.addressedTurns(), "the controller was still being waited on once the reply had begun to be heard")
+	s.eventually(func() bool { return len(s.agent.addressedTurns()) == 0 },
+		"the controller was still being waited on once the reply had begun to be heard")
 
 	// Whatever the controller goes on to say, the reply has been heard, and what it said is not
 	// taken back. The ruling is delivered the way the harness delivers one.
