@@ -2804,56 +2804,6 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/v1/ops/customers/{customer_id}/quota": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Get an app's daily limit per end user
-         * @description What one end user of the app may spend in a UTC day. A number left out is the router's default.
-         *
-         *     Stream staff only: it needs the ops key.
-         */
-        readonly get: operations["getCustomerQuota"];
-        /**
-         * Set an app's daily limit per end user
-         * @description Replaces what one end user of the app may spend in a UTC day, and leaves the rest of the app's policy as it is. A number left out is the router's default, and 0 is no cap. The app reads it in its policy and cannot change it. The node that stores it applies it at once, and the others within ten seconds. Every change is recorded with who made it, when, and the numbers before and after.
-         *
-         *     Stream staff only: it needs the ops key.
-         */
-        readonly put: operations["setCustomerQuota"];
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/ops/customers/{customer_id}/quota/changes": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * List the changes made to an app's daily limit per end user
-         * @description Every change Stream staff made, newest first: who made it, why, when, and the limit before and after.
-         *
-         *     Stream staff only: it needs the ops key.
-         */
-        readonly get: operations["listCustomerQuotaChanges"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/v1/ops/customers/{customer_id}/telephony-suspension": {
         readonly parameters: {
             readonly query?: never;
@@ -6716,7 +6666,7 @@ export type components = {
              */
             readonly per_million_output_tokens?: number;
         };
-        /** @description What one end user of the app may spend in a UTC day, counted per user and per address. Stream staff set it: in an app's policy it is read-only, so sending back what was read is fine and changing it is refused. A backend's own requests are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset. */
+        /** @description What one end user of the app may spend in a UTC day, counted per user and per address. Only an app's policy has one: an organization's that sets it is refused. A turn is counted on the day of the user who sent it, and a backend's own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset. */
         readonly Quota: {
             /**
              * Format: int64
@@ -6730,28 +6680,6 @@ export type components = {
              * @example 50000000
              */
             readonly tokens_per_user_per_day?: number;
-        };
-        readonly QuotaChange: {
-            /**
-             * Format: date-time
-             * @description When it was made.
-             */
-            readonly changed_at: string;
-            /** @description Who made the change. */
-            readonly changed_by: string;
-            readonly id: string;
-            /** @description The limit after the change. A number left out is the router's default. */
-            readonly new: components["schemas"]["Quota"];
-            /** @description The limit before the change. A number left out was the router's default. */
-            readonly previous: components["schemas"]["Quota"];
-            /** @description Why, as staff gave it. Empty when they gave none. */
-            readonly reason: string;
-        };
-        readonly QuotaChangePage: {
-            readonly has_more: boolean;
-            readonly items: readonly components["schemas"]["QuotaChange"][];
-            /** @description Pass as cursor for the next page. Absent on the last one. */
-            readonly next_cursor?: string;
         };
         readonly RCSProfile: {
             readonly agent_overview?: string;
@@ -7229,24 +7157,6 @@ export type components = {
             readonly max_frames?: number;
             /** @description Track or processor source. Omitted requires one unambiguous available source. */
             readonly source?: string;
-        };
-        readonly SetCustomerQuotaRequest: {
-            /** @description Who is changing it. Kept with the change. */
-            readonly changed_by: string;
-            /**
-             * Format: int64
-             * @description How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
-             * @example 20000
-             */
-            readonly messages_per_user_per_day?: number;
-            /** @description Why, for Stream staff. Kept with the change. The app is never shown it. */
-            readonly reason?: string;
-            /**
-             * Format: int64
-             * @description How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
-             * @example 50000000
-             */
-            readonly tokens_per_user_per_day?: number;
         };
         /** @description The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback. */
         readonly SetPluginClientRequest: {
@@ -14169,93 +14079,6 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            readonly 500: components["responses"]["InternalError"];
-        };
-    };
-    readonly getCustomerQuota: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                /** @description The app. */
-                readonly customer_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description The app's daily limit */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Quota"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 500: components["responses"]["InternalError"];
-        };
-    };
-    readonly setCustomerQuota: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                /** @description The app. */
-                readonly customer_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["SetCustomerQuotaRequest"];
-            };
-        };
-        readonly responses: {
-            /** @description The app's daily limit, as stored */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Quota"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 500: components["responses"]["InternalError"];
-        };
-    };
-    readonly listCustomerQuotaChanges: {
-        readonly parameters: {
-            readonly query?: {
-                /** @description The next_cursor of the previous page. Omitted is the first page. */
-                readonly cursor?: string;
-                /** @description Up to 200. Omitted is 25. */
-                readonly limit?: number;
-            };
-            readonly header?: never;
-            readonly path: {
-                /** @description The app. */
-                readonly customer_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description A page of changes */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["QuotaChangePage"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
             readonly 500: components["responses"]["InternalError"];
         };
     };

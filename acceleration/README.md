@@ -334,14 +334,17 @@ Two things are counted, per UTC day, and reaching either refuses the next respon
 | Model responses | 200 | What "200 messages a day" means |
 | Tokens | 5,000,000 | A backstop for the caller who asks for few responses and makes each one enormous. A turn of an agent with a few MCP servers carries tens of thousands of tokens of tool definitions, so it should not be what an ordinary day hits first |
 
-These numbers are the deployment's default. Stream staff set an app's own with the ops key,
-`PUT /v1/ops/customers/{customer_id}/quota` (`messages_per_user_per_day`,
-`tokens_per_user_per_day`, and `changed_by`, which is required, and an optional `reason`),
-above the default or below it, and `0` is no cap. Every change is kept with who made it, when,
-and the numbers before and after, and `GET /v1/ops/customers/{customer_id}/quota/changes` lists
-them newest first. An app reads it
-as `quota` in its policy and cannot change it, since an app could otherwise give its users any
-number. Organizations have none. Each number is decided on its own.
+These numbers are the deployment's default. An app sets its own as `quota` in its policy,
+`PUT /v1/policies/app` (`messages_per_user_per_day`, `tokens_per_user_per_day`), above the
+default or below it, and `0` is no cap. The PUT replaces the whole policy, so one that leaves
+`quota` out clears it and the default applies again. Organizations have none: a `quota` sent
+to `PUT /v1/policies/organization` is a 400. Each number is decided on its own. A limit Stream
+sets on a whole app is the gateway's (AI-1253), a staff spend cap is AI-1254, and a history of
+policy changes is AI-1255.
+
+A turn is counted on the day of whoever sent it. In a session a backend opened in a user's
+name, the backend's own turns are not counted, and what the user sends into it with their own
+token is counted on their day. In a session the user opened, every turn is counted on their day.
 
 Each is counted against two buckets: the `user_id` the caller's token names, scoped
 to the customer who minted it, and the address the request came from, scoped to the
@@ -382,7 +385,7 @@ optional. The organization's are a floor its apps can tighten but not loosen.
 | ------- | ------------ |
 | `budget` | A spend cap across every modality, reset hourly, daily, weekly or monthly on a UTC boundary. Once spent, new sessions and new LLM responses are refused. Both the app's and the organization's caps apply |
 | `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models |
-| `quota` | Read-only, on an app's policy: what one end user may spend in a UTC day, set by Stream staff in place of the deployment's default. Sending back what was read is fine; changing it is a 400. See [Daily limits](#daily-limits) |
+| `quota` | On an app's policy only: what one end user may spend in a UTC day, in place of the deployment's default. An organization's policy that sets it is a 400. See [Daily limits](#daily-limits) |
 | `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the decision model router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
 
 The screen asks one question per harm in OpenRouter's prompt injection list (instruction
