@@ -1,7 +1,9 @@
 name: CI (unit)
+# Feature branches run through pull_request; a push of the same commit would be a second,
+# uncancellable copy of every job.
 on:
   push:
-    branches: [ "**" ]
+    branches: [ "main", "accelerate" ]
     paths-ignore:
       - '**/*.md'
       - '**/*.png'
@@ -184,5 +186,5 @@ jobs:
 
 # Cancel in-flight runs for the same branch/PR when new commits arrive
 concurrency:
-  group: ci-unit-${{ github.workflow }}-${{ github.ref }}
+  group: ci-unit-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
