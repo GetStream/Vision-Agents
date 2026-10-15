@@ -35,11 +35,19 @@ class ConnectionInvocation:
             arguments (list[InvocationArgument] | None | Unset): The shape of what the call was asked, sorted by name.
                 Absent for a call asked with no arguments, for an incognito session's call, for arguments that were not a JSON
                 object, and for a call recorded before the router kept it.
+            error_message (str | Unset): Why the call failed: what the call's error said, else the start of the provider's
+                error body, at most 1 KiB. Every URL in it keeps only its scheme and host, and the body has the connection's
+                credential and the request's path taken out. A call the router held for the provider's rate limit says rate
+                limited by the router: retry after <seconds>s. Absent for a call that answered, and for a call recorded before
+                the router kept it.
             error_type (InvocationErrorType | Unset): customer_auth: the provider refused the connection's credential, or it
                 had none; reconnect it. external_server: the provider answered with a failure or could not be reached.
                 client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call.
                 outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have
                 been done. denied: the router refused it before anything was sent.
+            provider_status (int | Unset): The HTTP status the provider answered the call's last request with. Absent for a
+                call that answered, and for one no request of which was answered: the router refused or held it, or the provider
+                could not be reached.
             session_id (str | Unset): The session that called it. Absent for an incognito session, whose calls are tied to
                 no conversation.
     """
@@ -53,7 +61,9 @@ class ConnectionInvocation:
     started_at: datetime.datetime
     tool: str
     arguments: list[InvocationArgument] | None | Unset = UNSET
+    error_message: str | Unset = UNSET
     error_type: InvocationErrorType | Unset = UNSET
+    provider_status: int | Unset = UNSET
     session_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -86,9 +96,13 @@ class ConnectionInvocation:
         else:
             arguments = self.arguments
 
+        error_message = self.error_message
+
         error_type: str | Unset = UNSET
         if not isinstance(self.error_type, Unset):
             error_type = self.error_type.value
+
+        provider_status = self.provider_status
 
         session_id = self.session_id
 
@@ -108,8 +122,12 @@ class ConnectionInvocation:
         )
         if arguments is not UNSET:
             field_dict["arguments"] = arguments
+        if error_message is not UNSET:
+            field_dict["error_message"] = error_message
         if error_type is not UNSET:
             field_dict["error_type"] = error_type
+        if provider_status is not UNSET:
+            field_dict["provider_status"] = provider_status
         if session_id is not UNSET:
             field_dict["session_id"] = session_id
 
@@ -160,12 +178,16 @@ class ConnectionInvocation:
 
         arguments = _parse_arguments(d.pop("arguments", UNSET))
 
+        error_message = d.pop("error_message", UNSET)
+
         _error_type = d.pop("error_type", UNSET)
         error_type: InvocationErrorType | Unset
         if isinstance(_error_type, Unset):
             error_type = UNSET
         else:
             error_type = InvocationErrorType(_error_type)
+
+        provider_status = d.pop("provider_status", UNSET)
 
         session_id = d.pop("session_id", UNSET)
 
@@ -179,7 +201,9 @@ class ConnectionInvocation:
             started_at=started_at,
             tool=tool,
             arguments=arguments,
+            error_message=error_message,
             error_type=error_type,
+            provider_status=provider_status,
             session_id=session_id,
         )
 

@@ -3672,12 +3672,18 @@ type ConnectionInvocation struct {
 	ConnectionId string `json:"connection_id"`
 	ConnectorId  string `json:"connector_id"`
 
+	// ErrorMessage Why the call failed: what the call's error said, else the start of the provider's error body, at most 1 KiB. Every URL in it keeps only its scheme and host, and the body has the connection's credential and the request's path taken out. A call the router held for the provider's rate limit says rate limited by the router: retry after <seconds>s. Absent for a call that answered, and for a call recorded before the router kept it.
+	ErrorMessage *string `json:"error_message,omitempty"`
+
 	// ErrorType customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
 	ErrorType *InvocationErrorType `json:"error_type,omitempty"`
 	Id        string               `json:"id"`
 
 	// LatencyMs From the call reaching the router to its answer, the router's own checks included.
 	LatencyMs int64 `json:"latency_ms"`
+
+	// ProviderStatus The HTTP status the provider answered the call's last request with. Absent for a call that answered, and for one no request of which was answered: the router refused or held it, or the provider could not be reached.
+	ProviderStatus *int64 `json:"provider_status,omitempty"`
 
 	// SessionId The session that called it. Absent for an incognito session, whose calls are tied to no conversation.
 	SessionId *string   `json:"session_id,omitempty"`

@@ -4827,6 +4827,8 @@ export type components = {
             readonly config_id: string;
             readonly connection_id: string;
             readonly connector_id: string;
+            /** @description Why the call failed: what the call's error said, else the start of the provider's error body, at most 1 KiB. Every URL in it keeps only its scheme and host, and the body has the connection's credential and the request's path taken out. A call the router held for the provider's rate limit says rate limited by the router: retry after <seconds>s. Absent for a call that answered, and for a call recorded before the router kept it. */
+            readonly error_message?: string;
             /** @description How the call failed. Absent for a call that answered. */
             readonly error_type?: components["schemas"]["InvocationErrorType"];
             readonly id: string;
@@ -4835,6 +4837,11 @@ export type components = {
              * @description From the call reaching the router to its answer, the router's own checks included.
              */
             readonly latency_ms: number;
+            /**
+             * Format: int64
+             * @description The HTTP status the provider answered the call's last request with. Absent for a call that answered, and for one no request of which was answered: the router refused or held it, or the provider could not be reached.
+             */
+            readonly provider_status?: number;
             /** @description The session that called it. Absent for an incognito session, whose calls are tied to no conversation. */
             readonly session_id?: string;
             /** Format: date-time */
