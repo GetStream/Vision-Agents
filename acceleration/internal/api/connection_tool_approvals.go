@@ -15,10 +15,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// maxApprovedTools is how many tools one approve names: the maxItems of a binding's tools
-// (AgentConnectorBinding.Tools), so the tools one binding offers fit in one call.
-const maxApprovedTools = 128
-
 // errToolPinMoved is the answer to an approve that lost a race (store.ErrConnectorToolPinMoved).
 // 409, as errStaleRevision: the caller reads again and retries (RFC 9110 section 15.5.10).
 var errToolPinMoved = conflict("a tool's pin or the connection's grant changed while the tools were approved, " +
@@ -32,6 +28,8 @@ type ConnectionToolApproval struct {
 
 // ConnectionToolsApproval is the body of an approve.
 type ConnectionToolsApproval struct {
+	// 128 is the maxItems of a binding's tools (AgentConnectorBinding.Tools), so the tools one
+	// binding offers fit in one call.
 	Tools []ConnectionToolApproval `json:"tools" minItems:"1" maxItems:"128" doc:"The tools to approve, each named once. Up to 128."`
 }
 
