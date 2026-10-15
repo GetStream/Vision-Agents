@@ -689,7 +689,7 @@ func (a *Agent) followNative() error {
 		return nil
 	}
 	a.mu.Lock()
-	if a.closed || a.switching.Load() || a.sts == nil || a.harness == nil || a.generating || a.utterances > 0 || a.pendingTools > 0 || a.nativeAwaiting || a.nativeListening || !a.waitingSince.IsZero() || !a.harness.Pending() {
+	if a.closed || a.switching.Load() || a.interrupting || a.sts == nil || a.harness == nil || a.generating || a.utterances > 0 || a.pendingTools > 0 || a.nativeAwaiting || a.nativeListening || !a.waitingSince.IsZero() || !a.harness.Pending() {
 		a.mu.Unlock()
 		return nil
 	}

@@ -343,6 +343,61 @@ func TestFinalWaitCapturesLateReply(t *testing.T) {
 	}
 }
 
+func TestFinalWaitDoesNotCountSpeechAlreadyInProgressWhenCallerSpeaks(t *testing.T) {
+	loop := transport.NewLoopback()
+	producerDone := make(chan struct{})
+	receiverDone := make(chan struct{})
+	go func() {
+		defer close(receiverDone)
+		for range loop.AgentRecv {
+		}
+	}()
+	go func() {
+		defer close(producerDone)
+		_ = loop.SendAgent(audio.Tone(3500*audio.Rate/1000, 220, 10000))
+		time.Sleep(1500 * time.Millisecond)
+		_ = loop.SendAgent(audio.Tone(audio.Rate, 260, 12000))
+	}()
+	t.Cleanup(func() {
+		_ = loop.Close()
+		<-receiverDone
+		<-producerDone
+	})
+
+	text := "one more thing"
+	eng := Engine{
+		Audio: map[string][]int16{
+			text: audio.Tone(300*audio.Rate/1000, 180, 10000),
+		},
+		TurnHangoverMS: 400,
+		ClosingGraceMS: 2000,
+	}
+	sc := scenario.Scenario{Turns: []scenario.Turn{
+		{ID: "final", Text: text, Trigger: scenario.Trigger{Kind: scenario.TriggerDuringAgent, AfterMS: 2600}},
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	got, err := eng.Play(ctx, sc, loop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Events) != 1 || !got.Events[0].Overlap {
+		t.Fatalf("final caller turn did not overlap the existing reply: %+v", got.Events)
+	}
+	spans := audio.DetectSpeech(got.Agent, got.Rate, audio.AgentSpeechThreshold, audio.DefaultHangoverMs)
+	if len(spans) != 2 {
+		t.Fatalf("expected the ongoing speech and a fresh reply, spans=%+v", spans)
+	}
+	oldReply, event := spans[0], got.Events[0]
+	if oldReply.StartMs >= event.RecStartMs || oldReply.EndMs <= event.RecEndMs ||
+		oldReply.EndMs-oldReply.StartMs <= 2500 {
+		t.Fatalf("existing speech did not continue through the final caller turn as a substantive reply: span=%+v event=%+v", oldReply, event)
+	}
+	if spans[1].StartMs <= max(event.RecEndMs, oldReply.EndMs) {
+		t.Fatalf("fresh reply started at %dms before caller end %dms or old reply end %dms", spans[1].StartMs, event.RecEndMs, oldReply.EndMs)
+	}
+}
+
 // The contract prompts make the agent speak filler while tools run, so it is still talking
 // when the last scripted turn ends. Hanging up on that first silence drops the substantive
 // reply that the entity gates score.

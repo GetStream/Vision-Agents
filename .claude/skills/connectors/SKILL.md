@@ -183,7 +183,7 @@ Check the router log first (`docker compose logs -f router` locally).
 
 | What you see | Cause | Fix |
 |---|---|---|
-| `GET /v1/agents/connections?owner_type=user` answers 400, or the browser console says a header is not allowed | The router got no `X-Stream-User-Id`. A proxy or gateway in front dropped it | Forward the header for a server-side caller |
+| `GET /v1/agents/connections?owner_type=user` lists every user's connections instead of one user's, or the browser console says a header is not allowed | The router got no `X-Stream-User-Id`, which lists every user's. A proxy or gateway in front dropped it | Forward the header for a server-side caller |
 | The consent popup finishes, the dashboard keeps waiting | `DASHBOARD_BASE_URL` is unset or another origin | Set it to the dashboard origin |
 | «no OAuth client available» on consent | No Stream client (`<ENV>_MCP_CLIENT_ID`) and no app client | Set one of them |
 | 409 «Another customer's record already names this provider app» | That Slack app is registered to another customer on this router | Use another Slack app, or remove the old record |

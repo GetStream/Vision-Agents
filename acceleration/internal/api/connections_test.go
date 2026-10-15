@@ -158,11 +158,64 @@ func (s *ConnectionsSuite) TestAliceDoesNotListBobsConnections() {
 		"the app's own are no user's")
 }
 
-func (s *ConnectionsSuite) TestListingAUsersConnectionsNeedsTheUserTheBackendActsFor() {
-	status, failure := s.serverClient.failure(http.MethodGet, "/v1/agents/connections?owner_type=user", nil)
+func (s *ConnectionsSuite) TestABackendActingForNobodyListsEveryUsersConnections() {
+	alice, bob := s.data.createUser(), s.data.createUser()
+	alices := s.create(s.serverClient.actingFor(alice), userOwned("linear", alice))
+	bobs := s.create(s.serverClient.actingFor(bob), userOwned("linear", bob))
+	s.create(s.serverClient, appOwned("linear"))
+	s.create(s.data.backendOfAnotherApp().actingFor(alice), userOwned("linear", alice))
 
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "X-Stream-User-Id")
+	listed := s.list(s.serverClient, "user", "").Items
+
+	s.Equal([]string{bobs.ID, alices.ID}, connectionIDs(listed), "newest first, not the app's own nor another app's")
+	s.Equal([]string{bob.userID, alice.userID}, []string{listed[0].Owner.UserID, listed[1].Owner.UserID})
+}
+
+func (s *ConnectionsSuite) TestEveryUsersConnectionsNarrowToOneConnector() {
+	alice, bob := s.data.createUser(), s.data.createUser()
+	alices := s.create(s.serverClient.actingFor(alice), userOwned("linear", alice))
+	s.create(s.serverClient.actingFor(bob), userOwned("github", bob))
+
+	s.Equal([]string{alices.ID}, connectionIDs(s.list(s.serverClient, "user", "linear").Items))
+}
+
+func (s *ConnectionsSuite) TestPagingEveryUsersConnectionsWalksThemAll() {
+	users := []*testClient{s.data.createUser(), s.data.createUser(), s.data.createUser()}
+	var made []string
+	for i := range 5 {
+		user := users[i%len(users)]
+		made = append([]string{s.create(s.serverClient.actingFor(user), userOwned("linear", user)).ID}, made...)
+	}
+
+	var walked []string
+	cursor := ""
+	for pages := 0; ; pages++ {
+		s.Require().Less(pages, len(made), "paging does not end")
+		var listed ConnectionPage
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+			"/v1/agents/connections?owner_type=user&limit=2&cursor="+url.QueryEscape(cursor), nil, &listed))
+		s.LessOrEqual(len(listed.Items), 2)
+		walked = append(walked, connectionIDs(listed.Items)...)
+		if !listed.HasMore {
+			s.Nil(listed.NextCursor)
+			break
+		}
+		s.Require().NotNil(listed.NextCursor)
+		cursor = *listed.NextCursor
+	}
+	s.Equal(made, walked)
+}
+
+func (s *ConnectionsSuite) TestNoDeviceListsAnotherUsersConnections() {
+	alice, bob := s.data.createUser(), s.data.createUser()
+	bobs := s.create(s.serverClient.actingFor(bob), userOwned("linear", bob))
+
+	for _, device := range []*testClient{alice, alice.actingFor(bob)} {
+		status, answered := device.call(http.MethodGet, "/v1/agents/connections?owner_type=user", nil)
+
+		s.Equal(http.StatusForbidden, status)
+		s.NotContains(string(answered), bobs.ID)
+	}
 }
 
 func (s *ConnectionsSuite) TestAnOwnerTypeThatIsNeitherIsRefused() {
