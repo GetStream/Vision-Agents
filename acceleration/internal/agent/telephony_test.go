@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -1116,6 +1118,29 @@ func (s *AgentSuite) awaitToolRan() ToolRan {
 
 // left reports whether the agent is out of the call, which is what it says on the way out.
 func (s *AgentSuite) left() bool { return countOf[Left](s.reported()) > 0 }
+
+func (s *AgentSuite) TestANegativeAssertionWaitsForItsLastCheck() {
+	synctest.Test(s.T(), func(t *testing.T) {
+		checks := new(AgentSuite)
+		checks.SetT(t)
+		finished := make(chan struct{})
+		var once sync.Once
+		checks.never(func() bool {
+			once.Do(func() {
+				time.Sleep(time.Second) // Longer than the assertion window, on the fake clock.
+				close(finished)
+			})
+			return false
+		}, "the condition stays false")
+
+		select {
+		case <-finished:
+		default:
+			t.Error("the assertion returned while its condition was still using test fixtures")
+			<-finished
+		}
+	})
+}
 
 // never asserts that something stays untrue for long enough to believe it.
 func (s *AgentSuite) never(condition func() bool, message string) {
