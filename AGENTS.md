@@ -144,6 +144,7 @@ skill (`.claude/skills/security/SKILL.md`).
 
 For Go tests, read the `go-testing` skill (`.claude/skills/go-testing/SKILL.md`) first: testify
 suites, the shared `RouterSuite` for integration tests, and how to wait for async writes.
+Before you write Go, read the `go` skill (`.claude/skills/go/SKILL.md`): errors, logging, spans and comments.
 
 Before you run more than one coding agent at once (parallel PRs, reviewers, fixers), read the
 `parallel-agents` skill (`.claude/skills/parallel-agents/SKILL.md`): test databases, migration
