@@ -284,7 +284,11 @@ func (s *speaker) next() (webrtcmedia.Sample, agent.PlayoutMarks, time.Time) {
 	seq := s.head
 	s.head++
 	s.speaking = true
-	s.drained.Signal()
+	// A writer waits for the queue to be back under its bound, and waking it any earlier
+	// is a wakeup a frame for as long as a long chunk is draining.
+	if len(s.frames) <= playoutFrames {
+		s.drained.Signal()
+	}
 
 	sample := webrtcmedia.Sample{Data: frame, Duration: opusFrameDuration}
 	// A report whose frame never came, because the encoder had nothing to give for it, is
