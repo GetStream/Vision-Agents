@@ -16,6 +16,9 @@ final readonly class ConnectionValidation
     public function __construct(
         public string $connectionId,
         public ConnectionValidationStatus|string $status,
+        // With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's cur...
+        /** @var list<string>|null */
+        public ?array $changedTools = null,
         // When the tools were listed. Absent until a validate listed them.
         public ?\DateTimeImmutable $checkedAt = null,
         // What a program branches on when the status is not connected: connector_scope_required with needs_scopes; co...
@@ -38,6 +41,7 @@ final readonly class ConnectionValidation
         return new self(
             connectionId: Json::string($data, 'connection_id'),
             status: Json::enum($data, 'status', ConnectionValidationStatus::class),
+            changedTools: array_key_exists('changed_tools', $data) && $data['changed_tools'] !== null ? Json::strings($data, 'changed_tools') : null,
             checkedAt: array_key_exists('checked_at', $data) && $data['checked_at'] !== null ? Json::date($data, 'checked_at') : null,
             code: array_key_exists('code', $data) && $data['code'] !== null ? Json::string($data, 'code') : null,
             error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
@@ -56,6 +60,9 @@ final readonly class ConnectionValidation
         $out = [];
         $out['connection_id'] = $this->connectionId;
         $out['status'] = Json::enumValue($this->status);
+        if ($this->changedTools !== null) {
+            $out['changed_tools'] = $this->changedTools;
+        }
         if ($this->checkedAt !== null) {
             $out['checked_at'] = Json::dateValue($this->checkedAt);
         }

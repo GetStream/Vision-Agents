@@ -23,13 +23,21 @@ class ConnectionValidation:
         status (ConnectionValidationStatus): connected: the credential works and the tools were listed. pending: no
             credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps,
             or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and
-            the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the
-            provider could not be reached or listed nothing usable; error says why.
+            the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps.
+            needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the
+            connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and a
+            new grant (a consent) approves them. failed: the provider could not be reached or listed nothing usable; error
+            says why.
+        changed_tools (list[str] | None | Unset): With needs_reapproval: the tools the provider now lists at a schema
+            other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until
+            they are approved again. A pinned tool the provider no longer lists is not one: approving it again cannot bring
+            it back.
         checked_at (datetime.datetime | Unset): When the tools were listed. Absent until a validate listed them.
         code (str | Unset): What a program branches on when the status is not connected: connector_scope_required with
-            needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose
-            token or key the provider rejected, or that reads a connector revision marked broken, which only saving
-            credentials (PUT .../credentials) fixes. More may be added.
+            needs_scopes; connector_tool_schema_changed with needs_reapproval; connector_credential_rejected with
+            needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that
+            reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be
+            added.
         error (str | Unset): Why the status is not connected, for a person to read.
         missing_scopes (list[str] | None | Unset): With needs_scopes: the scopes the checked tools need that the grant
             lacks, sorted.
@@ -39,6 +47,7 @@ class ConnectionValidation:
 
     connection_id: str
     status: ConnectionValidationStatus
+    changed_tools: list[str] | None | Unset = UNSET
     checked_at: datetime.datetime | Unset = UNSET
     code: str | Unset = UNSET
     error: str | Unset = UNSET
@@ -50,6 +59,15 @@ class ConnectionValidation:
         connection_id = self.connection_id
 
         status = self.status.value
+
+        changed_tools: list[str] | None | Unset
+        if isinstance(self.changed_tools, Unset):
+            changed_tools = UNSET
+        elif isinstance(self.changed_tools, list):
+            changed_tools = self.changed_tools
+
+        else:
+            changed_tools = self.changed_tools
 
         checked_at: str | Unset = UNSET
         if not isinstance(self.checked_at, Unset):
@@ -78,6 +96,8 @@ class ConnectionValidation:
                 "status": status,
             }
         )
+        if changed_tools is not UNSET:
+            field_dict["changed_tools"] = changed_tools
         if checked_at is not UNSET:
             field_dict["checked_at"] = checked_at
         if code is not UNSET:
@@ -97,6 +117,23 @@ class ConnectionValidation:
         connection_id = d.pop("connection_id")
 
         status = ConnectionValidationStatus(d.pop("status"))
+
+        def _parse_changed_tools(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                changed_tools_type_0 = cast(list[str], data)
+
+                return changed_tools_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        changed_tools = _parse_changed_tools(d.pop("changed_tools", UNSET))
 
         _checked_at = d.pop("checked_at", UNSET)
         checked_at: datetime.datetime | Unset
@@ -131,6 +168,7 @@ class ConnectionValidation:
         connection_validation = cls(
             connection_id=connection_id,
             status=status,
+            changed_tools=changed_tools,
             checked_at=checked_at,
             code=code,
             error=error,

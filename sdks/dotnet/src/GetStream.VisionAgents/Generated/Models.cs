@@ -3048,7 +3048,7 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset CheckedAt { get; set; } = default!;
 
         /// <summary>
-        /// The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+        /// The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string? Code { get; set; } = default!;
@@ -3306,13 +3306,19 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("changed_tools")]
+        public System.Collections.Generic.List<string>? ChangedTools { get; set; } = default!;
+
+        /// <summary>
         /// When the tools were listed. Absent until a validate listed them.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("checked_at")]
         public System.DateTimeOffset? CheckedAt { get; set; } = default!;
 
         /// <summary>
-        /// What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added.
+        /// What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_tool_schema_changed with needs_reapproval; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string? Code { get; set; } = default!;
