@@ -75,6 +75,20 @@ type Config struct {
 	CPU      int `json:"cpu,omitempty"`
 	MemoryGB int `json:"memory_gb,omitempty"`
 	DiskGB   int `json:"disk_gb,omitempty"`
+	// Network lets code in the sandbox reach the internet. Without it, and without
+	// AllowedDomains or NetworkAllowList, every outbound connection is blocked.
+	Network bool `json:"network,omitempty"`
+	// AllowedDomains are the domains code in the sandbox may reach. Set with Network, it
+	// narrows what Network opens.
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
+	// NetworkAllowList are the CIDR ranges code in the sandbox may reach, narrowing
+	// Network the same way. Daytona takes one allow list or the other, never both.
+	NetworkAllowList []string `json:"network_allow_list,omitempty"`
+}
+
+// Isolated reports whether code in the sandbox may reach nothing outside it.
+func (c Config) Isolated() bool {
+	return !c.Network && len(c.AllowedDomains) == 0 && len(c.NetworkAllowList) == 0
 }
 
 // Built reports whether the sandbox needs an image built for it.

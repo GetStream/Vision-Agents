@@ -5420,8 +5420,15 @@ components:
       type: string
     SandboxOptions:
       additionalProperties: false
-      description: How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+      description: How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
       properties:
+        allowed_domains:
+          description: Domains code in the sandbox may reach, such as api.example.com. Set, nothing else is reachable, even with network on. Not with network_allow_list.
+          items:
+            maxLength: 253
+            type: string
+          maxItems: 64
+          type: array
         cpu:
           description: CPUs for the sandbox. Zero is the provider's default.
           format: int64
@@ -5444,6 +5451,16 @@ components:
           maximum: 64
           minimum: 0
           type: integer
+        network:
+          description: Whether code in the sandbox may reach the internet. Off by default, and then every outbound connection is blocked unless allowed_domains or network_allow_list names where it may go.
+          type: boolean
+        network_allow_list:
+          description: CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set, nothing else is reachable, even with network on. Not with allowed_domains.
+          items:
+            maxLength: 43
+            type: string
+          maxItems: 64
+          type: array
         setup:
           description: Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it.
           items:

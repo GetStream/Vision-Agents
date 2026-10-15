@@ -864,6 +864,12 @@ it once, `timeout_ms` for one run (30 seconds by default, at most 30 minutes), a
 first sandbox from a given setup waits for the build. A run is still bounded by its skill's
 deadline, so a skill that renders for minutes says so in its own.
 
+Code in the sandbox reaches nothing outside it by default. `network: true` opens the
+internet, and `allowed_domains` or `network_allow_list` (CIDR ranges), one or the other,
+names the only places it may go, with or without `network`. These need no image of their own.
+Daytona organizations on tiers 1 and 2 cannot set either list per sandbox and refuse to create
+one that does; blocking everything, the default, works on every tier.
+
 `run_code` takes `files` as well as `code`: paths the program writes that the person should
 get, at most four of up to 20 MiB each. On a persistent text conversation each file is
 uploaded to the channel as the agent, `task_settled` lists them (`name`, `mime_type`, `url`,

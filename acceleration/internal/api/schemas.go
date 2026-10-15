@@ -742,18 +742,23 @@ func (e Sandbox) Valid() bool {
 
 // SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
 type SandboxOptions struct {
-	Cpu       *int      `json:"cpu,omitempty" doc:"CPUs for the sandbox. Zero is the provider's default." minimum:"0" maximum:"16"`
-	DiskGb    *int      `json:"disk_gb,omitempty" doc:"Disk for the sandbox, in GiB. Zero is the provider's default." minimum:"0" maximum:"100"`
-	Image     *string   `json:"image,omitempty" doc:"The container image to build on, which must have Python, such as python:3.13-slim-bookworm. Empty with anything else set is a slim Python 3.13 image." maxLength:"256"`
-	MemoryGb  *int      `json:"memory_gb,omitempty" doc:"Memory for the sandbox, in GiB. Zero is the provider's default." minimum:"0" maximum:"64"`
-	Setup     *[]string `json:"setup,omitempty" doc:"Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it." maxItems:"32"`
-	TimeoutMs *int      `json:"timeout_ms,omitempty" doc:"How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A run is still bounded by the deadline of the skill it was written for." minimum:"0" maximum:"1800000"`
+	AllowedDomains   *[]string `json:"allowed_domains,omitempty" doc:"Domains code in the sandbox may reach, such as api.example.com. Set, nothing else is reachable, even with network on. Not with network_allow_list." maxItems:"64"`
+	Cpu              *int      `json:"cpu,omitempty" doc:"CPUs for the sandbox. Zero is the provider's default." minimum:"0" maximum:"16"`
+	DiskGb           *int      `json:"disk_gb,omitempty" doc:"Disk for the sandbox, in GiB. Zero is the provider's default." minimum:"0" maximum:"100"`
+	Image            *string   `json:"image,omitempty" doc:"The container image to build on, which must have Python, such as python:3.13-slim-bookworm. Empty with anything else set is a slim Python 3.13 image." maxLength:"256"`
+	MemoryGb         *int      `json:"memory_gb,omitempty" doc:"Memory for the sandbox, in GiB. Zero is the provider's default." minimum:"0" maximum:"64"`
+	Network          *bool     `json:"network,omitempty" doc:"Whether code in the sandbox may reach the internet. Off by default, and then every outbound connection is blocked unless allowed_domains or network_allow_list names where it may go."`
+	NetworkAllowList *[]string `json:"network_allow_list,omitempty" doc:"CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set, nothing else is reachable, even with network on. Not with allowed_domains." maxItems:"64"`
+	Setup            *[]string `json:"setup,omitempty" doc:"Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it." maxItems:"32"`
+	TimeoutMs        *int      `json:"timeout_ms,omitempty" doc:"How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A run is still bounded by the deadline of the skill it was written for." minimum:"0" maximum:"1800000"`
 }
 
 func (*SandboxOptions) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run."
+	schema.Description = "How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run."
 	schema.AdditionalProperties = false
 	schema.Properties["setup"].Items.MaxLength = itemLimit(2048)
+	schema.Properties["allowed_domains"].Items.MaxLength = itemLimit(253)
+	schema.Properties["network_allow_list"].Items.MaxLength = itemLimit(43)
 	return schema
 }
 

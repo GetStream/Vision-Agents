@@ -168,7 +168,15 @@ func quoted(word string) string {
 // params are what the sandbox is created from: Daytona's own Python sandbox, or an image
 // built from the config's base and setup.
 func (s *Sandbox) params() any {
-	base := types.SandboxBaseParams{Language: types.CodeLanguagePython}
+	base := types.SandboxBaseParams{Language: types.CodeLanguagePython, NetworkBlockAll: s.config.Isolated()}
+	if domains := s.config.AllowedDomains; len(domains) > 0 {
+		joined := strings.Join(domains, ",")
+		base.DomainAllowList = &joined
+	}
+	if cidrs := s.config.NetworkAllowList; len(cidrs) > 0 {
+		joined := strings.Join(cidrs, ",")
+		base.NetworkAllowList = &joined
+	}
 	if !s.config.Built() {
 		return types.SnapshotParams{SandboxBaseParams: base}
 	}
