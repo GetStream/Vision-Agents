@@ -2428,7 +2428,7 @@ func (s *AgentSuite) TestAnInterruptionKeepsReturnedWorkUntilTheVoiceReconnects(
 	s.delegates()
 	s.join(true)
 	s.model.reply = nil
-	s.model.then = []string{"The result is 12.63."}
+	s.model.then = []string{"The result is twelve point six three."}
 	s.subagent.reply = nil
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
@@ -2499,7 +2499,7 @@ func (s *AgentSuite) TestAnInterruptionKeepsReturnedWorkUntilTheVoiceReconnects(
 		}
 		return false
 	}, "the replacement model request did not receive the delegated result")
-	s.eventually(func() bool { return s.spokenText("12.63") }, "the returned result was not spoken")
+	s.eventually(func() bool { return s.spokenText("twelve point six three") }, "the returned result was not spoken")
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the replacement reply produced no audio")
 	s.eventually(func() bool { return !s.agent.Busy() }, "the replacement reply never settled")
 	s.Zero(countOf[Error](s.reported()), "the interruption left the agent with a voice error")
