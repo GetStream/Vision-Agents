@@ -275,6 +275,29 @@ func TestAPublicRequestOpenWhenADrainStartsFinishesInsideTheGrace(t *testing.T) 
 	}
 }
 
+func TestAPeerRequestOpenAfterADrainFinishesInsideTheGrace(t *testing.T) {
+	public, _ := servingNothing(t)
+	peers, done := servingASlowRequest(t)
+
+	err := stopServing(stopping{
+		public:    public,
+		peers:     peers,
+		drainWork: func() {},
+		held:      func() int { return 0 },
+		telephony: idlePhone(t),
+		drain:     time.Hour,
+		grace:     shutdownGrace,
+		logger:    slog.New(slog.DiscardHandler),
+	})
+
+	require.NoError(t, err)
+	select {
+	case <-done:
+	default:
+		t.Fatal("stopServing returned while the peer request was still running")
+	}
+}
+
 // unclosable closes but says it could not. Besides its deadline, a listener that fails to
 // close is the one error http.Server.Shutdown returns (closeListenersLocked in net/http),
 // and no real listener fails to close on demand.
