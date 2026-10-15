@@ -1903,7 +1903,7 @@ func (c *Conversation) run() {
 		select {
 		case <-c.stopped:
 			if c.flush() {
-				c.indicate(nil)
+				c.indicate(indication{})
 			}
 			return
 		case <-tick.C:
@@ -1945,7 +1945,12 @@ func (c *Conversation) run() {
 					window = &w
 				}
 			}
-			if m != nil {
+			next := indication{}
+			if created && m.Role == "assistant" && m.FinishedAt == nil {
+				next = indication{message: m.ID, state: aiState(*m)}
+			}
+			// Only an update sends the reply, so only a tick that sends one copies it.
+			if live {
 				copy := *m
 				copy.Tools = append([]Tool{}, m.Tools...)
 				copy.Parts = append([]Part{}, m.Parts...)
@@ -1963,11 +1968,7 @@ func (c *Conversation) run() {
 			c.mu.Unlock()
 			// Every pending write is stored by now, so a settled reply's final text is
 			// already in Stream Chat when its indicator clears.
-			if created && m.Role == "assistant" && m.FinishedAt == nil {
-				c.indicate(m)
-			} else {
-				c.indicate(nil)
-			}
+			c.indicate(next)
 			if live {
 				c.lived = now
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -2021,14 +2022,10 @@ func liveBackoff(err error, failures int, now time.Time) time.Duration {
 }
 
 // indicate tells watchers what a live reply is doing with Stream's AI indicator events,
-// sending one only when that changes. A nil reply clears the last indicator. They are a
+// sending one only when that changes. An empty one clears the last indicator. They are a
 // best-effort signal: the message's own state and generating fields stay authoritative,
 // so a failed send is not retried.
-func (c *Conversation) indicate(m *Message) {
-	next := indication{}
-	if m != nil {
-		next = indication{message: m.ID, state: aiState(*m)}
-	}
+func (c *Conversation) indicate(next indication) {
 	if next == c.indicated {
 		return
 	}
