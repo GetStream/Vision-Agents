@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -447,15 +448,17 @@ func leg(from, to time.Time) float64 {
 	return msBetween(from, to)
 }
 
-// turnRecorder writes finished turns to Postgres off the conversation's path. A
-// conversation must never wait on a database, so recording is asynchronous and rows are
-// what gets dropped when the writer cannot keep up.
+// turnRecorder writes finished turns off the conversation's path: the turn to Redis for
+// the hour somebody may read the call back in, and its counts to Postgres for the stats.
+// A conversation must never wait on a database, so recording is asynchronous and turns
+// are what gets dropped when the writer cannot keep up. Either side may be nil.
 type turnRecorder struct {
 	store  *store.Store
+	live   *live.Client
 	owner  routing.Owner
 	logger *slog.Logger
 
-	queue chan store.Turn
+	queue chan live.Turn
 	done  chan struct{}
 
 	// closing guards the queue against the one send that cannot be recovered from. A
@@ -467,12 +470,13 @@ type turnRecorder struct {
 	dropped   atomic.Int64
 }
 
-func newTurnRecorder(pgStore *store.Store, owner routing.Owner, logger *slog.Logger) *turnRecorder {
+func newTurnRecorder(pgStore *store.Store, liveClient *live.Client, owner routing.Owner, logger *slog.Logger) *turnRecorder {
 	r := &turnRecorder{
 		store:  pgStore,
+		live:   liveClient,
 		owner:  owner,
 		logger: logger,
-		queue:  make(chan store.Turn, turnQueueSize),
+		queue:  make(chan live.Turn, turnQueueSize),
 		done:   make(chan struct{}),
 	}
 	go r.run()
@@ -481,7 +485,7 @@ func newTurnRecorder(pgStore *store.Store, owner routing.Owner, logger *slog.Log
 
 // Record queues a finished turn, dropping it if the writer is too far behind.
 func (r *turnRecorder) Record(turn Turn) {
-	row := store.Turn{
+	row := live.Turn{
 		CustomerID:           r.owner.CustomerID,
 		AgentID:              r.owner.AgentID,
 		CallID:               r.owner.CallID,
@@ -542,11 +546,35 @@ func (r *turnRecorder) run() {
 
 	for row := range r.queue {
 		ctx, cancel := context.WithTimeout(context.Background(), turnWriteTimeout)
-		if err := r.store.RecordTurn(ctx, &row); err != nil {
-			r.logger.Error("could not record turn", "error", err)
+		if r.live != nil {
+			if err := r.live.RecordTurn(ctx, row); err != nil {
+				r.logger.Error("could not record turn", "error", err)
+			}
+		}
+		if r.store != nil {
+			if err := r.store.RecordTurnStats(ctx, sampleOf(row)); err != nil {
+				r.logger.Error("could not count turn", "error", err)
+			}
 		}
 		cancel()
 	}
+}
+
+func sampleOf(turn live.Turn) store.TurnSample {
+	sample := store.TurnSample{
+		CustomerID:   turn.CustomerID,
+		AgentID:      turn.AgentID,
+		StartedAt:    turn.StartedAt,
+		Interrupted:  turn.Interrupted,
+		STTLatencyMs: turn.STTLatencyMs,
+		LLMTTFTMs:    turn.LLMTTFTMs,
+		TTSTTFBMs:    turn.TTSTTFBMs,
+		RoundtripMs:  turn.RoundtripMs,
+	}
+	if turn.AudioOutMs != nil {
+		sample.AudioOutMs = *turn.AudioOutMs
+	}
+	return sample
 }
 
 // measured keeps a leg that never happened out of the percentiles rather than counting

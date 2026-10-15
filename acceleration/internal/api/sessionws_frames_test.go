@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 func TestASettledTaskListsTheFilesItsCodeHandedBack(t *testing.T) {
@@ -98,7 +98,7 @@ func TestATurnFrameCarriesHowLongTheReplyWasHeld(t *testing.T) {
 
 func TestATimelineEntryCarriesHowLongTheReplyWasHeld(t *testing.T) {
 	held := 620.0
-	turns := []store.Turn{{TurnID: "turn-1", ReplyHoldMs: &held}, {TurnID: "turn-2"}}
+	turns := []live.Turn{{TurnID: "turn-1", ReplyHoldMs: &held}, {TurnID: "turn-2"}}
 
 	timeline := timelineOf(turns, nil, nil)
 
@@ -109,7 +109,7 @@ func TestATimelineEntryCarriesHowLongTheReplyWasHeld(t *testing.T) {
 
 func TestATimelineEntryCarriesWhenTheFirstFrameWasQueuedAndHeard(t *testing.T) {
 	queued, audible, speechEnd, roundtrip := 880.0, 940.0, 1060.0, 1400.0
-	turns := []store.Turn{
+	turns := []live.Turn{
 		{TurnID: "turn-1", RoundtripMs: &roundtrip, FirstFrameQueuedMs: &queued,
 			FirstAudibleFrameMs: &audible, SpeechEndToAudibleMs: &speechEnd},
 		{TurnID: "turn-2", RoundtripMs: &roundtrip},

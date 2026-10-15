@@ -57,7 +57,7 @@ func (s *MCPBrandingSuite) SetupTest() {
 func (s *MCPBrandingSuite) TestAServerSaysWhatItIsWhenTheConfigIsSaved() {
 	var created AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
-		map[string]any{"name": "crm", "mcp_servers": []map[string]any{{"name": "crm", "url": "https://crm.example.com/mcp"}}}, &created))
+		map[string]any{"name": "crm", "mcp_servers": []map[string]any{{"name": "crm", "url": "https://8.8.8.8/mcp"}}}, &created))
 
 	var read AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
@@ -73,7 +73,7 @@ func (s *MCPBrandingSuite) TestAServerSaysWhatItIsWhenTheConfigIsSaved() {
 }
 
 func (s *MCPBrandingSuite) TestAServerThatStopsAnsweringKeepsWhatItSaidBefore() {
-	servers := []map[string]any{{"name": "crm", "url": "https://crm.example.com/mcp"}}
+	servers := []map[string]any{{"name": "crm", "url": "https://8.8.8.8/mcp"}}
 	var created AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
 		map[string]any{"name": "crm", "mcp_servers": servers}, &created))
@@ -93,7 +93,7 @@ func (s *MCPBrandingSuite) TestAServerThatNeverAnsweredIsSavedWithoutBranding() 
 
 	var created AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
-		map[string]any{"name": "crm", "mcp_servers": []map[string]any{{"name": "crm", "url": "https://crm.example.com/mcp"}}}, &created))
+		map[string]any{"name": "crm", "mcp_servers": []map[string]any{{"name": "crm", "url": "https://8.8.8.8/mcp"}}}, &created))
 
-	s.Equal([]McpServer{{Name: "crm", Url: "https://crm.example.com/mcp"}}, value(created.McpServers))
+	s.Equal([]McpServer{{Name: "crm", Url: "https://8.8.8.8/mcp"}}, value(created.McpServers))
 }

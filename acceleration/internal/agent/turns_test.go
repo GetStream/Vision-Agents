@@ -22,7 +22,7 @@ func TestTurnRecorderSuite(t *testing.T) {
 // recorder is one with nowhere to write. Nothing here lets a row reach the writer, so the
 // store it would need is never touched.
 func (s *TurnRecorderSuite) recorder() *turnRecorder {
-	return newTurnRecorder(nil, routing.Owner{CustomerID: "acme"}, slog.New(slog.DiscardHandler))
+	return newTurnRecorder(nil, nil, routing.Owner{CustomerID: "acme"}, slog.New(slog.DiscardHandler))
 }
 
 // TestATurnRecordedAfterCloseIsLetGo covers the one send that cannot be recovered from.

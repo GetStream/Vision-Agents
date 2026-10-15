@@ -132,6 +132,8 @@ func (s *Speaker) encoderFor(inputRate int) (media.PCM16Writer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rtcaudio: build opus encoder: %w", err)
 	}
+	soxrCreate.Lock()
+	defer soxrCreate.Unlock()
 	return media.ResampleWriter(media.FullFrames(encoder, opusFrameSamples), inputRate), nil
 }
 

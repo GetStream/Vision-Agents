@@ -97,7 +97,11 @@ def sync_detailed(
     which GET .../tools then shows. A connection that needs a reconnect says so without the provider
     being asked. The granted scopes are then checked against what the tools need (all of them, or those
     the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the
-    missing scopes. Who may validate it is who may read it.
+    missing scopes. The tools sessions pinned for the connection's current grant are then compared with
+    the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed
+    and the changed tools, and sessions keep leaving it out; a validate never pins a tool again.
+    needs_scopes comes first, since the consent it asks for begins a new grant, which approves the
+    changed tools too. Who may validate it is who may read it.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -138,7 +142,11 @@ def sync(
     which GET .../tools then shows. A connection that needs a reconnect says so without the provider
     being asked. The granted scopes are then checked against what the tools need (all of them, or those
     the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the
-    missing scopes. Who may validate it is who may read it.
+    missing scopes. The tools sessions pinned for the connection's current grant are then compared with
+    the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed
+    and the changed tools, and sessions keep leaving it out; a validate never pins a tool again.
+    needs_scopes comes first, since the consent it asks for begins a new grant, which approves the
+    changed tools too. Who may validate it is who may read it.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -174,7 +182,11 @@ async def asyncio_detailed(
     which GET .../tools then shows. A connection that needs a reconnect says so without the provider
     being asked. The granted scopes are then checked against what the tools need (all of them, or those
     the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the
-    missing scopes. Who may validate it is who may read it.
+    missing scopes. The tools sessions pinned for the connection's current grant are then compared with
+    the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed
+    and the changed tools, and sessions keep leaving it out; a validate never pins a tool again.
+    needs_scopes comes first, since the consent it asks for begins a new grant, which approves the
+    changed tools too. Who may validate it is who may read it.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -213,7 +225,11 @@ async def asyncio(
     which GET .../tools then shows. A connection that needs a reconnect says so without the provider
     being asked. The granted scopes are then checked against what the tools need (all of them, or those
     the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the
-    missing scopes. Who may validate it is who may read it.
+    missing scopes. The tools sessions pinned for the connection's current grant are then compared with
+    the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed
+    and the changed tools, and sessions keep leaving it out; a validate never pins a tool again.
+    needs_scopes comes first, since the consent it asks for begins a new grant, which approves the
+    changed tools too. Who may validate it is who may read it.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

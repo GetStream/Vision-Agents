@@ -58,6 +58,8 @@ type Step struct {
 	// GapMs is the longest silence inside a reply, which is what a starved speaker
 	// sounds like.
 	GapMs Stat `json:"gap_ms"`
+	// Audio is how faithfully the probe callers' answers arrived.
+	Audio Audio `json:"audio"`
 	// DroppedFrames is inbound audio the caller could not keep up with. Anything above
 	// zero means the measurement is the laptop's and not the router's.
 	DroppedFrames int `json:"dropped_frames"`
@@ -78,6 +80,31 @@ type Stat struct {
 	P95   float64 `json:"p95"`
 	P99   float64 `json:"p99"`
 	Max   float64 `json:"max"`
+}
+
+// Audio scores the answers a few callers recorded against the tone the mock TTS sends,
+// so a router that keeps answering but garbles its audio under load is caught.
+type Audio struct {
+	// Replies is how many answers were scored.
+	Replies int `json:"replies"`
+	// SNRP50Db and SNRMinDb are the tone's power over everything else in an answer, in
+	// decibels: the typical answer and the worst.
+	SNRP50Db float64 `json:"snr_p50_db"`
+	SNRMinDb float64 `json:"snr_min_db"`
+	// Windows is how many 100 ms windows of speech were scored, and Glitches how many
+	// were not the tone: a click, a skipped frame, distortion.
+	Windows  int `json:"windows"`
+	Glitches int `json:"glitches"`
+	// Dropouts counts 20 ms frames that went quiet in the middle of an answer.
+	Dropouts int `json:"dropouts"`
+}
+
+// Broken is the share of the scored speech that was glitched or missing.
+func (a Audio) Broken() float64 {
+	if a.Windows == 0 {
+		return 0
+	}
+	return float64(a.Glitches*framesPerWindow+a.Dropouts) / float64(a.Windows*framesPerWindow+a.Dropouts)
 }
 
 // HostCPU is what this machine was doing while a step ran. A run that saturated the
@@ -161,13 +188,13 @@ func (r Report) Markdown() string {
 		r.StartedAt.Format(time.RFC3339))
 	fmt.Fprintf(&out, "**Held %d agents.** %s\n\n", r.Held, r.verdict())
 
-	fmt.Fprintln(&out, "| agents | joined | answered | reply p50 | reply p95 | reply p99 | gap p95 | session p95 | router cpu | router mem | host cpu |")
-	fmt.Fprintln(&out, "|---|---|---|---|---|---|---|---|---|---|---|")
+	fmt.Fprintln(&out, "| agents | joined | answered | reply p50 | reply p95 | reply p99 | gap p95 | audio snr p50/min | audio broken | session p95 | router cpu | router mem | host cpu |")
+	fmt.Fprintln(&out, "|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 	for _, step := range r.Steps {
-		fmt.Fprintf(&out, "| %d | %d/%d | %d/%d | %s | %s | %s | %s | %s | %s | %s | %.0f%% |\n",
+		fmt.Fprintf(&out, "| %d | %d/%d | %d/%d | %s | %s | %s | %s | %s | %s | %s | %s | %s | %.0f%% |\n",
 			step.Agents, step.Joined, step.Sessions, step.Answered, step.Turns,
 			ms(step.ReplyMs.P50), ms(step.ReplyMs.P95), ms(step.ReplyMs.P99),
-			ms(step.GapMs.P95), ms(step.SessionMs.P95),
+			ms(step.GapMs.P95), step.Audio.snr(), step.Audio.broken(), ms(step.SessionMs.P95),
 			step.Router.CPU(), step.Router.Memory(), step.Host.Busy*100)
 	}
 
@@ -255,6 +282,20 @@ func answered(step Step) string {
 		return "-"
 	}
 	return fmt.Sprintf("%.0f%%", float64(step.Answered)/float64(step.Turns)*100)
+}
+
+func (a Audio) snr() string {
+	if a.Replies == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.0f/%.0f dB", a.SNRP50Db, a.SNRMinDb)
+}
+
+func (a Audio) broken() string {
+	if a.Windows == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.1f%% (%d glitches, %d dropouts)", a.Broken()*100, a.Glitches, a.Dropouts)
 }
 
 func ms(value float64) string {

@@ -1,0 +1,77 @@
+# Notion's hosted MCP server (Notion MCP), asked for in WWSD's platform feedback #6 (AI-1292).
+# Vendor pages, opened October 15, 2026:
+#   [mcp]    https://developers.notion.com/docs/mcp
+#   [start]  https://developers.notion.com/guides/mcp/get-started-with-mcp
+#   [client] https://developers.notion.com/guides/mcp/build-mcp-client («Build an MCP client
+#            for Notion», which [start] points a client builder to)
+# And the servers' own metadata, fetched on October 15, 2026 («[prm]», «[as]» and «[401]»):
+#   [prm] GET https://mcp.notion.com/.well-known/oauth-protected-resource/mcp at
+#         2026-10-15T15:16:47Z: resource https://mcp.notion.com/mcp, authorization_servers
+#         [https://mcp.notion.com], scopes_supported [default].
+#   [as]  GET https://mcp.notion.com/.well-known/oauth-authorization-server at
+#         2026-10-15T15:16:47Z: issuer https://mcp.notion.com, authorization_endpoint
+#         https://mcp.notion.com/authorize, token_endpoint https://mcp.notion.com/token,
+#         registration_endpoint https://mcp.notion.com/register, revocation_endpoint
+#         https://mcp.notion.com/token, scopes_supported [default], grant_types_supported
+#         [authorization_code, refresh_token, urn:ietf:params:oauth:grant-type:jwt-bearer],
+#         token_endpoint_auth_methods_supported [client_secret_basic, client_secret_post,
+#         none], code_challenge_methods_supported [S256],
+#         authorization_response_iss_parameter_supported true,
+#         client_id_metadata_document_supported true.
+#   [401] POST https://mcp.notion.com/mcp with no token at 2026-10-15T15:16:47Z: 401,
+#         WWW-Authenticate: Bearer realm="OAuth", resource_metadata=
+#         "https://mcp.notion.com/.well-known/oauth-protected-resource/mcp", scope="default".
+id: notion
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+name: Notion
+# The catalog's existing category for Google Docs and Google Drive (google_docs.yaml,
+# google_drive.yaml).
+category: Documents
+# «read and update content that you can access»: [mcp].
+description: Search, read and update the pages and databases the person can access.
+endpoints:
+  # «Streamable HTTP» at https://mcp.notion.com/mcp; the SSE URL is «only if the client
+  # doesn't support Streamable HTTP»: [start]. Authorize, token and revoke are not written:
+  # oauth2_code discovers them through [prm] and [as] (RFC 9728 and 8414), as [client] asks
+  # («Before connecting to an MCP server, discover its OAuth configuration»).
+  mcp: https://mcp.notion.com/mcp
+# «Notion MCP currently requires you to complete the OAuth authorization flow»: [start].
+# PKCE «is mandatory»: [client]; S256: [as]. The hosted server documents no token option:
+# [start] names bearer tokens only for the open-source server, «no longer actively
+# maintained».
+schemes: [oauth2_code]
+client:
+  # «Notion MCP server supports dynamic client registration (RFC 7591)»: [client];
+  # registration_endpoint: [as]. [client] and [as] also offer CIMD; it is left out until a
+  # live consent shows Notion accepts the router's client metadata document, so a consent
+  # takes the same path as every other hosted MCP built-in (linear.yaml, sentry.yaml).
+  registration: [dcr]
+scopes:
+  # [401] challenges with scope="default", and [prm] and [as] name only default. MCP
+  # 2026-07-28, Authorization, «Scope Selection Strategy»: «Use scope parameter from the
+  # initial WWW-Authenticate header in the 401 response, if provided».
+  list: [default]
+# No identity. [client], Step 6, documents TokenResponse with user_id?, workspace_id?, bot_id?
+# and workspace_name?, «sent only on authorization-code exchanges» (opened 2026-10-15T15:27:26Z).
+# They are optional there, and an identity part cannot be optional (core/manifest.go:507), and
+# no live consent has shown which of them a token response carries. So none is captured: a
+# reconnect to another workspace is not refused as an account switch. An OIDC id_token is only
+# for clients «the Notion team allows» ([client]).
+refresh:
+  # «Every refresh rotates the refresh token»: [client]. No grace: [client] keeps the previous
+  # token as «a one-step window» with no duration, and warns that reusing a rotated-out token
+  # «can revoke the entire connection».
+  rotating: true
+  # «Access tokens currently last about eight hours», read from expires_in first: [client].
+  # Used only when a token response has no expires_in.
+  access_ttl: 8h
+  # A refresh token dies after «30 consecutive days of inactivity» (720h): [client]. That is
+  # counted from each refresh, as refresh_ttl is. [client]'s other limit, «an absolute maximum
+  # lifetime of 180 days measured from when the user first authorized», is counted from the
+  # consent, which this field cannot say.
+  refresh_ttl: 720h
+# No rate_limit: neither [mcp], [start] nor [client] documents one. # unverified
+sources:
+  - kind: mcp
+    endpoint: mcp

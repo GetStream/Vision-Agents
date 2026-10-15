@@ -13,6 +13,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -122,10 +123,11 @@ func (s *CallsSuite) TestTheRunningCallsAreTheOnesThatHaveNotEnded() {
 func (s *CallsSuite) TestWhatACallDecidedIsFoundByTheRowRecordingIt() {
 	// A dashboard holds the row's id, and the agent wrote its reasoning against the call
 	// it joined. Reading one by the other is what puts the decision log on the page.
-	call := s.started(store.Call{})
-	s.Require().NoError(s.store.RecordCallEvents(context.Background(), []store.CallEvent{{
+	// Decisions are kept for an hour, so this call is a recent one.
+	call := s.started(store.Call{StartedAt: time.Now().Add(-time.Minute)})
+	s.Require().NoError(s.live.RecordCallEvents(context.Background(), []live.CallEvent{{
 		CustomerID: s.customerID(), CallID: call.CallID, AgentID: call.AgentID,
-		At: s.base.Add(time.Second), Kind: "answer", Reason: "a complete thought",
+		At: time.Now(), Kind: "answer", Reason: "a complete thought",
 		Said: "how is the weather",
 	}}))
 

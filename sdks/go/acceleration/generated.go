@@ -568,6 +568,7 @@ func (e ConnectionStatus) Valid() bool {
 const (
 	ConnectionValidationStatusConnected            ConnectionValidationStatus = "connected"
 	ConnectionValidationStatusFailed               ConnectionValidationStatus = "failed"
+	ConnectionValidationStatusNeedsReapproval      ConnectionValidationStatus = "needs_reapproval"
 	ConnectionValidationStatusNeedsReauthorization ConnectionValidationStatus = "needs_reauthorization"
 	ConnectionValidationStatusNeedsScopes          ConnectionValidationStatus = "needs_scopes"
 	ConnectionValidationStatusPending              ConnectionValidationStatus = "pending"
@@ -579,6 +580,8 @@ func (e ConnectionValidationStatus) Valid() bool {
 	case ConnectionValidationStatusConnected:
 		return true
 	case ConnectionValidationStatusFailed:
+		return true
+	case ConnectionValidationStatusNeedsReapproval:
 		return true
 	case ConnectionValidationStatusNeedsReauthorization:
 		return true
@@ -3707,13 +3710,13 @@ type ConnectionLastValidation struct {
 	// CheckedAt When the validate ran.
 	CheckedAt time.Time `json:"checked_at"`
 
-	// Code The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+	// Code The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
 	Code *string `json:"code,omitempty"`
 
 	// Error Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote.
 	Error *string `json:"error,omitempty"`
 
-	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and a new grant (a consent) approves them. failed: the provider could not be reached or listed nothing usable; error says why.
 	Status ConnectionValidationStatus `json:"status"`
 }
 
@@ -3734,7 +3737,7 @@ type ConnectionPage struct {
 	HasMore bool          `json:"has_more"`
 	Items   *[]Connection `json:"items"`
 
-	// NextCursor Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one.
+	// NextCursor Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app). Absent on the last one.
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
@@ -3811,10 +3814,13 @@ type ConnectionUse struct {
 
 // ConnectionValidation Whether a connection's credential works, found by asking the provider for its tools.
 type ConnectionValidation struct {
+	// ChangedTools With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back.
+	ChangedTools *[]string `json:"changed_tools,omitempty"`
+
 	// CheckedAt When the tools were listed. Absent until a validate listed them.
 	CheckedAt *time.Time `json:"checked_at,omitempty"`
 
-	// Code What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added.
+	// Code What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_tool_schema_changed with needs_reapproval; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added.
 	Code         *string `json:"code,omitempty"`
 	ConnectionId string  `json:"connection_id"`
 
@@ -3824,7 +3830,7 @@ type ConnectionValidation struct {
 	// MissingScopes With needs_scopes: the scopes the checked tools need that the grant lacks, sorted.
 	MissingScopes *[]string `json:"missing_scopes,omitempty"`
 
-	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and a new grant (a consent) approves them. failed: the provider could not be reached or listed nothing usable; error says why.
 	Status ConnectionValidationStatus `json:"status"`
 
 	// ToolsDigest The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them.
@@ -3837,7 +3843,7 @@ type ConnectionValidationRequest struct {
 	Tools *[]string `json:"tools,omitempty"`
 }
 
-// ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+// ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and a new grant (a consent) approves them. failed: the provider could not be reached or listed nothing usable; error says why.
 type ConnectionValidationStatus string
 
 // Connector A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
@@ -5168,7 +5174,7 @@ type McpServer struct {
 	// Tools Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
 	Tools *[]string `json:"tools,omitempty"`
 
-	// Url Its Streamable HTTP endpoint, over https.
+	// Url Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses.
 	Url string `json:"url"`
 
 	// User Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
@@ -7802,8 +7808,8 @@ type ListAgentConfigsParams struct {
 
 // ListConnectionsParams defines parameters for ListConnections.
 type ListConnectionsParams struct {
-	// OwnerType app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id.
-	OwnerType ConnectionOwnerType `form:"owner_type" json:"owner_type"`
+	// OwnerType app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. Omitted is app.
+	OwnerType *ConnectionOwnerType `form:"owner_type,omitempty" json:"owner_type,omitempty"`
 
 	// ConnectorId Keeps one connector's.
 	ConnectorId *string `form:"connector_id,omitempty" json:"connector_id,omitempty"`
@@ -8781,14 +8787,14 @@ type ClientInterface interface {
 
 	// GetCallEvents What the conversation decided, and why
 	//
-	// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+	// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. They are kept for an hour. A call still running reports the same decisions live on the session socket.
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/events (the `GetCallEvents` operationId).
 	GetCallEvents(ctx context.Context, id string, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCallTimeline The call as it unfolded, said and measured together
 	//
-	// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
+	// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an hour; GET /v1/turns/stats keeps their percentiles.
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/timeline (the `GetCallTimeline` operationId).
 	GetCallTimeline(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -9331,7 +9337,7 @@ type ClientInterface interface {
 
 	// ValidateConnectionWithBody Validate a connection
 	//
-	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -9342,7 +9348,7 @@ type ClientInterface interface {
 
 	// ValidateConnection Validate a connection
 	//
-	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -11342,7 +11348,7 @@ type ClientInterface interface {
 
 	// GetTurnStats Conversational latency for the calling customer
 	//
-	// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed.
+	// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a histogram and are within 5% of the true ones.
 	//
 	// Corresponds with GET /v1/turns/stats (the `GetTurnStats` operationId).
 	GetTurnStats(ctx context.Context, params *GetTurnStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11483,7 +11489,7 @@ func (c *Client) GetCall(ctx context.Context, id string, reqEditors ...RequestEd
 
 // GetCallEvents What the conversation decided, and why
 //
-// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. They are kept for an hour. A call still running reports the same decisions live on the session socket.
 //
 // Corresponds with GET /v1/agents/calls/{id}/events (the `GetCallEvents` operationId).
 func (c *Client) GetCallEvents(ctx context.Context, id string, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -11500,7 +11506,7 @@ func (c *Client) GetCallEvents(ctx context.Context, id string, params *GetCallEv
 
 // GetCallTimeline The call as it unfolded, said and measured together
 //
-// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
+// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an hour; GET /v1/turns/stats keeps their percentiles.
 //
 // Corresponds with GET /v1/agents/calls/{id}/timeline (the `GetCallTimeline` operationId).
 func (c *Client) GetCallTimeline(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12606,7 +12612,7 @@ func (c *Client) ListConnectionTools(ctx context.Context, id string, reqEditors 
 
 // ValidateConnectionWithBody Validate a connection
 //
-// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -12627,7 +12633,7 @@ func (c *Client) ValidateConnectionWithBody(ctx context.Context, id string, cont
 
 // ValidateConnection Validate a connection
 //
-// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -16823,7 +16829,7 @@ func (c *Client) GetSpeech(ctx context.Context, id string, reqEditors ...Request
 
 // GetTurnStats Conversational latency for the calling customer
 //
-// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed.
+// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a histogram and are within 5% of the true ones.
 //
 // Corresponds with GET /v1/turns/stats (the `GetTurnStats` operationId).
 func (c *Client) GetTurnStats(ctx context.Context, params *GetTurnStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -18473,12 +18479,16 @@ func NewListConnectionsRequest(server string, params *ListConnectionsParams) (*h
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "owner_type", params.OwnerType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.OwnerType != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "owner_type", *params.OwnerType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if params.ConnectorId != nil {
@@ -27035,7 +27045,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetCallEventsWithResponse What the conversation decided, and why
 	//
-	// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+	// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. They are kept for an hour. A call still running reports the same decisions live on the session socket.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27044,7 +27054,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetCallTimelineWithResponse The call as it unfolded, said and measured together
 	//
-	// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
+	// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an hour; GET /v1/turns/stats keeps their percentiles.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27643,7 +27653,7 @@ type ClientWithResponsesInterface interface {
 
 	// ValidateConnectionWithBodyWithResponse Validate a connection
 	//
-	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -27654,7 +27664,7 @@ type ClientWithResponsesInterface interface {
 
 	// ValidateConnectionWithResponse Validate a connection
 	//
-	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -29866,7 +29876,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetTurnStatsWithResponse Conversational latency for the calling customer
 	//
-	// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed.
+	// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a histogram and are within 5% of the true ones.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -45946,7 +45956,7 @@ func (c *ClientWithResponses) GetCallWithResponse(ctx context.Context, id string
 
 // GetCallEventsWithResponse What the conversation decided, and why
 //
-// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. They are kept for an hour. A call still running reports the same decisions live on the session socket.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -45961,7 +45971,7 @@ func (c *ClientWithResponses) GetCallEventsWithResponse(ctx context.Context, id 
 
 // GetCallTimelineWithResponse The call as it unfolded, said and measured together
 //
-// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
+// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an hour; GET /v1/turns/stats keeps their percentiles.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -46900,7 +46910,7 @@ func (c *ClientWithResponses) ListConnectionToolsWithResponse(ctx context.Contex
 
 // ValidateConnectionWithBodyWithResponse Validate a connection
 //
-// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -46917,7 +46927,7 @@ func (c *ClientWithResponses) ValidateConnectionWithBodyWithResponse(ctx context
 
 // ValidateConnectionWithResponse Validate a connection
 //
-// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -50449,7 +50459,7 @@ func (c *ClientWithResponses) GetSpeechWithResponse(ctx context.Context, id stri
 
 // GetTurnStatsWithResponse Conversational latency for the calling customer
 //
-// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed.
+// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a histogram and are within 5% of the true ones.
 //
 // Returns a wrapper object for the known response body format(s).
 //
