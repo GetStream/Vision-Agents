@@ -697,6 +697,13 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 			"provider_code", refused.Code, "error_description", core.LoggedDescription(refused.Description, query.Get("state"), query.Get("code")))
 		return consentDenied
 	}
+	if refused != nil {
+		// Any other error the provider sent back: its description is kept as the denied line
+		// keeps it, not as AuthorizationError.Error carries it, raw and whole.
+		s.logger.Info("a consent did not complete", "connection", row.ConnectionID, "provider_code", refused.Code,
+			"error_description", core.LoggedDescription(refused.Description, query.Get("state"), query.Get("code")))
+		return consentFailed
+	}
 	if err != nil {
 		s.logger.Info("a consent did not complete", "connection", row.ConnectionID, "error", err)
 		return consentFailed

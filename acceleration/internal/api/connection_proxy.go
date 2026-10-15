@@ -177,12 +177,37 @@ func (s *Server) proxyConnection(w http.ResponseWriter, r *http.Request) {
 	// read early nor held for the line (AI-1245): the host the call went to and the start of the
 	// body as the copy read it (core.Exchange.ErrorBody, a 4xx's or a 5xx's), redacted as every
 	// connector call's is of the path, the query and the connection's credential, with URLs kept
-	// to their host (core.LoggedBody). It names no header, and not the request's body.
+	// to their host (core.LoggedBody), and of the caller's cookies, which the call forwards
+	// (forwardedHeader). It names no header.
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		s.logger.Info("a direct call's provider answered with an error", "connection", connection.ID,
-			"connector", connection.ConnectorID, "provider_status", status, "provider_host", exchange.Host(),
-			"provider_body", core.LoggedBody(exchange.ErrorBody()))
+		line := []any{"connection", connection.ID, "connector", connection.ConnectorID,
+			"provider_status", status, "provider_host", exchange.Host()}
+		// Why: a provider may repeat the request in its error answer (an echo, a validation
+		// error quoting a field), and a request body is never logged (security/go.md section 7).
+		// Its echo can be any part of it in any encoding, so no redaction could be shown to
+		// catch it: a call that sent a body leaves no excerpt.
+		if len(body) == 0 {
+			line = append(line, "provider_body", core.LoggedBody(exchange.ErrorBody(), cookieValues(request.Header)...))
+		}
+		s.logger.Info("a direct call's provider answered with an error", line...)
 	}
+}
+
+// cookieValues is what of header's Cookie lines (RFC 6265 section 5.4) must not reach a log
+// line: each line whole and each cookie's value in it, as sent.
+//
+// Example: "sid=s-1; theme=dark" is "sid=s-1; theme=dark", "s-1" and "dark".
+func cookieValues(header http.Header) []string {
+	var found []string
+	for _, line := range header.Values("Cookie") {
+		found = append(found, line)
+		for pair := range strings.SplitSeq(line, ";") {
+			if _, value, ok := strings.Cut(textproto.TrimString(pair), "="); ok {
+				found = append(found, value)
+			}
+		}
+	}
+	return found
 }
 
 // proxiedPath is the provider's path the request names, as it was escaped on the wire: what

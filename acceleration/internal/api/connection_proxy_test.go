@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -35,7 +36,18 @@ const (
 	echoRetryAfterHeader = "X-Echo-Retry-After"
 	// echoRawHeader has the echo answer rawAnswer with rawServerTiming instead.
 	echoRawHeader = "X-Echo-Raw"
+	// echoStallHeader has the echo answer a 502 with stalledStart, then wait until the test
+	// closes the channel the header's value names in ConnectionProxySuite.stalls, then end it
+	// with stalledEnd.
+	echoStallHeader = "X-Echo-Stall"
 )
+
+// stalledStart is a 5xx body's first part, over 4 KiB so the router's buffers cannot hold it
+// all (the server's response bufio.Writer is 2 KiB before chunking and its connection's 4 KiB,
+// net/http/server.go in go1.27.0).
+var stalledStart = strings.Repeat("s", 8<<10)
+
+const stalledEnd = "end"
 
 // rawAnswer is a JSON object over 2 KiB, so net/http sends it chunked, with no Content-Length
 // (bufferBeforeChunkingSize in net/http/server.go is 2048).
@@ -50,6 +62,9 @@ type echoed struct {
 	Query  string      `json:"query"`
 	Header http.Header `json:"header"`
 	Body   string      `json:"body"`
+	// Cookies is the value of each cookie the request carried, as a provider that quotes one
+	// would repeat it apart from its Cookie line.
+	Cookies []string `json:"cookies,omitempty"`
 }
 
 // ConnectionProxySuite sends direct calls through a connection (T44), end to end: the
@@ -64,6 +79,8 @@ type ConnectionProxySuite struct {
 	hits atomic.Int64
 	// logged is what the router logged, for the line an answer other than 2xx leaves.
 	logged *lockedLog
+	// stalls are the channels a stalled answer waits on, by its echoStallHeader.
+	stalls sync.Map
 }
 
 func TestConnectionProxySuite(t *testing.T) {
@@ -221,9 +238,8 @@ func (s *ConnectionProxySuite) TestTheProvidersAnswerComesBackAsItCame() {
 
 // TestAnErrorAnswerComesBackAsItCameAndIsLogged: a 404 and a 502 reach the caller as base
 // 8666b26d answered them (probe-base.txt: the status, the echo's three headers and its JSON byte
-// for byte), and each leaves one line (AI-1245) with the status, the host and the start of the
-// body, without the connection's token or the path and query the echo repeats, its URLs kept
-// to their host.
+// for byte), and each leaves one line (AI-1245) with the status and the host. The call sent a
+// body, which the echo repeats, so the line has no excerpt of the answer (R1.1).
 func (s *ConnectionProxySuite) TestAnErrorAnswerComesBackAsItCameAndIsLogged() {
 	for _, status := range []int{http.StatusNotFound, http.StatusBadGateway} {
 		token := "token-" + s.utils.uuid()
@@ -243,12 +259,92 @@ func (s *ConnectionProxySuite) TestAnErrorAnswerComesBackAsItCameAndIsLogged() {
 			"the answer is the echo's, byte for byte")
 		line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
 		s.Contains(line, " provider_status="+strconv.Itoa(status)+" ")
-		s.Contains(line, " provider_host="+strings.TrimPrefix(s.echo.URL, "https://")+" ")
-		s.Contains(line, `provider_body="{\"method\":\"POST\",\"path\":\"[redacted]\",\"query\":\"[redacted]\",`)
-		s.Contains(line, `\"Authorization\":[\"Bearer [redacted]\"]`)
-		s.Contains(line, `\"X-Echo-Link\":[\"https://docs.example\"]`)
+		s.Contains(line, " provider_host="+strings.TrimPrefix(s.echo.URL, "https://")+"\n")
+		s.NotContains(line, "provider_body=")
+		s.False(strings.Contains(line, "brew"), "the request's body is not logged")
 		s.False(strings.Contains(line, token), "the connection's token is not logged")
 	}
+}
+
+// TestAnErrorAnswerToACallWithNoBodyIsLoggedWithoutTheCallersCookies: the call forwards the
+// caller's Cookie line, and the echo's 404 repeats it, and each cookie's value apart. The line
+// has the start of the body, without the connection's token, the path and query, the Cookie
+// line or any cookie's value, its URLs kept to their host (R1.1).
+func (s *ConnectionProxySuite) TestAnErrorAnswerToACallWithNoBodyIsLoggedWithoutTheCallersCookies() {
+	token := "token-" + s.utils.uuid()
+	id := s.connectedWithToken(s.connector(""), token)
+	session, theme := "sid-"+s.utils.uuid(), "theme-"+s.utils.uuid()
+
+	response, answer := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "items/7?q=1"), "",
+		http.Header{echoStatusHeader: {"404"}, "X-Echo-Link": {"https://docs.example/errors/7?q=1"},
+			"Cookie": {"session=" + session + "; theme=" + theme}})
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+	got := s.echoed(answer)
+	s.Equal([]string{"session=" + session + "; theme=" + theme}, got.Header.Values("Cookie"), "the provider got the caller's Cookie")
+	s.Equal([]string{session, theme}, got.Cookies)
+	line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
+	s.Contains(line, `provider_body="{\"method\":\"GET\",\"path\":\"[redacted]\",\"query\":\"[redacted]\",`)
+	s.Contains(line, `\"Authorization\":[\"Bearer [redacted]\"]`)
+	s.Contains(line, `\"Cookie\":[\"[redacted]\"]`)
+	s.Contains(line, `\"cookies\":[\"[redacted]\",\"[redacted]\"]`)
+	s.Contains(line, `\"X-Echo-Link\":[\"https://docs.example\"]`)
+	for _, sent := range []string{token, session, theme} {
+		s.False(strings.Contains(s.logged.String(), sent), "neither the token nor a cookie is logged")
+	}
+}
+
+// TestAStalled5xxReachesTheCallerAsItComes: a 502 whose body sends 8 KiB, then stalls until the
+// test ends the stall, gives the caller its first KiB while the stall lasts, as base 8666b26d
+// does (reviewer probe: 5 ms), so the line logged after the copy holds nothing back (R1.3). An
+// answer the router held for its line would come only once the stall ends, after the 5 s the
+// test waits.
+func (s *ConnectionProxySuite) TestAStalled5xxReachesTheCallerAsItComes() {
+	id := s.connected(s.connector(""), bearer.Name)
+	key, release := s.utils.uuid(), make(chan struct{})
+	s.stalls.Store(key, release)
+	defer s.stalls.Delete(key)
+	request, err := http.NewRequest(http.MethodGet, s.server.URL+proxy(id, "stall"), nil)
+	s.Require().NoError(err)
+	request.Header = s.serverClient.header.Clone()
+	request.Header.Set(echoStallHeader, key)
+	type started struct {
+		response *http.Response
+		first    []byte
+		err      error
+	}
+	came := make(chan started, 1)
+	go func() {
+		response, err := s.server.Client().Do(request)
+		if err != nil {
+			came <- started{err: err}
+			return
+		}
+		first := make([]byte, 1<<10)
+		_, err = io.ReadFull(response.Body, first)
+		came <- started{response: response, first: first, err: err}
+	}()
+
+	var got started
+	select {
+	case got = <-came:
+	case <-time.After(5 * time.Second):
+		close(release)
+		got = <-came
+		if got.response != nil {
+			_ = got.response.Body.Close()
+		}
+		s.FailNow("the first KiB came only once the stall ended")
+	}
+	close(release)
+
+	s.Require().NoError(got.err)
+	defer got.response.Body.Close()
+	s.Equal(http.StatusBadGateway, got.response.StatusCode)
+	s.Equal(stalledStart[:1<<10], string(got.first))
+	rest, err := io.ReadAll(got.response.Body)
+	s.Require().NoError(err)
+	s.True(string(got.first)+string(rest) == stalledStart+stalledEnd, "the whole body comes once the stall ends")
 }
 
 // TestOnlyAnAnswerOtherThan2xxIsLogged: a 200 leaves no line; a 302, which the connection's
@@ -446,6 +542,18 @@ func (s *ConnectionProxySuite) proxyCalls(id string) []ConnectorAuditEvent {
 // Retry-After the test asked for, or with rawAnswer when asked.
 func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	s.hits.Add(1)
+	if key := r.Header.Get(echoStallHeader); key != "" {
+		release, _ := s.stalls.Load(key)
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, stalledStart)
+		w.(http.Flusher).Flush()
+		select {
+		case <-release.(chan struct{}):
+		case <-time.After(suiteConnectorTimeout):
+		}
+		_, _ = io.WriteString(w, stalledEnd)
+		return
+	}
 	if r.Header.Get(echoRawHeader) != "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Server-Timing", rawServerTiming)
@@ -465,8 +573,12 @@ func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Keep-Alive", "timeout=5")
 	w.Header().Set(RequestIDHeader, "provider-request")
 	w.WriteHeader(status)
+	var cookies []string
+	for _, cookie := range r.Cookies() {
+		cookies = append(cookies, cookie.Value)
+	}
 	_ = json.NewEncoder(w).Encode(echoed{Method: r.Method, Path: r.URL.EscapedPath(), Query: r.URL.RawQuery,
-		Header: r.Header, Body: string(body)})
+		Header: r.Header, Body: string(body), Cookies: cookies})
 }
 
 // proxy is the proxy path of connection id for the provider's path.

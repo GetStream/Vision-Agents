@@ -54,3 +54,29 @@ func (s *LoggedDescriptionSuite) TestADescriptionOf256BytesIsKeptWhole() {
 
 	s.Equal(text, core.LoggedDescription(text))
 }
+
+// LoggedBodySuite is what a log line keeps of the start of a provider's error body (AI-1245)
+// beyond the Exchange's own redaction: what else the request carried, redacted.
+type LoggedBodySuite struct {
+	suite.Suite
+}
+
+func TestLoggedBodySuite(t *testing.T) {
+	suite.Run(t, new(LoggedBodySuite))
+}
+
+func (s *LoggedBodySuite) TestAnEchoedSecretIsRedacted() {
+	body := `{"header":{"Cookie":["sid=s-secret-1; theme=dark-mode"]}}`
+
+	s.Equal(`{"header":{"Cookie":["sid=[redacted]; theme=[redacted]"]}}`, core.LoggedBody(body, "s-secret-1", "dark-mode"))
+}
+
+// TestABodyCutInsideASecretLosesItsStart: the body is the start of a longer one, so the start
+// of a secret it ends with is the start of that secret.
+func (s *LoggedBodySuite) TestABodyCutInsideASecretLosesItsStart() {
+	s.Equal(`{"cookie":"sid=`, core.LoggedBody(`{"cookie":"sid=s-secr`, "s-secret-1"))
+}
+
+func (s *LoggedBodySuite) TestABodyWithNoSecretsIsKept() {
+	s.Equal(`{"error":"not_found"}`, core.LoggedBody(`{"error":"not_found"}`))
+}

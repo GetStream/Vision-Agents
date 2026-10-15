@@ -248,8 +248,9 @@ func (s *AuthorizationsSuite) TestADeniedConsentLeavesTheConnectionPending() {
 }
 
 // TestADeniedConsentIsLoggedWithTheProvidersDescription: one line names the connection, the
-// connector, the provider's code and its description (AI-1245), without the callback's state,
-// which the description echoes, its URL kept to the host and at most 256 bytes. The browser's
+// connector, the provider's code and its description (AI-1245), without the callback's state
+// and code, which the description echoes (a callback is the browser's to forge, so a denial may
+// carry a code too), its URL kept to the host and at most 256 bytes. The browser's
 // answer is base 8666b26d's (probe-base.txt): a 302 to the dashboard saying denied, the one
 // Set-Cookie that clears the attempt's cookie, and net/http's link to the same place.
 func (s *AuthorizationsSuite) TestADeniedConsentIsLoggedWithTheProvidersDescription() {
@@ -259,8 +260,9 @@ func (s *AuthorizationsSuite) TestADeniedConsentIsLoggedWithTheProvidersDescript
 	s.provider.Use(fakeprovider.CommaScopes, fakeprovider.ConsentDenied)
 	callback := s.consent(authorize)
 	query := callback.Query()
-	state := query.Get("state")
-	query.Set("error_description", "the user said no to "+state+" at https://idp.example/consent?state="+state+" "+strings.Repeat("é", 200))
+	state, code := query.Get("state"), "code-"+s.utils.uuid()
+	query.Set("code", code)
+	query.Set("error_description", "the user said no to "+state+" for "+code+" at https://idp.example/consent?state="+state+" "+strings.Repeat("é", 200))
 	callback.RawQuery = query.Encode()
 
 	response := alice.get(callback.String())
@@ -273,9 +275,44 @@ func (s *AuthorizationsSuite) TestADeniedConsentIsLoggedWithTheProvidersDescript
 	s.Contains(line, " connector="+s.get(id).ConnectorID+" ")
 	s.Contains(line, " provider_code=access_denied ")
 	_, description, _ := strings.Cut(line, ` error_description="`)
-	s.True(strings.HasPrefix(description, "the user said no to [redacted] at https://idp.example éé"), line)
+	s.True(strings.HasPrefix(description, "the user said no to [redacted] for [redacted] at https://idp.example éé"), line)
 	s.LessOrEqual(len(strings.TrimSuffix(description, "\"\n")), core.DescriptionBytes)
 	s.False(strings.Contains(s.logged.String(), state), "the state is not logged")
+	s.False(strings.Contains(s.logged.String(), code), "the code is not logged")
+}
+
+// TestAConsentTheProviderRefusedOtherwiseIsLoggedWithItsDescriptionCut: an error other than
+// access_denied fails the consent as base 8666b26d does (a 302 to the dashboard saying failed,
+// the one Set-Cookie that clears the attempt's cookie), and its line keeps the provider's code
+// and its description as the denied line does: without the callback's state and code, which it
+// echoes, its URL kept to the host, at most 256 bytes (R1.O4).
+func (s *AuthorizationsSuite) TestAConsentTheProviderRefusedOtherwiseIsLoggedWithItsDescriptionCut() {
+	id := s.connection("")
+	alice := s.browser()
+	authorize := alice.handOff(s.start(id))
+	s.provider.Use(fakeprovider.CommaScopes, fakeprovider.ConsentDenied)
+	callback := s.consent(authorize)
+	query := callback.Query()
+	state, code := query.Get("state"), "code-"+s.utils.uuid()
+	query.Set("error", "invalid_scope")
+	query.Set("code", code)
+	query.Set("error_description", "scope refused for "+state+" and "+code+" at https://idp.example/scopes?code="+code+" "+strings.Repeat("é", 200))
+	callback.RawQuery = query.Encode()
+
+	response := alice.get(callback.String())
+
+	s.Equal(http.StatusFound, response.StatusCode)
+	s.Equal(s.landing(id, consentFailed), response.Header.Get("Location"))
+	s.Len(response.Header.Values("Set-Cookie"), 1)
+	s.Equal(ConnectionStatus(store.ConnectionPending), s.get(id).Status)
+	line := s.logged.line(s.T(), "a consent did not complete", id)
+	s.Contains(line, " provider_code=invalid_scope ")
+	s.NotContains(line, " error=")
+	_, description, _ := strings.Cut(line, ` error_description="`)
+	s.True(strings.HasPrefix(description, "scope refused for [redacted] and [redacted] at https://idp.example éé"), line)
+	s.LessOrEqual(len(strings.TrimSuffix(description, "\"\n")), core.DescriptionBytes)
+	s.False(strings.Contains(s.logged.String(), state), "the state is not logged")
+	s.False(strings.Contains(s.logged.String(), code), "the code is not logged")
 }
 
 // TestAConsentWhoseConnectionCannotBeReadIsLogged: a connection row the store cannot read
