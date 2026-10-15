@@ -23,11 +23,42 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 # The live posture tests are left out: they skip without INTEGRATION_ROUTER_KEY and
 # VISION_AGENTS_URL, which nothing here sets.
 jobs:
-  kotlin-core:
+  # A pull request builds only the SDKs it touches, so a Dart change does not wait on the
+  # macOS runner. A push to main or accelerate builds them all.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      kotlin: ${{ steps.filter.outputs.kotlin }}
+      dart: ${{ steps.filter.outputs.dart }}
+      swift: ${{ steps.filter.outputs.swift }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            kotlin:
+              - 'sdks/kotlin/**'
+              - 'acceleration/api/openapi.yaml'
+              - '.github/workflows/client-sdks.yml'
+            dart:
+              - 'sdks/dart/**'
+              - 'acceleration/api/openapi.yaml'
+              - '.github/workflows/client-sdks.yml'
+            swift:
+              - 'sdks/swift/**'
+              - 'examples/voice_agents/swift_demo/app/**'
+              - 'acceleration/api/openapi.yaml'
+              - '.github/workflows/client-sdks.yml'
+
+  kotlin:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.kotlin == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -42,10 +73,14 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # The runner carries an Android SDK, but not necessarily compileSdk 37.
+      - name: Android platform 37
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" >/dev/null
+
       # PostureTest reads acceleration/api/openapi.yaml, so a spec change that opens or
       # closes an operation the SDK calls fails here.
-      - name: Test core
-        run: ./gradlew -PcoreOnly :core:test
+      - name: Test core and build ui, rtc and chat
+        run: ./gradlew :core:test :ui:assembleRelease :rtc:assembleRelease :chat:assembleRelease
 
       - uses: astral-sh/setup-uv@v6
 
@@ -55,22 +90,9 @@ jobs:
           changed=$(git status --porcelain -- core/src/main/kotlin/io/getstream/visionagents/core/generated)
           if [ -n "$changed" ]; then echo "$changed"; git diff; exit 1; fi
 
-  kotlin-android:
-    runs-on: ubuntu-latest
-    # compileSdk 37, which this image carries and the runner's own Android SDK may not.
-    container:
-      image: cimg/android:2026.08.1
-      options: --user root
-    defaults:
-      run:
-        working-directory: sdks/kotlin
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build ui, rtc and chat
-        run: ./gradlew :ui:assembleRelease :rtc:assembleRelease :chat:assembleRelease
-
   dart:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.dart == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,6 +119,8 @@ jobs:
           dart test
 
   swift:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.swift == 'true'
     # The examples add StreamChatAI, whose iOS 13 target Xcode 26 refuses beside MarkdownUI's
     # iOS 15. macos-26 carries only Xcode 26; this image carries 27, betas included.
     runs-on: xcode-27
@@ -136,17 +160,37 @@ jobs:
           changed=$(git status --porcelain -- sdks/swift/core/Sources/VisionAgentsCore/Generated)
           if [ -n "$changed" ]; then echo "$changed"; git diff; exit 1; fi
 
+      # Both builds resolve into one checkout directory and compile into one DerivedData, so
+      # the Stream SDKs and WebRTC are fetched and built once a run rather than twice.
+      - uses: actions/cache/restore@v4
+        id: packages
+        with:
+          path: ${{ runner.temp }}/spm
+          key: spm-${{ runner.os }}-xcode27-${{ hashFiles('sdks/swift/**/Package.swift', 'sdks/swift/**/Package.resolved', 'examples/voice_agents/swift_demo/app/SwiftDemo.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-xcode27-
+
       # The package is iOS only, so it is tested on a simulator rather than with `swift test`.
       - name: Test core
         working-directory: sdks/swift/core
         timeout-minutes: 20
         run: |
           device=$(xcrun simctl list devices available -j | python3 -c "import json, sys; devices = json.load(sys.stdin)['devices']; print(next(d['udid'] for runtime, found in devices.items() if 'iOS' in runtime for d in found if d['name'].startswith('iPhone')))")
-          xcodebuild test -scheme vision-agents-core -destination "platform=iOS Simulator,id=$device"
+          xcodebuild test -scheme vision-agents-core -destination "platform=iOS Simulator,id=$device" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" -derivedDataPath "$RUNNER_TEMP/DerivedData"
 
       - name: Build swift_demo
         working-directory: examples/voice_agents/swift_demo/app
-        run: xcodebuild -project SwiftDemo.xcodeproj -scheme SwiftDemo -destination 'generic/platform=iOS Simulator' build
+        timeout-minutes: 10
+        run: |
+          xcodebuild -project SwiftDemo.xcodeproj -scheme SwiftDemo -destination 'generic/platform=iOS Simulator' \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" -derivedDataPath "$RUNNER_TEMP/DerivedData" build
+
+      # Saved even when a test fails, so a red run still leaves the next one a warm cache.
+      - uses: actions/cache/save@v4
+        if: always() && steps.packages.outputs.cache-hit != 'true'
+        with:
+          path: ${{ runner.temp }}/spm
+          key: ${{ steps.packages.outputs.cache-primary-key }}
 
 concurrency:
   group: ci-client-sdks-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
