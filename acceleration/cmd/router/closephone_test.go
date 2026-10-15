@@ -189,8 +189,14 @@ func TestARouterServesOnTheSocketItInherited(t *testing.T) {
 	require.NoError(t, err)
 	address := opened.Addr().String()
 	require.NoError(t, opened.Close())
+	// listen owns the descriptor it is given and closes it, as it does a real inherited one.
+	// Give it a duplicate and close our file: handing it file's own descriptor closed that
+	// number twice, and a later test's socket that reused it was closed underneath it.
+	inheritedFD, err := syscall.Dup(int(file.Fd()))
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
 
-	inherited, err := listen("", int(file.Fd()))
+	inherited, err := listen("", inheritedFD)
 	require.NoError(t, err)
 	server := &http.Server{
 		Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
