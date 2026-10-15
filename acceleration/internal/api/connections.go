@@ -179,12 +179,12 @@ func (*ConnectionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) 
 type ConnectionPage struct {
 	Items      []Connection `json:"items"`
 	HasMore    bool         `json:"has_more"`
-	NextCursor *string      `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one."`
+	NextCursor *string      `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app). Absent on the last one."`
 }
 
 type listConnectionsRequest struct {
-	OwnerType   ConnectionOwnerType `query:"owner_type" required:"true" doc:"app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id."`
-	ConnectorID string              `query:"connector_id" doc:"Keeps one connector's."`
+	OwnerType   optionalParam[ConnectionOwnerType] `query:"owner_type" doc:"app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. Omitted is app."`
+	ConnectorID string                             `query:"connector_id" doc:"Keeps one connector's."`
 	// 200 and 25 are store.ConnectionLimit's.
 	Limit  int    `query:"limit" minimum:"1" maximum:"200" doc:"Up to 200. Omitted is 25."`
 	Cursor string `query:"cursor" doc:"The next_cursor of the previous page. Omitted is the first page."`
@@ -398,8 +398,14 @@ func (s *Server) listConnections(ctx context.Context, request *listConnectionsRe
 	if s.store == nil {
 		return nil, errNoConnections
 	}
+	// Omitted is app: WWSD platform feedback #7 (AI-1293, opened 2026-10-15) asked for the
+	// app's own rather than a 400.
+	ownerType := ConnectionOwnerType(store.OwnerApp)
+	if named := request.OwnerType.ptr(); named != nil {
+		ownerType = *named
+	}
 	ownerID := ""
-	if request.OwnerType == store.OwnerUser {
+	if ownerType == store.OwnerUser {
 		ownerID = actingUser(ctx)
 		if ownerID == "" {
 			return nil, invalidRequest("owner_type user lists the connections of the user this backend acts for: name them with " + auth.UserHeader)
@@ -410,7 +416,7 @@ func (s *Server) listConnections(ctx context.Context, request *listConnectionsRe
 		return nil, invalidRequest(err.Error())
 	}
 	found, err := s.store.ConnectorConnectionsByOwner(ctx, customerID, store.ConnectionFilter{
-		OwnerType:   string(request.OwnerType),
+		OwnerType:   string(ownerType),
 		OwnerID:     ownerID,
 		ConnectorID: request.ConnectorID,
 		Limit:       request.Limit,

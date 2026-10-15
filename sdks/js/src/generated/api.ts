@@ -4882,7 +4882,7 @@ export type components = {
         readonly ConnectionPage: {
             readonly has_more: boolean;
             readonly items: readonly components["schemas"]["Connection"][] | null;
-            /** @description Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one. */
+            /** @description Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app). Absent on the last one. */
             readonly next_cursor?: string;
         };
         /** @description A connection to create, pending until an account is connected. An unknown field is refused rather than ignored. */
@@ -9849,15 +9849,15 @@ export interface operations {
     };
     readonly listConnections: {
         readonly parameters: {
-            readonly query: {
+            readonly query?: {
                 /** @description Keeps one connector's. */
                 readonly connector_id?: string;
                 /** @description The next_cursor of the previous page. Omitted is the first page. */
                 readonly cursor?: string;
                 /** @description Up to 200. Omitted is 25. */
                 readonly limit?: number;
-                /** @description app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. */
-                readonly owner_type: components["schemas"]["ConnectionOwnerType"];
+                /** @description app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. Omitted is app. */
+                readonly owner_type?: components["schemas"]["ConnectionOwnerType"];
             };
             readonly header?: never;
             readonly path?: never;
