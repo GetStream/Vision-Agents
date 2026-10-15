@@ -137,7 +137,9 @@ if `performance_benchmark/`, `benchmark/` or `sdks/go` changed.
 ## 5. Record
 
 From `out/round-<n>/report.json`: agents held, what broke the next step, reply p50/p95,
-router cores at the held step and mCPU per agent, and $/voice-minute. Compare with the
+router cores at the held step and mCPU per agent, $/voice-minute, and the audio score at the
+held step (`audio`: SNR and the share broken). A fix that holds more agents while the SNR
+falls or glitches climb is trading quality for capacity; say so. Compare with the
 previous round:
 
 ```bash

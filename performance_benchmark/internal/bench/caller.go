@@ -53,6 +53,10 @@ type turn struct {
 	// gapMs is the longest silence inside the answer, which is what a speaker running
 	// out of audio sounds like.
 	gapMs float64
+	// quality is how faithfully the answer's audio arrived, when scored says a probe
+	// caller recorded it.
+	quality toneQuality
+	scored  bool
 }
 
 // answered reports whether the agent said anything back.
@@ -66,6 +70,8 @@ type Caller struct {
 	Models Models
 	// Index distinguishes this caller from the others in the same step.
 	Index int
+	// Probe records every answer and scores its audio against the mock TTS's tone.
+	Probe bool
 	// Logger is where a caller reports what it could not do.
 	Logger *slog.Logger
 }
@@ -183,10 +189,14 @@ func (c Caller) send(ctx context.Context, media transport.Media, ticker *time.Ti
 //
 // The caller keeps sending silence throughout, because a leg that stops sending is a leg
 // the far end hears as gone.
-func (c Caller) listen(ctx context.Context, media transport.Media, ticker *time.Ticker, silence []int16) (turn, error) {
+func (c Caller) listen(ctx context.Context, media transport.Media, ticker *time.Ticker, silence []int16) (heard turn, err error) {
 	askedAt := time.Now()
-	heard := turn{}
 	var startedAt, lastAudibleAt time.Time
+	var recorded *[]int16
+	if c.Probe {
+		recorded = new([]int16)
+		defer func() { heard.quality, heard.scored = measureTone(*recorded) }()
+	}
 
 	for {
 		select {
@@ -198,7 +208,7 @@ func (c Caller) listen(ctx context.Context, media transport.Media, ticker *time.
 			return heard, err
 		}
 
-		if audible(media) {
+		if audible(media, recorded) {
 			now := time.Now()
 			if startedAt.IsZero() {
 				startedAt = now
@@ -220,13 +230,16 @@ func (c Caller) listen(ctx context.Context, media transport.Media, ticker *time.
 	}
 }
 
-// audible drains whatever arrived since the last tick and reports whether any of it was
-// the agent speaking.
-func audible(media transport.Media) bool {
+// audible drains whatever arrived since the last tick, onto recorded when it is not nil,
+// and reports whether any of it was the agent speaking.
+func audible(media transport.Media, recorded *[]int16) bool {
 	speaking := false
 	for {
 		select {
 		case frame := <-media.Recv():
+			if recorded != nil {
+				*recorded = append(*recorded, frame.PCM...)
+			}
 			if audio.FrameEnergy(frame.PCM) > audio.DefaultSpeechThreshold {
 				speaking = true
 			}

@@ -85,6 +85,27 @@ func (s *RampSuite) TestAnUnansweredTurnHasNoReplyTimeOfItsOwn() {
 	s.InDelta(300, step.ReplyMs.P50, 0.1)
 }
 
+func (s *RampSuite) TestTheProbesAudioIsSummarised() {
+	step := summarise(2, []conversation{
+		{sessionMs: 1, trackMs: 1, turns: []turn{
+			{replyMs: 300, scored: true, quality: toneQuality{snrDb: 40, windows: 50}},
+			{replyMs: 300, scored: true, quality: toneQuality{snrDb: 12, windows: 50, glitches: 2, dropouts: 3}},
+		}},
+		{sessionMs: 1, trackMs: 1, turns: []turn{{replyMs: 300}}},
+	})
+
+	s.Equal(Audio{Replies: 2, SNRP50Db: 12, SNRMinDb: 12, Windows: 100, Glitches: 2, Dropouts: 3}, step.Audio)
+}
+
+func (s *RampSuite) TestAudioThatBreaksUpBreaksTheStep() {
+	step := s.held()
+	step.Audio = Audio{Replies: 8, Windows: 400, Glitches: 1}
+	s.Empty(broke(step), "one glitch is a packet the network lost")
+
+	step.Audio.Glitches = 12
+	s.Contains(broke(step), "audio broke up in 3.0%")
+}
+
 func (s *RampSuite) TestAGappyReplyIsReported() {
 	step := summarise(1, []conversation{{sessionMs: 1, trackMs: 1, turns: []turn{{replyMs: 300, gapMs: 900}}}})
 

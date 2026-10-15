@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -20,7 +21,13 @@ const (
 	maxUnansweredTurns = 0.10
 	// maxReplyP95Ms is the wait at which a conversation has stopped being one.
 	maxReplyP95Ms = 3000
+	// maxBrokenAudio is the share of the probes' speech that may be glitched or missing:
+	// room for a packet the network lost, not for audio that breaks up.
+	maxBrokenAudio = 0.01
 )
+
+// audioProbes is how many callers in a step record their answers to score the audio.
+const audioProbes = 4
 
 // settleBetweenSteps lets the sessions of one step close before the next opens, so a
 // step is not measured against the one before it still hanging up.
@@ -125,6 +132,7 @@ func runStep(ctx context.Context, options Options, count int) Step {
 				Agent:  options.Agent,
 				Models: options.Models,
 				Index:  i,
+				Probe:  i < audioProbes,
 				Logger: options.Logger,
 			}.Converse(ctx, until)
 		}()
@@ -142,7 +150,7 @@ func runStep(ctx context.Context, options Options, count int) Step {
 // summarise turns what the callers did into the step's numbers.
 func summarise(count int, held []conversation) Step {
 	step := Step{Agents: count, Sessions: count, Errors: map[string]int{}}
-	var sessions, tracks, replies, gaps []float64
+	var sessions, tracks, replies, gaps, snrs []float64
 
 	for _, conversation := range held {
 		if conversation.failedAt != "" {
@@ -166,6 +174,12 @@ func summarise(count int, held []conversation) Step {
 			if turn.gapMs > 0 {
 				gaps = append(gaps, turn.gapMs)
 			}
+			if turn.scored {
+				snrs = append(snrs, turn.quality.snrDb)
+				step.Audio.Windows += turn.quality.windows
+				step.Audio.Glitches += turn.quality.glitches
+				step.Audio.Dropouts += turn.quality.dropouts
+			}
 		}
 	}
 
@@ -173,6 +187,12 @@ func summarise(count int, held []conversation) Step {
 	step.TrackMs = stat(tracks)
 	step.ReplyMs = stat(replies)
 	step.GapMs = stat(gaps)
+	if len(snrs) > 0 {
+		slices.Sort(snrs)
+		step.Audio.Replies = len(snrs)
+		step.Audio.SNRP50Db = percentile(snrs, 0.50)
+		step.Audio.SNRMinDb = snrs[0]
+	}
 	return step
 }
 
@@ -201,6 +221,9 @@ func broke(step Step) string {
 	if step.ReplyMs.P95 > maxReplyP95Ms {
 		return fmt.Sprintf("a reply took %.0fms at p95, past the %dms a conversation survives",
 			step.ReplyMs.P95, maxReplyP95Ms)
+	}
+	if broken := step.Audio.Broken(); broken > maxBrokenAudio {
+		return fmt.Sprintf("the agents' audio broke up in %.1f%% of what the probe callers heard", broken*100)
 	}
 	return ""
 }

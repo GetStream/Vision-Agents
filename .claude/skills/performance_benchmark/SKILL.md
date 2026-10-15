@@ -60,8 +60,9 @@ works before asking for a long one.
 | Finer steps near the ceiling | `-start <last held> -factor 1` is refused; use `-start`/`-max` around it with `-factor 2` |
 
 A step breaks when more than 5% of conversations never get the agent onto the call, more than
-10% of turns go unanswered, a reply takes over three seconds at p95, or a router pod restarts.
-The step before it is the answer, printed as `Held N agents`.
+10% of turns go unanswered, a reply takes over three seconds at p95, more than 1% of the probe
+callers' audio is broken, or a router pod restarts. The step before it is the answer, printed
+as `Held N agents`.
 
 ## 3. Read it
 
@@ -77,6 +78,14 @@ The four timings say where a ceiling is:
 - **ReplyMs** growing while the stage spans stay flat: queueing, not a model.
 - **GapMs** appearing: the router is producing audio slower than real time. This is the one
   that users hear first.
+
+**Audio quality.** The first four callers of every step record each answer and score it
+against the 220 Hz tone the mock TTS sends (`internal/bench/quality.go`): `audio snr` is the
+tone's power over everything else, per 100 ms of speech, typical and worst answer; clean Opus
+reads 33 to 36 dB. `audio broken` counts glitches (100 ms windows under 20 dB: a click, a
+skipped 20 ms frame, distortion) and dropouts (frames that went quiet mid-sentence; pauses
+between sentences are not counted). A glitch now and then is a packet the network lost: the
+router's own `turns.audio_dropped_ms` says whether it was the router.
 
 **The caller can be the bottleneck.** Each conversation costs this machine an Opus encode and
 decode. When a step reports `host CPU saturated`, that ceiling is the laptop's, not the
