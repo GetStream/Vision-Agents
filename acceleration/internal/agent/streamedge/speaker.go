@@ -22,6 +22,9 @@ const (
 	opusSampleRate = 48_000
 	// opusFrameDuration is the frame size every Opus encoder and decoder handles.
 	opusFrameDuration = 20 * time.Millisecond
+	// opusComplexity is the encoder's effort. Below 5 CELT skips its pitch prefilter, which
+	// is about half of what encoding a voice costs, for a small loss on voiced speech.
+	opusComplexity = 4
 	// opusNegotiatedChannels is the channel count the published track has to declare. Opus
 	// is always offered as two-channel in SDP, and pion refuses to bind a track whose
 	// channel count does not match what was negotiated. What goes out is still mono: the
@@ -145,7 +148,12 @@ func (s *speaker) queue(pcm audio.PcmData, marks agent.PlayoutMarks) (time.Time,
 		return time.Time{}, errors.New("streamedge: the call has been left")
 	}
 	if s.encoder == nil {
-		encoder, err := opus.NewEncoder(opus.Config{SampleRate: encoderRate(pcm.SampleRate), FrameDuration: opusFrameDuration})
+		// Low delay keeps the encoder in CELT, which a voice is coded in at these rates
+		// anyway, without the speech or music analysis that picks a mode.
+		encoder, err := opus.NewEncoder(opus.Config{
+			SampleRate: encoderRate(pcm.SampleRate), FrameDuration: opusFrameDuration,
+			Application: opus.ApplicationLowDelay, Complexity: opusComplexity,
+		})
 		if err != nil {
 			return time.Time{}, fmt.Errorf("streamedge: build opus encoder: %w", err)
 		}
