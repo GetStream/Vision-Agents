@@ -16,8 +16,13 @@ on:
         required: false
         default: false
         type: boolean
+      ref:
+        description: 'Branch to check out; empty checks out the commit that triggered the run'
+        required: false
+        default: ""
+        type: string
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.marker }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -35,6 +40,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
         with:
@@ -47,21 +54,26 @@ jobs:
       # Validate extras are defined in pyproject.toml
       - name: Validate extra dependencies in "sdks/python/pyproject.toml"
         run: uv run dev.py validate-extras
-      # Run mypy
+      # Run mypy. A cache key is written once and never updated, so each push to main or
+      # accelerate saves its own, and every other run starts from the newest one.
       - name: Restore mypy cache
         uses: actions/cache/restore@v5
         with:
           path: .mypy_cache
-          key: mypy-cache-${{ hashFiles('pyproject.toml') }}
+          key: mypy-cache-${{ hashFiles('pyproject.toml', 'uv.lock') }}-${{ github.sha }}
+          restore-keys: |
+            mypy-cache-${{ hashFiles('pyproject.toml', 'uv.lock') }}-
+            mypy-cache-
       - name: Run mypy for core
-        run: uv run dev.py mypy
+        run: uv run --no-sync dev.py mypy
       - name: Run mypy for plugins
-        run: uv run dev.py mypy-plugins
+        run: uv run --no-sync dev.py mypy-plugins
       - name: Save mypy cache
+        if: github.event_name == 'push'
         uses: actions/cache/save@v5
         with:
           path: .mypy_cache
-          key: mypy-cache-${{ hashFiles('pyproject.toml') }}
+          key: mypy-cache-${{ hashFiles('pyproject.toml', 'uv.lock') }}-${{ github.sha }}
 
   test:
     name: Test "${{ inputs.marker }}"
@@ -97,22 +109,29 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Clean space as per https://github.com/actions/virtual-environments/issues/709
-        run: |
-          sudo rm -rf "/usr/share/dotnet" || true
-          sudo rm -rf "/usr/local/lib/android" || true
-          sudo rm -rf "/usr/local/share/boost" || true
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
+        with:
+          ref: ${{ inputs.ref }}
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libportaudio2
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libportaudio2
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
         with:
           python-version: "3.12.13"
+      # The VAD and turn models land in the temp dir by default and are otherwise fetched
+      # from GitHub and Hugging Face on every run.
+      - name: Cache ONNX models
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/silero_vad.onnx
+            /tmp/smart-turn-v3.0.onnx
+          key: onnx-models-${{ hashFiles('sdks/python/vision_agents/core/vad/silero.py', 'plugins/smart_turn/vision_agents/plugins/smart_turn/smart_turn_detection.py') }}
+      # Unit tests spread over every core; integration tests stay serial so the providers'
+      # rate limits see one caller.
       - name: Run core tests
-        run: uv run pytest -m "${{ inputs.marker }}" tests/ ${{ inputs.pytest-params }}
+        run: uv run --no-sync pytest -m "${{ inputs.marker }}" ${{ inputs.marker != 'integration' && '-n auto --dist worksteal' || '' }} tests/ ${{ inputs.pytest-params }}
       - name: Run plugin tests
-        run: uv run pytest -m "${{ inputs.marker }}" plugins/*/tests/*.py ${{ inputs.pytest-params }}
+        run: uv run --no-sync pytest -m "${{ inputs.marker }}" ${{ inputs.marker != 'integration' && '-n auto --dist worksteal' || '' }} plugins/*/tests/*.py ${{ inputs.pytest-params }}
       - name: Notify Slack on failure
         if: failure() && inputs.notify-on-failure
         uses: ./.github/actions/notify-slack

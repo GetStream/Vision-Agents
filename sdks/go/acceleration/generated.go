@@ -3759,7 +3759,7 @@ type ConnectionPage struct {
 	HasMore bool          `json:"has_more"`
 	Items   *[]Connection `json:"items"`
 
-	// NextCursor Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app). Absent on the last one.
+	// NextCursor Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app) and the same X-Stream-User-Id, or again none. Absent on the last one.
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
@@ -7845,7 +7845,7 @@ type ListAgentConfigsParams struct {
 
 // ListConnectionsParams defines parameters for ListConnections.
 type ListConnectionsParams struct {
-	// OwnerType app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. Omitted is app.
+	// OwnerType app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id, or every user's when it names none. Omitted is app.
 	OwnerType *ConnectionOwnerType `form:"owner_type,omitempty" json:"owner_type,omitempty"`
 
 	// ConnectorId Keeps one connector's.
@@ -9215,7 +9215,7 @@ type ClientInterface interface {
 
 	// ListConnections List connections
 	//
-	// One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+	// Connections, newest first: the app's own, those of the user the backend acts for, or every user's when it acts for none.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -12356,7 +12356,7 @@ func (c *Client) SetPluginClient(ctx context.Context, id string, pluginId string
 
 // ListConnections List connections
 //
-// One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+// Connections, newest first: the app's own, those of the user the backend acts for, or every user's when it acts for none.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -27632,7 +27632,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListConnectionsWithResponse List connections
 	//
-	// One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+	// Connections, newest first: the app's own, those of the user the backend acts for, or every user's when it acts for none.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -46902,7 +46902,7 @@ func (c *ClientWithResponses) SetPluginClientWithResponse(ctx context.Context, i
 
 // ListConnectionsWithResponse List connections
 //
-// One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+// Connections, newest first: the app's own, those of the user the backend acts for, or every user's when it acts for none.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //

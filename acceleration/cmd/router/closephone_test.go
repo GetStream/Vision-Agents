@@ -162,6 +162,7 @@ func TestARequestOutlivingTheGraceIsNotAnError(t *testing.T) {
 	var logs bytes.Buffer
 	err := stopServing(stopping{
 		public:    servingAnOpenRequest(t),
+		peers:     servingAnOpenRequest(t),
 		drainWork: func() {},
 		held:      func() int { return 0 },
 		telephony: idlePhone(t),
@@ -172,9 +173,12 @@ func TestARequestOutlivingTheGraceIsNotAnError(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, logs.String(), "level=WARN")
 	require.Contains(t, logs.String(), "requests were still running when the grace ran out")
+	require.Contains(t, logs.String(), "listener=public grace="+testGrace.String())
+	require.Contains(t, logs.String(), "listener=peers grace="+testGrace.String())
 }
 
 func TestAPeerRequestOutlivingTheGraceAfterADrainIsNotAnError(t *testing.T) {
+	var logs bytes.Buffer
 	err := stopServing(stopping{
 		public:    &http.Server{ReadHeaderTimeout: time.Second},
 		peers:     servingAnOpenRequest(t),
@@ -183,10 +187,116 @@ func TestAPeerRequestOutlivingTheGraceAfterADrainIsNotAnError(t *testing.T) {
 		telephony: idlePhone(t),
 		drain:     time.Hour,
 		grace:     testGrace,
+		logger:    slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+
+	require.NoError(t, err)
+	require.Contains(t, logs.String(), "listener=peers grace="+testGrace.String())
+}
+
+// servingASlowRequest is a server with one request open that finishes on its own in 200 ms:
+// long enough that a shutdown given no grace returns first, and short against shutdownGrace.
+// done closes when the request has finished.
+func servingASlowRequest(t *testing.T) (server *http.Server, done <-chan struct{}) {
+	t.Helper()
+	opened, finished := make(chan struct{}), make(chan struct{})
+	server = &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			defer close(finished)
+			close(opened)
+			time.Sleep(200 * time.Millisecond)
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		ReadHeaderTimeout: time.Second,
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = server.Serve(listener) }()
+	go func() {
+		if res, err := http.Get("http://" + listener.Addr().String()); err == nil {
+			_ = res.Body.Close()
+		}
+	}()
+	<-opened
+	return server, finished
+}
+
+// servingNothing is a server with no request open, and the address it answers on.
+func servingNothing(t *testing.T) (*http.Server, string) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := &http.Server{
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+		ReadHeaderTimeout: time.Second,
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	go func() { _ = server.Serve(listener) }()
+	require.True(t, answers(listener.Addr().String()))
+	return server, listener.Addr().String()
+}
+
+func TestARouterWithoutADrainStopsAnsweringItsPeers(t *testing.T) {
+	public, _ := servingNothing(t)
+	peers, peerAddress := servingNothing(t)
+
+	err := stopServing(stopping{
+		public:    public,
+		peers:     peers,
+		drainWork: func() {},
+		held:      func() int { return 0 },
+		telephony: idlePhone(t),
+		grace:     testGrace,
 		logger:    slog.New(slog.DiscardHandler),
 	})
 
 	require.NoError(t, err)
+	require.False(t, answers(peerAddress), "the peer listener outlived a router stopping without a drain")
+}
+
+func TestAPublicRequestOpenWhenADrainStartsFinishesInsideTheGrace(t *testing.T) {
+	public, done := servingASlowRequest(t)
+
+	err := stopServing(stopping{
+		public:    public,
+		drainWork: func() {},
+		held:      func() int { return 0 },
+		telephony: idlePhone(t),
+		drain:     time.Hour,
+		grace:     shutdownGrace,
+		logger:    slog.New(slog.DiscardHandler),
+	})
+
+	require.NoError(t, err)
+	select {
+	case <-done:
+	default:
+		t.Fatal("stopServing returned while the public request was still running")
+	}
+}
+
+func TestAPeerRequestOpenAfterADrainFinishesInsideTheGrace(t *testing.T) {
+	public, _ := servingNothing(t)
+	peers, done := servingASlowRequest(t)
+
+	err := stopServing(stopping{
+		public:    public,
+		peers:     peers,
+		drainWork: func() {},
+		held:      func() int { return 0 },
+		telephony: idlePhone(t),
+		drain:     time.Hour,
+		grace:     shutdownGrace,
+		logger:    slog.New(slog.DiscardHandler),
+	})
+
+	require.NoError(t, err)
+	select {
+	case <-done:
+	default:
+		t.Fatal("stopServing returned while the peer request was still running")
+	}
 }
 
 // unclosable closes but says it could not. Besides its deadline, a listener that fails to

@@ -1,7 +1,7 @@
 name: Python compatibility check
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "accelerate" ]
     paths:
       - '**/pyproject.toml'
       - 'uv.lock'
@@ -16,7 +16,7 @@ on:
       - '.github/workflows/python-versions.yml'
 
 concurrency:
-  group: python-compatibility-${{ github.workflow }}-${{ github.ref }}
+  group: python-compatibility-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:

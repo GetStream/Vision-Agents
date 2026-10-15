@@ -33,7 +33,6 @@ runs:
       shell: bash
       run: |
         echo "uv download cache hit: ${{ steps.setup_uv.outputs['cache-hit'] }}"
-        echo ".venv cache hit: ${{ steps.cache_venv.outputs.cache-hit }}"
 
     - name: Install the project dependencies
       shell: bash
