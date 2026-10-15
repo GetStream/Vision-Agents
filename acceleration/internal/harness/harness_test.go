@@ -701,7 +701,7 @@ func (s *HarnessSuite) TestTheModelAskingAgainDoesNotReplaceTheCallersImages() {
 	for _, settled := range settledIn(s.events.seen()) {
 		s.NotEqual(ReasonSuperseded, settled.Result.Reason, "the picture's task was replaced")
 	}
-	s.Len(delegatedIn(s.events.seen()), 1)
+	s.awaitDelegated(1)
 }
 
 func (s *HarnessSuite) TestATurnsImagesAreHandedToTheModelBesideTheWordsTheyCameWith() {
