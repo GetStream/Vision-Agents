@@ -193,6 +193,34 @@ func TestAPeerRequestOutlivingTheGraceAfterADrainIsNotAnError(t *testing.T) {
 	require.Contains(t, logs.String(), "listener=peers")
 }
 
+// servingASlowRequest is a server with one request open that finishes on its own in 200 ms:
+// long enough that a shutdown given no grace returns first, and short against shutdownGrace.
+// done closes when the request has finished.
+func servingASlowRequest(t *testing.T) (server *http.Server, done <-chan struct{}) {
+	t.Helper()
+	opened, finished := make(chan struct{}), make(chan struct{})
+	server = &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			defer close(finished)
+			close(opened)
+			time.Sleep(200 * time.Millisecond)
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		ReadHeaderTimeout: time.Second,
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = server.Serve(listener) }()
+	go func() {
+		if res, err := http.Get("http://" + listener.Addr().String()); err == nil {
+			_ = res.Body.Close()
+		}
+	}()
+	<-opened
+	return server, finished
+}
+
 // servingNothing is a server with no request open, and the address it answers on.
 func servingNothing(t *testing.T) (*http.Server, string) {
 	t.Helper()
@@ -224,6 +252,27 @@ func TestARouterWithoutADrainStopsAnsweringItsPeers(t *testing.T) {
 
 	require.NoError(t, err)
 	require.False(t, answers(peerAddress), "the peer listener outlived a router stopping without a drain")
+}
+
+func TestAPublicRequestOpenWhenADrainStartsFinishesInsideTheGrace(t *testing.T) {
+	public, done := servingASlowRequest(t)
+
+	err := stopServing(stopping{
+		public:    public,
+		drainWork: func() {},
+		held:      func() int { return 0 },
+		telephony: idlePhone(t),
+		drain:     time.Hour,
+		grace:     shutdownGrace,
+		logger:    slog.New(slog.DiscardHandler),
+	})
+
+	require.NoError(t, err)
+	select {
+	case <-done:
+	default:
+		t.Fatal("stopServing returned while the public request was still running")
+	}
 }
 
 // unclosable closes but says it could not. Besides its deadline, a listener that fails to
