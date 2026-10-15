@@ -91,6 +91,7 @@ type ConnectorAuditEvent struct {
 	LatencyMs    *int64                    `json:"latency_ms,omitempty" doc:"How long a proxy_call took until the provider's answer, in milliseconds. Absent for a grant."`
 	Target       string                    `json:"target,omitempty" doc:"The host a proxy_call reached. Absent for a grant."`
 	CreatedAt    time.Time                 `json:"created_at"`
+	Tools        []ApprovedConnectionTool  `json:"tools,omitempty" doc:"A tool_reapproved row's tools, by name, sorted, each with the digest approved and the one it was pinned at before. Absent for every other action."`
 	Credential   *ConnectorAuditCredential `json:"credential,omitempty" doc:"The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a user's erasure, a connector's delete, and a connection whose scheme does not name its tokens. A connection delete's row names the tokens it ended."`
 }
 
@@ -128,8 +129,11 @@ func (ConnectorAuditAction) Schema(registry huma.Registry) *huma.Schema {
 			"grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, "+
 			"because the provider refused or revoked it or the connection was deleted. "+
 			"token_export: the app's backend exported its access credential. "+
-			"proxy_call: a direct call went to the provider through the connection.",
-		store.AuditGrantCreated, store.AuditGrantRefreshed, store.AuditGrantRevoked, store.AuditTokenExport, store.AuditProxyCall)
+			"proxy_call: a direct call went to the provider through the connection. "+
+			"tool_reapproved: the app's backend approved tools at the schema the provider lists now "+
+			"(POST .../tools/approve); tools names them.",
+		store.AuditGrantCreated, store.AuditGrantRefreshed, store.AuditGrantRevoked, store.AuditTokenExport, store.AuditProxyCall,
+		store.AuditToolReapproved)
 }
 
 // ConnectorAuditPage is a page of audit rows.
@@ -287,7 +291,7 @@ func (s *Server) listConnectorAudit(ctx context.Context, request *listConnectorA
 			OwnerType: ConnectionOwnerType(row.OwnerType), Action: ConnectorAuditAction(row.Action),
 			Reason: row.Reason, Revision: row.Revision, RequestID: row.RequestID, SessionID: row.SessionID,
 			AttemptID: row.AttemptID, StatusCode: row.StatusCode, LatencyMs: row.LatencyMs, Target: row.Target,
-			CreatedAt: row.CreatedAt, Credential: auditCredential(row.Credential),
+			CreatedAt: row.CreatedAt, Credential: auditCredential(row.Credential), Tools: approvedTools(row.Tools),
 		})
 	}
 	if more {
