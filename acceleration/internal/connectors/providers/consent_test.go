@@ -393,6 +393,14 @@ func (s *ConsentSuite) TestLinearAppConnectsWithTheCustomersClientAtItsPinnedEnd
 	s.Equal("https://api.linear.app/oauth/token", manifest.Endpoints["token"])
 	s.Equal("https://api.linear.app", manifest.Endpoints["api_base"])
 	s.Equal("https://mcp.linear.app/mcp", manifest.Endpoints["mcp"])
+	s.Equal("https://api.linear.app/oauth/revoke", manifest.Endpoints["revoke"], "a disconnect revokes the token at Linear")
+	s.Equal([]core.SourceRule{{Kind: "mcp", Endpoint: "mcp"}}, manifest.Sources, "the MCP tools")
+	s.Equal(core.RateLimitPerUser, manifest.RateLimit.Per)
+	raw, err := fs.ReadFile(providers.FS, "linear_app.yaml")
+	s.Require().NoError(err)
+	parsed, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
+	s.Equal([]string{oauth2code.Name}, parsed.Schemes, "no bearer: a pasted key cannot serve both endpoints")
 	resolved := s.atFake(srv, manifest)
 	wire := &tokenWire{next: srv.Client().Transport}
 	scheme := s.schemeOver(&http.Client{Transport: wire}, s.preregistered(srv, core.ClientCustomer))
@@ -414,6 +422,9 @@ func (s *ConsentSuite) TestLinearAppConnectsWithTheCustomersClientAtItsPinnedEnd
 	s.Require().Len(wire.sent, 1, "one code exchange")
 	s.Empty(wire.sent[0].authorization, "no HTTP Basic credentials")
 	s.Equal(srv.ClientSecret, wire.sent[0].form.Get("client_secret"))
+
+	s.Require().NoError(scheme.Revoke(s.ctx, stored, resolved))
+	s.Equal(1, srv.Hits(fakeprovider.PathRevoke), "the stored grant is revoked at the pinned revoke endpoint")
 }
 
 func (s *ConsentSuite) TestLinearAppWithoutTheCustomersClientIsRefusedRatherThanRegistered() {
