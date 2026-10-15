@@ -43,9 +43,9 @@ const (
 	echoStallHeader = "X-Echo-Stall"
 )
 
-// echoStatusParam asks the echo for a status as echoStatusHeader does, in the query, for a call
-// that must forward no header but plainHeaders.
-const echoStatusParam = "echo_status"
+// echoNotFoundPath is the provider path the echo answers with a 404, for a call that must
+// forward no header but plainHeaders and no query (the proxy forwards both).
+const echoNotFoundPath = "missing/7"
 
 // stalledStart is a 5xx body's first part, over 4 KiB so the router's buffers cannot hold it
 // all (the server's response bufio.Writer is 2 KiB before chunking and its connection's 4 KiB,
@@ -271,21 +271,21 @@ func (s *ConnectionProxySuite) TestAnErrorAnswerComesBackAsItCameAndIsLogged() {
 
 // TestAnErrorAnswerToACallWithOnlyPlainHeadersIsLoggedWithItsStart: a call with no body that
 // forwards only plainHeaders gets its 404 logged with the start of the body, without the
-// connection's token, the path and query, its URLs kept to their host (a User-Agent naming one,
+// connection's token, the path, its URLs kept to their host (a User-Agent naming one,
 // as crawlers' do), and the router's server token, which the provider never got (R2.1, R2.2).
 func (s *ConnectionProxySuite) TestAnErrorAnswerToACallWithOnlyPlainHeadersIsLoggedWithItsStart() {
 	token := "token-" + s.utils.uuid()
 	id := s.connectedWithToken(s.connector(""), token)
 	serverToken := "server-token-" + s.utils.uuid()
 
-	response, answer := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "items/7")+"?"+echoStatusParam+"=404", "",
+	response, answer := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, echoNotFoundPath), "",
 		http.Header{"Accept": {"application/json"}, "Accept-Language": {"en"},
 			"User-Agent": {"probe/1 +https://docs.example/bot?q=1"}, auth.ServerTokenHeader: {serverToken}})
 
 	s.Equal(http.StatusNotFound, response.StatusCode)
 	s.Empty(s.echoed(answer).Header.Values(auth.ServerTokenHeader), "the provider did not get the router's server token")
 	line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
-	s.Contains(line, `provider_body="{\"method\":\"GET\",\"path\":\"[redacted]\",\"query\":\"[redacted]\",`)
+	s.Contains(line, `provider_body="{\"method\":\"GET\",\"path\":\"[redacted]\",\"query\":\"\",`)
 	s.Contains(line, `\"Authorization\":[\"Bearer [redacted]\"]`)
 	s.Contains(line, `\"User-Agent\":[\"probe/1 +https://docs.example\"]`)
 	for _, sent := range []string{token, serverToken} {
@@ -300,7 +300,7 @@ func (s *ConnectionProxySuite) TestAnErrorAnswerToACallWithOnlyPlainHeadersIsLog
 func (s *ConnectionProxySuite) TestAnErrorAnswerToACallThatSentABodyIsLoggedWithoutItsStart() {
 	id := s.connected(s.connector(""), bearer.Name)
 	body := "brew-" + s.utils.uuid()
-	request, err := http.NewRequest(http.MethodPost, s.server.URL+proxy(id, "items/7")+"?"+echoStatusParam+"=404",
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+proxy(id, echoNotFoundPath),
 		io.NopCloser(strings.NewReader(body)))
 	s.Require().NoError(err)
 	request.Header = s.serverClient.header.Clone()
@@ -331,7 +331,7 @@ func (s *ConnectionProxySuite) TestAnErrorAnswerToACallThatForwardedAnotherHeade
 		id := s.connected(s.connector(""), bearer.Name)
 		secret := "sec-" + s.utils.uuid()
 
-		response, answer := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "items/7")+"?"+echoStatusParam+"=404", "",
+		response, answer := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, echoNotFoundPath), "",
 			http.Header{sent.header: {fmt.Sprintf(sent.value, secret)}})
 
 		s.Equal(http.StatusNotFound, response.StatusCode)
@@ -342,6 +342,25 @@ func (s *ConnectionProxySuite) TestAnErrorAnswerToACallThatForwardedAnotherHeade
 		s.NotContains(line, "provider_body=", sent.value)
 		s.False(strings.Contains(s.logged.String(), secret), "the %s %q is not logged", sent.header, sent.value)
 	}
+}
+
+// TestAnErrorAnswerToACallThatForwardedAQueryIsLoggedWithoutItsStart: a call with no body and
+// only plainHeaders that carries a query gets its 404 logged with the status and the host only:
+// the proxy forwards the query, and the echo repeats it with its & JSON-escaped, which the
+// redaction of the query as one raw string misses (R3.1).
+func (s *ConnectionProxySuite) TestAnErrorAnswerToACallThatForwardedAQueryIsLoggedWithoutItsStart() {
+	id := s.connected(s.connector(""), bearer.Name)
+	secret := "sec-" + s.utils.uuid()
+
+	response, answer := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, echoNotFoundPath+"?key="+secret+"&x=1"), "", nil)
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+	s.Equal("key="+secret+"&x=1", s.echoed(answer).Query, "the provider got the caller's query")
+	line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
+	s.Contains(line, " provider_status=404 ")
+	s.Contains(line, " provider_host="+strings.TrimPrefix(s.echo.URL, "https://")+"\n")
+	s.NotContains(line, "provider_body=")
+	s.False(strings.Contains(s.logged.String(), secret), "the query's value is not logged")
 }
 
 // TestAStalled5xxReachesTheCallerAsItComes: a 502 whose body sends 8 KiB, then stalls until the
@@ -615,8 +634,8 @@ func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	if asked := r.Header.Get(echoStatusHeader); asked != "" {
 		status, _ = strconv.Atoi(asked)
 	}
-	if asked := r.URL.Query().Get(echoStatusParam); asked != "" {
-		status, _ = strconv.Atoi(asked)
+	if r.URL.Path == "/base/"+echoNotFoundPath {
+		status = http.StatusNotFound
 	}
 	if wait := r.Header.Get(echoRetryAfterHeader); wait != "" {
 		w.Header().Set("Retry-After", wait)

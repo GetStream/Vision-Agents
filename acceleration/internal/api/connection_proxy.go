@@ -154,7 +154,7 @@ func (s *Server) proxyConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.Header = forwardedHeader(r.Header)
-	quotable := len(body) == 0 && onlyPlainHeaders(request.Header)
+	quotable := len(body) == 0 && request.URL.RawQuery == "" && onlyPlainHeaders(request.Header)
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
 	started := time.Now()
 	response, err := s.connectorTransports.Client(ref, scheme).Do(request)
@@ -199,9 +199,9 @@ func (s *Server) proxyConnection(w http.ResponseWriter, r *http.Request) {
 			"provider_status", status, "provider_host", exchange.Host()}
 		// Why: a provider may repeat the request in its error answer (an echo, a validation
 		// error quoting a field), and a request body is never logged (security/go.md section 7),
-		// nor a header that may carry a secret. Its echo can be any part of it in any encoding
-		// (quoted, JSON-escaped), so no redaction could be shown to catch it: a call that sent a
-		// body, or a header outside plainHeaders, leaves no excerpt.
+		// nor a header that may carry a secret, and the query is forwarded too. Its echo can be any
+		// part of it in any encoding (quoted, JSON-escaped), so no redaction could be shown to catch
+		// it: a call that sent a body, a query, or a header outside plainHeaders, leaves no excerpt.
 		if quotable {
 			line = append(line, "provider_body", core.LoggedBody(exchange.ErrorBody()))
 		}
