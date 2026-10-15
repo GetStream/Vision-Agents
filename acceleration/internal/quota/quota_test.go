@@ -68,9 +68,7 @@ func (s *QuotaSuite) SetupTest() {
 
 // limiter returns a Limiter over the shared Redis with the given allowance.
 func (s *QuotaSuite) limiter(messages, tokens int64) *Limiter {
-	limiter, err := New(s.redis, Limits{MessagesPerDay: messages, TokensPerDay: tokens}, slog.Default())
-	s.Require().NoError(err)
-	return limiter
+	return s.limiterWith(Limits{MessagesPerDay: messages, TokensPerDay: tokens}, nil)
 }
 
 func (s *QuotaSuite) TestACallerUnderTheirAllowanceIsAllowed() {
@@ -78,17 +76,17 @@ func (s *QuotaSuite) TestACallerUnderTheirAllowanceIsAllowed() {
 	limiter.Debit(s.ctx, s.customer, s.caller, 10)
 	limiter.Debit(s.ctx, s.customer, s.caller, 10)
 
-	s.NoError(limiter.Allow(s.ctx, s.customer, s.caller))
+	s.NoError(s.allow(limiter, s.customer, s.caller))
 }
 
 func (s *QuotaSuite) TestTheMessageAfterTheLastOneIsRefused() {
 	limiter := s.limiter(3, 0)
 	for range 3 {
-		s.Require().NoError(limiter.Allow(s.ctx, s.customer, s.caller))
+		s.Require().NoError(s.allow(limiter, s.customer, s.caller))
 		limiter.Debit(s.ctx, s.customer, s.caller, 10)
 	}
 
-	s.ErrorIs(limiter.Allow(s.ctx, s.customer, s.caller), ErrExhausted)
+	s.ErrorIs(s.allow(limiter, s.customer, s.caller), ErrExhausted)
 }
 
 func (s *QuotaSuite) TestOneEnormousRequestSpendsTheDayBeforeTheMessagesRunOut() {
@@ -96,7 +94,7 @@ func (s *QuotaSuite) TestOneEnormousRequestSpendsTheDayBeforeTheMessagesRunOut()
 	limiter := s.limiter(200, 1_000)
 	limiter.Debit(s.ctx, s.customer, s.caller, 1_000)
 
-	err := limiter.Allow(s.ctx, s.customer, s.caller)
+	err := s.allow(limiter, s.customer, s.caller)
 
 	s.ErrorIs(err, ErrExhausted)
 	s.Contains(err.Error(), "tokens", "the caller should be told which limit they reached")
@@ -106,11 +104,11 @@ func (s *QuotaSuite) TestTwoUsersOfOneCustomerDoNotShareAnAllowance() {
 	limiter := s.limiter(1, 0)
 	spent := routing.Caller{UserID: s.caller.UserID}
 	limiter.Debit(s.ctx, s.customer, spent, 10)
-	s.Require().ErrorIs(limiter.Allow(s.ctx, s.customer, spent), ErrExhausted)
+	s.Require().ErrorIs(s.allow(limiter, s.customer, spent), ErrExhausted)
 
 	other := routing.Caller{UserID: s.caller.UserID + "-other"}
 
-	s.NoError(limiter.Allow(s.ctx, s.customer, other))
+	s.NoError(s.allow(limiter, s.customer, other))
 }
 
 func (s *QuotaSuite) TestTwoCustomersMayNameTheSameUser() {
@@ -119,9 +117,9 @@ func (s *QuotaSuite) TestTwoCustomersMayNameTheSameUser() {
 	limiter := s.limiter(1, 0)
 	spent := routing.Caller{UserID: s.caller.UserID}
 	limiter.Debit(s.ctx, s.customer, spent, 10)
-	s.Require().ErrorIs(limiter.Allow(s.ctx, s.customer, spent), ErrExhausted)
+	s.Require().ErrorIs(s.allow(limiter, s.customer, spent), ErrExhausted)
 
-	s.NoError(limiter.Allow(s.ctx, s.customer+"-other", spent))
+	s.NoError(s.allow(limiter, s.customer+"-other", spent))
 }
 
 func (s *QuotaSuite) TestTheAddressIsCountedWhenTheUserIsFresh() {
@@ -129,7 +127,7 @@ func (s *QuotaSuite) TestTheAddressIsCountedWhenTheUserIsFresh() {
 	limiter := s.limiter(1, 0)
 	limiter.Debit(s.ctx, s.customer, routing.Caller{UserID: "first", IP: s.caller.IP}, 10)
 
-	err := limiter.Allow(s.ctx, s.customer, routing.Caller{UserID: "second", IP: s.caller.IP})
+	err := s.allow(limiter, s.customer, routing.Caller{UserID: "second", IP: s.caller.IP})
 
 	s.ErrorIs(err, ErrExhausted)
 }
@@ -141,7 +139,7 @@ func (s *QuotaSuite) TestNobodyToCountAgainstIsNotCounted() {
 	limiter.Debit(s.ctx, s.customer, backend, 10_000)
 	limiter.Debit(s.ctx, s.customer, backend, 10_000)
 
-	s.NoError(limiter.Allow(s.ctx, s.customer, backend))
+	s.NoError(s.allow(limiter, s.customer, backend))
 }
 
 func (s *QuotaSuite) TestALimitOfZeroIsNotEnforced() {
@@ -150,11 +148,11 @@ func (s *QuotaSuite) TestALimitOfZeroIsNotEnforced() {
 	for range 5 {
 		limiter.Debit(s.ctx, s.customer, s.caller, 10)
 	}
-	s.Require().NoError(limiter.Allow(s.ctx, s.customer, s.caller))
+	s.Require().NoError(s.allow(limiter, s.customer, s.caller))
 
 	limiter.Debit(s.ctx, s.customer, s.caller, 50)
 
-	s.ErrorIs(limiter.Allow(s.ctx, s.customer, s.caller), ErrExhausted)
+	s.ErrorIs(s.allow(limiter, s.customer, s.caller), ErrExhausted)
 }
 
 func (s *QuotaSuite) TestADebitCountsBothMessagesAndTokens() {
@@ -162,7 +160,7 @@ func (s *QuotaSuite) TestADebitCountsBothMessagesAndTokens() {
 	limiter.Debit(s.ctx, s.customer, s.caller, 250)
 	limiter.Debit(s.ctx, s.customer, s.caller, 250)
 
-	spent, err := limiter.spent(s.ctx, limiter.keys(s.customer, s.caller)[0])
+	spent, err := limiter.spent(s.ctx, limiter.keys(s.customer, s.caller, time.Now())[0])
 
 	s.Require().NoError(err)
 	s.EqualValues(2, spent.messages)
@@ -173,7 +171,7 @@ func (s *QuotaSuite) TestADaysCountersExpireOnTheirOwn() {
 	limiter := s.limiter(10, 0)
 	limiter.Debit(s.ctx, s.customer, s.caller, 10)
 
-	for _, key := range limiter.keys(s.customer, s.caller) {
+	for _, key := range limiter.keys(s.customer, s.caller, time.Now()) {
 		ttl, err := s.redis.Do(s.ctx, s.redis.B().Ttl().Key(key).Build()).AsInt64()
 		s.Require().NoError(err)
 		s.Positive(ttl, "a day's counters should not outlive their retention")
@@ -181,14 +179,11 @@ func (s *QuotaSuite) TestADaysCountersExpireOnTheirOwn() {
 	}
 }
 
-func (s *QuotaSuite) TestALimiterNeedsSomewhereToCountAndSomethingToEnforce() {
-	_, err := New(nil, Limits{MessagesPerDay: 1}, slog.Default())
+func (s *QuotaSuite) TestALimiterNeedsSomewhereToCount() {
+	_, err := New(nil, Limits{MessagesPerDay: 1}, nil, slog.Default())
+
 	s.Require().Error(err)
 	s.Contains(err.Error(), "redis")
-
-	_, err = New(s.redis, Limits{}, slog.Default())
-	s.Require().Error(err)
-	s.Contains(err.Error(), "limits")
 }
 
 func (s *QuotaSuite) TestANilLimiterAllowsEverything() {
@@ -197,5 +192,160 @@ func (s *QuotaSuite) TestANilLimiterAllowsEverything() {
 
 	limiter.Debit(s.ctx, s.customer, s.caller, 10_000)
 
-	s.NoError(limiter.Allow(s.ctx, s.customer, s.caller))
+	s.NoError(s.allow(limiter, s.customer, s.caller))
+}
+
+// allow is Allow without the status, for the tests that ask only whether a caller may go on.
+func (s *QuotaSuite) allow(limiter *Limiter, customerID string, caller routing.Caller) error {
+	_, err := limiter.Allow(s.ctx, customerID, caller)
+	return err
+}
+
+// limitsByCustomer is a Source that knows a few customers' limits and has no opinion about
+// anybody else's.
+type limitsByCustomer map[string]Limits
+
+func (l limitsByCustomer) Limits(_ context.Context, customerID string, defaults Limits) Limits {
+	if limits, ok := l[customerID]; ok {
+		return limits
+	}
+	return defaults
+}
+
+func (s *QuotaSuite) limiterWith(defaults Limits, source Source) *Limiter {
+	limiter, err := New(s.redis, defaults, source, slog.Default())
+	s.Require().NoError(err)
+	return limiter
+}
+
+func (s *QuotaSuite) TestEachAppsUsersAreHeldToTheirAppsOwnLimit() {
+	other := s.customer + "-other"
+	limiter := s.limiterWith(Limits{MessagesPerDay: 100}, limitsByCustomer{s.customer: {MessagesPerDay: 5}})
+	for range 5 {
+		s.Require().NoError(s.allow(limiter, s.customer, s.caller))
+		limiter.Debit(s.ctx, s.customer, s.caller, 10)
+		limiter.Debit(s.ctx, other, s.caller, 10)
+	}
+
+	s.ErrorIs(s.allow(limiter, s.customer, s.caller), ErrExhausted, "the app allows five")
+	s.NoError(s.allow(limiter, other, s.caller), "the other app is held to the deployment's hundred")
+}
+
+func (s *QuotaSuite) TestTheDeploymentsLimitHoldsWhereNoPolicySetsOne() {
+	// A source with no opinion leaves the deployment's three messages a day.
+	limiter := s.limiterWith(Limits{MessagesPerDay: 3}, limitsByCustomer{})
+	allowed := 0
+	for s.allow(limiter, s.customer, s.caller) == nil && allowed < 10 {
+		allowed++
+		limiter.Debit(s.ctx, s.customer, s.caller, 10)
+	}
+
+	s.Equal(3, allowed)
+}
+
+func (s *QuotaSuite) TestACustomersOwnProcessIsNeverCounted() {
+	// A backend naming the user it acts for is still the customer's own process.
+	limiter := s.limiter(1, 1)
+	backend := routing.Caller{UserID: s.caller.UserID, IP: s.caller.IP, ServerSide: true}
+	limiter.Debit(s.ctx, s.customer, backend, 10_000)
+	limiter.Debit(s.ctx, s.customer, backend, 10_000)
+
+	s.NoError(s.allow(limiter, s.customer, backend))
+	s.NoError(s.allow(limiter, s.customer, s.caller),
+		"what a backend spent for a user is not the user's")
+}
+
+func (s *QuotaSuite) TestAnAddressIsCountedPerApp() {
+	limiter := s.limiter(1, 0)
+	address := routing.Caller{IP: s.caller.IP}
+	limiter.Debit(s.ctx, s.customer, address, 10)
+	s.Require().ErrorIs(s.allow(limiter, s.customer, address), ErrExhausted)
+
+	s.NoError(s.allow(limiter, s.customer+"-other", address),
+		"each app sets its own limit, so one address is counted once per app")
+}
+
+func (s *QuotaSuite) TestACallerIsToldWhatIsLeftOfTheirDay() {
+	limiter := s.limiter(5, 0)
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+
+	status, err := limiter.Allow(s.ctx, s.customer, s.caller)
+
+	s.Require().NoError(err)
+	s.EqualValues(5, status.Limit)
+	s.EqualValues(3, status.Remaining)
+	now := time.Now().UTC()
+	s.Equal(time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC), status.Reset)
+}
+
+func (s *QuotaSuite) TestACallerIsToldAboutTheLimitNearestToRefusingThem() {
+	// Nine of ten messages left, and a tenth of the tokens: the tokens refuse first.
+	limiter := s.limiter(10, 1_000)
+	limiter.Debit(s.ctx, s.customer, s.caller, 900)
+
+	status, err := limiter.Allow(s.ctx, s.customer, s.caller)
+
+	s.Require().NoError(err)
+	s.EqualValues(1_000, status.Limit)
+	s.EqualValues(100, status.Remaining)
+}
+
+func (s *QuotaSuite) TestARefusedCallerIsToldNothingIsLeft() {
+	limiter := s.limiter(1, 0)
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+
+	status, err := limiter.Allow(s.ctx, s.customer, s.caller)
+
+	s.Require().ErrorIs(err, ErrExhausted)
+	s.EqualValues(1, status.Limit)
+	s.Zero(status.Remaining)
+}
+
+func (s *QuotaSuite) TestACustomerHeldToNoLimitIsNotCounted() {
+	// A deployment with no default, and an app that set none: nothing to enforce, so nothing
+	// is written either, which is what such a deployment did before it had a Limiter at all.
+	limiter := s.limiterWith(Limits{}, limitsByCustomer{})
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+
+	status, err := limiter.Allow(s.ctx, s.customer, s.caller)
+
+	s.Require().NoError(err)
+	s.Zero(status, "an uncounted caller is told nothing")
+	for _, key := range limiter.keys(s.customer, s.caller, time.Now()) {
+		exists, err := s.redis.Do(s.ctx, s.redis.B().Exists().Key(key).Build()).AsInt64()
+		s.Require().NoError(err)
+		s.Zero(exists, "nothing is counted for %s", key)
+	}
+}
+
+func (s *QuotaSuite) TestAnAppsLimitHoldsWhereTheDeploymentHasNone() {
+	limiter := s.limiterWith(Limits{}, limitsByCustomer{s.customer: {MessagesPerDay: 1}})
+	s.Require().NoError(s.allow(limiter, s.customer, s.caller))
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+
+	s.ErrorIs(s.allow(limiter, s.customer, s.caller), ErrExhausted)
+}
+
+// stalledSource is a Source whose store answers only once the lookup is given up on, or
+// after a minute when nothing gives it up.
+type stalledSource struct{}
+
+func (stalledSource) Limits(ctx context.Context, _ string, _ Limits) Limits {
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Minute):
+	}
+	return Limits{MessagesPerDay: 1}
+}
+
+func (s *QuotaSuite) TestADebitWaitsNoLongerThanItsTimeoutForTheLimits() {
+	// The debit runs on the goroutine draining a finished response, which a stalled policy
+	// store must not hold past the debit's own timeout.
+	limiter := s.limiterWith(Limits{}, stalledSource{})
+	started := time.Now()
+
+	limiter.Debit(context.Background(), s.customer, s.caller, 10)
+
+	s.Less(time.Since(started), writeTimeout+time.Second)
 }

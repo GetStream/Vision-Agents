@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
@@ -58,12 +59,11 @@ type Recorder struct {
 
 // NewRecorder validates the options and returns a recorder.
 func NewRecorder(options RecorderOptions) (*Recorder, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv("ELEVENLABS_API_KEY")
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, "ELEVENLABS_API_KEY")
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("elevenlabs: api key is required (set ELEVENLABS_API_KEY)"))
 	}
+	options.APIKey = keys.Peek()
 	if options.VoiceID == "" {
 		options.VoiceID = os.Getenv("ELEVENLABS_VOICE_ID")
 	}
@@ -83,7 +83,7 @@ func NewRecorder(options RecorderOptions) (*Recorder, error) {
 
 	return &Recorder{
 		options: options,
-		client:  &http.Client{Timeout: recorderTimeout},
+		client:  keys.WrapClient(&http.Client{Timeout: recorderTimeout}, keypool.Header("xi-api-key", "")),
 		logger:  logger.With("provider", ProviderName, "model", options.Model),
 	}, nil
 }

@@ -1,11 +1,13 @@
 // Package policy enforces what an organization and its apps have decided about spend, data
-// handling, prompt injection, which models may be used and how usage is labelled.
+// handling, prompt injection, which models may be used, how usage is labelled and what one
+// end user may spend in a day.
 //
 // An organization's policy is a floor its apps can tighten and cannot loosen: both budgets
 // apply, a data policy is the stricter of the two, prompt injection is screened if either
 // turns it on, only a model both allow may be routed to, and the organization's tags win
 // over the app's. That is the only reading under which an organization's setting means
-// anything, since an app that could switch it off would make it a suggestion.
+// anything, since an app that could switch it off would make it a suggestion. A daily limit
+// per end user is the app's alone, so it has no organization's to meet.
 //
 // Decisions are cached per customer for a few seconds, because Admit is asked before every
 // routed session and every LLM response, and a budget is a sum over the request rows. The
@@ -23,6 +25,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -66,6 +69,10 @@ type decision struct {
 	screen  bool
 	// ownApp is a customer that must act in a Stream app of its own.
 	ownApp bool
+	// messages and tokens are the daily limits per end user the app's policy sets, nil
+	// where it sets none.
+	messages *int64
+	tokens   *int64
 	// unread is a decision made without the policies, which could not be read.
 	unread  error
 	expires time.Time
@@ -92,6 +99,21 @@ func (e *Enforcer) Admit(ctx context.Context, customerID string) (routing.Admiss
 	defer span.End()
 	decided := e.decide(ctx, customerID)
 	return routing.Admission{DataPolicy: decided.floor, Models: decided.models, Tags: decided.tags}, stack.Wrap(decided.refusal)
+}
+
+// Limits returns what one of a customer's end users may spend in a day: the number the
+// app's policy sets, or defaults where it sets none. A limit of zero is no cap. A policy
+// that could not be read leaves defaults in place; a spend that could not be read leaves
+// the limits the policy sets.
+func (e *Enforcer) Limits(ctx context.Context, customerID string, defaults quota.Limits) quota.Limits {
+	if e == nil || customerID == "" {
+		return defaults
+	}
+	decided := e.decide(ctx, customerID)
+	return quota.Limits{
+		MessagesPerDay: orDefault(decided.messages, defaults.MessagesPerDay),
+		TokensPerDay:   orDefault(decided.tokens, defaults.TokensPerDay),
+	}
 }
 
 // Join records that an app was seen under an organization, which is what an organization's
@@ -214,6 +236,10 @@ func (e *Enforcer) work(ctx context.Context, appID string) (decision, error) {
 		// Either scope requiring it requires it: an app can ask for it and cannot opt out.
 		ownApp: enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
 	}
+	if app.Quota != nil {
+		decided.messages = app.Quota.MessagesPerUserPerDay
+		decided.tokens = app.Quota.TokensPerUserPerDay
+	}
 	if organization.Budget != nil {
 		if decided.refusal, err = e.over(ctx, store.ScopeOrganization, organizationID, *organization.Budget); err != nil {
 			return decided, err
@@ -250,6 +276,13 @@ func (e *Enforcer) forget(customerID string) {
 }
 
 func enabled(flag *bool) bool { return flag != nil && *flag }
+
+func orDefault(limit *int64, fallback int64) int64 {
+	if limit == nil {
+		return fallback
+	}
+	return *limit
+}
 
 // allowedByBoth is the models both scopes allow: nil where neither has a list, the one
 // list where only one has, and what is on both where both have.

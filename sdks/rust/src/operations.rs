@@ -45,6 +45,22 @@ impl Client {
         )
         .await
     }
+    /// What caused the calls the agents handled badly
+    ///
+    /// `POST /v1/agents/calls/reviews/analysis` (`analyzeReviews`).
+    pub async fn analyze_reviews(
+        &self,
+        body: &types::AnalyzeReviewsRequest,
+    ) -> Result<types::ReviewAnalysis> {
+        self.send(
+            Method::POST,
+            "/v1/agents/calls/reviews/analysis",
+            None::<&()>,
+            Some(body),
+            "analyzeReviews",
+        )
+        .await
+    }
     /// One call, with whatever was made of it afterwards
     ///
     /// `GET /v1/agents/calls/{id}` (`getCall`).
@@ -2266,6 +2282,61 @@ impl Client {
         )
         .await
     }
+    /// Get why an app's telephony is suspended
+    ///
+    /// `GET /v1/ops/customers/{customer_id}/telephony-suspension` (`getTelephonySuspension`).
+    pub async fn get_telephony_suspension(
+        &self,
+        customer_id: &str,
+    ) -> Result<types::TelephonySuspension> {
+        self.send(
+            Method::GET,
+            &format!(
+                "/v1/ops/customers/{customer_id}/telephony-suspension",
+                customer_id = segment(customer_id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "getTelephonySuspension",
+        )
+        .await
+    }
+    /// Suspend an app's telephony
+    ///
+    /// `PUT /v1/ops/customers/{customer_id}/telephony-suspension` (`suspendTelephony`).
+    pub async fn suspend_telephony(
+        &self,
+        customer_id: &str,
+        body: Option<&types::SuspendTelephonyRequest>,
+    ) -> Result<types::TelephonySuspension> {
+        self.send(
+            Method::PUT,
+            &format!(
+                "/v1/ops/customers/{customer_id}/telephony-suspension",
+                customer_id = segment(customer_id)
+            ),
+            None::<&()>,
+            body,
+            "suspendTelephony",
+        )
+        .await
+    }
+    /// Lift an app's telephony suspension
+    ///
+    /// `DELETE /v1/ops/customers/{customer_id}/telephony-suspension` (`liftTelephonySuspension`).
+    pub async fn lift_telephony_suspension(&self, customer_id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!(
+                "/v1/ops/customers/{customer_id}/telephony-suspension",
+                customer_id = segment(customer_id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "liftTelephonySuspension",
+        )
+        .await
+    }
     /// List use cases waiting on Stream
     ///
     /// `GET /v1/ops/use-cases` (`listUseCasesForReview`).
@@ -3151,6 +3222,9 @@ pub struct ListCallsQuery {
     /// Only calls that started before this, exclusive.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
+    /// Only reviewed calls scored at or below this, from 1 to 5.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_review_score: Option<i64>,
 }
 /// The query string `getCallEvents` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

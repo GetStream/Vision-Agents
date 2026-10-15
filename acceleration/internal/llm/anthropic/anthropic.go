@@ -3,8 +3,8 @@ package anthropic
 
 import (
 	"log/slog"
-	"os"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 )
@@ -18,7 +18,7 @@ type Options struct {
 
 func New(options Options) (*openaicompat.LLM, error) {
 	if options.APIKey == "" {
-		options.APIKey = os.Getenv("ANTHROPIC_API_KEY")
+		options.APIKey = keypool.Getenv("ANTHROPIC_API_KEY")
 	}
 	if options.Model == "" {
 		options.Model = "claude-opus-5"

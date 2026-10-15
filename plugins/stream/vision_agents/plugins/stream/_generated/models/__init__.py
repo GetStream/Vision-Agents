@@ -29,7 +29,9 @@ from .agent_response_item_page import AgentResponseItemPage
 from .agent_response_item_payload import AgentResponseItemPayload
 from .agent_response_page import AgentResponsePage
 from .agent_response_status import AgentResponseStatus
+from .agent_stats import AgentStats
 from .agent_tools import AgentTools
+from .analyze_reviews_request import AnalyzeReviewsRequest
 from .app_settings import AppSettings
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
@@ -295,6 +297,8 @@ from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
 from .respond_request import RespondRequest
 from .review_actor import ReviewActor
+from .review_analysis import ReviewAnalysis
+from .review_cause import ReviewCause
 from .review_decision import ReviewDecision
 from .review_page import ReviewPage
 from .review_queue import ReviewQueue
@@ -381,12 +385,14 @@ from .sts_options_overwrites import StsOptionsOverwrites
 from .sts_options_turn_detection import StsOptionsTurnDetection
 from .stt_options import SttOptions
 from .stt_options_overwrites import SttOptionsOverwrites
+from .suspend_telephony_request import SuspendTelephonyRequest
 from .sync_agent_request import SyncAgentRequest
 from .sync_agent_request_tags import SyncAgentRequestTags
 from .sync_agent_result import SyncAgentResult
 from .tag_key_summary import TagKeySummary
 from .tag_stats_bucket import TagStatsBucket
 from .tag_value_summary import TagValueSummary
+from .telephony_suspension import TelephonySuspension
 from .text_content_part import TextContentPart
 from .text_content_part_type import TextContentPartType
 from .text_match import TextMatch
@@ -397,6 +403,7 @@ from .tool_approval_command import ToolApprovalCommand
 from .tool_approval_command_type import ToolApprovalCommandType
 from .tool_result_command import ToolResultCommand
 from .tool_result_command_type import ToolResultCommandType
+from .tool_stats import ToolStats
 from .transcript_entity import TranscriptEntity
 from .transcript_format import TranscriptFormat
 from .transcript_message import TranscriptMessage
@@ -467,7 +474,9 @@ __all__ = (
     "AgentResponseItemPayload",
     "AgentResponsePage",
     "AgentResponseStatus",
+    "AgentStats",
     "AgentTools",
+    "AnalyzeReviewsRequest",
     "AppSettings",
     "AttachNumberRequest",
     "AttachedNumber",
@@ -727,6 +736,8 @@ __all__ = (
     "RecordingStatus",
     "RespondRequest",
     "ReviewActor",
+    "ReviewAnalysis",
+    "ReviewCause",
     "ReviewDecision",
     "ReviewPage",
     "ReviewQueue",
@@ -813,12 +824,14 @@ __all__ = (
     "StsOptionsTurnDetection",
     "SttOptions",
     "SttOptionsOverwrites",
+    "SuspendTelephonyRequest",
     "SyncAgentRequest",
     "SyncAgentRequestTags",
     "SyncAgentResult",
     "TagKeySummary",
     "TagStatsBucket",
     "TagValueSummary",
+    "TelephonySuspension",
     "TextContentPart",
     "TextContentPartType",
     "TextMatch",
@@ -829,6 +842,7 @@ __all__ = (
     "ToolApprovalCommandType",
     "ToolResultCommand",
     "ToolResultCommandType",
+    "ToolStats",
     "TranscriptEntity",
     "TranscriptFormat",
     "TranscriptMessage",

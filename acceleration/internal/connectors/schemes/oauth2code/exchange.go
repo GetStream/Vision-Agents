@@ -23,10 +23,30 @@ import (
 type TokenError struct {
 	Status int
 	Code   string
+	// Description is its error_description for a log line (ErrorDescription), "" when it gave
+	// none. Error leaves it out, so the text a caller or the model reads is the same with it.
+	Description string
 }
 
 func (e *TokenError) Error() string {
 	return fmt.Sprintf("oauth2code: token endpoint answered HTTP %d: %s", e.Status, e.Code)
+}
+
+// ErrorDescription is the error_description member of raw, a token endpoint's JSON object
+// answer (RFC 6749 section 5.2), as a log line may hold it (core.LoggedDescription): each of
+// secrets, what the request carried, such as the refresh token and the client secret,
+// redacted, its URLs kept to their host, at most core.DescriptionBytes. "" when it has none.
+// Both OAuth schemes read it here, oauth2cc for its token request too.
+func ErrorDescription(raw []byte, secrets ...string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	object, err := decodeObject(raw)
+	if err != nil {
+		return ""
+	}
+	description, _ := object["error_description"].(string)
+	return core.LoggedDescription(description, secrets...)
 }
 
 // tokenResponse is the part of a token response (RFC 6749 section 5.1) the scheme reads

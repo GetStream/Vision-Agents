@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -61,13 +62,18 @@ func (s *LLMQuotaSuite) SetupTest() {
 // session returns a session over the stub provider, limited to the given allowance and
 // owned by the caller under test.
 func (s *LLMQuotaSuite) session(messages, tokens int64, caller routing.Caller) (*Session, *stubLLM) {
+	return s.sessionAs("stub", messages, tokens, caller)
+}
+
+// sessionAs is session with the stub routed under the provider name given.
+func (s *LLMQuotaSuite) sessionAs(name string, messages, tokens int64, caller routing.Caller) (*Session, *stubLLM) {
 	limiter, err := quota.New(s.redis,
-		quota.Limits{MessagesPerDay: messages, TokensPerDay: tokens}, slog.Default())
+		quota.Limits{MessagesPerDay: messages, TokensPerDay: tokens}, nil, slog.Default())
 	s.Require().NoError(err)
 
 	provider := newStubLLM()
 	recorder := routing.NewRecorder(routing.LLM, nil, nil, slog.Default())
-	config := routing.ProviderConfig{Provider: "stub", Model: "stub-model"}
+	config := routing.ProviderConfig{Provider: name, Model: "stub-model"}
 	session := newSession(provider, config,
 		routing.Owner{CustomerID: "acme", Caller: caller}, recorder, limiter)
 
@@ -141,4 +147,87 @@ func (s *LLMQuotaSuite) TestARefusedTurnAsksTheProviderForNothing() {
 
 	s.Require().ErrorIs(err, quota.ErrExhausted)
 	s.Len(provider.asked, 1, "a refused turn should never reach the provider")
+}
+
+func (s *LLMQuotaSuite) TestASessionABackendOpenedForAUserIsNeverRefused() {
+	// The backend names the user it acts for, and is trusted with that spend all the same.
+	backend := s.caller
+	backend.ServerSide = true
+	session, provider := s.session(1, 1, backend)
+
+	for turn := range 3 {
+		stream, err := session.Create(s.ctx, llm.ResponseParams{
+			ID: fmt.Sprintf("c%d", turn), Input: prompt(),
+		})
+		s.Require().NoError(err, "a backend's session should not be refused on turn %d", turn)
+		s.answer(provider, stream, turn, 1_000, 1_000)
+	}
+	own, _ := s.session(1, 1, s.caller)
+	_, err := own.Create(s.ctx, llm.ResponseParams{ID: "own", Input: prompt()})
+	s.NoError(err, "what the backend spent was not charged to the user's own day")
+}
+
+func (s *LLMQuotaSuite) TestAMockAnswerIsNeitherCheckedNorCounted() {
+	mocked, mocker := s.sessionAs(mock.ProviderName, 1, 0, s.caller)
+	counted, counter := s.session(1, 0, s.caller)
+
+	for turn := range 3 {
+		stream, err := mocked.Create(s.ctx, llm.ResponseParams{
+			ID: fmt.Sprintf("m%d", turn), Input: prompt(),
+		})
+		s.Require().NoError(err, "a mock answer should not be refused on turn %d", turn)
+		s.answer(mocker, stream, turn, 1_000, 1_000)
+	}
+
+	stream, err := counted.Create(s.ctx, llm.ResponseParams{ID: "real", Input: prompt()})
+	s.Require().NoError(err, "the mock answers were not charged to the user's day")
+	s.answer(counter, stream, 0, 1_000, 1_000)
+
+	_, err = counted.Create(s.ctx, llm.ResponseParams{ID: "over", Input: prompt()})
+	s.Require().ErrorIs(err, quota.ErrExhausted, "the user's day is spent")
+
+	stream, err = mocked.Create(s.ctx, llm.ResponseParams{ID: "m3", Input: prompt()})
+	s.Require().NoError(err, "a mock answer is not refused once the day is spent")
+	s.answer(mocker, stream, 3, 1_000, 1_000)
+}
+
+func (s *LLMQuotaSuite) TestAUsersOwnTurnInASessionABackendOpenedForThemIsCountedOnTheirDay() {
+	backend := s.caller
+	backend.ServerSide = true
+	session, provider := s.session(1, 0, backend)
+	sentByUser := routing.WithCaller(s.ctx, s.caller)
+
+	stream, err := session.Create(sentByUser, llm.ResponseParams{ID: "user", Input: prompt()})
+	s.Require().NoError(err)
+	s.answer(provider, stream, 0, 10, 5)
+
+	_, err = session.Create(sentByUser, llm.ResponseParams{ID: "over", Input: prompt()})
+	s.Require().ErrorIs(err, quota.ErrExhausted, "the user's next turn is refused")
+	stream, err = session.Create(routing.WithCaller(s.ctx, backend), llm.ResponseParams{ID: "backend", Input: prompt()})
+	s.Require().NoError(err, "the backend's own turn is not counted")
+	s.answer(provider, stream, 1, 10, 5)
+}
+
+func (s *LLMQuotaSuite) TestAUserOpenedSessionIsCountedOnWhoeverOpenedIt() {
+	// A turn in it is the user's whoever sends it, and from wherever: the backend passing on
+	// what the user wrote, or the user from another address, spends the day of the address
+	// the session was opened from, as it always has.
+	opener := routing.Caller{IP: fmt.Sprintf("opener-%d", time.Now().UnixNano())}
+	user := s.caller
+	user.IP = opener.IP
+	session, provider := s.session(2, 0, user)
+	elsewhere := user
+	elsewhere.IP = "elsewhere-" + opener.IP
+
+	for turn, sender := range []routing.Caller{{UserID: user.UserID, ServerSide: true}, elsewhere} {
+		stream, err := session.Create(routing.WithCaller(s.ctx, sender), llm.ResponseParams{
+			ID: fmt.Sprintf("c%d", turn), Input: prompt(),
+		})
+		s.Require().NoError(err)
+		s.answer(provider, stream, turn, 10, 5)
+	}
+
+	sameAddress, _ := s.session(2, 0, opener)
+	_, err := sameAddress.Create(s.ctx, llm.ResponseParams{ID: "address", Input: prompt()})
+	s.ErrorIs(err, quota.ErrExhausted, "both turns were counted on the address the session was opened from")
 }

@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
 )
@@ -33,7 +33,7 @@ type Fish struct {
 // NewFish validates the options and returns a cloner.
 func NewFish(options FishOptions) (*Fish, error) {
 	if options.APIKey == "" {
-		options.APIKey = os.Getenv("FISH_API_KEY")
+		options.APIKey = keypool.FromEnv("", "FISH_API_KEY").Peek()
 	}
 	if options.APIKey == "" {
 		return nil, errors.New("voices: api key is required (set FISH_API_KEY)")

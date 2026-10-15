@@ -37,8 +37,8 @@ def main() -> None:
     parser.add_argument(
         "--pipeline",
         default=os.environ.get("VOICEBENCH_PIPELINE", "realtime"),
-        choices=["realtime", "accelerated"],
-        help="realtime OpenAI or the acceleration bundle",
+        choices=["realtime", "accelerated", "sts"],
+        help="realtime OpenAI, the acceleration bundle or a routed STS model",
     )
     args = parser.parse_args()
 

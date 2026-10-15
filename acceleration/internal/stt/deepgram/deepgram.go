@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +19,7 @@ import (
 	interfacesv2 "github.com/deepgram/deepgram-go-sdk/v3/pkg/client/interfaces/v2"
 	listenv2 "github.com/deepgram/deepgram-go-sdk/v3/pkg/client/listen/v2"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -88,12 +88,13 @@ type STT struct {
 
 // New validates the options and returns an unstarted provider.
 func New(options Options) (*STT, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv("DEEPGRAM_API_KEY")
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, "DEEPGRAM_API_KEY")
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("deepgram: api key is required (set DEEPGRAM_API_KEY)"))
 	}
+	// The SDK dials the socket itself, so a refusal cannot be handed to another key;
+	// sessions only take the keys in turn.
+	options.APIKey = keys.Next()
 	if options.Model == "" {
 		options.Model = DefaultModel
 	}

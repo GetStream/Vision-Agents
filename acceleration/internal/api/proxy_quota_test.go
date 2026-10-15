@@ -41,7 +41,7 @@ func (s *ProxyQuotaSuite) SetupSuite() {
 	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.redis = client
-	s.limiter, err = quota.New(client, quota.Limits{MessagesPerDay: 1}, slog.New(slog.DiscardHandler))
+	s.limiter, err = quota.New(client, quota.Limits{MessagesPerDay: 1}, nil, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 }
 

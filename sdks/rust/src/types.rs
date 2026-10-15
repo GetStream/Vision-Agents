@@ -834,6 +834,17 @@ pub struct AgentTools {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub progressive: ::std::option::Option<bool>,
 }
+///`AnalyzeReviewsRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AnalyzeReviewsRequest {
+    ///Only calls that started at or after this, inclusive.
+    pub from: ::std::string::String,
+    ///The model that analyses, a "provider/model" name or a shortcut. Left out, multilingual-high-accuracy.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub target: ::std::option::Option<::std::string::String>,
+    ///Only calls that started before this, exclusive.
+    pub to: ::std::string::String,
+}
 ///What the router does for the calling app. It never carries a secret.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct AppSettings {
@@ -7106,6 +7117,26 @@ impl ::std::convert::TryFrom<::std::string::String> for ReviewActor {
         value.parse()
     }
 }
+///`ReviewAnalysis`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ReviewAnalysis {
+    ///How many badly reviewed calls were read. Zero means there were none, and nothing was asked.
+    pub calls_read: i64,
+    pub causes: ::std::vec::Vec<ReviewCause>,
+    ///The whole, in two sentences.
+    pub summary: ::std::string::String,
+}
+///`ReviewCause`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ReviewCause {
+    ///The calls it explains, which are the sessions that ran them. Only ids that were read.
+    pub call_ids: ::std::vec::Vec<::std::string::String>,
+    ///What went wrong in those calls.
+    pub explanation: ::std::string::String,
+    ///What to change in the agent.
+    pub fix: ::std::string::String,
+    pub title: ::std::string::String,
+}
 ///approve sends the use case to the vendor; request_changes hands it back to the app to edit; reject ends it.
 #[derive(
     ::serde::Deserialize,
@@ -7254,7 +7285,7 @@ pub struct RouterConfigRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts: ::std::option::Option<TtsOptions>,
 }
-///Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+///Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -7301,10 +7332,13 @@ impl ::std::convert::TryFrom<::std::string::String> for Sandbox {
         value.parse()
     }
 }
-///How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+///How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxOptions {
+    ///Domains code in the sandbox may reach, such as api.example.com. Set, nothing else is reachable, even with network on. Not with network_allow_list.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub allowed_domains: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     ///CPUs for the sandbox. Zero is the provider's default.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub cpu: ::std::option::Option<i64>,
@@ -7317,6 +7351,12 @@ pub struct SandboxOptions {
     ///Memory for the sandbox, in GiB. Zero is the provider's default.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub memory_gb: ::std::option::Option<i64>,
+    ///Whether code in the sandbox may reach the internet. Off by default, and then every outbound connection is blocked unless allowed_domains or network_allow_list names where it may go.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub network: ::std::option::Option<bool>,
+    ///CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set, nothing else is reachable, even with network on. Not with allowed_domains.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub network_allow_list: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     ///Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub setup: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
@@ -9448,6 +9488,14 @@ pub struct SttOptions {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub words: ::std::option::Option<bool>,
 }
+///`SuspendTelephonyRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct SuspendTelephonyRequest {
+    ///Why the app is suspended. The app is never shown it.
+    pub reason: ::std::string::String,
+    ///Who is suspending it.
+    pub suspended_by: ::std::string::String,
+}
 ///An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct SyncAgentRequest {
@@ -9586,6 +9634,18 @@ pub struct TagValueSummary {
     ///This value's share of what the key covers, from 0 to 1.
     pub share: f64,
     pub value: ::std::string::String,
+}
+///`TelephonySuspension`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct TelephonySuspension {
+    ///The app that is suspended.
+    pub customer_id: ::std::string::String,
+    ///Why, for Stream staff. The app is never shown it.
+    pub reason: ::std::string::String,
+    ///When it was suspended, or last changed.
+    pub suspended_at: ::std::string::String,
+    ///Who suspended it.
+    pub suspended_by: ::std::string::String,
 }
 ///`TextContentPart`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]

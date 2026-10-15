@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -510,29 +511,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 	connectorLimiter := newConnectorLimiter(connectorTransports, liveClient, logger)
 
-	// A daily limit is counted in Redis, so a deployment without one caps nothing. That is
-	// the right way round: the limit protects against a customer's end users spending more
-	// than they were meant to, and refusing every request because the counter is missing
-	// would be a worse outage than the one it prevents.
-	var limiter *quota.Limiter
-	limits := quota.Limits{
-		MessagesPerDay: settings.RateLimit.MessagesPerDay,
-		TokensPerDay:   settings.RateLimit.TokensPerDay,
-	}
-	switch {
-	case !limits.Enforced():
-		logger.Warn("no daily limit configured, an end user may spend without bound",
-			"setting", "rate_limit.messages_per_day")
-	case liveClient == nil:
-		logger.Warn("no redis configured, daily limits will not be enforced", "setting", "redis.addr")
-	default:
-		if limiter, err = quota.New(liveClient.Redis(), limits, logger); err != nil {
-			return err
-		}
-		logger.Info("capping what one end user may spend in a day",
-			"messages", limits.MessagesPerDay, "tokens", limits.TokensPerDay)
-	}
-
 	// What every request is measured against -- the key it presented, the app behind it,
 	// their policies and what they have configured -- read through Redis and the cache
 	// rueidis keeps beside it. Without Redis it is Postgres on every read, which is what
@@ -579,6 +557,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		gate = policies
+	}
+
+	limiter, err := newDailyLimiter(liveClient, quota.Limits{
+		MessagesPerDay: settings.RateLimit.MessagesPerDay,
+		TokensPerDay:   settings.RateLimit.TokensPerDay,
+	}, policies, logger)
+	if err != nil {
+		return err
 	}
 
 	if settings.Agent.SpeculativeReplies {
@@ -1236,41 +1222,149 @@ func run(settings config.Config, logger *slog.Logger) error {
 		server.WarnWithoutMessageHooks(attempt)
 	}()
 
-	address := settings.Addr
-
-	httpServer := &http.Server{
-		Addr:              address,
-		Handler:           server.Handler(),
-		ReadHeaderTimeout: readHeaderTimeout,
+	handler := server.Handler()
+	public, err := listen(settings.Addr, settings.ListenFD)
+	if err != nil {
+		return err
 	}
-
-	listening := make(chan error, 1)
-	go func() {
-		logger.Info("listening", "address", address, "modalities", len(routers))
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
+	listening := make(chan error, 2)
+	serve := func(httpServer *http.Server, listener net.Listener) {
+		if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			listening <- err
 			return
 		}
 		listening <- nil
-	}()
+	}
+	logger.Info("listening", "address", public.Addr().String(), "modalities", len(routers))
+	go serve(httpServer, public)
+
+	// Peers get a listener of their own when one is asked for, so a node still answers for
+	// its sessions after it has stopped taking new work on the public one.
+	var peerServer *http.Server
+	if settings.Node.Listen != "" {
+		peers, err := net.Listen("tcp", settings.Node.Listen)
+		if err != nil {
+			return err
+		}
+		peerServer = &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
+		logger.Info("listening for peers", "address", peers.Addr().String(), "setting", "node.listen")
+		go serve(peerServer, peers)
+	}
 
 	select {
 	case err := <-listening:
 		return err
 	case <-ctx.Done():
-		logger.Info("shutting down")
-		return stopServing(httpServer, telephony, logger, shutdownGrace)
+		logger.Info("shutting down", "drain", settings.Shutdown.Drain)
+		return stopServing(stopping{
+			public:    httpServer,
+			peers:     peerServer,
+			drainWork: server.Drain,
+			held:      func() int { return running(sessions) },
+			telephony: telephony,
+			drain:     settings.Shutdown.Drain,
+			logger:    logger,
+		})
 	}
 }
 
-// stopServing hangs up the calls through customers' own SIP trunks, then drains HTTP. Both
-// fit in grace from now: the drain gets whatever the hangup left of it.
-func stopServing(httpServer *http.Server, telephony *phone.Service, logger *slog.Logger, grace time.Duration) error {
-	deadline := time.Now().Add(grace)
-	closePhone(telephony, logger)
-	shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
+// listen opens the public listener: the socket a supervisor handed down when there is one,
+// so the process before this one and this one take connections from the same queue.
+func listen(address string, fd int) (net.Listener, error) {
+	if fd == 0 {
+		return net.Listen("tcp", address)
+	}
+	inherited := os.NewFile(uintptr(fd), "listener")
+	defer inherited.Close()
+	listener, err := net.FileListener(inherited)
+	if err != nil {
+		return nil, fmt.Errorf("could not serve on the inherited socket %d (listen_fd): %w", fd, err)
+	}
+	return listener, nil
+}
+
+// stopping is what a router has to stop.
+type stopping struct {
+	public *http.Server
+	peers  *http.Server
+	// drainWork sends away the work that reconnects, the dispatch workers.
+	drainWork func()
+	// held is how many sessions the process is still running.
+	held      func() int
+	telephony *phone.Service
+	drain     time.Duration
+	logger    *slog.Logger
+}
+
+// drainPoll is how often a draining router looks at how many sessions it still holds.
+const drainPoll = 250 * time.Millisecond
+
+// stopServing stops taking work, then lets what is running finish.
+//
+// Without a drain it hangs up the calls through customers' own SIP trunks, then drains HTTP,
+// both inside shutdownGrace: the drain gets whatever the hangup left of it. With one, the
+// public listener closes first and the sessions this process holds, phone calls included,
+// keep going until they end or the drain runs out, still answering their peers' requests.
+// A second signal stops waiting. The sessions left are ended by the caller's
+// sessions.Shutdown either way.
+func stopServing(s stopping) error {
+	s.drainWork()
+	if s.drain <= 0 {
+		deadline := time.Now().Add(shutdownGrace)
+		closePhone(s.telephony, s.logger)
+		shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+		return errors.Join(s.public.Shutdown(shutdownCtx), shutdown(shutdownCtx, s.peers))
+	}
+
+	again := make(chan os.Signal, 1)
+	signal.Notify(again, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(again)
+	timeout := time.NewTimer(s.drain)
+	defer timeout.Stop()
+
+	httpCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	if err := s.public.Shutdown(httpCtx); err != nil {
+		s.logger.Warn("requests were still running when the public listener closed", "error", err)
+	}
+	cancel()
+
+	ticker := time.NewTicker(drainPoll)
+	defer ticker.Stop()
+	for held := s.held(); held > 0; held = s.held() {
+		select {
+		case <-ticker.C:
+			continue
+		case <-again:
+			s.logger.Info("told again to stop, ending the sessions still running", "sessions", held)
+		case <-timeout.C:
+			s.logger.Warn("the drain ran out, ending the sessions still running",
+				"sessions", held, "drain", s.drain, "setting", "shutdown.drain")
+		}
+		break
+	}
+
+	closePhone(s.telephony, s.logger)
+	peerCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
-	return httpServer.Shutdown(shutdownCtx)
+	return shutdown(peerCtx, s.peers)
+}
+
+// running is how many sessions a router holds; one without sessions holds none.
+func running(sessions *session.Manager) int {
+	if sessions == nil {
+		return 0
+	}
+	return sessions.Len()
+}
+
+// shutdown drains a server that may not exist.
+func shutdown(ctx context.Context, server *http.Server) error {
+	if server == nil {
+		return nil
+	}
+	return server.Shutdown(ctx)
 }
 
 // pruneDataChanges drops the recorded changes nobody can resume from any more, hourly
@@ -1341,7 +1435,11 @@ func newDirectory(
 
 	address := settings.Node.Advertise
 	if address == "" {
-		found, err := node.Address(settings.Addr)
+		listen := settings.Addr
+		if settings.Node.Listen != "" {
+			listen = settings.Node.Listen
+		}
+		found, err := node.Address(listen)
 		if err != nil {
 			return nil, fmt.Errorf("could not work out the address this node's peers reach it at, "+
 				"so set node.advertise: %w", err)
@@ -1631,4 +1729,42 @@ func buildDLC(
 		return nil, nil, err
 	}
 	return service, gate, nil
+}
+
+// newDailyLimiter caps what one end user may spend in a day, or returns nil when nothing
+// can be capped.
+//
+// A daily limit is counted in Redis, so a deployment without one caps nothing. That is the
+// right way round: the limit protects against a customer's end users spending more than
+// they were meant to, and refusing every request because the counter is missing would be a
+// worse outage than the one it prevents. The deployment's numbers are only the default: an
+// app sets its own in its policy, so a deployment with no default still caps an app that
+// sets one.
+func newDailyLimiter(liveClient *live.Client, limits quota.Limits, policies *policy.Enforcer, logger *slog.Logger) (*quota.Limiter, error) {
+	// A nil *Enforcer in the interface is not a nil Source.
+	var source quota.Source
+	if policies != nil {
+		source = policies
+	}
+	switch {
+	case !limits.Enforced() && source == nil:
+		logger.Warn("no daily limit configured, an end user may spend without bound",
+			"setting", "rate_limit.messages_per_day")
+		return nil, nil
+	case liveClient == nil:
+		logger.Warn("no redis configured, daily limits will not be enforced", "setting", "redis.addr")
+		return nil, nil
+	}
+	limiter, err := quota.New(liveClient.Redis(), limits, source, logger)
+	if err != nil {
+		return nil, err
+	}
+	if !limits.Enforced() {
+		logger.Info("no default daily limit is set, only the daily limits in app policies apply",
+			"setting", "rate_limit.messages_per_day")
+		return limiter, nil
+	}
+	logger.Info("capping what one end user may spend in a day, unless their app's policy says otherwise",
+		"messages", limits.MessagesPerDay, "tokens", limits.TokensPerDay)
+	return limiter, nil
 }

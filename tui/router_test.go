@@ -132,6 +132,13 @@ func newRouter(t *testing.T) *router {
 			backend.mu.Lock()
 			backend.sent = append(backend.sent, frame)
 			backend.mu.Unlock()
+			// The router hangs up once a close has ended the session
+			// (acceleration/internal/api/sessionws.go, case "close"), and Leave waits for
+			// that hang-up for up to five seconds (sdks/go/stream/accelerated.go,
+			// awaitHangup). A stand-in that kept reading would hold every close that long.
+			if frame["type"] == "close" {
+				return
+			}
 		}
 	})
 

@@ -441,6 +441,30 @@ sandbox_options:
 	}
 }
 
+func TestSyncSendsWhatTheSandboxMayReach(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "researcher")
+	write(t, root, "agent.yaml", `sandbox: daytona
+sandbox_options:
+  network: true
+  allowed_domains: [api.example.com]
+  network_allow_list: [10.0.0.0/8]
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	options := router.syncs[0].SandboxOptions
+	if options == nil || !*options.Network || (*options.AllowedDomains)[0] != "api.example.com" ||
+		(*options.NetworkAllowList)[0] != "10.0.0.0/8" {
+		t.Errorf("what the sandbox may reach went as %+v", options)
+	}
+}
+
 func TestSyncSendsTheChannelsTheAgentAnswersOn(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", `channels:

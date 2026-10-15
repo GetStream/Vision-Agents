@@ -2513,10 +2513,10 @@ type AgentConfig struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
-	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 	Skills         *[]string       `json:"skills,omitempty"`
@@ -2579,10 +2579,10 @@ type AgentConfigPatch struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
-	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 	Skills         *[]string       `json:"skills,omitempty"`
@@ -2653,10 +2653,10 @@ type AgentConfigRequest struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
-	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 
 	// Search What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
@@ -3672,12 +3672,18 @@ type ConnectionInvocation struct {
 	ConnectionId string `json:"connection_id"`
 	ConnectorId  string `json:"connector_id"`
 
+	// ErrorMessage Why the call failed: the start of the provider's error body when it answered with a 4xx or a 5xx, else what the call's error said, at most 1 KiB. Every URL in it keeps only its scheme and host, and the connection's credential and the request's path are taken out. A call the router held for the provider's rate limit says rate limited by the router: retry after <seconds>s. Absent for a call that answered, and for a call recorded before the router kept it.
+	ErrorMessage *string `json:"error_message,omitempty"`
+
 	// ErrorType customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
 	ErrorType *InvocationErrorType `json:"error_type,omitempty"`
 	Id        string               `json:"id"`
 
 	// LatencyMs From the call reaching the router to its answer, the router's own checks included.
 	LatencyMs int64 `json:"latency_ms"`
+
+	// ProviderStatus The HTTP status the provider answered the call's last request with. Absent for a call that answered, and for one no request of which was answered: the router refused or held it, or the provider could not be reached.
+	ProviderStatus *int64 `json:"provider_status,omitempty"`
 
 	// SessionId The session that called it. Absent for an incognito session, whose calls are tied to no conversation.
 	SessionId *string   `json:"session_id,omitempty"`
@@ -5578,6 +5584,9 @@ type Policy struct {
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
 
+	// Quota What one end user of the app may spend in a UTC day, counted per user and per address. Only an app's policy has one: an organization's that sets it is refused. A turn is counted on the day of the user who sent it, and a backend's own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+	Quota *Quota `json:"quota,omitempty"`
+
 	// RequireOwnStreamApp Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
 	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
 
@@ -5704,6 +5713,19 @@ type ProviderPrice struct {
 
 	// PerMillionOutputTokens Example: 3.75
 	PerMillionOutputTokens *float64 `json:"per_million_output_tokens,omitempty"`
+}
+
+// Quota What one end user of the app may spend in a UTC day, counted per user and per address. Only an app's policy has one: an organization's that sets it is refused. A turn is counted on the day of the user who sent it, and a backend's own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+type Quota struct {
+	// MessagesPerUserPerDay How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
+	//
+	// Example: 20000
+	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty"`
+
+	// TokensPerUserPerDay How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
+	//
+	// Example: 50000000
+	TokensPerUserPerDay *int64 `json:"tokens_per_user_per_day,omitempty"`
 }
 
 // RCSProfile defines model for RCSProfile.
@@ -5898,11 +5920,14 @@ type RouterConfigRequest struct {
 	Tts *TtsOptions `json:"tts,omitempty"`
 }
 
-// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 type Sandbox string
 
-// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 type SandboxOptions struct {
+	// AllowedDomains Domains code in the sandbox may reach, such as api.example.com. Set, nothing else is reachable, even with network on. Not with network_allow_list.
+	AllowedDomains *[]string `json:"allowed_domains,omitempty"`
+
 	// Cpu CPUs for the sandbox. Zero is the provider's default.
 	Cpu *int64 `json:"cpu,omitempty"`
 
@@ -5914,6 +5939,12 @@ type SandboxOptions struct {
 
 	// MemoryGb Memory for the sandbox, in GiB. Zero is the provider's default.
 	MemoryGb *int64 `json:"memory_gb,omitempty"`
+
+	// Network Whether code in the sandbox may reach the internet. Off by default, and then every outbound connection is blocked unless allowed_domains or network_allow_list names where it may go.
+	Network *bool `json:"network,omitempty"`
+
+	// NetworkAllowList CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set, nothing else is reachable, even with network on. Not with allowed_domains.
+	NetworkAllowList *[]string `json:"network_allow_list,omitempty"`
 
 	// Setup Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it.
 	Setup *[]string `json:"setup,omitempty"`
@@ -6916,10 +6947,10 @@ type SyncAgentRequest struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
-	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 
@@ -9219,7 +9250,7 @@ type ClientInterface interface {
 
 	// ListConnectionInvocations List a connection's tool calls
 	//
-	// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+	// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, except the start of the provider's error for a call that failed, and an incognito session's calls name no session. Who may read them is who may read the connection.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -12414,7 +12445,7 @@ func (c *Client) PutConnectionCredentials(ctx context.Context, id string, body P
 
 // ListConnectionInvocations List a connection's tool calls
 //
-// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, except the start of the provider's error for a call that failed, and an incognito session's calls name no session. Who may read them is who may read the connection.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -27521,7 +27552,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListConnectionInvocationsWithResponse List a connection's tool calls
 	//
-	// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+	// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, except the start of the provider's error for a call that failed, and an incognito session's calls name no session. Who may read them is who may read the connection.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -46730,7 +46761,7 @@ func (c *ClientWithResponses) PutConnectionCredentialsWithResponse(ctx context.C
 
 // ListConnectionInvocationsWithResponse List a connection's tool calls
 //
-// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, and an incognito session's calls name no session. Who may read them is who may read the connection.
+// Every tool call sessions ran through the connection, newest first: the binding, the tool, the latency and how it failed. What a call was asked and answered is never kept, except the start of the provider's error for a call that failed, and an incognito session's calls name no session. Who may read them is who may read the connection.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //

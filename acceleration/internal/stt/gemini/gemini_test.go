@@ -107,8 +107,8 @@ func (s *GeminiSuite) TestTheKeyTravelsOnTheQueryStringBecauseTheresNowhereElse(
 	provider, err := New(Options{APIKey: "sec ret"})
 	s.Require().NoError(err)
 
-	s.Contains(provider.endpoint(), "key=sec+ret", "the key must be escaped, not pasted")
-	s.True(strings.HasPrefix(provider.endpoint(), DefaultURL+"?"))
+	s.Contains(provider.endpoint(provider.options.APIKey), "key=sec+ret", "the key must be escaped, not pasted")
+	s.True(strings.HasPrefix(provider.endpoint(provider.options.APIKey), DefaultURL+"?"))
 }
 
 func (s *GeminiSuite) TestAHypothesisReplacesTheOneBeforeItRatherThanAddingToIt() {

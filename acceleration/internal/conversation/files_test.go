@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -102,6 +103,21 @@ func TestARenderIsAttachedToTheReplyAndComesBackWithItsHistory(t *testing.T) {
 	require.Len(t, page.Messages, 2)
 	require.Empty(t, page.Messages[0].Files, "the person's own message carries nothing")
 	require.Equal(t, []sandbox.Attachment{render}, page.Messages[1].Files)
+}
+
+func TestFilesCodeTheReplyRanHandsBackAreAttachedToIt(t *testing.T) {
+	_, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "artist", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("render a teapot"))
+	render := sandbox.Attachment{Name: "teapot.png", MIME: "image/png", URL: "https://cdn.fake/image/teapot.png", Size: 3}
+
+	c.Observe(agent.ToolStarted{ID: "run-1", Tool: sandbox.ToolName, StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "run-1", Tool: sandbox.ToolName, Result: "Attached.", Files: []sandbox.Attachment{render}})
+
+	require.Equal(t, []sandbox.Attachment{render}, current(c).Files)
 }
 
 func TestFilesForWorkTheReplyNeverStartedAreNotAttached(t *testing.T) {

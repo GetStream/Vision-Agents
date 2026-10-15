@@ -26,6 +26,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
@@ -35,6 +36,10 @@ const ProviderName = "elevenlabs"
 
 // DefaultModel is the low-latency model, which is what a live conversation wants.
 const DefaultModel = "eleven_flash_v2_5"
+
+// quotaExceeded is the error a frame carries when the key the socket was opened on has no
+// quota left. The key rests, so the sessions after this one are opened on another.
+const quotaExceeded = "quota_exceeded"
 
 // DefaultVoiceID is a voice from the public voice library, so the provider works without a
 // voice having been picked. It is deliberately not one of the older premade voices: those
@@ -154,6 +159,7 @@ type utterance struct {
 // TTS is a streaming ElevenLabs text-to-speech session.
 type TTS struct {
 	options Options
+	keys    *keypool.Pool
 	logger  *slog.Logger
 	emitter *tts.Emitter
 
@@ -174,13 +180,12 @@ type TTS struct {
 // normalize fills in the defaults and reports what cannot be defaulted. Both endpoints
 // take the same options, so they settle them the same way and differ only in the model
 // they fall back to.
-func normalize(options Options, fallbackModel string) (Options, *slog.Logger, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv("ELEVENLABS_API_KEY")
+func normalize(options Options, fallbackModel string) (Options, *keypool.Pool, *slog.Logger, error) {
+	keys := keypool.FromEnv(options.APIKey, "ELEVENLABS_API_KEY").Pin()
+	if keys.Len() == 0 {
+		return options, nil, nil, stack.Wrap(errors.New("elevenlabs: api key is required (set ELEVENLABS_API_KEY)"))
 	}
-	if options.APIKey == "" {
-		return options, nil, stack.Wrap(errors.New("elevenlabs: api key is required (set ELEVENLABS_API_KEY)"))
-	}
+	options.APIKey = keys.Peek()
 	if options.VoiceID == "" {
 		options.VoiceID = os.Getenv("ELEVENLABS_VOICE_ID")
 	}
@@ -194,7 +199,7 @@ func normalize(options Options, fallbackModel string) (Options, *slog.Logger, er
 		options.SampleRate = DefaultSampleRate
 	}
 	if !slices.Contains(supportedSampleRates, options.SampleRate) {
-		return options, nil, stack.Wrap(fmt.Errorf("elevenlabs: sample rate %d is not one of %v",
+		return options, nil, nil, stack.Wrap(fmt.Errorf("elevenlabs: sample rate %d is not one of %v",
 			options.SampleRate, supportedSampleRates))
 	}
 	if options.BaseURL == "" {
@@ -210,12 +215,12 @@ func normalize(options Options, fallbackModel string) (Options, *slog.Logger, er
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return options, logger, nil
+	return options, keys, logger, nil
 }
 
 // New validates the options and returns an unstarted provider.
 func New(options Options) (*TTS, error) {
-	options, logger, err := normalize(options, DefaultModel)
+	options, keys, logger, err := normalize(options, DefaultModel)
 	if err != nil {
 		return nil, err
 	}
@@ -231,6 +236,7 @@ func New(options Options) (*TTS, error) {
 
 	return &TTS{
 		options:      options,
+		keys:         keys,
 		logger:       logger.With("provider", ProviderName, "model", options.Model),
 		emitter:      tts.NewEmitter(64),
 		socketClosed: make(chan struct{}),
@@ -250,9 +256,9 @@ func (t *TTS) Start(ctx context.Context) error {
 	t.mu.Unlock()
 
 	dialer := &websocket.Dialer{HandshakeTimeout: t.options.HandshakeTimeout}
-	header := http.Header{"xi-api-key": []string{t.options.APIKey}}
-
-	conn, response, err := dialer.DialContext(ctx, t.url(), header)
+	conn, response, key, err := t.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+		return t.url(), http.Header{"xi-api-key": []string{key}}
+	})
 	if err != nil {
 		if response != nil {
 			return stack.Wrap(fmt.Errorf("elevenlabs: dial: %w (http %d)", err, response.StatusCode))
@@ -262,7 +268,7 @@ func (t *TTS) Start(ctx context.Context) error {
 	t.conn = conn
 
 	t.emitter.Send(tts.Connected{Provider: ProviderName, Model: t.options.Model, At: time.Now()})
-	go t.readLoop()
+	go t.readLoop(key)
 	return nil
 }
 
@@ -472,8 +478,8 @@ func (t *TTS) send(message clientMessage) error {
 	return stack.Wrap(t.conn.WriteMessage(websocket.TextMessage, payload))
 }
 
-// readLoop translates server frames into events until the connection ends.
-func (t *TTS) readLoop() {
+// readLoop translates server frames into events until the connection, opened on key, ends.
+func (t *TTS) readLoop(key string) {
 	for {
 		_, raw, err := t.conn.ReadMessage()
 		if err != nil {
@@ -488,6 +494,9 @@ func (t *TTS) readLoop() {
 		if err := json.Unmarshal(raw, &message); err != nil {
 			t.logger.Debug("undecodable frame", "error", err)
 			continue
+		}
+		if message.Error == quotaExceeded {
+			t.keys.Cooldown(key, keypool.MaxCooldown)
 		}
 		t.handleMessage(message)
 	}

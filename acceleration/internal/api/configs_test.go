@@ -285,6 +285,54 @@ func (s *ConfigsSuite) TestAnEmptySetupCommandIsRefused() {
 	s.Contains(failure, "setup")
 }
 
+func (s *ConfigsSuite) TestAConfigRemembersWhatItsSandboxMayReach() {
+	created := s.createConfig(map[string]any{"name": "researcher", "sandbox": "daytona",
+		"sandbox_options": map[string]any{
+			"network":         true,
+			"allowed_domains": []string{"api.example.com"},
+		}})
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	options := value(read.SandboxOptions)
+	s.True(value(options.Network))
+	s.Equal([]string{"api.example.com"}, value(options.AllowedDomains))
+	s.Empty(value(options.NetworkAllowList))
+}
+
+func (s *ConfigsSuite) TestDomainsAndCIDRRangesTogetherAreRefused() {
+	// Daytona takes one allow list per sandbox and refuses to create one given both, which
+	// would fail every run of code rather than this one request.
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "researcher", "sandbox": "daytona", "sandbox_options": map[string]any{
+			"allowed_domains":    []string{"api.example.com"},
+			"network_allow_list": []string{"10.0.0.0/8"},
+		}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "not both")
+}
+
+func (s *ConfigsSuite) TestANetworkAllowListEntryThatIsNoCIDRIsRefused() {
+	created := s.createConfig(map[string]any{"name": "researcher", "sandbox": "daytona"})
+
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"sandbox_options": map[string]any{"network_allow_list": []string{"10.0.0.0"}}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "network_allow_list")
+}
+
+func (s *ConfigsSuite) TestAnAllowedDomainWithACommaIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "researcher", "sandbox": "daytona",
+			"sandbox_options": map[string]any{"allowed_domains": []string{"a.com,b.com"}}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "allowed_domains")
+}
+
 func (s *ConfigsSuite) TestAConfigRemembersTheMCPServersItNamesByURL() {
 	created := s.createConfig(map[string]any{"name": "concierge", "mcp_servers": []map[string]any{
 		{"name": "tablejourney", "url": "https://tablejourney.com/mcp"},

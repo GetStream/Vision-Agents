@@ -415,6 +415,9 @@ async def _declare_settings(
             cpu=options.cpu,
             memory_gb=options.memory_gb,
             disk_gb=options.disk_gb,
+            network=options.network,
+            allowed_domains=options.allowed_domains,
+            network_allow_list=options.network_allow_list,
         )
     if settings.tags:
         tags = SyncAgentRequestTags()

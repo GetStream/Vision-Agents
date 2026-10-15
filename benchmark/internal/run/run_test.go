@@ -107,6 +107,26 @@ func TestBuildManifestAcceleratedDefaults(t *testing.T) {
 	}
 }
 
+func TestBuildManifestSTSIgnoresTheCascade(t *testing.T) {
+	t.Setenv("VOICEBENCH_STS", "")
+	t.Setenv("VOICEBENCH_MODEL", "gemma/gemma-4-26B-A4B-it")
+	t.Setenv("VOICEBENCH_STT", "deepgram/flux-general-en")
+	t.Setenv("VOICEBENCH_TTS", "elevenlabs/eleven_v4_turbo")
+	t.Setenv("VOICEBENCH_SUBAGENT", "openai/gpt-6.1-sol")
+	manifest := buildManifest(Config{
+		Root:        findTestRoot(t),
+		Pack:        "restaurant",
+		TargetName:  "sts",
+		SpawnTarget: true,
+	}, []scenario.Scenario{{ID: "restaurant.golden", Pack: "restaurant", Category: scenario.Golden}})
+	if manifest.TargetModel != "openai/gpt-live-1" || manifest.TargetLLM != "openai/gpt-live-1" {
+		t.Fatalf("model %q llm %q", manifest.TargetModel, manifest.TargetLLM)
+	}
+	if manifest.TargetSTT != "" || manifest.TargetTTS != "" || manifest.TargetSubagent != "" {
+		t.Fatalf("stt %q tts %q subagent %q", manifest.TargetSTT, manifest.TargetTTS, manifest.TargetSubagent)
+	}
+}
+
 func TestBuildManifestRecordsTheScoringASRAndNormalizer(t *testing.T) {
 	cfg := Config{
 		Root:       findTestRoot(t),

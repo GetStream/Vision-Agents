@@ -33,16 +33,30 @@ import (
 // the stored config is a real one rather than an empty one.
 const instructions = "You are a load test. Answer in one short sentence."
 
-// staging is the hosted router this is meant to be run against.
-const staging = "https://accelerate.gcp.stream-io-api.com"
+// hosted is a router this is meant to be run against, and where its pods are, so a run can
+// say what they were doing. The router carries no component label, and its release name is
+// what tells it from the gateway's.
+type hosted struct {
+	url, namespace, selector string
+}
 
-// Where the staging router's pods are, so a run can say what they were doing. The router
-// carries no component label, and its release name is what tells it from the gateway's.
-const (
-	stagingNamespace = "accelerate-staging"
-	stagingContext   = "gke_stream-gcp-2026-v2_us-east1_us-east1-acceleration"
-	stagingSelector  = "app.kubernetes.io/name=accelerate,app.kubernetes.io/instance=chat-accelerate-staging"
-)
+// targets are the hosted routers -target names. benchmark is the release deploys are
+// rehearsed on, so a run there disturbs nobody; staging is the one people use.
+var targets = map[string]hosted{
+	"staging": {
+		url:       "https://accelerate.gcp.stream-io-api.com",
+		namespace: "accelerate-staging",
+		selector:  "app.kubernetes.io/name=accelerate,app.kubernetes.io/instance=chat-accelerate-staging",
+	},
+	"benchmark": {
+		url:       "https://accelerate-benchmark.gcp.stream-io-api.com",
+		namespace: "accelerate-benchmark",
+		selector:  "app.kubernetes.io/name=accelerate,app.kubernetes.io/instance=chat-accelerate-benchmark",
+	},
+}
+
+// hostedContext is the kubectl context both hosted routers are in.
+const hostedContext = "gke_stream-gcp-2026-v2_us-east1_us-east1-acceleration"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -67,16 +81,17 @@ func run(args []string) error {
 
 func ramp(args []string) error {
 	flags := flag.NewFlagSet("run", flag.ExitOnError)
-	target := flags.String("target", "staging", "staging, or a router URL")
+	target := flags.String("target", "staging", "staging, benchmark, or a router URL")
 	label := flags.String("label", "", "what this run is of, for the comparison")
 	agent := flags.String("agent", "perfbench", "the stored config the conversations run")
 	start := flags.Int("start", 1, "how many agents the first step runs")
 	factor := flags.Int("factor", 2, "what each step multiplies the last by")
 	maximum := flags.Int("max", 64, "where to stop, whatever is still holding")
 	hold := flags.Duration("hold", 90*time.Second, "how long each step talks for")
-	namespace := flags.String("namespace", "", "the router's namespace, for pod readings; empty with -target staging uses "+stagingNamespace)
+	joinRate := flags.Float64("join-rate", 0, "conversations a step opens per second; 0 opens them all at once")
+	namespace := flags.String("namespace", "", "the router's namespace, for pod readings; empty with a hosted -target uses its own")
 	kubeContext := flags.String("kube-context", "", "the kubectl context the namespace is in; empty is the current one")
-	selector := flags.String("selector", "", "which pods are the router; empty with -target staging uses the staging release's")
+	selector := flags.String("selector", "", "which pods are the router; empty with a hosted -target uses its release's")
 	out := flags.String("out", "", "where to write the report; empty is out/<time>")
 	stt := flags.String("stt", "mock/mock-stt", "the transcriber")
 	tts := flags.String("tts", "mock/mock-tts", "the voice")
@@ -86,15 +101,20 @@ func ramp(args []string) error {
 	}
 
 	url := *target
-	if url == "staging" {
-		url = staging
+	if known, ok := targets[url]; ok {
+		url = known.url
+		// A hosted router is behind the authenticating proxy, which refuses the customer
+		// header a local .env sets.
+		if err := os.Unsetenv(stream.CustomerEnv); err != nil {
+			return err
+		}
 		if *namespace == "" {
-			*namespace = stagingNamespace
+			*namespace = known.namespace
 			if *kubeContext == "" {
-				*kubeContext = stagingContext
+				*kubeContext = hostedContext
 			}
 			if *selector == "" {
-				*selector = stagingSelector
+				*selector = known.selector
 			}
 		}
 	}
@@ -120,6 +140,7 @@ func ramp(args []string) error {
 		Factor:       *factor,
 		Max:          *maximum,
 		Hold:         *hold,
+		JoinRate:     *joinRate,
 		Target:       url,
 		Cluster:      bench.Cluster{Namespace: *namespace, Selector: *selector, Context: *kubeContext},
 		Logger:       logger,

@@ -219,11 +219,11 @@ func (d *dispatcher) runLogin(ctx context.Context, l *login, call llm.ToolCall) 
 	}
 	run := llm.ToolCall{ID: call.ID, Name: name, Arguments: arguments}
 	if err := d.recheck(ctx, found); err != nil {
-		d.record(found, run, started, store.InvocationDenied)
+		d.record(found, run, started, failure{kind: store.InvocationDenied}, err)
 		return nil, err
 	}
-	parts, failure, err := d.call(ctx, found, run)
-	d.record(found, run, started, failure)
+	parts, how, err := d.call(ctx, found, run)
+	d.record(found, run, started, how, err)
 	return parts, err
 }
 
@@ -265,7 +265,7 @@ func (d *dispatcher) openOrAsk(ctx context.Context, l *login) (*dispatcher, stri
 // selection for the binding, so a fork or a reopened chat chooses it again rather than ask
 // for another login. l.mu is held.
 func (d *dispatcher) openLogin(ctx context.Context, l *login, connectionID string) bool {
-	opened := &dispatcher{store: d.store, spec: d.spec, routes: map[string]route{}}
+	opened := &dispatcher{store: d.store, spec: d.spec, routes: map[string]route{}, logger: d.logger}
 	// Opened as attachConnectors opens a binding, on the context a call runs on, so a refresh
 	// while the tools are listed names this session, whether the turn or the consent's
 	// callback asked for it.

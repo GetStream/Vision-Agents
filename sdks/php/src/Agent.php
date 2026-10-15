@@ -300,6 +300,7 @@ final class Agent
             plugins: $declared->plugins === [] ? null : $declared->plugins,
             keyterms: $pipeline->keyterms ?? ($declared->keyterms === [] ? null : $declared->keyterms),
             sandbox: $this->sandbox ?? ($declared->sandbox === '' ? null : (Sandbox::tryFrom($declared->sandbox) ?? $declared->sandbox)),
+            sandboxOptions: $declared->sandboxOptions,
             tags: $tags === [] ? null : $tags,
             dispatch: $declared->dispatch,
             simulations: $simulations === null ? null : array_map(static fn (Simulation $simulation) => $simulation->toDeclaration(), $simulations),

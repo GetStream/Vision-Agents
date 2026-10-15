@@ -23,7 +23,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +30,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -127,6 +127,7 @@ type serverMessage struct {
 // STT is an xAI streaming speech-to-text session.
 type STT struct {
 	options Options
+	keys    *keypool.Pool
 	logger  *slog.Logger
 	emitter *stt.Emitter
 
@@ -155,12 +156,11 @@ type STT struct {
 
 // New validates the options and returns an unstarted provider.
 func New(options Options) (*STT, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar).Pin()
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(fmt.Errorf("grok: api key is required (set %s)", apiKeyEnvVar))
 	}
+	options.APIKey = keys.Peek()
 	if options.Model == "" {
 		options.Model = DefaultModel
 	}
@@ -189,6 +189,7 @@ func New(options Options) (*STT, error) {
 
 	return &STT{
 		options:  options,
+		keys:     keys,
 		logger:   logger.With("provider", ProviderName, "model", options.Model),
 		emitter:  stt.NewEmitter(64),
 		finished: make(chan struct{}),
@@ -206,9 +207,9 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	dialer := &websocket.Dialer{HandshakeTimeout: s.options.HandshakeTimeout}
-	header := http.Header{"Authorization": []string{"Bearer " + s.options.APIKey}}
-
-	conn, response, err := dialer.DialContext(ctx, s.endpoint(), header)
+	conn, response, _, err := s.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+		return s.endpoint(), http.Header{"Authorization": []string{"Bearer " + key}}
+	})
 	if err != nil {
 		if response != nil {
 			return stack.Wrap(fmt.Errorf("grok: dial: %w (http %d)", err, response.StatusCode))

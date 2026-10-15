@@ -302,6 +302,48 @@ func (s *DaytonaSuite) TestWithoutSetupDaytonasOwnSandboxIsUsed() {
 	s.NotContains(s.platform.requests()[0], "buildInfo", "nothing has to be built")
 }
 
+func (s *DaytonaSuite) TestASandboxReachesNothingByDefault() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	created := s.platform.requests()[0]
+	s.Equal(true, created["networkBlockAll"])
+	s.NotContains(created, "domainAllowList")
+	s.NotContains(created, "networkAllowList")
+}
+
+func (s *DaytonaSuite) TestANetworkedSandboxReachesTheInternet() {
+	box := s.configured(Options{Config: sandbox.Config{Network: true}})
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal(false, s.platform.requests()[0]["networkBlockAll"])
+}
+
+func (s *DaytonaSuite) TestASandboxReachesOnlyWhatItsAllowListsName() {
+	box := s.configured(Options{Config: sandbox.Config{AllowedDomains: []string{"api.example.com", "pypi.org"}}})
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	created := s.platform.requests()[0]
+	s.Equal(false, created["networkBlockAll"])
+	s.Equal("api.example.com,pypi.org", created["domainAllowList"])
+	s.NotContains(created, "networkAllowList", "Daytona refuses a sandbox given two allow lists")
+}
+
+func (s *DaytonaSuite) TestASandboxReachesOnlyTheRangesItsAllowListNames() {
+	box := s.configured(Options{Config: sandbox.Config{NetworkAllowList: []string{"10.0.0.0/8", "192.168.1.0/24"}}})
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	created := s.platform.requests()[0]
+	s.Equal("10.0.0.0/8,192.168.1.0/24", created["networkAllowList"])
+	s.NotContains(created, "domainAllowList")
+}
+
 func (s *DaytonaSuite) TestASetupIsBuiltOnTheImageItNames() {
 	box := s.configured(Options{Config: sandbox.Config{
 		Image: "python:3.13-slim-bookworm",

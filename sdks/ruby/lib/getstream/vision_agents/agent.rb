@@ -384,6 +384,7 @@ module GetStream
           dispatch: settings["dispatch"],
           subagent: presence(@pipeline[:subagent].to_s) || presence(settings["subagent"]),
           sandbox: @sandbox&.provider || presence(settings["sandbox"]),
+          sandbox_options: settings["sandbox_options"],
           tags: (tags unless tags.empty?)
         }
       end

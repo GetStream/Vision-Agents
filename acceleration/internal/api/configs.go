@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"path"
 	"slices"
@@ -916,6 +917,25 @@ func sandboxOptionsComplaint(options *SandboxOptions) (string, bool) {
 			return "a sandbox_options.setup command is between 1 and 2048 characters", false
 		}
 	}
+	if len(value(options.AllowedDomains)) > 64 {
+		return "sandbox_options.allowed_domains is at most 64 domains", false
+	}
+	for _, domain := range value(options.AllowedDomains) {
+		if domain == "" || len(domain) > 253 || strings.ContainsAny(domain, ", \t\n/") {
+			return fmt.Sprintf("sandbox_options.allowed_domains: %q is not a domain", domain), false
+		}
+	}
+	if len(value(options.NetworkAllowList)) > 64 {
+		return "sandbox_options.network_allow_list is at most 64 CIDR ranges", false
+	}
+	for _, cidr := range value(options.NetworkAllowList) {
+		if _, err := netip.ParsePrefix(cidr); err != nil {
+			return fmt.Sprintf("sandbox_options.network_allow_list: %q is not a CIDR range such as 10.0.0.0/8", cidr), false
+		}
+	}
+	if len(value(options.AllowedDomains)) > 0 && len(value(options.NetworkAllowList)) > 0 {
+		return "sandbox_options takes allowed_domains or network_allow_list, not both", false
+	}
 	return "", true
 }
 
@@ -925,12 +945,15 @@ func sandboxConfigOf(options *SandboxOptions) sandbox.Config {
 		return sandbox.Config{}
 	}
 	return sandbox.Config{
-		Image:     strings.TrimSpace(value(options.Image)),
-		Setup:     value(options.Setup),
-		TimeoutMs: value(options.TimeoutMs),
-		CPU:       value(options.Cpu),
-		MemoryGB:  value(options.MemoryGb),
-		DiskGB:    value(options.DiskGb),
+		Image:            strings.TrimSpace(value(options.Image)),
+		Setup:            value(options.Setup),
+		TimeoutMs:        value(options.TimeoutMs),
+		CPU:              value(options.Cpu),
+		MemoryGB:         value(options.MemoryGb),
+		DiskGB:           value(options.DiskGb),
+		Network:          value(options.Network),
+		AllowedDomains:   value(options.AllowedDomains),
+		NetworkAllowList: value(options.NetworkAllowList),
 	}
 }
 
@@ -938,17 +961,22 @@ func sandboxConfigOf(options *SandboxOptions) sandbox.Config {
 // provider's own.
 func sandboxOptionsOf(config sandbox.Config) *SandboxOptions {
 	if config.Image == "" && len(config.Setup) == 0 && config.TimeoutMs == 0 &&
-		config.CPU == 0 && config.MemoryGB == 0 && config.DiskGB == 0 {
+		config.CPU == 0 && config.MemoryGB == 0 && config.DiskGB == 0 && config.Isolated() {
 		return nil
 	}
 	setup := append([]string{}, config.Setup...)
+	domains := append([]string{}, config.AllowedDomains...)
+	cidrs := append([]string{}, config.NetworkAllowList...)
 	return &SandboxOptions{
-		Image:     optional(config.Image),
-		Setup:     &setup,
-		TimeoutMs: &config.TimeoutMs,
-		Cpu:       &config.CPU,
-		MemoryGb:  &config.MemoryGB,
-		DiskGb:    &config.DiskGB,
+		Image:            optional(config.Image),
+		Setup:            &setup,
+		TimeoutMs:        &config.TimeoutMs,
+		Cpu:              &config.CPU,
+		MemoryGb:         &config.MemoryGB,
+		DiskGb:           &config.DiskGB,
+		Network:          &config.Network,
+		AllowedDomains:   &domains,
+		NetworkAllowList: &cidrs,
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -418,7 +419,7 @@ func TestSayingSomethingSendsItDownTheSocket(t *testing.T) {
 	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
 		for {
 			var frame map[string]any
-			if err := connection.ReadJSON(&frame); err != nil {
+			if err := connection.ReadJSON(&frame); err != nil || frame["type"] == "close" {
 				return
 			}
 			sent <- frame
@@ -484,11 +485,37 @@ func TestTheEventsChannelClosesWhenTheConversationEnds(t *testing.T) {
 	}
 }
 
-// hold keeps a socket open until the client goes away, which is what a call with nothing
-// happening on it looks like.
+func TestLeavingWaitsForTheRouterToEndTheSession(t *testing.T) {
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		hold(t, connection)
+		time.Sleep(200 * time.Millisecond)
+		_ = connection.WriteJSON(map[string]any{"type": "left"})
+	})
+
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	events := pipeline.Events()
+	if err := pipeline.Leave(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	var kinds []string
+	for event := range events {
+		kinds = append(kinds, event.Kind)
+	}
+	if !slices.Contains(kinds, "left") {
+		t.Fatalf("the client hung up before the router ended the session: got %v", kinds)
+	}
+}
+
+// hold keeps a socket open until the client closes the session or goes away, which is what
+// a call with nothing happening on it looks like.
 func hold(_ *testing.T, connection *websocket.Conn) {
 	for {
-		if _, _, err := connection.ReadMessage(); err != nil {
+		var frame map[string]any
+		if err := connection.ReadJSON(&frame); err != nil || frame["type"] == "close" {
 			return
 		}
 	}
