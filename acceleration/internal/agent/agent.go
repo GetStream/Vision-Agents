@@ -1789,7 +1789,7 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 	}
 	current := a.harness
 	ctx := a.ctx
-	if a.sender != (routing.Caller{}) {
+	if !a.sender.IsZero() {
 		ctx = routing.WithCaller(ctx, a.sender)
 	}
 	ctx, cancel := context.WithCancel(ctx)

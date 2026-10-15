@@ -185,6 +185,11 @@ type Caller struct {
 	ServerSide bool
 }
 
+// IsZero says nobody was named: a turn that was heard, not typed.
+func (c Caller) IsZero() bool {
+	return c == Caller{}
+}
+
 type callerKey struct{}
 
 // WithCaller says who sent what ctx carries: the request, or the turn of a session it asks
