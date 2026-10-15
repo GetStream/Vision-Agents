@@ -86,7 +86,6 @@ var dataTables = []dataTable{
 	{name: "simulation_cases", parent: "simulation_runs", parentColumn: "run_id"},
 	{name: "users", customer: "customer_id"},
 	{name: "calls", customer: "customer_id"},
-	{name: "call_events", customer: "customer_id"},
 	{name: "call_bridges", customer: "customer_id"},
 	{name: "recordings", customer: "customer_id"},
 	{name: "agent_sessions", customer: "customer_id"},
@@ -95,13 +94,12 @@ var dataTables = []dataTable{
 	{name: "agent_response_items", parent: "agent_responses", parentColumn: "response_id"},
 	{name: "agent_logs", customer: "customer_id"},
 	{name: "requests", customer: "customer_id"},
-	{name: "turns", customer: "customer_id"},
 	{name: "stats_hourly", customer: "customer_id"},
 	{name: "stats_daily", customer: "customer_id"},
 	{name: "stats_tags_hourly", customer: "customer_id"},
 	{name: "stats_tags_daily", customer: "customer_id"},
 	{name: "turn_stats_hourly", customer: "customer_id"},
-	{name: "turn_stats_daily", customer: "customer_id"},
+	{name: "turn_latency_hourly", customer: "customer_id"},
 	// Only what this app decided. The organization's policy covers apps whose rows are
 	// not this caller's to read.
 	{name: "policies", customer: "scope_id", filter: "scope = 'app'"},

@@ -208,7 +208,7 @@ export type paths = {
         };
         /**
          * What the conversation decided, and why
-         * @description A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+         * @description A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. They are kept for an hour. A call still running reports the same decisions live on the session socket.
          */
         readonly get: operations["getCallEvents"];
         readonly put?: never;
@@ -228,7 +228,7 @@ export type paths = {
         };
         /**
          * The call as it unfolded, said and measured together
-         * @description Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
+         * @description Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an hour; GET /v1/turns/stats keeps their percentiles.
          */
         readonly get: operations["getCallTimeline"];
         readonly put?: never;
@@ -3724,7 +3724,7 @@ export type paths = {
         };
         /**
          * Conversational latency for the calling customer
-         * @description One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed.
+         * @description One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a histogram and are within 5% of the true ones.
          */
         readonly get: operations["getTurnStats"];
         readonly put?: never;

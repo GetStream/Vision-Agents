@@ -204,11 +204,7 @@ func (s *Store) Rollup(ctx context.Context, granularity Granularity, from, to ti
 	if err != nil {
 		return 0, err
 	}
-	turns, err := s.rollupTurns(ctx, granularity, from, to)
-	if err != nil {
-		return 0, err
-	}
-	return providers + tags + turns, nil
+	return providers + tags, nil
 }
 
 func (s *Store) rollupProviders(ctx context.Context, granularity Granularity, from, to time.Time) (int64, error) {
@@ -327,121 +323,6 @@ ON CONFLICT (modality, customer_id, tag_key, tag_value, bucket) DO UPDATE SET
 		return 0, stack.Wrap(fmt.Errorf("store: rollup %s tags: %w", granularity, err))
 	}
 	return affected, nil
-}
-
-// RecordTurn stores one conversational turn.
-func (s *Store) RecordTurn(ctx context.Context, turn *Turn) error {
-	if turn.CustomerID == "" {
-		return errors.New("store: customer id is required")
-	}
-	if turn.AgentID == "" {
-		return errors.New("store: agent id is required")
-	}
-	if turn.TurnID == "" {
-		return errors.New("store: turn id is required")
-	}
-	if turn.StartedAt.IsZero() {
-		turn.StartedAt = time.Now().UTC()
-	}
-
-	// A turn is recorded once, but a retry after a write that did land must not double
-	// count it, so the agent's own turn id settles which row wins.
-	_, err := s.db.NewInsert().Model(turn).
-		On("CONFLICT (agent_id, turn_id) DO NOTHING").
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("store: record turn: %w", err)
-	}
-	return nil
-}
-
-// rollupTurns aggregates conversational turns into per-agent latency percentiles. p99 is
-// carried for the roundtrip only, since that is the number a conversation is judged on.
-func (s *Store) rollupTurns(ctx context.Context, granularity Granularity, from, to time.Time) (int64, error) {
-	query := fmt.Sprintf(`
-INSERT INTO %s (
-    customer_id, agent_id, bucket,
-    turn_count, interrupted_count, audio_out_ms_total,
-    stt_latency_p50_ms, stt_latency_p95_ms,
-    llm_ttft_p50_ms, llm_ttft_p95_ms,
-    tts_ttfb_p50_ms, tts_ttfb_p95_ms,
-    roundtrip_p50_ms, roundtrip_p95_ms, roundtrip_p99_ms
-)
-SELECT
-    customer_id,
-    agent_id,
-    date_trunc('%s', started_at) AS bucket,
-    COUNT(*),
-    COUNT(*) FILTER (WHERE interrupted),
-    COALESCE(SUM(audio_out_ms), 0),
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY stt_latency_ms),
-    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY stt_latency_ms),
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY llm_ttft_ms),
-    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY llm_ttft_ms),
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY tts_ttfb_ms),
-    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY tts_ttfb_ms),
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY roundtrip_ms),
-    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY roundtrip_ms),
-    PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY roundtrip_ms)
-FROM turns
-WHERE started_at >= ? AND started_at < ?
-GROUP BY customer_id, agent_id, bucket
-ON CONFLICT (customer_id, agent_id, bucket) DO UPDATE SET
-    turn_count = EXCLUDED.turn_count,
-    interrupted_count = EXCLUDED.interrupted_count,
-    audio_out_ms_total = EXCLUDED.audio_out_ms_total,
-    stt_latency_p50_ms = EXCLUDED.stt_latency_p50_ms,
-    stt_latency_p95_ms = EXCLUDED.stt_latency_p95_ms,
-    llm_ttft_p50_ms = EXCLUDED.llm_ttft_p50_ms,
-    llm_ttft_p95_ms = EXCLUDED.llm_ttft_p95_ms,
-    tts_ttfb_p50_ms = EXCLUDED.tts_ttfb_p50_ms,
-    tts_ttfb_p95_ms = EXCLUDED.tts_ttfb_p95_ms,
-    roundtrip_p50_ms = EXCLUDED.roundtrip_p50_ms,
-    roundtrip_p95_ms = EXCLUDED.roundtrip_p95_ms,
-    roundtrip_p99_ms = EXCLUDED.roundtrip_p99_ms`,
-		granularity.turnTable(), granularity.truncateUnit())
-
-	result, err := s.db.ExecContext(ctx, query, from, to)
-	if err != nil {
-		return 0, stack.Wrap(fmt.Errorf("store: rollup %s turns: %w", granularity, err))
-	}
-
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return 0, stack.Wrap(fmt.Errorf("store: rollup %s turns: %w", granularity, err))
-	}
-	return affected, nil
-}
-
-// CustomerTurnStats returns the conversational latency buckets for one customer, oldest
-// first. An agent id narrows it to one agent.
-func (s *Store) CustomerTurnStats(
-	ctx context.Context,
-	customerID, agentID string,
-	granularity Granularity,
-	from, to time.Time,
-) ([]TurnBucket, error) {
-	if !granularity.Valid() {
-		return nil, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
-	}
-	if customerID == "" {
-		return nil, stack.Wrap(errors.New("store: customer id is required"))
-	}
-
-	query := s.db.NewSelect().
-		Table(granularity.turnTable()).
-		Where("customer_id = ?", customerID).
-		Where("bucket >= ?", from).
-		Where("bucket < ?", to)
-	if agentID != "" {
-		query = query.Where("agent_id = ?", agentID)
-	}
-
-	var buckets []TurnBucket
-	if err := query.Order("bucket ASC", "agent_id ASC").Scan(ctx, &buckets); err != nil {
-		return nil, stack.Wrap(fmt.Errorf("store: customer turn stats: %w", err))
-	}
-	return buckets, nil
 }
 
 // CustomerStats returns the buckets for one customer and modality in [from, to), oldest
