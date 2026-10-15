@@ -53,6 +53,10 @@ type turn struct {
 	// gapMs is the longest silence inside the answer, which is what a speaker running
 	// out of audio sounds like.
 	gapMs float64
+	// quality is how faithfully the answer's audio arrived, when scored says a probe
+	// caller recorded it.
+	quality toneQuality
+	scored  bool
 }
 
 // answered reports whether the agent said anything back.
@@ -66,6 +70,8 @@ type Caller struct {
 	Models Models
 	// Index distinguishes this caller from the others in the same step.
 	Index int
+	// Probe records every answer and scores its audio against the mock TTS's tone.
+	Probe bool
 	// Logger is where a caller reports what it could not do.
 	Logger *slog.Logger
 }
@@ -183,10 +189,14 @@ func (c Caller) send(ctx context.Context, media transport.Media, ticker *time.Ti
 //
 // The caller keeps sending silence throughout, because a leg that stops sending is a leg
 // the far end hears as gone.
-func (c Caller) listen(ctx context.Context, media transport.Media, ticker *time.Ticker, silence []int16) (turn, error) {
+func (c Caller) listen(ctx context.Context, media transport.Media, ticker *time.Ticker, silence []int16) (heard turn, err error) {
 	askedAt := time.Now()
-	heard := turn{}
 	var startedAt, lastAudibleAt time.Time
+	var recorded *recording
+	if c.Probe {
+		recorded = &recording{}
+		defer func() { heard.quality, heard.scored = measureTone(recorded.pcm) }()
+	}
 
 	for {
 		select {
@@ -198,7 +208,7 @@ func (c Caller) listen(ctx context.Context, media transport.Media, ticker *time.
 			return heard, err
 		}
 
-		if audible(media) {
+		if audible(media, recorded) {
 			now := time.Now()
 			if startedAt.IsZero() {
 				startedAt = now
@@ -220,20 +230,47 @@ func (c Caller) listen(ctx context.Context, media transport.Media, ticker *time.
 	}
 }
 
-// audible drains whatever arrived since the last tick and reports whether any of it was
-// the agent speaking.
-func audible(media transport.Media) bool {
-	speaking := false
+// audible drains whatever arrived since the last tick, onto recorded when it is not nil,
+// and reports whether any of it was the agent speaking.
+func audible(media transport.Media, recorded *recording) bool {
+	speaking, arrived := false, false
 	for {
 		select {
 		case frame := <-media.Recv():
-			if audio.FrameEnergy(frame.PCM) > audio.DefaultSpeechThreshold {
-				speaking = true
+			arrived = true
+			loud := audio.FrameEnergy(frame.PCM) > audio.DefaultSpeechThreshold
+			if recorded != nil {
+				recorded.add(frame.PCM, loud)
 			}
+			speaking = speaking || loud
 		default:
+			if recorded != nil && !arrived {
+				recorded.missed++
+			}
 			return speaking
 		}
 	}
+}
+
+// recording is what a probe caller heard, played out as a browser would: the agent sends
+// nothing through most of a silence (Opus DTX), and the decoder plays the time it skipped as
+// silence. The decoder here only hands over what arrived, so that time is put back.
+type recording struct {
+	pcm []int16
+	// missed counts the ticks nothing arrived on since the last frame.
+	missed int
+	quiet  bool
+}
+
+func (r *recording) add(frame []int16, loud bool) {
+	// Only next to a quiet frame: a frame missing from speech is loss, which the score has to
+	// see, rather than a silence the agent did not send. Either side will do, because the
+	// jitter buffer holds the last frame before a gap until the one after it arrives.
+	if r.quiet || !loud {
+		r.pcm = append(r.pcm, make([]int16, r.missed*len(frame))...)
+	}
+	r.pcm = append(r.pcm, frame...)
+	r.missed, r.quiet = 0, !loud
 }
 
 // drain throws away inbound audio nobody is measuring, so the leg's queue stays empty and

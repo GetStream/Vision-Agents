@@ -22,6 +22,9 @@ const (
 	opusSampleRate = 48_000
 	// opusFrameDuration is the frame size every Opus encoder and decoder handles.
 	opusFrameDuration = 20 * time.Millisecond
+	// opusComplexity is the encoder's effort. Below 5 CELT skips its pitch prefilter, which
+	// is about half of what encoding a voice costs, for a small loss on voiced speech.
+	opusComplexity = 4
 	// opusNegotiatedChannels is the channel count the published track has to declare. Opus
 	// is always offered as two-channel in SDP, and pion refuses to bind a track whose
 	// channel count does not match what was negotiated. What goes out is still mono: the
@@ -40,10 +43,22 @@ const (
 	// audibleSample is the level a sample has to reach, in either direction, for the piece
 	// holding it to count as speech: about -48 dBFS, above what a voice leaves in its pauses.
 	audibleSample = 128
+	// dtxFrameBytes is the most an Opus DTX frame takes: the encoder's way of saying there is
+	// nothing to hear, which is not sent.
+	dtxFrameBytes = 2
+	// silenceRefreshFrames is how often silence still goes out while the agent says nothing:
+	// every 400 ms, as Opus's own DTX does, so the far end keeps hearing from the track.
+	silenceRefreshFrames = 20
+	// silenceLeadFrames is how much silence goes out before the track stops sending. The
+	// first silent frame still decodes the tail of the speech before it, and a decoder fills
+	// the gap that follows from the last frame it had.
+	silenceLeadFrames = 2
 )
 
 // silenceFrame is the canonical Opus silence packet. The track is published for the whole
-// call, so something has to go out while the agent has nothing to say.
+// call, so something has to go out while the agent has nothing to say. It goes out for
+// silenceLeadFrames and then every silenceRefreshFrames; in between the track sends nothing
+// and only its timestamps move on, which a decoder plays as silence.
 var silenceFrame = []byte{0xf8, 0xff, 0xfe}
 
 // speaker is the agent's voice on the call: PCM in, 20 ms Opus frames out.
@@ -77,8 +92,10 @@ type speaker struct {
 	// unflushed is set while the encoder may still be holding the tail of an utterance,
 	// so it is only pushed out once rather than on every quiet frame.
 	unflushed bool
-	speaking  bool
-	closed    bool
+	// quiet counts the frames handed out since the queue last had one.
+	quiet    int
+	speaking bool
+	closed   bool
 }
 
 // armedMark is a reply waiting on the track, with the number of the frame to report it at. The
@@ -145,7 +162,12 @@ func (s *speaker) queue(pcm audio.PcmData, marks agent.PlayoutMarks) (time.Time,
 		return time.Time{}, errors.New("streamedge: the call has been left")
 	}
 	if s.encoder == nil {
-		encoder, err := opus.NewEncoder(opus.Config{SampleRate: opusSampleRate, FrameDuration: opusFrameDuration})
+		// Low delay keeps the encoder in CELT, which a voice is coded in at these rates
+		// anyway, without the speech or music analysis that picks a mode.
+		encoder, err := opus.NewEncoder(opus.Config{
+			SampleRate: encoderRate(pcm.SampleRate), FrameDuration: opusFrameDuration,
+			Application: opus.ApplicationLowDelay, Complexity: opusComplexity, DTX: true,
+		})
 		if err != nil {
 			return time.Time{}, fmt.Errorf("streamedge: build opus encoder: %w", err)
 		}
@@ -193,6 +215,18 @@ func (s *speaker) encode(samples []int16, sampleRate int) ([][]byte, error) {
 		return nil, fmt.Errorf("streamedge: encode speech: %w", err)
 	}
 	return packets, nil
+}
+
+// encoderRate is the rate to encode a voice at: its own when Opus takes it, so the speech
+// is not resampled first, and 48 kHz otherwise. The RTP clock is 48 kHz whatever the
+// encoder ran at, and every decoder plays any of them.
+func encoderRate(sampleRate int) int {
+	switch sampleRate {
+	case 8_000, 12_000, 16_000, 24_000, opusSampleRate:
+		return sampleRate
+	default:
+		return opusSampleRate
+	}
 }
 
 // waitForRoom blocks while the queue is over its bound.
@@ -264,15 +298,28 @@ func (s *speaker) next() (webrtcmedia.Sample, agent.PlayoutMarks, time.Time) {
 	}
 	if len(s.frames) == 0 {
 		s.speaking = false
-		return webrtcmedia.Sample{Data: silenceFrame, Duration: opusFrameDuration}, nil, time.Time{}
+		sample := webrtcmedia.Sample{Duration: opusFrameDuration}
+		if s.quiet < silenceLeadFrames || s.quiet%silenceRefreshFrames == 0 {
+			sample.Data = silenceFrame
+		}
+		s.quiet++
+		return sample, nil, time.Time{}
 	}
+	s.quiet = 0
 
 	frame := s.frames[0]
+	if len(frame) <= dtxFrameBytes {
+		frame = nil
+	}
 	s.frames = s.frames[1:]
 	seq := s.head
 	s.head++
 	s.speaking = true
-	s.drained.Signal()
+	// A writer waits for the queue to be back under its bound, and waking it any earlier
+	// is a wakeup a frame for as long as a long chunk is draining.
+	if len(s.frames) <= playoutFrames {
+		s.drained.Signal()
+	}
 
 	sample := webrtcmedia.Sample{Data: frame, Duration: opusFrameDuration}
 	// A report whose frame never came, because the encoder had nothing to give for it, is

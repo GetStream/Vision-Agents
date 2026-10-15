@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -51,8 +52,8 @@ func (s *Server) listCalls(ctx context.Context, request *listCallsRequest) (*lis
 	}
 
 	filter := store.CallFilter{
-		AgentID:    value(request.AgentId.ptr()),
-		CampaignID: value(request.CampaignId.ptr()),
+		AgentID:        value(request.AgentId.ptr()),
+		CampaignID:     value(request.CampaignId.ptr()),
 		Running:        value(request.Running.ptr()),
 		MaxReviewScore: value(request.MaxReviewScore.ptr()),
 		Limit:          value(request.Limit.ptr()),
@@ -554,10 +555,13 @@ func (s *Server) getCallEvents(ctx context.Context, request *getCallEventsReques
 		return nil, errUnknownCall
 	}
 
-	stored, err := s.store.CallEvents(
-		ctx, customerID, call.CallID, call.StartedAt, call.EndedAt, value(request.Limit.ptr()))
-	if err != nil {
-		return nil, err
+	var stored []live.CallEvent
+	if s.live != nil {
+		stored, err = s.live.CallEvents(
+			ctx, customerID, call.CallID, call.StartedAt, call.EndedAt, value(request.Limit.ptr()))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	decisions := make([]CallEvent, 0, len(stored))
@@ -591,9 +595,12 @@ func (s *Server) getCallTimeline(ctx context.Context, request *getCallTimelineRe
 		return nil, errUnknownCall
 	}
 
-	turns, err := s.store.CallTurns(ctx, customerID, call.AgentID, call.StartedAt, call.EndedAt)
-	if err != nil {
-		return nil, err
+	var turns []live.Turn
+	if s.live != nil {
+		turns, err = s.live.CallTurns(ctx, customerID, call.AgentID, call.StartedAt, call.EndedAt)
+		if err != nil {
+			return nil, err
+		}
 	}
 	models, err := s.store.CallModelCalls(ctx, customerID, call.AgentID, call.CallID, call.StartedAt, call.EndedAt)
 	if err != nil {
@@ -616,7 +623,7 @@ func (s *Server) getCallTimeline(ctx context.Context, request *getCallTimelineRe
 // goes, so a line belongs to the last turn that had started when it was stored. Within a
 // turn the first line is what the caller said and the last is what the agent answered,
 // which is what a two-line exchange always is.
-func timelineOf(turns []store.Turn, said []chatlog.Spoken, models []store.Request) []TimelineEntry {
+func timelineOf(turns []live.Turn, said []chatlog.Spoken, models []store.Request) []TimelineEntry {
 	modelCalls := make(map[string][]ModelCallTiming)
 	for _, request := range models {
 		if request.TurnID == "" {
@@ -920,7 +927,8 @@ func (s *Server) registerCalls(api huma.API) {
 		Path:        "/v1/agents/calls/{id}/timeline",
 		Summary:     "The call as it unfolded, said and measured together",
 		Description: "Each exchange with what was said in it and what it cost the caller in waiting: how long " +
-			"the answer took to start, how much the agent spoke, and whether it was talked over.",
+			"the answer took to start, how much the agent spoke, and whether it was talked over. The " +
+			"timings are kept for an hour; GET /v1/turns/stats keeps their percentiles.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The exchanges, oldest first"},
 		},
@@ -935,7 +943,8 @@ func (s *Server) registerCalls(api huma.API) {
 			"way it did: why the agent waited rather than answering, why it read something as not " +
 			"meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind " +
 			"the conversation, which is the only thing that explains a call that surprised somebody. " +
-			"A call still running reports the same decisions live on the session socket.",
+			"They are kept for an hour. A call still running reports the same decisions live on the " +
+			"session socket.",
 		// Declared rather than read off the input, so the default is documented without
 		// being filled in: the handler tells a parameter left out from one sent.
 		Parameters: []*huma.Param{
@@ -978,13 +987,13 @@ func (s *Server) registerCalls(api huma.API) {
 }
 
 type listCallsRequest struct {
-	AgentId    optionalParam[string]    `query:"agent_id" doc:"Narrow to one agent."`
-	CampaignId optionalParam[string]    `query:"campaign_id" doc:"Narrow to the calls one campaign placed."`
-	Running    optionalParam[bool]      `query:"running" doc:"Only calls that have not ended."`
-	From       optionalParam[time.Time] `query:"from" doc:"Only calls that started at or after this, inclusive."`
-	To         optionalParam[time.Time] `query:"to" doc:"Only calls that started before this, exclusive."`
-	MaxReviewScore optionalParam[int] `query:"max_review_score" doc:"Only reviewed calls scored at or below this, from 1 to 5."`
-	Limit          optionalParam[int] `query:"limit"`
+	AgentId        optionalParam[string]    `query:"agent_id" doc:"Narrow to one agent."`
+	CampaignId     optionalParam[string]    `query:"campaign_id" doc:"Narrow to the calls one campaign placed."`
+	Running        optionalParam[bool]      `query:"running" doc:"Only calls that have not ended."`
+	From           optionalParam[time.Time] `query:"from" doc:"Only calls that started at or after this, inclusive."`
+	To             optionalParam[time.Time] `query:"to" doc:"Only calls that started before this, exclusive."`
+	MaxReviewScore optionalParam[int]       `query:"max_review_score" doc:"Only reviewed calls scored at or below this, from 1 to 5."`
+	Limit          optionalParam[int]       `query:"limit"`
 }
 
 type listCallsResponse struct {

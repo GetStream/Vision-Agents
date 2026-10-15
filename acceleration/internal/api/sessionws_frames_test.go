@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 func TestASettledTaskListsTheFilesItsCodeHandedBack(t *testing.T) {
@@ -88,7 +88,7 @@ func TestATurnFrameCarriesWhenTheFirstFrameWasQueuedAndHeard(t *testing.T) {
 
 func TestATimelineEntryCarriesWhenTheFirstFrameWasQueuedAndHeard(t *testing.T) {
 	queued, audible, speechEnd, roundtrip := 880.0, 940.0, 1060.0, 1400.0
-	turns := []store.Turn{
+	turns := []live.Turn{
 		{TurnID: "turn-1", RoundtripMs: &roundtrip, FirstFrameQueuedMs: &queued,
 			FirstAudibleFrameMs: &audible, SpeechEndToAudibleMs: &speechEnd},
 		{TurnID: "turn-2", RoundtripMs: &roundtrip},

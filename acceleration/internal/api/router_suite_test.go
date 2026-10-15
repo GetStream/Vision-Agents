@@ -47,10 +47,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/detectionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/detectionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -828,6 +828,7 @@ func (s *RouterSuite) sessionManager(
 		Conversations: conversations,
 		Stream:        s.stream,
 		Store:         s.store,
+		Live:          s.live,
 		Configs:       s.configs,
 		Directory:     directory,
 		Connectors:    connectors,
@@ -978,6 +979,7 @@ func (s *RouterSuite) otherRouter(workers *dispatch.Pool) (*httptest.Server, *Se
 		Conversations: s.conversations,
 		Stream:        s.stream,
 		Store:         s.store,
+		Live:          s.live,
 		Configs:       s.configs,
 		Directory:     directory,
 		Logger:        logger,

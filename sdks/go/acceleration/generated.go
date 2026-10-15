@@ -8778,14 +8778,14 @@ type ClientInterface interface {
 
 	// GetCallEvents What the conversation decided, and why
 	//
-	// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+	// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. They are kept for an hour. A call still running reports the same decisions live on the session socket.
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/events (the `GetCallEvents` operationId).
 	GetCallEvents(ctx context.Context, id string, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCallTimeline The call as it unfolded, said and measured together
 	//
-	// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
+	// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an hour; GET /v1/turns/stats keeps their percentiles.
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/timeline (the `GetCallTimeline` operationId).
 	GetCallTimeline(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11339,7 +11339,7 @@ type ClientInterface interface {
 
 	// GetTurnStats Conversational latency for the calling customer
 	//
-	// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed.
+	// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a histogram and are within 5% of the true ones.
 	//
 	// Corresponds with GET /v1/turns/stats (the `GetTurnStats` operationId).
 	GetTurnStats(ctx context.Context, params *GetTurnStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11480,7 +11480,7 @@ func (c *Client) GetCall(ctx context.Context, id string, reqEditors ...RequestEd
 
 // GetCallEvents What the conversation decided, and why
 //
-// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. They are kept for an hour. A call still running reports the same decisions live on the session socket.
 //
 // Corresponds with GET /v1/agents/calls/{id}/events (the `GetCallEvents` operationId).
 func (c *Client) GetCallEvents(ctx context.Context, id string, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -11497,7 +11497,7 @@ func (c *Client) GetCallEvents(ctx context.Context, id string, params *GetCallEv
 
 // GetCallTimeline The call as it unfolded, said and measured together
 //
-// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
+// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an hour; GET /v1/turns/stats keeps their percentiles.
 //
 // Corresponds with GET /v1/agents/calls/{id}/timeline (the `GetCallTimeline` operationId).
 func (c *Client) GetCallTimeline(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -16820,7 +16820,7 @@ func (c *Client) GetSpeech(ctx context.Context, id string, reqEditors ...Request
 
 // GetTurnStats Conversational latency for the calling customer
 //
-// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed.
+// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a histogram and are within 5% of the true ones.
 //
 // Corresponds with GET /v1/turns/stats (the `GetTurnStats` operationId).
 func (c *Client) GetTurnStats(ctx context.Context, params *GetTurnStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -27036,7 +27036,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetCallEventsWithResponse What the conversation decided, and why
 	//
-	// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+	// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. They are kept for an hour. A call still running reports the same decisions live on the session socket.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27045,7 +27045,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetCallTimelineWithResponse The call as it unfolded, said and measured together
 	//
-	// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
+	// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an hour; GET /v1/turns/stats keeps their percentiles.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -29867,7 +29867,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetTurnStatsWithResponse Conversational latency for the calling customer
 	//
-	// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed.
+	// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a histogram and are within 5% of the true ones.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -45947,7 +45947,7 @@ func (c *ClientWithResponses) GetCallWithResponse(ctx context.Context, id string
 
 // GetCallEventsWithResponse What the conversation decided, and why
 //
-// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. They are kept for an hour. A call still running reports the same decisions live on the session socket.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -45962,7 +45962,7 @@ func (c *ClientWithResponses) GetCallEventsWithResponse(ctx context.Context, id 
 
 // GetCallTimelineWithResponse The call as it unfolded, said and measured together
 //
-// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
+// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an hour; GET /v1/turns/stats keeps their percentiles.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -50450,7 +50450,7 @@ func (c *ClientWithResponses) GetSpeechWithResponse(ctx context.Context, id stri
 
 // GetTurnStatsWithResponse Conversational latency for the calling customer
 //
-// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed.
+// One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a histogram and are within 5% of the true ones.
 //
 // Returns a wrapper object for the known response body format(s).
 //

@@ -177,6 +177,30 @@ func TestHistoryWithNoOutboxRecordReadsTheRecordedApp(t *testing.T) {
 	require.Contains(t, texts, "kept in acme's app")
 }
 
+func TestAReleasedConversationIsLetGoAndReadBackWhenReopened(t *testing.T) {
+	apps := newTwoApps(t)
+	service := NewForChats(apps)
+	service.retireAfter = 0
+	t.Cleanup(service.Close)
+	c := replied(t, service, 0, "acme", "said before the session ended")
+	c.Release()
+
+	require.Eventually(t, func() bool {
+		service.mu.Lock()
+		defer service.mu.Unlock()
+		return len(service.all) == 0
+	}, 5*time.Second, 10*time.Millisecond)
+
+	reopened, history, _, err := service.OpenInApp(t.Context(), 0, "acme", "agent", c.CID(), "employee", "", nil)
+	require.NoError(t, err)
+	t.Cleanup(reopened.Release)
+	var said []string
+	for _, message := range history {
+		said = append(said, message.Content)
+	}
+	require.Contains(t, said, "said before the session ended")
+}
+
 // pinnedTo answers one app's client for that app, standing in for a source that still
 // reaches an app the customer used to act in.
 type pinnedTo struct {
