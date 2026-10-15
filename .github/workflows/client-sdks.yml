@@ -75,7 +75,7 @@ jobs:
 
       # The runner carries an Android SDK, but not necessarily compileSdk 37.
       - name: Android platform 37
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" >/dev/null
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" >/dev/null
 
       # PostureTest reads acceleration/api/openapi.yaml, so a spec change that opens or
       # closes an operation the SDK calls fails here.
