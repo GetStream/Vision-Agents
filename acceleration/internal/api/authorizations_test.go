@@ -19,6 +19,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
@@ -49,6 +51,8 @@ type AuthorizationsSuite struct {
 	RouterSuite
 	provider *fakeprovider.Server
 	scheme   *oauth2code.Scheme
+	// logged is what the router logged, for the lines a consent that ends otherwise leaves.
+	logged *lockedLog
 }
 
 func TestAuthorizationsSuite(t *testing.T) {
@@ -83,6 +87,8 @@ func (s *AuthorizationsSuite) SetupSuite() {
 	s.publicURL, s.dashboardURL = consentPublicURL, consentDashboard
 	// So a reconnect's MCP events can be seen restored (TestAReconnectRestoresTheEventSubscriptionsItsBindingsDeclare).
 	s.mcpEventsOn = true
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -239,6 +245,71 @@ func (s *AuthorizationsSuite) TestADeniedConsentLeavesTheConnectionPending() {
 	s.Equal(ConnectionStatus(store.ConnectionPending), s.get(id).Status)
 	s.Equal(1, s.get(id).Revision)
 	s.Equal(exchanges, s.provider.Hits(fakeprovider.PathToken), "nothing was exchanged")
+}
+
+// TestADeniedConsentIsLoggedWithTheProvidersDescription: one line names the connection, the
+// connector, the provider's code and its description (AI-1245), without the callback's state,
+// which the description echoes, its URL kept to the host and at most 256 bytes. The browser's
+// answer is base 8666b26d's (probe-base.txt): a 302 to the dashboard saying denied, the one
+// Set-Cookie that clears the attempt's cookie, and net/http's link to the same place.
+func (s *AuthorizationsSuite) TestADeniedConsentIsLoggedWithTheProvidersDescription() {
+	id := s.connection("")
+	alice := s.browser()
+	authorize := alice.handOff(s.start(id))
+	s.provider.Use(fakeprovider.CommaScopes, fakeprovider.ConsentDenied)
+	callback := s.consent(authorize)
+	query := callback.Query()
+	state := query.Get("state")
+	query.Set("error_description", "the user said no to "+state+" at https://idp.example/consent?state="+state+" "+strings.Repeat("é", 200))
+	callback.RawQuery = query.Encode()
+
+	response := alice.get(callback.String())
+
+	s.Equal(http.StatusFound, response.StatusCode)
+	s.Equal(s.landing(id, consentDenied), response.Header.Get("Location"))
+	s.Len(response.Header.Values("Set-Cookie"), 1)
+	s.Equal(`<a href="`+consentDashboard+"?connection_id="+id+`&amp;status=denied">Found</a>.`+"\n\n", s.body(response))
+	line := s.logged.line(s.T(), "a consent was denied at the provider", id)
+	s.Contains(line, " connector="+s.get(id).ConnectorID+" ")
+	s.Contains(line, " provider_code=access_denied ")
+	_, description, _ := strings.Cut(line, ` error_description="`)
+	s.True(strings.HasPrefix(description, "the user said no to [redacted] at https://idp.example éé"), line)
+	s.LessOrEqual(len(strings.TrimSuffix(description, "\"\n")), core.DescriptionBytes)
+	s.False(strings.Contains(s.logged.String(), state), "the state is not logged")
+}
+
+// TestAConsentWhoseConnectionCannotBeReadIsLogged: a connection row the store cannot read
+// (metadata that is not an object) fails the consent as on base 8666b26d (probe-base.txt: a 302
+// to the dashboard saying failed), and now leaves a line naming the connection, the connector
+// and the store's error, and neither the state nor the code.
+func (s *AuthorizationsSuite) TestAConsentWhoseConnectionCannotBeReadIsLogged() {
+	id := s.connection("")
+	connector := s.get(id).ConnectorID
+	alice := s.browser()
+	callback := s.consent(alice.handOff(s.start(id)))
+	_, err := s.store.DB().NewRaw(`UPDATE connector_connections SET metadata = '"unreadable"'::jsonb WHERE id = ?`, id).Exec(s.T().Context())
+	s.Require().NoError(err)
+
+	finished := alice.finish(callback)
+
+	s.Equal(http.StatusFound, finished.StatusCode)
+	s.Equal(s.landing(id, consentFailed), finished.Header.Get("Location"))
+	line := s.logged.line(s.T(), "could not read the connection a consent finished for", id)
+	s.Contains(line, " connector="+connector+" ")
+	s.Contains(line, " error=")
+	for _, sent := range []string{callback.Query().Get("state"), callback.Query().Get("code")} {
+		s.False(strings.Contains(s.logged.String(), sent), "neither the state nor the code is logged")
+	}
+}
+
+// TestAConsentThatConnectsLogsNeitherLine: only a consent that ends otherwise leaves one.
+func (s *AuthorizationsSuite) TestAConsentThatConnectsLogsNeitherLine() {
+	id := s.connection("")
+
+	s.connect(id)
+
+	s.Empty(s.logged.lines("a consent was denied at the provider", id))
+	s.Empty(s.logged.lines("could not read the connection a consent finished for", id))
 }
 
 func (s *AuthorizationsSuite) TestAConsentFinishedInAnotherBrowserIsRefused() {
@@ -975,6 +1046,24 @@ func (b *browser) post(address, origin string, body any) *http.Response {
 	response, err := b.client.Do(request)
 	b.suite.Require().NoError(err)
 	return response
+}
+
+// lines are the lines of l with message that name connection.
+func (l *lockedLog) lines(message, connection string) []string {
+	var found []string
+	for line := range strings.Lines(l.String()) {
+		if strings.Contains(line, `msg="`+message+`"`) && strings.Contains(line, " connection="+connection+" ") {
+			found = append(found, line)
+		}
+	}
+	return found
+}
+
+// line is the one line of l with message that names connection.
+func (l *lockedLog) line(t *testing.T, message, connection string) string {
+	found := l.lines(message, connection)
+	require.Len(t, found, 1, "one line %q for %s", message, connection)
+	return found[0]
 }
 
 type roundTripper func(*http.Request) (*http.Response, error)

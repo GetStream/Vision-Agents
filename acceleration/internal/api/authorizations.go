@@ -674,6 +674,8 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 	}
 	connection, err := s.store.ConnectorConnection(ctx, row.CustomerID, row.ConnectionID)
 	if err != nil {
+		s.logger.Error("could not read the connection a consent finished for", "connection", row.ConnectionID,
+			"connector", sealed.ConnectorID, "error", err)
 		return consentFailed
 	}
 	manifest, err := s.connectionManifest(ctx, connection, sealed.DefinitionRevision)
@@ -689,7 +691,10 @@ func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthori
 	var refused *oauth2code.AuthorizationError
 	if errors.As(err, &refused) && refused.Code == "access_denied" {
 		// RFC 6749 section 4.1.2.1: «The resource owner or authorization server denied the
-		// request». Nothing is written: the connection stays as it was.
+		// request». Nothing is written: the connection stays as it was. The line keeps the
+		// provider's description without the callback's state and code, which it may echo.
+		s.logger.Info("a consent was denied at the provider", "connection", row.ConnectionID, "connector", sealed.ConnectorID,
+			"provider_code", refused.Code, "error_description", core.LoggedDescription(refused.Description, query.Get("state"), query.Get("code")))
 		return consentDenied
 	}
 	if err != nil {
