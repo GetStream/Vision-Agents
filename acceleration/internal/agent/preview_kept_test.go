@@ -105,7 +105,9 @@ func (s *AgentSuite) TestAWaitKeepsThePreviewUntilTheWordsAreChecked() {
 
 	s.says(participant, "please find a table")
 
-	s.eventually(func() bool { return s.keptPreviews() == 1 }, "the wait did not keep the preview")
+	s.eventually(func() bool {
+		return s.keptPreviews() == 1 && len(s.model.requests()) == 1
+	}, "the wait did not keep and start the preview")
 	s.Equal(1, s.previewsHeld())
 	s.Len(s.model.requests(), 1)
 	s.Empty(s.voice.spoken(), "a preview is never spoken before the words are answered")
