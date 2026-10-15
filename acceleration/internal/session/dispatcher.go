@@ -1,6 +1,7 @@
 package session
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -117,31 +118,46 @@ type failure struct {
 	// start of the body, the WWW-Authenticate and the Retry-After of its answer when that was a
 	// 4xx or a 5xx (core.Exchange); "" when there was none.
 	host, body, challenge, retryAfter string
+	// message is what the router says of a call it held itself, with no error and no answer
+	// to say it (heldByTheRouter); "" for every other call.
+	message string
+	// redact is the call's core.Exchange.Redact, for what the error the call returned says
+	// (providerMessage); nil for a call that sent nothing through an Exchange.
+	redact func(string) string
 }
 
 // answerOf is what the call's requests saw (core.Exchange), with no kind.
 func answerOf(exchange *core.Exchange) failure {
 	return failure{status: exchange.Status(), host: exchange.Host(), body: exchange.ErrorBody(),
-		challenge: exchange.WWWAuthenticate(), retryAfter: exchange.RetryAfterHeader()}
+		challenge: exchange.WWWAuthenticate(), retryAfter: exchange.RetryAfterHeader(), redact: exchange.Redact}
 }
 
 // record queues the row of one call that started at started and ended now, as how says.
 // The row names the binding, the connection and the tool, and the shape of call's arguments
-// (argumentShape), never what the call was asked or answered. An incognito session's names no
+// (argumentShape), never what the call was asked or answered, except the start of the
+// provider's error for a call that failed (error_message, below). An incognito session's names no
 // session and keeps no shape: the lengths come from the conversation.
 //
 // A call that failed or was refused also leaves one Warn line, "connector call failed", on the
 // session's logger: the row's names and id, the provider's HTTP status, and what the provider
-// or the refusal said (providerMessage of err, the error the call returned). It also names the
+// or the refusal said (providerMessage of err, the error the call returned, without what the
+// call's Exchange redacts: an echoed token or request path, AI-1244). It also names the
 // host the last request went to (provider_host) and the start of a 4xx's or a 5xx's body
 // (provider_body, through providerBody), and, when that answer had them, its WWW-Authenticate
 // (www_authenticate) and Retry-After (retry_after), each cut to providerMessageBytes (AI-1243).
 // A call the model
 // reads connector_rate_limited, outcome_unknown or a step-up of returned no error, so its line
-// has no message. An incognito session's line carries the message like any other's, by the
+// has no message, except one the limiter held before sending, whose message is
+// heldByTheRouter's (AI-1244). An incognito session's line carries the message like any other's, by the
 // owner's decision (AI-1242, 2026-10-14), but names no session, as its row does (Spec.Incognito).
 // A call that answered logs nothing. The id is given here rather than by the store, so the line
 // names the row it wrote.
+//
+// A failed call's row keeps the status, nil when none was answered, and an error_message: the
+// line's provider_body when the provider answered a 4xx or a 5xx with one, since the MCP
+// client's error for it often says only the status, else its provider_message, so the row holds
+// nothing the line does not (AI-1244). Example: a 403 whose body says why keeps that body; an
+// MCP isError, which comes in a 200, keeps the tool's words.
 func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how failure, err error) {
 	sessionID := d.spec.ID
 	var arguments []store.ArgumentShape
@@ -157,6 +173,16 @@ func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how f
 		StartedAt: started, LatencyMs: time.Since(started).Milliseconds(), ErrorType: how.kind,
 		Arguments: arguments,
 	}
+	message, body := how.message, providerBody(how.body)
+	if message == "" {
+		message = providerMessage(err, how.redact)
+	}
+	// A call that answered has no failure to say: no status, no message. The body is "" unless
+	// the last answer was a 4xx or a 5xx (core.Exchange.ErrorBody).
+	row.ErrorMessage = cmp.Or(body, message)
+	if how.status != 0 {
+		row.ProviderStatus = &how.status
+	}
 	d.invocations.Record(row)
 	if how.kind == "" {
 		return
@@ -164,8 +190,8 @@ func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how f
 	fields := []any{"customer", row.CustomerID, "connection", row.ConnectionID,
 		"connector", row.ConnectorID, "binding", row.Binding, "tool", row.Tool, "session", row.SessionID,
 		"invocation", row.ID, "error_type", row.ErrorType, "latency_ms", row.LatencyMs,
-		"provider_status", how.status, "provider_message", providerMessage(err),
-		"provider_host", how.host, "provider_body", providerBody(how.body)}
+		"provider_status", how.status, "provider_message", message,
+		"provider_host", how.host, "provider_body", body}
 	if how.challenge != "" {
 		fields = append(fields, "www_authenticate", cutAtRune(how.challenge, providerMessageBytes))
 	}
@@ -323,7 +349,7 @@ func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]ll
 // cap, cancelled with ctx.
 func (d *dispatcher) send(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, failure, error) {
 	if wait := d.limiter.Wait(ctx, r.limit); wait > 0 {
-		return llm.TextParts(rateLimited(call.Name, wait)), failure{kind: store.InvocationDenied}, nil
+		return llm.TextParts(rateLimited(call.Name, wait)), failure{kind: store.InvocationDenied, message: heldByTheRouter(wait)}, nil
 	}
 	bounded, cancel := context.WithTimeout(d.correlated(ctx), r.timeout)
 	defer cancel()
@@ -404,9 +430,22 @@ func outcomeUnknown(name string) string {
 // connector_rate_limited result with retry_after_seconds (Kanat, 2026-10-07, D8), in whole
 // seconds rounded up, as Retry-After's delay-seconds are whole (RFC 9110 section 10.2.3).
 func rateLimited(name string, wait time.Duration) string {
-	seconds := int64((wait + time.Second - 1) / time.Second)
 	return fmt.Sprintf("connector_rate_limited: the provider limits how often %s may be called, and it was "+
-		"not run. retry_after_seconds: %d. Do not call it again before then.", name, seconds)
+		"not run. retry_after_seconds: %d. Do not call it again before then.", name, retryAfterSeconds(wait))
+}
+
+// heldByTheRouter is the error_message, and the log line's provider_message, of a call the
+// limiter held before sending (AI-1244): its error_type stays denied, as on the base, and this
+// says why, with the seconds the model reads. The form is fixed, for a reader to match on:
+// "rate limited by the router: retry after <seconds>s".
+func heldByTheRouter(wait time.Duration) string {
+	return fmt.Sprintf("rate limited by the router: retry after %ds", retryAfterSeconds(wait))
+}
+
+// retryAfterSeconds is wait in whole seconds rounded up, as Retry-After's delay-seconds are
+// whole (RFC 9110 section 10.2.3).
+func retryAfterSeconds(wait time.Duration) int64 {
+	return int64((wait + time.Second - 1) / time.Second)
 }
 
 // recheck refuses a call that the session's config and connection no longer allow, before

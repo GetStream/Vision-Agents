@@ -342,7 +342,8 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 		raw, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		var message struct {
-			Method string `json:"method"`
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
 			Params struct {
 				Name      string `json:"name"`
 				Arguments struct {
@@ -366,7 +367,11 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 				w.Header()[name] = values
 			}
 			w.WriteHeader(fixed.status)
-			_, _ = io.WriteString(w, fixed.body)
+			body := fixed.body
+			if fixed.rpc != "" {
+				body = `{"jsonrpc":"2.0","id":` + string(message.ID) + `,` + fixed.rpc + `}`
+			}
+			_, _ = io.WriteString(w, body)
 			if fixed.then != nil {
 				w.(http.Flusher).Flush()
 				fixed.then(w, r)
@@ -496,6 +501,9 @@ type fixedAnswer struct {
 	status int
 	header http.Header
 	body   string
+	// rpc, when set, is the body instead: a JSON-RPC response to the request, with its id, and
+	// rpc its "result" or "error" member (answerRPC).
+	rpc string
 	// then, when set, goes on with the body once body is sent: it stalls or drips the rest.
 	then func(http.ResponseWriter, *http.Request)
 }
@@ -505,6 +513,15 @@ func (p *accountsProvider) answer(account string, status int, header http.Header
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.answers[account] = fixedAnswer{status: status, header: header, body: body}
+}
+
+// answerRPC has account answer tools/call with status and a JSON-RPC response whose "result"
+// or "error" member is member, such as `"error":{"code":-32603,"message":"..."}`, until forget.
+func (p *accountsProvider) answerRPC(account string, status int, member string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.answers[account] = fixedAnswer{status: status,
+		header: http.Header{"Content-Type": {"application/json"}}, rpc: member}
 }
 
 // answerThen is answer, with then going on with the body once body is sent.

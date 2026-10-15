@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -90,9 +91,35 @@ func (s *ConnectionRecordsSuite) TestAModelsToolCallLeavesOneRowInItsConnections
 	s.Equal("echo", calls[0].Tool)
 	s.Equal(opened.Id, calls[0].SessionID)
 	s.Nil(calls[0].ErrorType)
+	s.Nil(calls[0].ProviderStatus, "a call that answered has no status")
+	s.Empty(calls[0].ErrorMessage)
 	// AI-990 F40: the shape of what the model asked, {"text": connectorEchoText}, not its value.
 	length := len(connectorEchoText)
 	s.Equal([]InvocationArgument{{Name: "text", Type: "string", Length: &length}}, calls[0].Arguments)
+}
+
+// TestAFailedCallIsListedWithTheProvidersStatusAndWhyItFailed: the provider stops taking the
+// connection's token once the session is open, so the call fails with a 401; the backend reads
+// the status and the message, and no token, in the log (AI-1244).
+func (s *ConnectionRecordsSuite) TestAFailedCallIsListedWithTheProvidersStatusAndWhyItFailed() {
+	connector := s.connector()
+	token := issuedToken(&s.RouterSuite, s.provider)
+	mine := s.connectionHolding(s.client, connector, token)
+	opened := s.client.createSession(s.session(s.config(connector, s.client, mine, false), mine))
+	s.provider.RevokeBot(token)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.actingFor(s.client).do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
+		RespondRequest{Text: "ask the crm", RequestId: pointerTo(s.utils.uuid())}, nil))
+
+	calls := s.calls(s.serverClient.actingFor(s.client), mine, 1)
+	s.Require().NotNil(calls[0].ErrorType)
+	s.Equal(InvocationErrorType(store.InvocationCustomerAuth), *calls[0].ErrorType)
+	s.Equal(pointerTo(http.StatusUnauthorized), calls[0].ProviderStatus)
+	s.Equal(`mcp: crm__echo: calling "tools/call": sending "tools/call": rejected by transport: `+
+		"mcp: the server refused the request with 401 Unauthorized", calls[0].ErrorMessage)
+	var raw json.RawMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.actingFor(s.client).do(http.MethodGet, "/v1/agents/connections/"+mine+"/invocations", nil, &raw))
+	s.NotContains(string(raw), token)
 }
 
 func (s *ConnectionRecordsSuite) TestAnIncognitoSessionsCallIsLoggedWithoutTheSession() {
@@ -333,6 +360,11 @@ sources:
 // connection is a validated connection to connector holding the fake's token, the app's
 // when user is nil and otherwise user's, made by the backend acting for them.
 func (s *ConnectionRecordsSuite) connection(user *testClient, connector string) string {
+	return s.connectionHolding(user, connector, s.token)
+}
+
+// connectionHolding is connection, holding token.
+func (s *ConnectionRecordsSuite) connectionHolding(user *testClient, connector, token string) string {
 	as, body := s.serverClient, appOwned(connector)
 	if user != nil {
 		as, body = s.serverClient.actingFor(user), userOwned(connector, user)
@@ -340,7 +372,7 @@ func (s *ConnectionRecordsSuite) connection(user *testClient, connector string) 
 	var created Connection
 	s.Require().Equal(http.StatusCreated, as.do(http.MethodPost, "/v1/agents/connections", withScheme(body, bearer.Name), &created))
 	s.Require().Equal(http.StatusOK, as.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials",
-		map[string]any{"expected_revision": 1, "values": map[string]string{bearer.SuppliedToken: s.token}}, nil))
+		map[string]any{"expected_revision": 1, "values": map[string]string{bearer.SuppliedToken: token}}, nil))
 	var validation ConnectionValidation
 	s.Require().Equal(http.StatusOK, as.do(http.MethodPost, "/v1/agents/connections/"+created.ID+"/validate", nil, &validation))
 	s.Require().Equal(validationConnected, string(validation.Status), validation.Error)

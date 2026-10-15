@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -150,6 +151,33 @@ func (s *TransportsSuite) TestAnExchangeRecordsTheResolversRefusalAndNothingSent
 	s.Require().Error(err)
 	s.False(exchange.Sent())
 	s.ErrorIs(exchange.CredentialError(), errNotConnected)
+}
+
+// TestAnExchangeRedactsTheLastRequestsPathAndCredential: what Redact takes out of a text, such
+// as the MCP client's error for a JSON-RPC error that echoes them (AI-1244).
+func (s *TransportsSuite) TestAnExchangeRedactsTheLastRequestsPathAndCredential() {
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal("invalid token [redacted] for [redacted]", exchange.Redact("invalid token token-1 for /mcp"))
+	// AGENTS.md «Secrets never print»: what Redact takes out is in no formatting of the Exchange.
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+		s.NotContains(fmt.Sprintf(verb, exchange), "token-1", verb)
+	}
+}
+
+// TestAnExchangeThatSentNothingRedactsNothing: with no request, Redact has nothing to take out,
+// and the Resolver's refusal is kept as it is.
+func (s *TransportsSuite) TestAnExchangeThatSentNothingRedactsNothing() {
+	s.resolver.disconnect()
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().Error(err)
+	s.Equal(err.Error(), exchange.Redact(err.Error()))
 }
 
 func (s *TransportsSuite) TestAnExchangeRecordsTheProvidersRefusal() {
