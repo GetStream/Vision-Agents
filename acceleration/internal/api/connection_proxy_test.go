@@ -37,6 +37,8 @@ import (
 const (
 	echoStatusHeader     = "X-Echo-Status"
 	echoRetryAfterHeader = "X-Echo-Retry-After"
+	// echoLinkHeader has the echo answer with its value as its Link header.
+	echoLinkHeader = "X-Echo-Answer-Link"
 	// echoRawHeader has the echo answer rawAnswer with rawServerTiming instead.
 	echoRawHeader = "X-Echo-Raw"
 	// echoStallHeader has the echo answer a 502 with stalledStart, then wait until the test
@@ -44,6 +46,9 @@ const (
 	// with stalledEnd.
 	echoStallHeader = "X-Echo-Stall"
 )
+
+// proxyPublicURL is the suite router's ROUTER_PUBLIC_URL.
+const proxyPublicURL = "https://router.example"
 
 // gitHubAPI is the host of the built-in github's api_base (providers/github.yaml), which the
 // suite's transport dials at the echo.
@@ -127,6 +132,8 @@ func (s *ConnectionProxySuite) SetupSuite() {
 	s.proxyCallsPerMinute = config.Defaults().Connectors.ProxyCallsPerMinute
 	s.logged = &lockedLog{}
 	s.logs = s.logged
+	// A Link's target under api_base is rewritten to the proxy under this URL.
+	s.publicURL = proxyPublicURL
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -530,6 +537,31 @@ func (s *ConnectionProxySuite) TestAGitHubConnectionsDirectCallGoesToGitHubsREST
 	s.NotEmpty(got.Header.Get("User-Agent"))
 }
 
+// TestAGitHubPageLinkComesBackThroughTheProxy: GitHub REST pages with a Link naming
+// api.github.com, which a client such as Octokit follows as it is with its token, the
+// router's. So the answer's Link names this connection's proxy instead, under the router's
+// public URL (RFC 8288 section 3), and following it reaches the next page with the
+// connection's token. A link elsewhere comes back as it came.
+func (s *ConnectionProxySuite) TestAGitHubPageLinkComesBackThroughTheProxy() {
+	token := "token-" + s.utils.uuid()
+	id := s.connectedWithToken("github", token)
+	page := `<https://api.github.com/user/repos?per_page=1&page=2>; rel="next"`
+	elsewhere := `<https://api.github.com.evil.example/user/repos?page=2>; rel="next"`
+
+	response, _ := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "user/repos?per_page=1"), "",
+		http.Header{echoLinkHeader: {page + ", " + elsewhere}})
+
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	next := proxyPublicURL + proxy(id, "user/repos?per_page=1&page=2")
+	s.Equal(`<`+next+`>; rel="next", `+elsewhere, response.Header.Get("Link"))
+	status, answer := s.send(s.serverClient, http.MethodGet, strings.TrimPrefix(next, proxyPublicURL), "", nil)
+	s.Require().Equal(http.StatusOK, status, string(answer))
+	got := s.echoed(answer)
+	s.Equal("/user/repos", got.Path)
+	s.Equal("per_page=1&page=2", got.Query)
+	s.Equal("Bearer "+token, got.Header.Get("Authorization"))
+}
+
 func (s *ConnectionProxySuite) TestAConnectorWithoutAnAPIBaseTakesNoDirectCalls() {
 	id := s.connected(s.connectorWithout(), bearer.Name)
 
@@ -697,6 +729,9 @@ func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	}
 	if wait := r.Header.Get(echoRetryAfterHeader); wait != "" {
 		w.Header().Set("Retry-After", wait)
+	}
+	if link := r.Header.Get(echoLinkHeader); link != "" {
+		w.Header().Set("Link", link)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Echo-Seen", "yes")

@@ -180,6 +180,11 @@ func (s *Server) proxyConnection(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header()[name] = values
 	}
+	// A link under api_base goes to this connection's proxy instead (proxiedLinks).
+	w.Header().Del("Link")
+	if links := proxiedLinks(response.Header.Values("Link"), base, s.connectionProxyURL(connection.ID)); len(links) > 0 {
+		w.Header()["Link"] = links
+	}
 	for _, name := range hopHeaders {
 		w.Header().Del(name)
 	}
@@ -207,6 +212,86 @@ func (s *Server) proxyConnection(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Info("a direct call's provider answered with an error", line...)
 	}
+}
+
+// connectionProxyURL is where the router at publicURL (ROUTER_PUBLIC_URL) takes direct calls
+// for the connection id, with no slash at its end; empty when publicURL is.
+func (s *Server) connectionProxyURL(id string) string {
+	public := strings.TrimRight(s.publicURL, "/")
+	if public == "" {
+		return ""
+	}
+	return public + strings.TrimSuffix(strings.Replace(connectionProxyPath, "{id}", url.PathEscape(id), 1), "/")
+}
+
+// proxiedLinks is the Link header values (RFC 8288 section 3: link-values split by commas, each
+// a URI-Reference in «<» and «>» and its parameters) with each target under base sent to proxy
+// instead, at the same path under it and the same query. A provider pages by such links (GitHub
+// REST: «link: <https://api.github.com/user/repos?page=2>; rel="next"», see github.yaml), and a
+// client follows one as it is with the credential it has, which for a direct call is the
+// router's: under base, the link would take that credential to the provider. A target
+// elsewhere (another host, https://api.github.com.evil.example) is left as it is. A quoted
+// parameter is skipped, so a «<» in it starts no target. With no proxy (no public URL) there is
+// nowhere to send a link, so there are none.
+//
+// Example: base https://api.github.com, proxy https://router.example/v1/agents/connections/c1/proxy
+// and <https://api.github.com/user/repos?page=2>; rel="next" is
+// <https://router.example/v1/agents/connections/c1/proxy/user/repos?page=2>; rel="next".
+func proxiedLinks(values []string, base, proxy string) []string {
+	if proxy == "" {
+		return nil
+	}
+	proxied := make([]string, 0, len(values))
+	for _, value := range values {
+		var out strings.Builder
+		quoted, escaped := false, false
+		for i := 0; i < len(value); i++ {
+			c := value[i]
+			switch {
+			case escaped:
+				escaped = false
+			case quoted && c == '\\':
+				escaped = true
+			case c == '"':
+				quoted = !quoted
+			case !quoted && c == '<':
+				end := strings.IndexByte(value[i:], '>')
+				if end < 0 {
+					break
+				}
+				target := value[i+1 : i+end]
+				if rest, under := underBase(target, base); under {
+					target = proxy + rest
+				}
+				out.WriteString("<" + target + ">")
+				i += end
+				continue
+			}
+			out.WriteByte(c)
+		}
+		proxied = append(proxied, out.String())
+	}
+	return proxied
+}
+
+// underBase is whether target is base or under it, and what follows base in it as written:
+// the rest of the path, the query and the fragment. Under means base (scheme and host in any
+// case) followed by nothing or by «/», «?» or «#», so a host or port that only starts with
+// base's, or a userinfo naming it, is not under it (RFC 3986 section 3.2).
+//
+// Example: under https://api.github.com, https://api.github.com/user?page=2 is, with rest
+// /user?page=2; https://api.github.com.evil.example/user, https://api.github.com@evil.example/
+// and https://api.github.com:8443/user are not.
+func underBase(target, base string) (string, bool) {
+	base = strings.TrimSuffix(base, "/")
+	if len(target) < len(base) || !strings.EqualFold(target[:len(base)], base) {
+		return "", false
+	}
+	rest := target[len(base):]
+	if rest != "" && !strings.ContainsRune("/?#", rune(rest[0])) {
+		return "", false
+	}
+	return rest, true
 }
 
 // onlyPlainHeaders is whether every header of header, as the server read it (in canonical

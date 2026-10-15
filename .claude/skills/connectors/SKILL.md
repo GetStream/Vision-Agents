@@ -82,6 +82,13 @@ Only a connector whose manifest has an `api_base` takes direct calls.
 | `github` (revision 4) | `https://api.github.com` | `repos/octo/hello/issues` |
 | `slack_bot` (revision 5) | `https://slack.com/api` | `chat.postMessage` |
 
+A provider's `Link` header (RFC 8288) that names a URL under `api_base`, such as GitHub's
+`rel="next"` page, comes back naming the same path and query under this connection's proxy
+URL (`ROUTER_PUBLIC_URL` + `/v1/agents/connections/{id}/proxy`), so a client that follows it,
+Octokit's paginate included, stays on the proxy. URLs in a body (`url`, `comments_url`) still
+name `https://api.github.com`: never send the router's credential there; call their path
+through the proxy.
+
 Every other built-in, `linear` included, is MCP-only: a direct call answers 400 «connector
 "linear" has no api_base endpoint». Why Linear has none is in `linear.yaml`. A connection keeps
 the revision it was made on, so a `github` connection made before revision 4 takes direct calls
