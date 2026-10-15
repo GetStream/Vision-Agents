@@ -173,6 +173,16 @@ func (s *Server) proxyConnection(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 	// The status is sent: a body cut off midway can only end the answer early.
 	_, _ = io.Copy(w, response.Body)
+	// A status other than 2xx is logged once the copy is done, so the caller's answer is neither
+	// read early nor held for the line (AI-1245): the host the call went to and the start of the
+	// body as the copy read it (core.Exchange.ErrorBody, a 4xx's or a 5xx's), redacted as every
+	// connector call's is of the path, the query and the connection's credential, with URLs kept
+	// to their host (core.LoggedBody). It names no header, and not the request's body.
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		s.logger.Info("a direct call's provider answered with an error", "connection", connection.ID,
+			"connector", connection.ConnectorID, "provider_status", status, "provider_host", exchange.Host(),
+			"provider_body", core.LoggedBody(exchange.ErrorBody()))
+	}
 }
 
 // proxiedPath is the provider's path the request names, as it was escaped on the wire: what

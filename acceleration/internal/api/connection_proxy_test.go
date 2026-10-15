@@ -62,6 +62,8 @@ type ConnectionProxySuite struct {
 	echo     *httptest.Server
 	// hits counts the requests the echo took.
 	hits atomic.Int64
+	// logged is what the router logged, for the line an answer other than 2xx leaves.
+	logged *lockedLog
 }
 
 func TestConnectionProxySuite(t *testing.T) {
@@ -85,6 +87,8 @@ func (s *ConnectionProxySuite) SetupSuite() {
 	// The router's default cap, as a deployment that sets none runs (AI-958). Every test but
 	// the cap's own stays under it, so each asserts what base answered.
 	s.proxyCallsPerMinute = config.Defaults().Connectors.ProxyCallsPerMinute
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -213,6 +217,53 @@ func (s *ConnectionProxySuite) TestTheProvidersAnswerComesBackAsItCame() {
 	s.Empty(response.Header.Values("Keep-Alive"), "a hop-by-hop header stays with the hop")
 	s.Equal("brew", s.echoed(answer).Body)
 	s.True(strings.HasPrefix(response.Header.Get(RequestIDHeader), "caller-"), response.Header.Get(RequestIDHeader))
+}
+
+// TestAnErrorAnswerComesBackAsItCameAndIsLogged: a 404 and a 502 reach the caller as base
+// 8666b26d answered them (probe-base.txt: the status, the echo's three headers and its JSON byte
+// for byte), and each leaves one line (AI-1245) with the status, the host and the start of the
+// body, without the connection's token or the path and query the echo repeats, its URLs kept
+// to their host.
+func (s *ConnectionProxySuite) TestAnErrorAnswerComesBackAsItCameAndIsLogged() {
+	for _, status := range []int{http.StatusNotFound, http.StatusBadGateway} {
+		token := "token-" + s.utils.uuid()
+		id := s.connectedWithToken(s.connector(""), token)
+
+		response, answer := s.sendRaw(s.serverClient, http.MethodPost, proxy(id, "items/7?q=1"), "brew",
+			http.Header{echoStatusHeader: {strconv.Itoa(status)}, "X-Echo-Link": {"https://docs.example/errors/7?q=1"}})
+
+		s.Equal(status, response.StatusCode)
+		response.Header.Del("Date")
+		response.Header.Del(RequestIDHeader)
+		s.Equal(http.Header{"Content-Length": {strconv.Itoa(len(answer))}, "Content-Type": {"application/json"},
+			"X-Echo-Seen": {"yes"}}, response.Header)
+		s.True(string(answer) == `{"method":"POST","path":"/base/items/7","query":"q=1","header":{"Accept-Encoding":["gzip"],`+
+			`"Authorization":["Bearer `+token+`"],"Content-Length":["4"],"User-Agent":["Go-http-client/1.1"],`+
+			`"X-Echo-Link":["https://docs.example/errors/7?q=1"],"X-Echo-Status":["`+strconv.Itoa(status)+`"]},"body":"brew"}`+"\n",
+			"the answer is the echo's, byte for byte")
+		line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
+		s.Contains(line, " provider_status="+strconv.Itoa(status)+" ")
+		s.Contains(line, " provider_host="+strings.TrimPrefix(s.echo.URL, "https://")+" ")
+		s.Contains(line, `provider_body="{\"method\":\"POST\",\"path\":\"[redacted]\",\"query\":\"[redacted]\",`)
+		s.Contains(line, `\"Authorization\":[\"Bearer [redacted]\"]`)
+		s.Contains(line, `\"X-Echo-Link\":[\"https://docs.example\"]`)
+		s.False(strings.Contains(line, token), "the connection's token is not logged")
+	}
+}
+
+// TestOnlyAnAnswerOtherThan2xxIsLogged: a 200 leaves no line; a 302, which the connection's
+// client does not follow without a Location, leaves one with no body, since only a 4xx's or a
+// 5xx's is kept (core.Exchange.ErrorBody).
+func (s *ConnectionProxySuite) TestOnlyAnAnswerOtherThan2xxIsLogged() {
+	ok := s.connected(s.connector(""), bearer.Name)
+	found := s.connected(s.connector(""), bearer.Name)
+
+	s.Equal(http.StatusOK, s.serverClient.do(http.MethodGet, proxy(ok, "ping"), nil, nil))
+	status, _ := s.send(s.serverClient, http.MethodGet, proxy(found, "ping"), "", http.Header{echoStatusHeader: {"302"}})
+
+	s.Equal(http.StatusFound, status)
+	s.Empty(s.logged.lines("a direct call's provider answered with an error", ok))
+	s.Contains(s.logged.line(s.T(), "a direct call's provider answered with an error", found), ` provider_status=302 `)
 }
 
 // TestAJSONAnswerComesBackByteForByte: a chunked JSON object, with no Content-Length, gets no
