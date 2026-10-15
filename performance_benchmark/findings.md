@@ -121,6 +121,17 @@ and the router at 5 cores. Against iterations 9-10b, router CPU per joined agent
 caller about 260 ms later at every step (p50 700 ms, was 430-450 ms). It is a fixed cost,
 not load; replies are not slower.
 
+The join failures at 512 were Cloud NAT, not Stream's coordinator. Stream allows this app
+1,000 `SendMessage` and 1,000 `UpdateMessage` a minute server-side, and the chat log sends
+at least two messages a turn, so at 256 agents most sends get a 429. Stream answers many of
+those 429s with `Connection: close`. Every one costs a new connection to the same edge
+address, about 440 a second per pod, which filled the node's 8192 NAT ports (13,000 to 22,000
+sockets in TIME_WAIT). Cloud NAT then dropped every new dial to that address: the
+coordinator join, the SFU signalling and the chat posts alike. `max_ports_per_vm` is now
+32768 and the router keeps 2048 connections a Stream host, which moved the wall. Below
+roughly 1,000 sends a minute, about 80 concurrent agents on one Stream app, nothing of this
+shows; above it the transcripts in Chat are mostly lost.
+
 A run whose callers die mid-step leaves its sessions running: a voice session does not end
 when the human leaves the call. One aborted run held 346 sessions (260 mCPU, 10,000
 goroutines) on a pod with nobody on them, until the pod was restarted.
