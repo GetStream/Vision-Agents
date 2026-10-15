@@ -105,6 +105,11 @@ export interface Declaration {
   search?: string;
   greeting?: Schemas["Greeting"];
   sandbox?: Schemas["Sandbox"];
+  /**
+   * How the sandbox is built and what code in it may reach. Outbound network is blocked
+   * unless `network` or an allow list opens it.
+   */
+  sandboxOptions?: Schemas["SandboxOptions"];
   plugins?: string[];
   keyterms?: string[];
   tags?: Record<string, string>;
@@ -707,6 +712,7 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),
     ...(declared.dispatch ? { dispatch: declared.dispatch } : {}),
+    ...(declared.sandboxOptions ? { sandbox_options: declared.sandboxOptions } : {}),
   };
 }
 
