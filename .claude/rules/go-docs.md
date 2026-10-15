@@ -54,6 +54,9 @@ terms: what's the invariant, what's the trade-off, what's the surprising
 fact a future reader needs. If the answer is "go read this external doc",
 the comment is doing the wrong job.
 
+Citing a public, stable source for a fact the code relies on is fine (an RFC, an engine's limits in
+its official docs): the comment still states the fact, and the link is where it comes from.
+
 ## GoDoc Comments
 
 New exported symbols need GoDoc comments as set out under "When Required" below.

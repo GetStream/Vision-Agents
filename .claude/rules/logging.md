@@ -78,19 +78,11 @@ if err := s.cache.Invalidate(ctx, key); err != nil {
 
 ### Tracing Spans
 
-Use `Type.Method` naming for tracing spans:
+Name a span `package.verb`, lowercase, as the router does (`appconfig.read`, `quota.allow`,
+`llm.provider.create`):
 
 ```go
-// Data-access layer: "StructName.MethodName"
-ctx, span := tracer.Start(ctx, "Store.GetOrder")
-defer span.End()
-
-// Handlers: "Handler.ActionName"
-ctx, span := tracer.Start(r.Context(), "Handler.MyAction")
-defer span.End()
-
-// Standalone operations
-subCtx, span := tracer.Start(ctx, "PrepareImportBatch")
+ctx, span := tracer.Start(ctx, "appconfig.read")
 defer span.End()
 ```
 

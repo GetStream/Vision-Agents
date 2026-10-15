@@ -171,6 +171,12 @@ slots, merge order and how not to burn tokens.
 - Avoid using `Any` type.
 - When adding code to an existing file, follow the patterns already established in that file (e.g. error handling style, import guards, naming).
 
+## Go rules
+
+`.claude/rules/` holds the Go rules (conventions, errors, logging, timeouts, batching, tests) and
+`do-not.md` for every file. Claude Code loads a rule when it opens a matching file; other agents
+should read them before writing Go.
+
 ## Code style
 
 ### Imports:

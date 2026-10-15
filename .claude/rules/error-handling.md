@@ -7,15 +7,17 @@ paths:
 
 ## Error Wrapping
 
-Wrap with `fmt.Errorf` and the `%w` verb, so callers can still match the cause with `errors.Is` / `errors.As`:
+Wrap with `fmt.Errorf` and the `%w` verb, so callers can still match the cause with `errors.Is` / `errors.As`.
+Start the message with the package name and say what was being done, without "failed to", as the
+router does (`oauth2cc: token: %w`):
 
 ```go
 // Wrap with additional context at boundaries
-fmt.Errorf("failed to get user %s: %w", userID, err)
+fmt.Errorf("store: get user %s: %w", userID, err)
 
 // Create new error
-errors.New("something went wrong")
-fmt.Errorf("invalid input: %s", input)
+errors.New("store: no such user")
+fmt.Errorf("store: invalid input %q", input)
 ```
 
 ### When to wrap vs return as is
@@ -28,7 +30,7 @@ fmt.Errorf("invalid input: %s", input)
 func (s *Store) GetOrderItems(ctx context.Context, orderID string) ([]Item, error) {
     items, err := s.db.Query(ctx, query, orderID)
     if err != nil {
-        return nil, fmt.Errorf("failed to get items for order %s: %w", orderID, err)
+        return nil, fmt.Errorf("store: get items for order %s: %w", orderID, err)
     }
     return items, nil
 }

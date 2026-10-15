@@ -43,21 +43,19 @@ if err := batchedOp(ctx, rows); err != nil {
 
 Raw multi-VALUES via `ExecContext` is fine when the ORM form doesn't fit; build placeholders + args explicitly.
 
-## Chunk Size — Ask, Don't Pick
+## Chunk Size — From Evidence
 
-The decision to chunk a batched statement, and the chunk size if so, is **the user's call, not the agent's**.
+Not every batch needs chunking: if request validation bounds the input small, one statement is enough.
 
-Before writing chunking code, ask the user two questions:
+When it does need chunking, derive the size from evidence, not from gut feel or another constant in
+the codebase:
 
-1. **Should we chunk this at all?** Not every batch needs chunking — if the input is bounded small by request validation, one statement may be enough.
-2. **If yes, what chunk size?** Surface what is known so the user can decide with context, then wait for an answer:
-   - The hard ceilings of the target engine (e.g. PostgreSQL caps a single statement at 65,535 bind parameters — see References).
-   - Any external guidance you can link.
-   - The realistic input range, derived from request validators or known caller behavior.
+- The hard ceiling of the target engine (PostgreSQL caps a single statement at 65,535 bind parameters — see References).
+- The realistic input range, from request validators or known caller behavior.
 
-Do not silently pick a chunk size from training data, gut feel, or consistency with another constant in the codebase. Local precedent is a consistency argument, not evidence — if the user explicitly tells you to match an existing constant for consistency, fine, but say so in the doc comment and keep it separate from the evidence-based reasoning.
-
-Once the user picks a size, use the project's chunking helper if one exists (search for a chunking utility) and document the rationale in the doc comment on the chunk-size constant, with links to the sources cited. If the choice has not been benchmarked against the target fleet, say so explicitly so the next reader knows it was reasoned, not measured.
+Use the project's chunking helper if one exists. State the reasoning in the doc comment on the
+chunk-size constant, citing the engine limit it stays under. If the size was reasoned, not
+benchmarked, say so there and in the PR description, so a reviewer can challenge it.
 
 ## Narrow Exceptions
 
@@ -68,7 +66,7 @@ Once the user picks a size, use the project's chunking helper if one exists (sea
 
 ## When Reviewing or Generating Code
 
-Before writing a `for … { db.Exec(...) }` block: stop and check whether the same work fits a single batched statement plus a chunking helper. If yes, write the batched version. If chunking is needed, ask the user for the size — do not pick it.
+Before writing a `for … { db.Exec(...) }` block: stop and check whether the same work fits a single batched statement plus a chunking helper. If yes, write the batched version. If chunking is needed, size it as above.
 
 ## References
 

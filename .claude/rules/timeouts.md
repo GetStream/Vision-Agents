@@ -7,7 +7,11 @@ paths:
 
 ## Context Timeouts
 
-All outbound calls (DB, HTTP, gRPC) must be bounded by a context timeout. Always `defer cancel()`.
+Every request/response call (a DB query, an HTTP or gRPC request) must be bounded by a context timeout. Always `defer cancel()`.
+
+A long-lived stream (an STT or TTS websocket, a realtime model session) is not: a fixed deadline would
+end the call mid-conversation. Bound its setup instead (`websocket.Dialer{HandshakeTimeout: ...}`, as
+in `internal/stt`) and let the session's own context end it.
 
 ```go
 ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -71,4 +75,4 @@ When the HTTP server sets a request-level timeout in middleware, handlers don't 
 
 A request-path `ctx` carries the request deadline. The unbounded case is any context derived from
 `context.Background()` or `context.TODO()` — background workers and goroutines detached from a request.
-Every outbound call made from one of those needs its own `context.WithTimeout`, as in the example at the top.
+Every request/response call made from one of those needs its own `context.WithTimeout`, as in the example at the top.
