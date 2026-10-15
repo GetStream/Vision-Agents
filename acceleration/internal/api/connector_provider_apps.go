@@ -539,14 +539,14 @@ func (s *Server) managedConnector(ctx context.Context, customerID, id string) (c
 		return core.Manifest{}, err
 	}
 	manifest := definition.Manifest
-	if err := managedBy(manifest); err != nil {
+	if err := whyNotManaged(manifest); err != nil {
 		return core.Manifest{}, err
 	}
 	return manifest, nil
 }
 
-// managedBy is why the router cannot create a Slack app for the connector, or nil.
-func managedBy(manifest core.Manifest) error {
+// whyNotManaged is the error saying why the router cannot create a Slack app for the connector, or nil when it can.
+func whyNotManaged(manifest core.Manifest) error {
 	if !slackapps.Serves(manifest) {
 		return invalidRequest(fmt.Sprintf("%s does not authorize at Slack, so the router creates no app for it", manifest.ID))
 	}

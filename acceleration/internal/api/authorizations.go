@@ -364,7 +364,7 @@ func (c consents) begin(ctx context.Context, connection store.ConnectorConnectio
 	// says how to give it one.
 	if errors.Is(err, oauth2code.ErrNoClient) {
 		if failure, ok := missingOAuthClient(err, manifest, connection.ConnectorID, connectorCallbackURL(c.publicURL),
-			c.providerApps && managedBy(latest.Manifest) == nil); ok {
+			c.providerApps && whyNotManaged(latest.Manifest) == nil); ok {
 			return Authorization{}, failure
 		}
 	}
@@ -865,7 +865,7 @@ func missingOAuthClient(err error, manifest core.ResolvedManifest, connectorID, 
 		ways = append(ways, fmt.Sprintf("put the app's own OAuth client with PUT /v1/agents/connectors/%s/oauth-client, "+
 			"giving %s; the client must list the redirect URI %s", connectorID, takes, redirectURI))
 	}
-	// providerApp is whether PUT provider-app would take the connector (managedBy) on a
+	// providerApp is whether PUT provider-app would take the connector (whyNotManaged) on a
 	// deployment that serves it (setConnectorProviderApp).
 	if providerApp && slices.Contains(manifest.Client.Registration, core.ClientManaged) {
 		// What setConnectorProviderApp needs the first time (ConnectorProviderAppRequest): the

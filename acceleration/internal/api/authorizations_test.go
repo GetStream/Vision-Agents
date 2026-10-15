@@ -29,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -858,6 +859,24 @@ func (s *AuthorizationsSuite) TestAConsentWithoutAClientNamesNoProviderAppWhereT
 	_, failure = s.consentFailure("slack_bot")
 	s.NotContains(failure.Message, "provider-app", "a public URL that is not https")
 	s.Contains(failure.Message, "oauth-client")
+}
+
+// TestAChatConsentWithoutAClientNamesProviderAppOnlyOnHTTPS (AI-1357): ConnectorConsents, the
+// consent a session's tool call begins, decides the same as the API's own: PUT provider-app
+// answers not_configured without an https ROUTER_PUBLIC_URL (setConnectorProviderApp), so an
+// http one is not told to use it.
+func (s *AuthorizationsSuite) TestAChatConsentWithoutAClientNamesProviderAppOnlyOnHTTPS() {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
+	request := session.ConsentRequest{CustomerID: s.customerID(), ConnectorID: "slack_bot", UserID: "chat-user"}
+
+	_, err := ConnectorConsents(s.store, s.connectors, s.sealer, "https://router.example")(context.Background(), request)
+	s.Require().Error(err)
+	s.Contains(err.Error(), "provider-app", "an https public URL")
+
+	_, err = ConnectorConsents(s.store, s.connectors, s.sealer, "http://router.example")(context.Background(), request)
+	s.Require().Error(err)
+	s.NotContains(err.Error(), "provider-app", "a public URL that is not https")
+	s.Contains(err.Error(), "oauth-client")
 }
 
 // TestAConsentWithoutAClientForAPublicClientAsksForNoSecret (AI-1357): PUT oauth-client
