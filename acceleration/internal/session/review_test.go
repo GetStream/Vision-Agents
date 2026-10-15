@@ -30,6 +30,7 @@ func (s *ReviewSuite) reviewerOver(logs *bytes.Buffer) (*reviewer, *gatedLLM) {
 	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return model, nil })
 	router, err := llmrouter.New(llmrouter.Options{Config: stubConfig(), Registry: reasoning, Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
 	return newReviewer(router, nil, slog.New(slog.NewTextHandler(logs, nil))), model
 }
 
