@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	mathrand "math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,7 @@ type Config struct {
 	Pack              string
 	ScenarioID        string
 	K                 int
+	Seed              *uint64
 	WorldAddr         string
 	CallID            string
 	CallType          string
@@ -133,10 +135,20 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 		if err != nil {
 			return report.Summary{}, err
 		}
+		if cfg.Short && cfg.Seed != nil {
+			ids = sampleShort(scenarios, *cfg.Seed)
+		}
 		scenarios, err = scenario.Filter(scenarios, ids)
 		if err != nil {
 			return report.Summary{}, err
 		}
+	}
+
+	if cfg.Seed != nil {
+		rng := mathrand.New(mathrand.NewPCG(*cfg.Seed, 0))
+		rng.Shuffle(len(scenarios), func(i, j int) {
+			scenarios[i], scenarios[j] = scenarios[j], scenarios[i]
+		})
 	}
 
 	worldSrv := world.New(cfg.Logger)
@@ -222,6 +234,21 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 	}
 	cfg.Logger.Info("wrote report", "dir", out)
 	return sum, nil
+}
+
+// sampleShort gives each scenario category equal weight, regardless of its pool size.
+func sampleShort(scenarios []scenario.Scenario, seed uint64) []string {
+	rng := mathrand.New(mathrand.NewPCG(seed, 0))
+	seen := map[scenario.Category]bool{}
+	var ids []string
+	for _, i := range rng.Perm(len(scenarios)) {
+		sc := scenarios[i]
+		if !seen[sc.Category] {
+			ids = append(ids, sc.ID)
+			seen[sc.Category] = true
+		}
+	}
+	return ids
 }
 
 func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenario.Scenario, trial int, out string) (report.CallResult, error) {
