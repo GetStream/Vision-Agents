@@ -1033,8 +1033,8 @@ type NumberAttachment struct {
 	StreamAppPK int64
 	CallType    string
 	CallID      string
-	// BridgeURI, BridgeUsername and the sealed password are the trunk's address and
-	// credentials. Empty stores nothing, as for a service with no key to seal them under.
+	// BridgeURI and BridgeUsername are the trunk's address, kept whenever a number is attached.
+	// The sealed password is empty for a service with no key to seal it under.
 	BridgeURI                string
 	BridgeUsername           string
 	BridgePasswordSealed     []byte

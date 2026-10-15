@@ -141,6 +141,25 @@ func (s *AppsSuite) TestReattachingAfterRegistrationMovesTheTrunk() {
 	s.Equal([]string{second.TrunkID}, s.own.Trunks())
 }
 
+func (s *AppsSuite) TestAttachingAnAttachedNumberAgainChangesNothing() {
+	// The SDKs attach on every WaitForCall, so the same request arrives on every run.
+	s.ownApp()
+	s.own.OneTrunkPerNumber()
+	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.vendor.inbound = Inbound{}
+
+	again, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.Equal(first.TrunkID, again.TrunkID)
+	s.Equal(first.RouteID, again.RouteID)
+	s.Equal(first.Bridge.URI, again.Bridge.URI)
+	s.Equal([]string{first.TrunkID}, s.own.Trunks())
+	s.Equal([]string{first.RouteID}, s.own.Rules())
+	s.Empty(s.vendor.inbound.E164, "the vendor is not told anything new")
+}
+
 func (s *AppsSuite) TestReleasingAfterRegistrationDeletesTheLinesLeftInTheDeploymentApp() {
 	// The customer may no longer add to the deployment's app, and what the router made
 	// there for it is still the router's to take down.
@@ -401,13 +420,14 @@ func (s *AppsSuite) TestAnAttachedNumbersTrunkCredentialsAreKeptForItsCalls() {
 }
 
 func (s *AppsSuite) TestWithoutASealerANumberStillAttachesButKeepsNoCredentials() {
-	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	attached, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
 	s.Require().NoError(err)
 
 	_, err = s.service.InboundBridge(s.ctx, "twilio", s.e164)
 
 	s.ErrorIs(err, ErrNoSealer)
-	s.Empty(s.number().BridgeURI)
+	s.Empty(s.number().BridgePasswordSealed)
+	s.Equal(attached.Bridge.URI, s.number().BridgeURI, "the address is not secret, so it is kept")
 }
 
 // Telnyx asks per call where to send a caller, and the answer is the stored trunk, so a
@@ -432,15 +452,4 @@ func (s *AppsSuite) TestWithoutASealerATelnyxNumberIsNotAttached() {
 	s.ErrorContains(err, "ROUTER_AUTH_KEK", "the error names what to set")
 	s.Empty(s.deployment.Trunks(), "nothing is made in Stream")
 	s.Empty(telnyx.inbound.E164, "telnyx is not told to send calls anywhere")
-}
-
-func (s *AppsSuite) TestReattachingANumberMovesItToTheNewCallName() {
-	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
-	s.Require().NoError(err)
-	second, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
-	s.Require().NoError(err)
-
-	s.NotEqual(first.TrunkID, second.TrunkID)
-	s.Equal([]string{second.TrunkID}, s.deployment.Trunks(), "the first trunk is removed")
-	s.Equal("sip:"+s.e164+"@sip.example.test", s.vendor.inbound.Bridge.URI)
 }

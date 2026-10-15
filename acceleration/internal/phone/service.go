@@ -454,6 +454,13 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 			held.Vendor, ErrNoSealer))
 	}
 
+	// The same request is sent on every run of a program waiting for calls, so a number
+	// already attached in this app is answered with what it has.
+	if held.StreamTrunkID != "" && held.StreamAppPK == pin {
+		return Attached{TrunkID: held.StreamTrunkID, RouteID: held.StreamRouteID,
+			Bridge: Bridge{URI: held.BridgeURI}}, nil
+	}
+
 	allowedIPs, err := trunkAllowlist(declared)
 	if err != nil {
 		return Attached{}, stack.Wrap(err)
@@ -502,14 +509,15 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	record := store.NumberAttachment{
 		TrunkID: trunkID, RouteID: routeID, StreamAppPK: pin, CallType: defaultCallType,
 	}
-	// Stream returns the password only now, and a vendor that asks per call where to send a
-	// caller needs it then. Without a key it is not kept, rather than kept in the clear.
+	// The address is not secret and a repeat attach answers it. Stream returns the password
+	// only now, and a vendor that asks per call where to send a caller needs it then. Without
+	// a key it is not kept, rather than kept in the clear.
+	record.BridgeURI, record.BridgeUsername = bridge.URI, bridge.Username
 	if s.sealer != nil {
 		sealed, err := s.sealer.SealWithAAD(bridge.Password, bridgeAAD(attachment.CustomerID, attachment.E164))
 		if err != nil {
 			return Attached{}, stack.Wrap(err)
 		}
-		record.BridgeURI, record.BridgeUsername = bridge.URI, bridge.Username
 		record.BridgePasswordSealed, record.BridgePasswordKEKVersion = sealed, s.sealer.CurrentVersion()
 	}
 
