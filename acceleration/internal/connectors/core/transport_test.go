@@ -405,6 +405,67 @@ func (s *TransportsSuite) TestA5xxClosedUnreadKeepsTheStartOfItsBody() {
 	s.Equal(page[:1024], exchange.ErrorBody())
 }
 
+// closedFast is how long a Close of a body that has fully arrived may take: it reads what is
+// there and returns, where waiting out closeReadWait (50 ms, not exported) would not. Half of
+// that, so a timer that fires fails it, and far above what a loopback read takes. A choice.
+const closedFast = 25 * time.Millisecond
+
+// TestAFullyArrivedBodyClosedUnreadClosesAtOnce: a 502 whose page came whole, whether it is
+// under or over a KiB, is read by Close from what is already there, so Close does not wait
+// closeReadWait for a body that has nothing more to give. The body is recorded all the same.
+func (s *TransportsSuite) TestAFullyArrivedBodyClosedUnreadClosesAtOnce() {
+	long := "<html>" + strings.Repeat("bad gateway ", 256) + "</html>"
+	cases := []struct{ name, page, kept string }{
+		{"under a KiB", "<html>bad gateway</html>", "<html>bad gateway</html>"},
+		{"over a KiB", long, long[:1024]},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			s.provider.answer(http.StatusBadGateway, nil, c.page)
+			ctx, exchange := core.WithExchange(context.Background())
+			response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+			s.Require().NoError(err)
+			// Let the page reach the client's connection before Close, as it does when the
+			// caller does other work between the headers and the Close.
+			time.Sleep(20 * time.Millisecond)
+
+			started := time.Now()
+			s.Require().NoError(response.Body.Close())
+
+			s.Less(time.Since(started), closedFast)
+			s.Equal(c.kept, exchange.ErrorBody())
+		})
+	}
+}
+
+// TestAWholeChunkedBodyEndingInTheStartOfATokenIsKeptUncut: the body ends on "t", the first
+// byte of the token "token-1", and its end comes in a chunk of its own after the text, so
+// the last read returns no bytes, only io.EOF. The body is whole, so nothing of it is cut.
+func (s *TransportsSuite) TestAWholeChunkedBodyEndingInTheStartOfATokenIsKeptUncut() {
+	cases := []struct{ name, url, said string }{
+		{"token", "/mcp", "invalid request, see the docs at"},
+		{"path", "/primary/mcp", "not found: /"},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			s.provider.respondWith(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, c.said)
+				w.(http.Flusher).Flush()
+				// The terminating chunk is sent after the text has been read.
+				time.Sleep(50 * time.Millisecond)
+			})
+			ctx, exchange := core.WithExchange(context.Background())
+
+			response, err := s.postWith(ctx, s.client(), s.provider.URL+c.url)
+
+			s.Require().NoError(err)
+			s.Equal(c.said, s.read(response))
+			s.Equal(c.said, exchange.ErrorBody())
+		})
+	}
+}
+
 // TestAClosedBodyIsNotReadNearTheRequestsDeadline: with 90 ms left, less than twice
 // closeReadWait, Close reads nothing more, so the call still ends before its deadline. The
 // provider sends its body 20 ms after the headers, inside the wait Close would have.
