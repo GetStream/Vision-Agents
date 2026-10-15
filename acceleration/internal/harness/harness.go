@@ -112,6 +112,8 @@ type noted struct {
 	quiet bool
 	// turn is the reply handed this note, empty while no reply has been.
 	turn string
+	// origin is the turn that requested the work, even before any reply takes its result.
+	origin string
 }
 
 // Turn is what the harness is asked to answer.
@@ -161,6 +163,9 @@ type Harness struct {
 	// notes are what has come back from the subagent since the fast model last spoke.
 	// They are folded into the next prompt, and forgotten once that reply has finished.
 	notes []noted
+	// cancelledTurns also excludes results that finished before cancellation but have yet
+	// to be consumed. Notes and their originating turns are retired under the same lock.
+	cancelledTurns map[string]string
 	// reporting is the skills whose answers the reply being written was handed, so it can
 	// be stopped from handing the same work back.
 	reporting []string
@@ -508,6 +513,13 @@ func (h *Harness) CancelDecision(candidateID string) error {
 
 // CancelTurn abandons delegated work whose conversational premise changed.
 func (h *Harness) CancelTurn(turnID, reason string) {
+	h.mu.Lock()
+	if h.cancelledTurns == nil {
+		h.cancelledTurns = make(map[string]string)
+	}
+	h.cancelledTurns[turnID] = reason
+	h.notes = slices.DeleteFunc(h.notes, func(written noted) bool { return written.origin == turnID })
+	h.mu.Unlock()
 	if h.tasks != nil {
 		h.tasks.CancelTurn(turnID, reason)
 	}
@@ -818,15 +830,21 @@ func (h *Harness) consumeTasks() {
 			h.finishCompaction(result)
 			continue
 		}
+		h.mu.Lock()
+		if reason, cancelled := h.cancelledTurns[result.TurnID]; cancelled {
+			result.State, result.Reason = Cancelled, reason
+			result.Text, result.Question = "", ""
+			result.Err, result.Files = nil, nil
+		}
 		if written := note(result); written != "" {
-			h.mu.Lock()
 			h.notes = append(h.notes, noted{
 				skill:  result.Skill,
 				text:   written,
 				asking: result.Question != "",
+				origin: result.TurnID,
 			})
-			h.mu.Unlock()
 		}
+		h.mu.Unlock()
 		h.emitter.Send(Settled{Result: result})
 	}
 }

@@ -40,6 +40,7 @@ const (
 type Result struct {
 	Evidence []string
 	TaskID   string
+	TurnID   string
 	Skill    string
 	State    State
 	// Text is the answer, when there is one.
