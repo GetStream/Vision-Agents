@@ -350,6 +350,81 @@ func (s *HarnessSuite) TestAFileTheCodeDidNotWriteIsNamed() {
 	s.Contains(told, "were not written, or were too large to return: /tmp/render.png")
 }
 
+// library answers questions as the knowledge base or the web would, recording what was
+// asked and on which turn.
+type library struct {
+	mu     sync.Mutex
+	answer string
+	err    error
+	asked  []string
+	turns  []string
+}
+
+func (l *library) ask(_ context.Context, turnID, query string) (string, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.asked = append(l.asked, query)
+	l.turns = append(l.turns, turnID)
+	return l.answer, l.err
+}
+
+func (l *library) questions() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.asked...)
+}
+
+func askFor(id, tool, query string) []llm.ToolCall {
+	return []llm.ToolCall{{ID: id, Name: tool, Arguments: `{"query":` + strconv.Quote(query) + `}`}}
+}
+
+func (s *HarnessSuite) TestTheSubagentLooksThingsUpAndSearchesAcrossRounds() {
+	s.knowledge = &library{answer: "The handbook says nothing about GPUs."}
+	s.web = &library{answer: "The H200 shipped in 2024."}
+	s.build(true)
+	s.slow.calls = [][]llm.ToolCall{askFor("call-1", "lookup", "latest GPU"), askFor("call-2", "search", "latest Nvidia GPU")}
+	s.slow.automatic = "The latest is the H200."
+	s.respond("turn-1", "what is the latest GPU")
+
+	s.reply("turn-1", `<ask skill="think">what is the latest GPU</ask>`)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Done, settled.State)
+	s.Equal("The latest is the H200.", settled.Text)
+	s.Equal([]string{"latest GPU"}, s.knowledge.questions())
+	s.Equal([]string{"latest Nvidia GPU"}, s.web.questions())
+	s.Equal([]string{"turn-1"}, s.web.turns, "what it found is told about the turn that asked")
+
+	first := s.slow.requests()[0]
+	var offered []string
+	for _, tool := range first.Tools {
+		offered = append(offered, tool.Name)
+	}
+	s.Equal([]string{"lookup", "search"}, offered)
+	s.Contains(first.Instructions, "knowledge base (lookup) before the web (search)")
+
+	s.Require().Len(s.slow.requests(), 3)
+	found := s.slow.requests()[2].Input[len(s.slow.requests()[2].Input)-1]
+	s.Equal("call-2", found.ToolCallID)
+	s.Equal("The H200 shipped in 2024.", found.Content)
+}
+
+func (s *HarnessSuite) TestASearchThatFailedIsToldToTheSubagent() {
+	s.web = &library{err: errors.New("search is down")}
+	s.build(true)
+	s.slow.calls = [][]llm.ToolCall{askFor("call-1", "search", "latest Nvidia GPU")}
+	s.slow.automatic = "I could not check."
+	s.respond("turn-1", "what is the latest GPU")
+
+	s.reply("turn-1", `<ask skill="think">what is the latest GPU</ask>`)
+
+	s.awaitSettled(1)
+	s.Require().Len(s.slow.requests(), 2)
+	s.NotContains(s.slow.requests()[0].Instructions, "(lookup)", "there is no order to keep with one source")
+	told := s.slow.requests()[1].Input[len(s.slow.requests()[1].Input)-1].Content
+	s.Contains(told, "search is down")
+}
+
 // pdfSkills is a stored skill that came as a folder, with a reference and a script.
 func pdfSkills() Skills {
 	return Skills{

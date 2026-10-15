@@ -56,6 +56,10 @@ type manager struct {
 	// publish puts the files code hands back where the caller can see them. Nil means
 	// there is nowhere to, and the subagent is told so.
 	publish sandbox.Publisher
+	// lookup and search answer the subagent out of the knowledge base and the web. Nil
+	// means the tool is not offered.
+	lookup func(ctx context.Context, turnID, query string) (string, error)
+	search func(ctx context.Context, turnID, query string) (string, error)
 	// overwrites is what the caller asked to change about how the model answers, written
 	// over delegated work as well as over the conversation itself: somebody who asked for
 	// more thinking meant the thinking, which is what runs here.
@@ -242,6 +246,9 @@ func (m *manager) start(created *task) {
 			created.bundle = loaded.Files
 			created.instructions += "\n\n" + Listing(created.skill, slices.Sorted(maps.Keys(loaded.Files)), m.box != nil)
 		}
+	}
+	if m.lookup != nil && m.search != nil {
+		created.instructions += "\n\nAlways ask the knowledge base (lookup) before the web (search)."
 	}
 	if created.capture && !llm.HasImage(created.messages) {
 		if m.capture == nil {
@@ -536,7 +543,8 @@ func (m *manager) consume(running *task, stream *llm.Stream) llm.Response {
 }
 
 // tools are what the subagent may do rather than say: run code when there is somewhere to
-// run it, and read the skill's own files when it brought some.
+// run it, read the skill's own files when it brought some, and look things up in the
+// knowledge base and on the web when the agent can.
 func (m *manager) tools(running *task) []llm.Tool {
 	var tools []llm.Tool
 	if m.box != nil {
@@ -545,7 +553,38 @@ func (m *manager) tools(running *task) []llm.Tool {
 	if len(running.bundle) > 0 {
 		tools = append(tools, readFileTool(slices.Sorted(maps.Keys(running.bundle))))
 	}
+	if m.lookup != nil {
+		tools = append(tools, queryTool(subagentLookupTool, "Look something up in the knowledge base, which is "+
+			"what this business has written down: prices, policies, how a product works. What it says is the "+
+			"answer the business wants given, even where the web says otherwise.", "What to look for, in the "+
+			"terms the question used."))
+	}
+	if m.search != nil {
+		tools = append(tools, queryTool(subagentSearchTool, "Search the web for what is true right now: news, "+
+			"releases, prices, anything that depends on today rather than on what you know. What you remember "+
+			"about any of these is out of date.", "What to find out, written as you would type it into a "+
+			"search box."))
+	}
 	return tools
+}
+
+// subagentLookupTool and subagentSearchTool are the names the subagent knows the knowledge
+// base and the web by, the same the model holding the conversation knows them by.
+const (
+	subagentLookupTool = "lookup"
+	subagentSearchTool = "search"
+)
+
+func queryTool(name, description, query string) llm.Tool {
+	return llm.Tool{
+		Name:        name,
+		Description: description,
+		Parameters: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"query": map[string]any{"type": "string", "description": query}},
+			"required":   []string{"query"},
+		},
+	}
 }
 
 // advance decides what a settled response means for its task: either the task runs the code
@@ -691,6 +730,20 @@ func (m *manager) ran(running *task, call llm.ToolCall) string {
 		}
 		return content
 	}
+	if ask := m.asker(call.Name); ask != nil {
+		var arguments struct {
+			Query string `json:"query"`
+		}
+		if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
+			return "Those arguments are not valid JSON: " + err.Error()
+		}
+		said, err := ask(running.ctx, running.turnID, arguments.Query)
+		if err != nil {
+			m.logger.Warn("the subagent could not look something up", "tool", call.Name, "error", err)
+			return "That did not work: " + err.Error()
+		}
+		return said
+	}
 	if call.Name != sandbox.ToolName || m.box == nil {
 		return "There is no tool called " + call.Name + "."
 	}
@@ -732,6 +785,18 @@ func (m *manager) ran(running *task, call llm.ToolCall) string {
 		said += "\n\nThese files were not written, or were too large to return: " + strings.Join(result.Missing, ", ")
 	}
 	return said
+}
+
+// asker is what answers a call for lookup or search, nil for any other tool or one the
+// agent cannot answer.
+func (m *manager) asker(name string) func(ctx context.Context, turnID, query string) (string, error) {
+	switch name {
+	case subagentLookupTool:
+		return m.lookup
+	case subagentSearchTool:
+		return m.search
+	}
+	return nil
 }
 
 // writeBundle puts a skill's files into the sandbox under skills/<name>/, the first time one

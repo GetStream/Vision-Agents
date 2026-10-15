@@ -32,17 +32,29 @@ func (a *Agent) search(ctx context.Context, call llm.ToolCall) (string, bool, er
 	if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
 		return "", false, fmt.Errorf("agent: could not read the search arguments: %w", err)
 	}
-	question := strings.TrimSpace(arguments.Query)
-	if question == "" {
-		return "", false, errors.New("agent: a search needs something to look for")
-	}
+	said, err := a.searchAnswer(ctx, call.ID, arguments.Query)
+	return said, false, err
+}
 
+// subagentSearch is how delegated work searches the web, nil when the agent cannot.
+func (a *Agent) subagentSearch() func(ctx context.Context, turnID, query string) (string, error) {
+	if a.searcher == nil {
+		return nil
+	}
+	return a.searchAnswer
+}
+
+func (a *Agent) searchAnswer(ctx context.Context, turnID, query string) (string, error) {
+	question := strings.TrimSpace(query)
+	if question == "" {
+		return "", errors.New("agent: a search needs something to look for")
+	}
 	found, err := a.searcher.Search(ctx, search.Query{Text: question})
 	if err != nil {
-		return "", false, fmt.Errorf("agent: search %q: %w", question, err)
+		return "", fmt.Errorf("agent: search %q: %w", question, err)
 	}
-	a.emitter.Send(Searched{TurnID: call.ID, Query: question, Results: len(found.Documents)})
-	return search.Prompt(found), false, nil
+	a.emitter.Send(Searched{TurnID: turnID, Query: question, Results: len(found.Documents)})
+	return search.Prompt(found), nil
 }
 
 // startSearching opens the search session, so the provider routing chose is settled before

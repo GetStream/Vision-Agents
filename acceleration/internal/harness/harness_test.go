@@ -196,6 +196,9 @@ type HarnessSuite struct {
 	shelf *shelf
 	// skills are what the next harness offers.
 	skills Skills
+	// knowledge and web, when set, answer the next harness's subagent's lookups and searches.
+	knowledge *library
+	web       *library
 
 	harness *Harness
 	events  *collector
@@ -211,6 +214,8 @@ func (s *HarnessSuite) SetupTest() {
 	s.box = nil
 	s.shelf = nil
 	s.skills = testSkills()
+	s.knowledge = nil
+	s.web = nil
 }
 
 // collector drains a harness's events for the life of one test, because the emitter
@@ -281,6 +286,12 @@ func (s *HarnessSuite) build(delegating bool) {
 	}
 	if s.shelf != nil {
 		options.Publish = s.shelf.publish
+	}
+	if s.knowledge != nil {
+		options.Lookup = s.knowledge.ask
+	}
+	if s.web != nil {
+		options.Search = s.web.ask
 	}
 
 	harness, err := New(options)
