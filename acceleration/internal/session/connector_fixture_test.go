@@ -307,6 +307,9 @@ type accountsProvider struct {
 	// limited answers tools/call of an account with 429 and the Retry-After it maps to, none
 	// when that is "" (RFC 6585 section 4: the header is a MAY).
 	limited map[string]string
+	// answers answers tools/call of an account with a fixed HTTP answer instead of the MCP
+	// server's (answer).
+	answers map[string]fixedAnswer
 	// servers are the accounts' MCP servers, by account.
 	servers map[string]*mcpsdk.Server
 }
@@ -316,7 +319,8 @@ type accountsProvider struct {
 const slowFor = 2 * time.Second
 
 func newAccountsProvider(s *connectorFixture) *accountsProvider {
-	p := &accountsProvider{called: map[string]int{}, methods: map[string][]string{}, limited: map[string]string{}}
+	p := &accountsProvider{called: map[string]int{}, methods: map[string][]string{}, limited: map[string]string{},
+		answers: map[string]fixedAnswer{}}
 	servers := map[string]*mcpsdk.Server{}
 	for _, account := range []string{"primary", "secondary", "moved"} {
 		servers[account] = accountServer(account)
@@ -355,7 +359,20 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 		}
 		streams := p.streams
 		retryAfter, limited := p.limited[account]
+		fixed, answers := p.answers[account]
 		p.mu.Unlock()
+		if answers && message.Method == "tools/call" {
+			for name, values := range fixed.header {
+				w.Header()[name] = values
+			}
+			w.WriteHeader(fixed.status)
+			_, _ = io.WriteString(w, fixed.body)
+			if fixed.then != nil {
+				w.(http.Flusher).Flush()
+				fixed.then(w, r)
+			}
+			return
+		}
 		if limited && message.Method == "tools/call" {
 			if retryAfter != "" {
 				w.Header().Set("Retry-After", retryAfter)
@@ -461,6 +478,7 @@ func (p *accountsProvider) forget() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.called, p.methods, p.streams, p.limited = map[string]int{}, map[string][]string{}, false, map[string]string{}
+	p.answers = map[string]fixedAnswer{}
 	for account := range p.servers {
 		p.servers[account] = accountServer(account)
 	}
@@ -471,6 +489,31 @@ func (p *accountsProvider) limit(account, retryAfter string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.limited[account] = retryAfter
+}
+
+// fixedAnswer is an HTTP answer a provider gives whatever it was asked.
+type fixedAnswer struct {
+	status int
+	header http.Header
+	body   string
+	// then, when set, goes on with the body once body is sent: it stalls or drips the rest.
+	then func(http.ResponseWriter, *http.Request)
+}
+
+// answer has account answer tools/call with status, header and body, until forget.
+func (p *accountsProvider) answer(account string, status int, header http.Header, body string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.answers[account] = fixedAnswer{status: status, header: header, body: body}
+}
+
+// answerThen is answer, with then going on with the body once body is sent.
+func (p *accountsProvider) answerThen(account string, status int, header http.Header, body string,
+	then func(http.ResponseWriter, *http.Request),
+) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.answers[account] = fixedAnswer{status: status, header: header, body: body, then: then}
 }
 
 // lift ends every limit.

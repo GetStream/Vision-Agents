@@ -26,6 +26,17 @@ const maxClassifiedBody = 1 << 20
 // costs that connection, not the client's Timeout.
 const maxDrainedBody = 2 << 10
 
+// maxErrorExcerpt caps what of a 4xx's or a 5xx's body an Exchange keeps for the dispatcher's
+// log line: 1 KiB, the ticket's choice (AI-1243), the cap of provider_message on that line
+// (session.providerMessageBytes). The body stays readable for the caller.
+const maxErrorExcerpt = 1 << 10
+
+// closeReadWait caps how long a Close of a 4xx's or a 5xx's body that was read short of
+// maxErrorExcerpt waits for the rest of it (recordedBody.Close). It is net/http's own wait for
+// the rest of a body closed unread, before it gives the connection up (maxPostCloseReadTime,
+// net/http/transport.go:2425 in go1.27.0), which that Close then spends as well.
+const closeReadWait = 50 * time.Millisecond
+
 // maxAttempts is how often one request is sent with a credential the provider may refuse:
 // the design's «On a 401 the Router calls Invalidate, refreshes and retries once»
 // (docs/connectors/channels.md on connectors/planning, «The proxy»; subtasks.md T44, «On a 401
@@ -195,12 +206,20 @@ func (c *credentialed) RoundTrip(request *http.Request) (*http.Response, error) 
 		return nil, err
 	}
 	for attempt := 1; ; attempt++ {
-		exchange.sending()
+		exchange.sending(request.URL.Host)
 		response, err := c.scheme.Wrap(c.base, credential).RoundTrip(request)
 		if err != nil {
 			exchange.answered(0, err)
 		} else {
 			exchange.answered(response.StatusCode, nil)
+			// The start of a 4xx's or a 5xx's body is kept for the dispatcher's log line, as
+			// its reader reads it: nothing is read here, so the answer reaches the caller as
+			// soon as its headers do (recordedBody). Only for a request whose context carries
+			// an Exchange, as the 429 below.
+			if exchange != nil && response.StatusCode >= http.StatusBadRequest {
+				exchange.failedWith(response.Header)
+				response.Body = recordBody(request, response.Body, exchange, redactionOf(request, credential))
+			}
 			// A 429 (RFC 6585 section 4) is read for the session's dispatcher, which holds
 			// further calls until its Retry-After passes (Limiter). Every scheme's Classify
 			// makes a 429 RateLimited with the Retry-After it carries (contracttest

@@ -98,3 +98,23 @@ func (s *ProviderMessageSuite) TestAMessageOfOneKiBIsKeptWhole() {
 
 	s.Equal(text, providerMessage(&core.ToolError{Message: text}))
 }
+
+// TestABodyThatEndsInsideARuneLosesThatRune: the transport keeps 1 KiB of a body
+// (core.Exchange.ErrorBody), which can end on the first two bytes of a 3-byte rune.
+func (s *ProviderMessageSuite) TestABodyThatEndsInsideARuneLosesThatRune() {
+	kept := strings.Repeat("a", providerMessageBytes-2) + "€"[:2]
+
+	s.Equal(strings.Repeat("a", providerMessageBytes-2), providerBody(kept))
+}
+
+func (s *ProviderMessageSuite) TestABodyThatEndsOnAWholeRuneIsKept() {
+	kept := strings.Repeat("a", providerMessageBytes-3) + "€"
+
+	s.Equal(kept, providerBody(kept))
+}
+
+func (s *ProviderMessageSuite) TestABodysURLsKeepOnlyTheirHost() {
+	kept := `{"error":"see https://crm.example/errors/42?access_token=` + queryToken + `"}`
+
+	s.Equal(`{"error":"see https://crm.example"}`, providerBody(kept))
+}

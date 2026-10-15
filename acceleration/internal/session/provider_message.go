@@ -28,7 +28,35 @@ func providerMessage(err error) string {
 	if err == nil {
 		return ""
 	}
-	return cutAtRune(anyURL.ReplaceAllStringFunc(err.Error(), origin), providerMessageBytes)
+	return providerText(err.Error())
+}
+
+// providerText is text a provider wrote, such as the start of its error body
+// (core.Exchange.ErrorBody), with every http or https URL in it kept to its scheme and host,
+// cut to providerMessageBytes at a UTF-8 boundary: what providerMessage does to an error's text.
+func providerText(text string) string {
+	return cutAtRune(anyURL.ReplaceAllStringFunc(text, origin), providerMessageBytes)
+}
+
+// providerBody is the start of a 4xx's or a 5xx's body as its log line has it: what the
+// transport kept (core.Exchange.ErrorBody) without the UTF-8 sequence its 1 KiB cut may end
+// inside, through providerText.
+func providerBody(body string) string {
+	return providerText(wholeRunes(body))
+}
+
+// wholeRunes is text without the UTF-8 sequence its last bytes start and do not finish; text
+// that ends on a whole rune, or is not UTF-8, is unchanged.
+func wholeRunes(text string) string {
+	for back := 1; back < utf8.UTFMax && back <= len(text); back++ {
+		if start := len(text) - back; utf8.RuneStart(text[start]) {
+			if !utf8.FullRuneInString(text[start:]) {
+				return text[:start]
+			}
+			return text
+		}
+	}
+	return text
 }
 
 // anyURL is an http or https URL in an error's text, up to the space or quote that ends it.

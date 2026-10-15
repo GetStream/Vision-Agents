@@ -5,7 +5,9 @@ package session
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -56,9 +58,58 @@ func (s *CallLogSuite) TestAnIsErrorAnswerLogsTheToolsWordsWithTheRowsNamesAndID
 	for _, field := range []string{"level=WARN", "customer=" + s.customerID, "connection=" + app,
 		"connector=" + s.connectorID, "binding=crm", "tool=fails", "session=" + spec.ID, "invocation=" + row.ID,
 		"error_type=external_server", fmt.Sprintf("latency_ms=%d ", row.LatencyMs), "provider_status=200",
-		`provider_message="the record is locked"`} {
+		`provider_message="the record is locked"`, "provider_host=" + s.providerHost(), `provider_body=""`} {
 		s.Contains(line, field)
 	}
+	s.NotContains(line, "www_authenticate=")
+	s.NotContains(line, "retry_after=")
+}
+
+// TestA403LogsTheHostTheBodyAndTheChallenge: the provider refuses with a JSON body and a
+// cookie; the line has the body and the challenge, and neither the cookie nor the token
+// (AI-1243).
+func (s *CallLogSuite) TestA403LogsTheHostTheBodyAndTheChallenge() {
+	app := s.connection("", "primary")
+	d, logged := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
+	s.provider.answer("primary", http.StatusForbidden, http.Header{"Content-Type": {"application/json"},
+		"Www-Authenticate": {`Bearer realm="crm"`}, "Set-Cookie": {"session=" + setCookieSecret}},
+		`{"error":"forbidden","message":"this app may not read contacts"}`)
+
+	_, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().Error(err)
+	line := s.onlyFailedLine(logged)
+	for _, field := range []string{"error_type=customer_auth", "provider_status=403", "provider_host=" + s.providerHost() + " ",
+		`provider_body="{\"error\":\"forbidden\",\"message\":\"this app may not read contacts\"}"`,
+		`www_authenticate="Bearer realm=\"crm\""`} {
+		s.Contains(line, field)
+	}
+	s.NotContains(line, "retry_after=")
+	for _, secret := range []string{setCookieSecret, tokenOf("primary"), "/primary/mcp"} {
+		s.NotContains(logged.String(), secret)
+	}
+}
+
+// TestA5xxsBodyIsCutAtARuneAndItsURLsKeepTheirHost: a 502 with a 3 KiB page whose kept KiB
+// ends inside a rune, a status page URL with a token, and a Retry-After.
+func (s *CallLogSuite) TestA5xxsBodyIsCutAtARuneAndItsURLsKeepTheirHost() {
+	app := s.connection("", "primary")
+	d, logged := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
+	said := "bad gateway, see https://status.crm.example/incidents?token=" + queryToken + " "
+	s.Require().NotZero((providerMessageBytes-len(said))%3, "the KiB ends inside a 3-byte rune")
+	s.provider.answer("primary", http.StatusBadGateway, http.Header{"Retry-After": {"120"}}, said+strings.Repeat("€", 1000))
+
+	_, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().Error(err)
+	line := s.onlyFailedLine(logged)
+	kept := "bad gateway, see https://status.crm.example " + strings.Repeat("€", (providerMessageBytes-len(said))/3)
+	for _, field := range []string{"error_type=external_server", "provider_status=502",
+		"provider_host=" + s.providerHost() + " ", `provider_body="` + kept + `"`, "retry_after=120"} {
+		s.Contains(line, field)
+	}
+	s.NotContains(line, "www_authenticate=")
+	s.NotContains(logged.String(), queryToken)
 }
 
 func (s *CallLogSuite) TestARefusedCallLogsTheReason() {
@@ -101,7 +152,10 @@ func (s *CallLogSuite) TestTheLineNamesNoCredential() {
 	line := s.onlyFailedLine(logged)
 	s.Contains(line, "error_type=customer_auth")
 	s.Contains(line, "provider_status=401")
-	for _, secret := range []string{tokenOf("secondary"), tokenOf("primary"), tokenOf("moved"), "Bearer"} {
+	// The provider's challenge, `Bearer error="invalid_token"`, is logged (AI-1243); the
+	// Authorization the router sent is not.
+	s.Contains(line, `www_authenticate="Bearer error=\"invalid_token\""`)
+	for _, secret := range []string{tokenOf("secondary"), tokenOf("primary"), tokenOf("moved"), "Bearer token"} {
 		s.NotContains(logged.String(), secret)
 	}
 }
@@ -122,6 +176,7 @@ func (s *CallLogSuite) TestATimedOutCallLogsNoMessage() {
 	s.Contains(line, "error_type=outcome_unknown")
 	s.Contains(line, "provider_status=200")
 	s.Contains(line, `provider_message=""`)
+	s.Contains(line, "provider_host="+s.providerHost())
 }
 
 // TestARateLimitedCallLogsTheStatusAndNoMessage: the 429 the limiter holds is answered as
@@ -228,6 +283,184 @@ func (s *CallLogSuite) TestWhatTheModelReadsAndEachErrorTypeAreTheBases() {
 			"external_server")(s.call(d, "crm__whoami", "{}"))
 	})
 }
+
+// TestWhatTheModelReadsOfAnErrorAnswerIsTheBases is the control for AI-1243, which reads the
+// start of a 4xx's or a 5xx's body before the MCP client does: every value is what the same
+// calls gave on 11102295 (probe/base-11102295.txt in the AI-1243 ledger, by
+// probe/zz_probe_test.go there). The 400's JSON-RPC error is over 1 KiB, and the client reads
+// its message only from the whole body.
+func (s *CallLogSuite) TestWhatTheModelReadsOfAnErrorAnswerIsTheBases() {
+	jsonRPC := `{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"the CRM is down","data":"` +
+		strings.Repeat("x", 3000) + `"}}`
+	cases := []struct {
+		name, failed, errorType string
+		status                  int
+		header                  http.Header
+		body                    string
+	}{
+		{"403 json", `mcp: crm__whoami: calling "tools/call": sending "tools/call": rejected by transport: ` +
+			"mcp: the server refused the request with 403 Forbidden", "customer_auth", http.StatusForbidden,
+			http.Header{"Content-Type": {"application/json"}, "Www-Authenticate": {`Bearer realm="crm"`},
+				"Set-Cookie": {"session=" + setCookieSecret}},
+			`{"error":"forbidden","message":"this app may not read contacts"}`},
+		{"500 json-rpc over 1 KiB", `mcp: crm__whoami: calling "tools/call": rejected by transport: ` +
+			`sending "tools/call": Internal Server Error`, "external_server", http.StatusInternalServerError,
+			http.Header{"Content-Type": {"application/json"}}, jsonRPC},
+		{"400 json-rpc over 1 KiB", `mcp: crm__whoami: calling "tools/call": sending "tools/call": ` +
+			"the CRM is down: rejected by transport: Bad Request", "external_server", http.StatusBadRequest,
+			http.Header{"Content-Type": {"application/json"}}, jsonRPC},
+		{"502 html with retry-after", `mcp: crm__whoami: calling "tools/call": rejected by transport: ` +
+			`sending "tools/call": Bad Gateway`, "external_server", http.StatusBadGateway,
+			http.Header{"Content-Type": {"text/html"}, "Retry-After": {"120"}},
+			"<html><body>bad gateway, see https://status.crm.example/incidents?token=abc</body></html>"},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			app := s.connection("", "primary")
+			d, _ := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
+			s.provider.answer("primary", c.status, c.header, c.body)
+			s.outcome(app, "", c.failed, c.errorType)(s.call(d, "crm__whoami", "{}"))
+		})
+	}
+}
+
+// TestAnErrorAnswerWhoseBodyStallsIsTheBases: a 4xx or a 5xx whose body stalls or drips,
+// under a binding timeout of 1 s. What the model reads, the error, the row's error_type and
+// how soon the call is back are what the same calls gave on 11102295 (rprobe-base.txt in the
+// AI-1243 ledger): the MCP client closes a 500's, 502's or 503's body unread and the call is
+// back at once, external_server; it reads a 400's to the end, so that one is outcome_unknown
+// there too. The line keeps what came of the body at once.
+func (s *CallLogSuite) TestAnErrorAnswerWhoseBodyStallsIsTheBases() {
+	rejected := `mcp: crm__whoami: calling "tools/call": rejected by transport: sending "tools/call": `
+	cases := []struct {
+		name, body, said, failed, errorType, logged string
+		status                                      int
+		then                                        func(http.ResponseWriter, *http.Request)
+		back                                        time.Duration
+	}{
+		{"500 stalls at once", "", "", rejected + "Internal Server Error", "external_server", `provider_body=""`,
+			http.StatusInternalServerError, holdUntilGone, 500 * time.Millisecond},
+		{"500 sends 100 B then stalls", strings.Repeat("e", 100), "", rejected + "Internal Server Error",
+			"external_server", "provider_body=" + strings.Repeat("e", 100), http.StatusInternalServerError,
+			holdUntilGone, 500 * time.Millisecond},
+		{"502 html stalls", "<html><body>bad gateway", "", rejected + "Bad Gateway", "external_server",
+			`provider_body="<html><body>bad gateway"`, http.StatusBadGateway, holdUntilGone, 500 * time.Millisecond},
+		{"503 drips 40 B over 4 s", "", "", rejected + "Service Unavailable", "external_server", "provider_status=503",
+			http.StatusServiceUnavailable, drip(40), 500 * time.Millisecond},
+		{"400 stalls, read to the end on the base too", `{"jsonrpc":"2.0"`, outcomeUnknown("crm__whoami"), "",
+			"outcome_unknown", "provider_status=400", http.StatusBadRequest, holdUntilGone, 2 * time.Second},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			app := s.connection("", "primary")
+			binding := s.fixed("crm", app, "whoami")
+			binding.TimeoutMs = 1000
+			d, logged := s.logging(s.spec(s.config(binding), "", nil))
+			s.provider.answerThen("primary", c.status, http.Header{"Content-Type": {"text/plain"}}, c.body, c.then)
+
+			started := time.Now()
+			said, err := s.call(d, "crm__whoami", "{}")
+
+			s.Less(time.Since(started), c.back)
+			s.outcome(app, c.said, c.failed, c.errorType)(said, err)
+			s.Contains(s.onlyFailedLine(logged), c.logged)
+		})
+	}
+}
+
+// holdUntilGone holds a provider's answer until the router is gone or five seconds pass.
+func holdUntilGone(_ http.ResponseWriter, r *http.Request) {
+	select {
+	case <-r.Context().Done():
+	case <-time.After(5 * time.Second):
+	}
+}
+
+// drip sends n bytes of a body, one every 100 ms, until the router is gone.
+func drip(n int) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		for range n {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+			_, _ = io.WriteString(w, "d")
+			w.(http.Flusher).Flush()
+		}
+	}
+}
+
+// TestALineKeepsNoPathOrTokenTheProviderEchoes: Express's default 404 names the path it was
+// sent, and a 400 repeats the token it refused (AI-1243).
+func (s *CallLogSuite) TestALineKeepsNoPathOrTokenTheProviderEchoes() {
+	cases := []struct {
+		name, body, logged string
+		status             int
+	}{
+		{"express 404", "<pre>Cannot POST /primary/mcp</pre>", `provider_body="<pre>Cannot POST [redacted]</pre>"`,
+			http.StatusNotFound},
+		{"spring error json", `{"status":404,"error":"Not Found","path":"/primary/mcp"}`,
+			`provider_body="{\"status\":404,\"error\":\"Not Found\",\"path\":\"[redacted]\"}"`, http.StatusNotFound},
+		{"echoed token", "invalid token " + tokenOf("primary"), `provider_body="invalid token [redacted]"`,
+			http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			app := s.connection("", "primary")
+			d, logged := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
+			s.provider.answer("primary", c.status, http.Header{"Content-Type": {"text/html"}}, c.body)
+
+			_, err := s.call(d, "crm__whoami", "{}")
+
+			s.Require().Error(err)
+			s.Contains(s.onlyFailedLine(logged), c.logged)
+			for _, secret := range []string{"/primary/mcp", tokenOf("primary")} {
+				s.NotContains(logged.String(), secret)
+			}
+		})
+	}
+}
+
+// TestA400LogsItsBody: the MCP client reads a 400's body to the end, and the line has it.
+func (s *CallLogSuite) TestA400LogsItsBody() {
+	app := s.connection("", "primary")
+	d, logged := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
+	s.provider.answer("primary", http.StatusBadRequest, http.Header{"Content-Type": {"text/plain"}}, "the arguments are wrong")
+
+	_, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().Error(err)
+	line := s.onlyFailedLine(logged)
+	s.Contains(line, "provider_status=400")
+	s.Contains(line, `provider_body="the arguments are wrong"`)
+}
+
+// TestEachHeaderIsCutToAKiB: a WWW-Authenticate and a Retry-After of 2 KiB each are logged to
+// their first KiB.
+func (s *CallLogSuite) TestEachHeaderIsCutToAKiB() {
+	app := s.connection("", "primary")
+	d, logged := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
+	challenge := "Bearer realm=" + strings.Repeat("r", 2048)
+	wait := strings.Repeat("9", 2048)
+	s.provider.answer("primary", http.StatusBadGateway, http.Header{"Www-Authenticate": {challenge},
+		"Retry-After": {wait}}, "down")
+
+	_, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().Error(err)
+	line := s.onlyFailedLine(logged)
+	s.Contains(line, `www_authenticate="`+challenge[:providerMessageBytes]+`"`)
+	s.True(strings.HasSuffix(line, " retry_after="+wait[:providerMessageBytes]), "the line ends with the cut Retry-After")
+}
+
+// providerHost is the host and port the suite's provider listens on.
+func (s *CallLogSuite) providerHost() string {
+	return strings.TrimPrefix(s.provider.URL, "https://")
+}
+
+// setCookieSecret is a cookie the provider sets, which no line may name. Synthetic.
+const setCookieSecret = "set-cookie-secret-1243"
 
 // outcome checks one call of connection: what the model read, the error's text ("" for
 // none) and the row's error_type.
