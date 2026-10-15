@@ -944,6 +944,68 @@ func (s *RoutingSuite) TestEachRouterReadsTheOverwritesForItsOwnModality() {
 		"a vendor that both transcribes and speaks must not be handed the other half's settings")
 }
 
+// newRouterReadingOverwrites is a router whose providers read a "mode" overwrite through
+// Settings, as every real factory that takes overwrites does, and record what was built.
+func (s *RoutingSuite) newRouterReadingOverwrites(built *[]string) *Router[*stubProvider] {
+	return s.newRouterWith(func(spec Spec) (*stubProvider, error) {
+		*built = append(*built, spec.Model)
+		var settings struct {
+			Mode string `json:"mode"`
+		}
+		if err := spec.Settings(&settings); err != nil {
+			return nil, err
+		}
+		return &stubProvider{model: spec.Model}, nil
+	})
+}
+
+func (s *RoutingSuite) TestAnOverwriteTheCandidateHasNoFieldForIsRefusedRatherThanRoutedAround() {
+	var built []string
+	router := s.newRouterReadingOverwrites(&built)
+
+	_, _, err := router.Select(s.ctx, Request{
+		CustomerID: "acme",
+		Providers:  []string{"quick/en", "lush/multi"},
+		STT:        options.STT{Overwrites: map[string]json.RawMessage{"quick": json.RawMessage(`{"moode":"fast"}`)}},
+	})
+
+	s.Require().ErrorIs(err, ErrOverwrite)
+	s.ErrorContains(err, "quick/en", "the caller is told whose block it was")
+	s.ErrorContains(err, "moode", "and which field")
+	s.Equal([]string{"en"}, built, "lush is never handed a request whose overwrite was dropped")
+}
+
+func (s *RoutingSuite) TestAnOverwriteOfTheWrongTypeIsRefusedRatherThanRoutedAround() {
+	var built []string
+	router := s.newRouterReadingOverwrites(&built)
+
+	_, _, err := router.Select(s.ctx, Request{
+		CustomerID: "acme",
+		Providers:  []string{"quick/en", "lush/multi"},
+		STT:        options.STT{Overwrites: map[string]json.RawMessage{"quick": json.RawMessage(`{"mode":5}`)}},
+	})
+
+	s.Require().ErrorIs(err, ErrOverwrite)
+	s.ErrorContains(err, "mode")
+	s.Equal([]string{"en"}, built)
+}
+
+func (s *RoutingSuite) TestABuildFailureThatIsNotAnOverwriteStillFailsOver() {
+	// A provider with no key is the provider's problem, not the caller's, so the next
+	// candidate serves, as it always has.
+	router := s.newRouterWith(func(spec Spec) (*stubProvider, error) {
+		if spec.Model == "en" {
+			return nil, errors.New("quick: api key is required")
+		}
+		return &stubProvider{model: spec.Model}, nil
+	})
+
+	_, config, err := router.Select(s.ctx, Request{CustomerID: "acme", Providers: []string{"quick/en", "lush/multi"}})
+
+	s.Require().NoError(err)
+	s.Equal("lush/multi", config.Name())
+}
+
 func (s *RoutingSuite) TestAVoiceNoProviderWasGivenLeavesNobodyToSayIt() {
 	router := s.newRouterResolving(prepared{"nobody": "unused"}, func(spec Spec) (*stubProvider, error) {
 		return &stubProvider{model: spec.Model}, nil

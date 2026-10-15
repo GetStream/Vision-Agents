@@ -50,6 +50,12 @@ type Spec struct {
 	Logger   *slog.Logger
 }
 
+// ErrOverwrite says a provider could not read the overwrites it was given: a field it does
+// not have, or a value of the wrong type. That is the caller's mistake rather than the
+// provider's fault, so the router answers with it instead of trying the next candidate,
+// which would never read the block at all.
+var ErrOverwrite = errors.New("routing: overwrites refused")
+
 // Settings decodes this provider's overwrites into a struct of its own.
 //
 // Unknown fields are rejected, which is the whole point: an escape hatch that silently
@@ -63,7 +69,7 @@ func (s Spec) Settings(into any) error {
 	decoder := json.NewDecoder(bytes.NewReader(s.Overwrites))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("routing: overwrites for %s: %w", s.Model, err))
+		return stack.Wrap(fmt.Errorf("%w for %s: %w", ErrOverwrite, s.Model, err))
 	}
 	return nil
 }

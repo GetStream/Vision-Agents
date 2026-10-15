@@ -379,7 +379,8 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 
 // Select builds and starts the best provider that will have it, falling back to the next
 // candidate when one fails to start. Failures are recorded so the next request routes
-// around them. The caller owns the returned provider and must Close it.
+// around them. An overwrite a candidate cannot read is not routed around: it is returned
+// as ErrOverwrite. The caller owns the returned provider and must Close it.
 func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderConfig, error) {
 	var zero P
 
@@ -432,6 +433,11 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		provider, err := r.startCandidate(ctx, request, candidate)
 		if err == nil {
 			return provider, candidate.Config, nil
+		}
+		// The next candidate is handed its own block, not this one, so falling over to it
+		// would serve the request with the overwrite silently dropped.
+		if errors.Is(err, ErrOverwrite) {
+			return zero, ProviderConfig{}, stack.Wrap(fmt.Errorf("%s: %w", candidate.Config.Name(), err))
 		}
 
 		r.logger.Warn("provider failed to start, trying the next candidate",

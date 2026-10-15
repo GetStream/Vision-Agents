@@ -29,11 +29,13 @@ func DefaultRegistry() *Registry {
 		}
 
 		options := elevenlabs.Options{
-			Model:    spec.Model,
-			VoiceID:  voiceOr(settings.VoiceID, spec.Voice),
-			Language: firstLanguage(spec.LanguageHints),
-			Speed:    number(spec.TTS.Speed),
-			Logger:   spec.Logger,
+			Model:      spec.Model,
+			VoiceID:    voiceOr(settings.VoiceID, spec.Voice),
+			Language:   firstLanguage(spec.LanguageHints),
+			Speed:      number(spec.TTS.Speed),
+			Stability:  spec.TTS.Stability,
+			Similarity: spec.TTS.Similarity,
+			Logger:     spec.Logger,
 		}
 		// The v3 models are served on a different socket, so which endpoint to open is
 		// decided by the model the router picked rather than by a second provider name.

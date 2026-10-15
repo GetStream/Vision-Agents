@@ -1997,6 +1997,8 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- `stability` and `similarity` on a voice's options reach ElevenLabs. `tts-quality` with a `stability` was refused with `no provider can express stability`, and the live ElevenLabs voices always sent stability 0.5 and similarity 0.8 whatever was asked. Flash v2.5 and Multilingual v2 now send both; v3 conversational, v4 and v4 Turbo send `stability` and refuse a `similarity`, which their socket does not take. A value outside 0 to 1 is refused. A request that names neither sends what it did before (AI-1360).
+- A TTS, STT or speech-to-speech overwrite the chosen provider cannot read (an unknown field such as `{"elevenlabs": {"voice_settings": {...}}}`, or a value of the wrong type) fails the request with an error naming the provider and the field. It used to fail over to the next candidate, which never reads another vendor's block, so `tts-quality` was served by Cartesia with the overwrite dropped (AI-1360).
 - New voice replies wait until interruption cleanup finishes, so barge-in no longer loses a queued follow-up.
 - Voicebench no longer treats speech already in progress when the final caller line starts as the agent's answer; it stays open for the next reply.
 - A router stopping with a request still open when its 10 s shutdown grace runs out logs a warning and exits 0. It reported `context deadline exceeded` to Sentry and exited 1, so a rollout that outlasted one slow request paged as a failure (#935).

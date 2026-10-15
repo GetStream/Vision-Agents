@@ -103,6 +103,34 @@ func (s *TTSRouterSuite) newStubbedRouter(built *[]routing.Spec) *Router {
 	return router
 }
 
+// newRouterOverRealElevenLabs is newStubbedRouter with ElevenLabs' own factory in front of
+// its stub, so what that factory refuses is refused here, while nothing is dialled. Every
+// candidate built is recorded as provider/model.
+func (s *TTSRouterSuite) newRouterOverRealElevenLabs(built *[]string) *Router {
+	s.T().Setenv("ELEVENLABS_API_KEY", "test-key")
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+
+	vendor := DefaultRegistry()
+	registry := routing.NewRegistry[tts.TTS]()
+	for _, provider := range config[routing.TTS].Providers {
+		registry.Register(provider.Provider, func(spec routing.Spec) (tts.TTS, error) {
+			*built = append(*built, provider.Provider+"/"+spec.Model)
+			if provider.Provider == "elevenlabs" {
+				if _, err := vendor.Build("elevenlabs", spec); err != nil {
+					return nil, err
+				}
+			}
+			return newStubTTS(), nil
+		})
+	}
+
+	router, err := New(Options{Config: config[routing.TTS], Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return router
+}
+
 // newSession returns a session over a stub provider, so event handling is the only thing
 // under test.
 func (s *TTSRouterSuite) newSession() (*Session, *stubTTS) {
@@ -384,6 +412,89 @@ func (s *TTSRouterSuite) TestRegistryRefusesAnOverwriteTheVendorHasNoFieldFor() 
 
 	s.ErrorContains(err, "delivery_moode",
 		"a misspelt setting has to be reported, since the alternative is silently not sending it")
+}
+
+func (s *TTSRouterSuite) TestAnOverwriteElevenLabsHasNoFieldForIsRefusedRatherThanSpokenByAnotherVoice() {
+	var built []string
+	router := s.newRouterOverRealElevenLabs(&built)
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "tts-quality",
+		Options: options.TTS{Overwrites: map[string]json.RawMessage{
+			"elevenlabs": json.RawMessage(`{"voice_settings":{"speed":1.2}}`),
+		}},
+	})
+
+	s.Require().ErrorIs(err, routing.ErrOverwrite)
+	s.ErrorContains(err, "elevenlabs/eleven_v4")
+	s.ErrorContains(err, "voice_settings")
+	s.Equal([]string{"elevenlabs/eleven_v4"}, built,
+		"cartesia never reads the elevenlabs block, so serving with it would drop the overwrite in silence")
+}
+
+func (s *TTSRouterSuite) TestAVoiceIdOverwriteStillReachesElevenLabsOnTheQualityShortcut() {
+	var built []string
+	router := s.newRouterOverRealElevenLabs(&built)
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "tts-quality",
+		Options: options.TTS{Overwrites: map[string]json.RawMessage{
+			"elevenlabs": json.RawMessage(`{"voice_id":"el-1"}`),
+		}},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("elevenlabs", session.Provider())
+	s.Equal("eleven_v4", session.Model())
+}
+
+func (s *TTSRouterSuite) TestAStabilityOnTheQualityShortcutIsServedByElevenLabs() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+	stability := 0.4
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "tts-quality",
+		Options:    options.TTS{Stability: &stability},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("elevenlabs", session.Provider())
+	s.Equal("eleven_v4", session.Model())
+	s.Require().Len(built, 1)
+	s.Equal(&stability, built[0].TTS.Stability)
+}
+
+func (s *TTSRouterSuite) TestASimilarityOnTheQualityShortcutIsRefusedRatherThanDropped() {
+	var built []string
+	router := s.newRouterOverRealElevenLabs(&built)
+	similarity := 0.7
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "tts-quality",
+		Options:    options.TTS{Similarity: &similarity},
+	})
+
+	s.ErrorContains(err, "takes no similarity",
+		"the dialogue socket has no similarity, and nothing else on the shortcut declares one")
+	s.Equal([]string{"elevenlabs/eleven_v4", "elevenlabs/eleven_v4_turbo"}, built)
+}
+
+func (s *TTSRouterSuite) TestRegistryHandsTheStabilityAndSimilarityToElevenLabs() {
+	s.T().Setenv("ELEVENLABS_API_KEY", "test-key")
+	outside := 1.5
+
+	// Out of range is the one answer the provider gives that shows it was handed the value.
+	_, err := DefaultRegistry().Build("elevenlabs", routing.Spec{Model: "eleven_v4", TTS: options.TTS{Stability: &outside}})
+	s.ErrorContains(err, "stability 1.5 is outside 0 to 1")
+	_, err = DefaultRegistry().Build("elevenlabs", routing.Spec{Model: "eleven_flash_v2_5", TTS: options.TTS{Similarity: &outside}})
+	s.ErrorContains(err, "similarity 1.5 is outside 0 to 1")
 }
 
 func (s *TTSRouterSuite) TestStartRequiresACustomer() {

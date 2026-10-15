@@ -54,6 +54,22 @@ const DefaultSampleRate = 24_000
 // defaultBaseURL is the production endpoint.
 const defaultBaseURL = "wss://api.elevenlabs.io"
 
+// defaultStability and defaultSimilarity open a context the caller asked neither for. They
+// are what this provider always sent, not ElevenLabs' own defaults (0.5 and 0.75,
+// https://elevenlabs.io/docs/api-reference/text-to-speech/v-1-text-to-speech-voice-id-stream-input, opened 2026-10-15).
+const (
+	defaultStability  = 0.5
+	defaultSimilarity = 0.8
+)
+
+// minVoiceSetting and maxVoiceSetting bound stability and similarity_boost: 0 to 1 per
+// https://elevenlabs.io/docs/api-reference/text-to-dialogue/ttd-websocket (opened 2026-10-15).
+// Live, 1.5 or -0.2 on the text-to-speech socket closes it with an unexplained 1011.
+const (
+	minVoiceSetting = 0
+	maxVoiceSetting = 1
+)
+
 // minSpeed and maxSpeed bound voice_settings.speed. A speed outside them is refused rather
 // than clamped, since a caller asking for 1.5 and hearing 1.2 cannot tell it was not honoured.
 const (
@@ -104,6 +120,10 @@ type Options struct {
 	// Speed is the rate of delivery, 1 being the voice's own and zero leaving it there.
 	// ElevenLabs accepts 0.7 to 1.2, and only on this socket: the dialogue models take none.
 	Speed float64
+	// Stability and Similarity are voice_settings, nil for the provider's own default. The
+	// dialogue models take stability and no similarity.
+	Stability  *float64
+	Similarity *float64
 	// SampleRate is the rate to synthesise at, one of supportedSampleRates.
 	SampleRate int
 	// BaseURL overrides the endpoint, for a proxy or a test server.
@@ -202,6 +222,12 @@ func normalize(options Options, fallbackModel string) (Options, *keypool.Pool, *
 		return options, nil, nil, stack.Wrap(fmt.Errorf("elevenlabs: sample rate %d is not one of %v",
 			options.SampleRate, supportedSampleRates))
 	}
+	if err := inRange("stability", options.Stability); err != nil {
+		return options, nil, nil, err
+	}
+	if err := inRange("similarity", options.Similarity); err != nil {
+		return options, nil, nil, err
+	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
 	}
@@ -216,6 +242,15 @@ func normalize(options Options, fallbackModel string) (Options, *keypool.Pool, *
 		logger = slog.Default()
 	}
 	return options, keys, logger, nil
+}
+
+// inRange refuses a voice setting ElevenLabs would not take rather than clamp it, since a
+// caller asking for 1.5 and hearing 1 cannot tell it was not honoured.
+func inRange(name string, value *float64) error {
+	if value == nil || (*value >= minVoiceSetting && *value <= maxVoiceSetting) {
+		return nil
+	}
+	return stack.Wrap(fmt.Errorf("elevenlabs: %s %g is outside %d to %d", name, *value, minVoiceSetting, maxVoiceSetting))
 }
 
 // New validates the options and returns an unstarted provider.
@@ -452,9 +487,13 @@ func (t *TTS) utteranceFor(id string) (*utterance, bool, error) {
 func (t *TTS) openContext(id string) error {
 	// A single space is the documented way to open a context without saying anything yet.
 	message := clientMessage{
-		Text:          " ",
-		ContextID:     id,
-		VoiceSettings: &voiceSettings{Stability: 0.5, SimilarityBoost: 0.8, Speed: t.options.Speed},
+		Text:      " ",
+		ContextID: id,
+		VoiceSettings: &voiceSettings{
+			Stability:       valueOr(t.options.Stability, defaultStability),
+			SimilarityBoost: valueOr(t.options.Similarity, defaultSimilarity),
+			Speed:           t.options.Speed,
+		},
 		// A short first threshold trades a little prosody for audio that starts sooner.
 		Generation: &generationConf{ChunkLengthSchedule: []int{50, 120, 160, 290}},
 	}
@@ -462,6 +501,14 @@ func (t *TTS) openContext(id string) error {
 		return stack.Wrap(fmt.Errorf("elevenlabs: open context: %w", err))
 	}
 	return nil
+}
+
+// valueOr is what was asked for, or the fallback when nothing was.
+func valueOr(asked *float64, fallback float64) float64 {
+	if asked == nil {
+		return fallback
+	}
+	return *asked
 }
 
 func (t *TTS) send(message clientMessage) error {
