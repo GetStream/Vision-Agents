@@ -9,12 +9,16 @@ namespace GetStream\VisionAgents\Generated;
 use GetStream\VisionAgents\Json;
 
 /**
- * How the sandbox is built and how long code may run in it. Only meaningful with a sandbox.
- * Omit it for the provider's own Python sandbox and a 30 second run.
+ * How the sandbox is built, what it may reach and how long code may run in it. Only meaningful
+ * with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second
+ * run.
  */
 final readonly class SandboxOptions
 {
     public function __construct(
+        // Domains code in the sandbox may reach, such as api.example.com. Set, nothing else is reachable, even with n...
+        /** @var list<string>|null */
+        public ?array $allowedDomains = null,
         // CPUs for the sandbox. Zero is the provider's default.
         public ?int $cpu = null,
         // Disk for the sandbox, in GiB. Zero is the provider's default.
@@ -23,6 +27,11 @@ final readonly class SandboxOptions
         public ?string $image = null,
         // Memory for the sandbox, in GiB. Zero is the provider's default.
         public ?int $memoryGb = null,
+        // Whether code in the sandbox may reach the internet. Off by default, and then every outbound connection is b...
+        public ?bool $network = null,
+        // CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set, nothing else is reachable, even with ne...
+        /** @var list<string>|null */
+        public ?array $networkAllowList = null,
         // Shell commands run once on top of the image when it is built, such as installing packages. The provider kee...
         /** @var list<string>|null */
         public ?array $setup = null,
@@ -37,10 +46,13 @@ final readonly class SandboxOptions
     public static function fromArray(array $data): self
     {
         return new self(
+            allowedDomains: array_key_exists('allowed_domains', $data) && $data['allowed_domains'] !== null ? Json::strings($data, 'allowed_domains') : null,
             cpu: array_key_exists('cpu', $data) && $data['cpu'] !== null ? Json::int($data, 'cpu') : null,
             diskGb: array_key_exists('disk_gb', $data) && $data['disk_gb'] !== null ? Json::int($data, 'disk_gb') : null,
             image: array_key_exists('image', $data) && $data['image'] !== null ? Json::string($data, 'image') : null,
             memoryGb: array_key_exists('memory_gb', $data) && $data['memory_gb'] !== null ? Json::int($data, 'memory_gb') : null,
+            network: array_key_exists('network', $data) && $data['network'] !== null ? Json::bool($data, 'network') : null,
+            networkAllowList: array_key_exists('network_allow_list', $data) && $data['network_allow_list'] !== null ? Json::strings($data, 'network_allow_list') : null,
             setup: array_key_exists('setup', $data) && $data['setup'] !== null ? Json::strings($data, 'setup') : null,
             timeoutMs: array_key_exists('timeout_ms', $data) && $data['timeout_ms'] !== null ? Json::int($data, 'timeout_ms') : null,
         );
@@ -54,6 +66,9 @@ final readonly class SandboxOptions
     public function toArray(): array
     {
         $out = [];
+        if ($this->allowedDomains !== null) {
+            $out['allowed_domains'] = $this->allowedDomains;
+        }
         if ($this->cpu !== null) {
             $out['cpu'] = $this->cpu;
         }
@@ -65,6 +80,12 @@ final readonly class SandboxOptions
         }
         if ($this->memoryGb !== null) {
             $out['memory_gb'] = $this->memoryGb;
+        }
+        if ($this->network !== null) {
+            $out['network'] = $this->network;
+        }
+        if ($this->networkAllowList !== null) {
+            $out['network_allow_list'] = $this->networkAllowList;
         }
         if ($this->setup !== null) {
             $out['setup'] = $this->setup;

@@ -329,6 +329,31 @@ final class AgentTest extends TestCase
         self::assertSame(['text' => 'enabled'], $this->router->to('POST', '/v1/agents/sync')[0]->json()['dispatch']);
     }
 
+    public function testSyncSendsHowTheSandboxIsBuiltAndWhatItMayReach(): void
+    {
+        $this->folder();
+        file_put_contents(
+            $this->dir . '/agent.yaml',
+            "name: jean\nsandbox: daytona\nsandbox_options:\n  setup: [pip install bpy==5.2.2]\n  timeout: 5m\n"
+            . "  memory_gb: 4\n  network: true\n  allowed_domains: [api.example.com]\n  network_allow_list: [10.0.0.0/8]\n",
+        );
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        self::assertEquals(
+            [
+                'allowed_domains' => ['api.example.com'],
+                'memory_gb' => 4,
+                'network' => true,
+                'network_allow_list' => ['10.0.0.0/8'],
+                'setup' => ['pip install bpy==5.2.2'],
+                'timeout_ms' => 300000,
+            ],
+            $this->router->to('POST', '/v1/agents/sync')[0]->json()['sandbox_options'],
+        );
+    }
+
     public function testSyncLeavesOutWhatAgentYamlSaysNothingAbout(): void
     {
         $this->folder();
