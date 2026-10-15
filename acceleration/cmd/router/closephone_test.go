@@ -193,6 +193,39 @@ func TestAPeerRequestOutlivingTheGraceAfterADrainIsNotAnError(t *testing.T) {
 	require.Contains(t, logs.String(), "listener=peers")
 }
 
+// servingNothing is a server with no request open, and the address it answers on.
+func servingNothing(t *testing.T) (*http.Server, string) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := &http.Server{
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+		ReadHeaderTimeout: time.Second,
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	go func() { _ = server.Serve(listener) }()
+	require.True(t, answers(listener.Addr().String()))
+	return server, listener.Addr().String()
+}
+
+func TestARouterWithoutADrainStopsAnsweringItsPeers(t *testing.T) {
+	public, _ := servingNothing(t)
+	peers, peerAddress := servingNothing(t)
+
+	err := stopServing(stopping{
+		public:    public,
+		peers:     peers,
+		drainWork: func() {},
+		held:      func() int { return 0 },
+		telephony: idlePhone(t),
+		grace:     testGrace,
+		logger:    slog.New(slog.DiscardHandler),
+	})
+
+	require.NoError(t, err)
+	require.False(t, answers(peerAddress), "the peer listener outlived a router stopping without a drain")
+}
+
 // unclosable closes but says it could not. Besides its deadline, a listener that fails to
 // close is the one error http.Server.Shutdown returns (closeListenersLocked in net/http),
 // and no real listener fails to close on demand.
