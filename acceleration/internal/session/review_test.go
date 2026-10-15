@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -70,6 +71,28 @@ func (s *ReviewSuite) TestAReviewThatFailsWhileTheReviewerIsOpenIsAnError() {
 	s.Contains(logs.String(), "call=call-unreadable")
 	s.Contains(logs.String(), "decode review")
 	s.NotContains(logs.String(), "level=WARN")
+}
+
+// A review that outlives reviewTimeout fails with the reviewer still open, so it stays an
+// error: only a Close may turn a failure into a warning. The bubble's clock runs the 90 s
+// out at once.
+func (s *ReviewSuite) TestAReviewThatRunsOutOfTimeIsAnError() {
+	synctest.Test(s.T(), func(t *testing.T) {
+		var logs bytes.Buffer
+		reviews, model := s.reviewerOver(&logs)
+
+		reviews.Review(store.Call{ID: "call-too-slow", CustomerID: "customer-reviewed"}, "en-low-latency", []spoken{{text: "hello?"}})
+		<-model.entered
+		time.Sleep(reviewTimeout)
+		reviews.running.Wait()
+		reviews.Close()
+		reviews.llm.Close()
+
+		s.Contains(logs.String(), "level=ERROR")
+		s.Contains(logs.String(), "call=call-too-slow")
+		s.Contains(logs.String(), "deadline exceeded")
+		s.NotContains(logs.String(), "level=WARN")
+	})
 }
 
 func (s *ReviewSuite) TestTheCallIsQuotedWithBothSidesNamed() {
