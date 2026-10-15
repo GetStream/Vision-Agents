@@ -114,6 +114,7 @@ Waves 3b–7 shipped the connectors core. Their ledgers are in `_connectors_hand
   - `wave-workflow.md`, `token-efficient-waves.md`, `pr-review-gate-before-merge.md`;
   - `local-db-no-approval.md`, `one-ticket-per-problem.md`, `volt-design-standards.md`, `accelerate-staging-only.md`.
 - **Plan doc:** `acceleration/docs/connectors/subtasks.md` on `origin/connectors/planning`.
+- **Developer feedback (Notion):** [WWSD platform feedback](https://app.notion.com/p/stream-wiki/WWSD-platform-feedback-3fa6a5d7f9f6816ea917cb967a124566) (WWSD = "What Would Stream Do"). Our developers wrote down the issues they hit while working with the platform. Read it before you plan connectors work for developers.
 - **Developer-facing:** the `connectors` and `add-connector` skills in the repo.
 
 ## 7. What to do next
