@@ -3734,7 +3734,7 @@ type ConnectionPage struct {
 	HasMore bool          `json:"has_more"`
 	Items   *[]Connection `json:"items"`
 
-	// NextCursor Pass as cursor for the next page, with the same owner_type and connector_id. Absent on the last one.
+	// NextCursor Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app). Absent on the last one.
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
@@ -7799,8 +7799,8 @@ type ListAgentConfigsParams struct {
 
 // ListConnectionsParams defines parameters for ListConnections.
 type ListConnectionsParams struct {
-	// OwnerType app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id.
-	OwnerType ConnectionOwnerType `form:"owner_type" json:"owner_type"`
+	// OwnerType app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. Omitted is app.
+	OwnerType *ConnectionOwnerType `form:"owner_type,omitempty" json:"owner_type,omitempty"`
 
 	// ConnectorId Keeps one connector's.
 	ConnectorId *string `form:"connector_id,omitempty" json:"connector_id,omitempty"`
@@ -18470,12 +18470,16 @@ func NewListConnectionsRequest(server string, params *ListConnectionsParams) (*h
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "owner_type", params.OwnerType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.OwnerType != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "owner_type", *params.OwnerType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if params.ConnectorId != nil {
