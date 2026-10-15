@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
@@ -101,7 +102,7 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := pluginEntriesComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := mcpServersComplaint(config); !ok {
+	if message, ok := mcpServersComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
 	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, nil)
@@ -181,7 +182,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if message, ok := pluginEntriesComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := mcpServersComplaint(config); !ok {
+	if message, ok := mcpServersComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
 	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, existing.MCPServers)
@@ -1110,8 +1111,10 @@ func renderedPluginEntries(entries []store.PluginEntry) *[]PluginEntry {
 
 // mcpServersComplaint reports what is wrong with the MCP servers a config names, if
 // anything. A name prefixes the server's tools the way a plugin's id does, so it may not be
-// one, nor hold the separator that splits a tool's name from it.
-func mcpServersComplaint(config store.AgentConfig) (string, bool) {
+// one, nor hold the separator that splits a tool's name from it. A session reaches a server
+// only on a public address (plugins.Open dials through egress.NewClient), so one on a private
+// network, loopback or link-local address is refused here rather than saved to fail silently.
+func mcpServersComplaint(ctx context.Context, config store.AgentConfig) (string, bool) {
 	seen := map[string]bool{}
 	for _, server := range config.MCPServers {
 		if strings.Contains(server.Name, plugins.PrefixSeparator) {
@@ -1130,6 +1133,16 @@ func mcpServersComplaint(config store.AgentConfig) (string, bool) {
 		}
 		if err := plugins.CheckToolPatterns(server.Tools); err != nil {
 			return fmt.Sprintf("mcp_servers: %s: %s", server.Name, strings.TrimPrefix(err.Error(), "plugins: ")), false
+		}
+	}
+	// Last, since it resolves each host: the checks above cost nothing. Only the host is
+	// checked, so a path or query the server needs is kept. One answer for every refusal, as
+	// for a custom connector's endpoint: a name that does not resolve is not told apart from
+	// one that resolves to a private address.
+	for _, server := range config.MCPServers {
+		endpoint, _ := url.Parse(server.URL)
+		if err := egress.ValidatePublicHTTPSURL(ctx, (&url.URL{Scheme: endpoint.Scheme, Host: endpoint.Host}).String()); err != nil {
+			return fmt.Sprintf("mcp_servers: %s: only public https URLs are reachable; the router cannot reach an MCP server on a private network, loopback or link-local address", server.Name), false
 		}
 	}
 	return "", true

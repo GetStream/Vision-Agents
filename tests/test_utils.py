@@ -1,13 +1,48 @@
 import asyncio
+import os
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 from vision_agents.core.utils.examples import get_weather_by_location, recorded_call
-from vision_agents.core.utils.utils import cancel_and_wait
+from vision_agents.core.utils.utils import cancel_and_wait, ensure_model
 
 from tests.base_test import BaseTest
 
 AUDIO = Path(__file__).parent / "test_assets" / "saturday_seven_thirty.wav"
+MODEL = b"onnx weights"
+
+
+class ModelServer(ThreadingHTTPServer):
+    """Serves MODEL, first answering with each status in `failures`."""
+
+    def __init__(self) -> None:
+        super().__init__(("127.0.0.1", 0), ModelRequest)
+        self.failures: list[int] = []
+        self.requests = 0
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.server_port}/model.onnx"
+
+
+class ModelRequest(BaseHTTPRequestHandler):
+    server: ModelServer
+
+    def do_GET(self) -> None:
+        self.server.requests += 1
+        if self.server.failures:
+            self.send_error(self.server.failures.pop(0))
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(MODEL)))
+        self.end_headers()
+        self.wfile.write(MODEL)
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
 
 
 class TestRecordedCall:
@@ -108,3 +143,38 @@ class TestCancelAndWait:
 
     async def test_cancel_no_futures(self):
         await cancel_and_wait()
+
+
+class TestEnsureModel:
+    @pytest.fixture
+    def server(self) -> Iterator[ModelServer]:
+        server = ModelServer()
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        yield server
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+    async def test_a_failure_that_may_pass_is_tried_again(
+        self, server: ModelServer, tmp_path: Path
+    ):
+        server.failures = [503]
+        path = tmp_path / "model.onnx"
+
+        await ensure_model(str(path), server.url)
+
+        assert await asyncio.to_thread(path.read_bytes) == MODEL
+        assert server.requests == 2
+        assert await asyncio.to_thread(os.listdir, tmp_path) == ["model.onnx"]
+
+    async def test_a_model_that_is_not_there_is_asked_for_once(
+        self, server: ModelServer, tmp_path: Path
+    ):
+        server.failures = [404]
+
+        with pytest.raises(RuntimeError, match="Failed to download model.onnx"):
+            await ensure_model(str(tmp_path / "model.onnx"), server.url)
+
+        assert server.requests == 1
+        assert await asyncio.to_thread(os.listdir, tmp_path) == []

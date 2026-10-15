@@ -469,7 +469,7 @@ func (m *Manager) patternGrants(ctx context.Context, binding store.ConnectorBind
 	}
 	if len(missed) > 0 {
 		m.logger.Warn("a tool a pattern matches is not offered: the connection no longer lists it with the "+
-			"schema it was pinned at, and a reconnect approves it again",
+			"schema it was pinned at, validate reports it as needs_reapproval, and a reconnect approves it again",
 			"connector", binding.Name, "connection", connection.ID, "tools", missed)
 	}
 	return grants, missed, "", nil

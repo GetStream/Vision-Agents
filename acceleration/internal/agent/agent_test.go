@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -637,8 +638,10 @@ type AgentSuite struct {
 	// performing is what a voice that acts stage directions asks to have said about it.
 	// It is set before joining, because the stub voice is built there.
 	performing string
-	// records is where turns are written, when a test gives the agent a database.
+	// records is where turns are counted, and live where they are kept, when a test gives
+	// the agent a database and a Redis.
 	records *store.Store
+	live    *live.Client
 	// agentID names the agent, so a test writing turns can find its own rows.
 	agentID string
 	// voiceAsked is what the voice was opened with.
@@ -859,6 +862,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		SessionID:          "session-1",
 		Incognito:          s.incognito,
 		Store:              s.records,
+		Live:               s.live,
 		SubagentTarget:     subagentTarget,
 		Skills:             s.skills,
 		Telephony:          calling,
@@ -1270,6 +1274,9 @@ func (s *AgentSuite) TestASecondVoiceAtTheSameMicrophoneIsNotTakenForTheCaller()
 	s.NotContains(asked[0].Input[0].Content, "different voice",
 		"the first voice heard on a track is the caller's")
 	s.Contains(asked[1].Input[0].Content, "different voice")
+	// The caller's answer is asked for on the turn's goroutine, once the flow decision is in,
+	// so it can still be on its way when the second voice has been considered.
+	s.eventually(func() bool { return len(s.model.requests()) > 0 }, "the caller was never answered")
 	s.Len(s.model.requests(), 1, "only the caller was answered")
 }
 

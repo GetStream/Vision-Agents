@@ -616,6 +616,10 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 is `*ConnectionOwnerType`, and nil means the app's own. Code that set `OwnerType: acceleration.ConnectionOwnerTypeApp`
 no longer compiles. Pass `&app` for a variable holding the value, or leave the field nil for the app.
 
+### An agent config refuses an MCP server on a private address
+
+The router reaches only MCP servers on a public https URL. Saving a config (create, replace, patch or `syncAgent`) now answers 400 `mcp_servers: <name>: only public https URLs are reachable` for a server whose host is on a private network (a Tailscale node included), loopback or link-local, or does not resolve. Such a server used to be saved, and then no session could reach it. A config already stored with one still reads.
+
 ## New Features
 
 ### Listing connections without `owner_type` lists the app's own
@@ -623,6 +627,19 @@ no longer compiles. Pass `&app` for a variable holding the value, or leave the f
 `GET /v1/agents/connections` takes `owner_type` as optional. Left out, it lists the app's own
 connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` still
 needs `X-Stream-User-Id`.
+
+### Validate says when a provider changed a tool sessions pinned
+
+`POST /v1/agents/connections/{id}/validate` now compares the tools the provider lists with the
+schema each was pinned at for the connection's current grant, the pin a session takes the
+first time it offers a tool granted by name or by pattern. A tool listed at another schema is
+`status: needs_reapproval`, a new `ConnectionValidationStatus`, with
+`code: connector_tool_schema_changed` and the tools in `changed_tools`, sorted; the connection's
+`last_validation` keeps the status, the code and an error naming them. It used to answer
+`connected` while sessions left the tool out. Sessions still leave it out, and a validate never
+pins it again: a new grant (a consent) approves it. A pinned tool the provider no longer lists
+is not reported. A grant lacking scopes is still `needs_scopes`, since the consent it asks for
+approves the changed tools too. A connection with no changed tool answers as before.
 
 ### A built-in Notion connector
 

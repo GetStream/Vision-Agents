@@ -107,6 +107,9 @@ type Options struct {
 	// AgentID. A bound Athena conversation passes the id from its CID so voice does not
 	// open a second channel.
 	Channel string
+	// Opened says the caller has just made or read Channel, so Start does not ask Stream for
+	// it again.
+	Opened bool
 	// Agent is the user the agent's own replies are written as.
 	Agent User
 	// VisibleTools are the agent config's visible_tools. A shown tool's stored artifacts
@@ -144,6 +147,7 @@ type Log struct {
 	agentID  string
 	channel  string
 	existing bool
+	opened   bool
 	customer string
 	agent    User
 	visible  []string
@@ -208,6 +212,7 @@ func New(options Options) (*Log, error) {
 		agentID:  options.AgentID,
 		channel:  channel,
 		existing: options.Channel != "",
+		opened:   options.Channel != "" && options.Opened,
 		customer: options.CustomerID,
 		agent:    options.Agent,
 		visible:  options.VisibleTools,
@@ -227,19 +232,20 @@ func (l *Log) Start(ctx context.Context) error {
 	if err := l.upsert(ctx, l.agent); err != nil {
 		return err
 	}
-	request := &getstream.GetOrCreateChannelRequest{}
-	if l.existing {
-		state := true
-		request.State = &state
-	} else {
-		request.Data = &getstream.ChannelInput{CreatedByID: &l.agent.ID}
-		if l.customer != "" {
-			request.Data.Custom = map[string]any{conversation.CustomerField: l.customer}
+	if !l.opened {
+		request := &getstream.GetOrCreateChannelRequest{}
+		if l.existing {
+			state := true
+			request.State = &state
+		} else {
+			request.Data = &getstream.ChannelInput{CreatedByID: &l.agent.ID}
+			if l.customer != "" {
+				request.Data.Custom = map[string]any{conversation.CustomerField: l.customer}
+			}
 		}
-	}
-	_, err := l.client.Chat().GetOrCreateChannel(ctx, ChannelType, l.channel, request)
-	if err != nil {
-		return stack.Wrap(err)
+		if _, err := l.client.Chat().GetOrCreateChannel(ctx, ChannelType, l.channel, request); err != nil {
+			return stack.Wrap(err)
+		}
 	}
 
 	l.started.Store(true)
