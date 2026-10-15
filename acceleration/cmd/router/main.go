@@ -511,29 +511,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 	connectorLimiter := newConnectorLimiter(connectorTransports, liveClient, logger)
 
-	// A daily limit is counted in Redis, so a deployment without one caps nothing. That is
-	// the right way round: the limit protects against a customer's end users spending more
-	// than they were meant to, and refusing every request because the counter is missing
-	// would be a worse outage than the one it prevents.
-	var limiter *quota.Limiter
-	limits := quota.Limits{
-		MessagesPerDay: settings.RateLimit.MessagesPerDay,
-		TokensPerDay:   settings.RateLimit.TokensPerDay,
-	}
-	switch {
-	case !limits.Enforced():
-		logger.Warn("no daily limit configured, an end user may spend without bound",
-			"setting", "rate_limit.messages_per_day")
-	case liveClient == nil:
-		logger.Warn("no redis configured, daily limits will not be enforced", "setting", "redis.addr")
-	default:
-		if limiter, err = quota.New(liveClient.Redis(), limits, logger); err != nil {
-			return err
-		}
-		logger.Info("capping what one end user may spend in a day",
-			"messages", limits.MessagesPerDay, "tokens", limits.TokensPerDay)
-	}
-
 	// What every request is measured against -- the key it presented, the app behind it,
 	// their policies and what they have configured -- read through Redis and the cache
 	// rueidis keeps beside it. Without Redis it is Postgres on every read, which is what
@@ -580,6 +557,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		gate = policies
+	}
+
+	limiter, err := newDailyLimiter(liveClient, quota.Limits{
+		MessagesPerDay: settings.RateLimit.MessagesPerDay,
+		TokensPerDay:   settings.RateLimit.TokensPerDay,
+	}, policies, logger)
+	if err != nil {
+		return err
 	}
 
 	if settings.Agent.SpeculativeReplies {
@@ -1744,4 +1729,42 @@ func buildDLC(
 		return nil, nil, err
 	}
 	return service, gate, nil
+}
+
+// newDailyLimiter caps what one end user may spend in a day, or returns nil when nothing
+// can be capped.
+//
+// A daily limit is counted in Redis, so a deployment without one caps nothing. That is the
+// right way round: the limit protects against a customer's end users spending more than
+// they were meant to, and refusing every request because the counter is missing would be a
+// worse outage than the one it prevents. The deployment's numbers are only the default: an
+// app sets its own in its policy, so a deployment with no default still caps an app that
+// sets one.
+func newDailyLimiter(liveClient *live.Client, limits quota.Limits, policies *policy.Enforcer, logger *slog.Logger) (*quota.Limiter, error) {
+	// A nil *Enforcer in the interface is not a nil Source.
+	var source quota.Source
+	if policies != nil {
+		source = policies
+	}
+	switch {
+	case !limits.Enforced() && source == nil:
+		logger.Warn("no daily limit configured, an end user may spend without bound",
+			"setting", "rate_limit.messages_per_day")
+		return nil, nil
+	case liveClient == nil:
+		logger.Warn("no redis configured, daily limits will not be enforced", "setting", "redis.addr")
+		return nil, nil
+	}
+	limiter, err := quota.New(liveClient.Redis(), limits, source, logger)
+	if err != nil {
+		return nil, err
+	}
+	if !limits.Enforced() {
+		logger.Info("no default daily limit is set, only the daily limits in app policies apply",
+			"setting", "rate_limit.messages_per_day")
+		return limiter, nil
+	}
+	logger.Info("capping what one end user may spend in a day, unless their app's policy says otherwise",
+		"messages", limits.MessagesPerDay, "tokens", limits.TokensPerDay)
+	return limiter, nil
 }

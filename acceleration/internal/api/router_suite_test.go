@@ -208,6 +208,8 @@ type RouterSuite struct {
 	// messagesPerDay is what one end user may spend, for a suite about the cap to set
 	// before it starts the harness. Zero is a cap nothing reaches.
 	messagesPerDay int64
+	// limiter is the router's daily limit, for a suite to spend a user's day with.
+	limiter *quota.Limiter
 
 	// memoryStore is where sessions remember, for a suite about memory to set before it
 	// starts the harness. Nil keeps them in memories.
@@ -393,9 +395,9 @@ func (s *RouterSuite) SetupSuite() {
 	s.T().Cleanup(s.configs.Close)
 	s.relayPrefix = uuid.NewString()
 
-	limiter := s.quota(liveClient, logger)
 	policies := s.policies(logger)
-	streams := s.routers(limiter, policies, logger)
+	s.limiter = s.quota(liveClient, policies, logger)
+	streams := s.routers(s.limiter, policies, logger)
 	// Built before it is served on, because a node says where it is before it has
 	// anything to say it is running.
 	listener := httptest.NewUnstartedServer(nil)
@@ -508,7 +510,7 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorSecrets:   connectorSecrets,
 		PublicURL:          s.publicURL,
 		DashboardURL:       s.dashboardURL,
-		Quota:              limiter,
+		Quota:              s.limiter,
 		DataRetention:      time.Hour,
 		PluginHTTP:         s.mcpTransport(),
 		Stream:             s.stream,
@@ -1057,15 +1059,15 @@ func (s *RouterSuite) policies(logger *slog.Logger) *policy.Enforcer {
 	return enforcer
 }
 
-// quota caps what one end user may spend in a day. The default is high enough that nothing
-// a test does reaches it; a suite about the cap sets messagesPerDay before it starts the
-// harness.
-func (s *RouterSuite) quota(liveClient *live.Client, logger *slog.Logger) *quota.Limiter {
+// quota caps what one end user may spend in a day, unless their app's policy says otherwise.
+// The default is high enough that nothing a test does reaches it; a suite about the cap sets
+// messagesPerDay before it starts the harness.
+func (s *RouterSuite) quota(liveClient *live.Client, policies *policy.Enforcer, logger *slog.Logger) *quota.Limiter {
 	allowed := s.messagesPerDay
 	if allowed == 0 {
 		allowed = 1_000_000
 	}
-	limiter, err := quota.New(liveClient.Redis(), quota.Limits{MessagesPerDay: allowed}, logger)
+	limiter, err := quota.New(liveClient.Redis(), quota.Limits{MessagesPerDay: allowed}, policies, logger)
 	s.Require().NoError(err)
 	return limiter
 }
@@ -1193,8 +1195,9 @@ func (c *testClient) raw(method, path string, body any) *http.Response {
 	response, err := c.suite.server.Client().Do(request)
 	require.NoError(err)
 	defer response.Body.Close()
-	_, err = readAll(response)
+	read, err := readAll(response)
 	require.NoError(err)
+	response.Body = io.NopCloser(bytes.NewReader(read))
 	return response
 }
 

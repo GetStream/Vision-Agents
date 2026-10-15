@@ -190,6 +190,10 @@ type stubLLM struct {
 	// keepCalling asks for them on every reply instead, which is the model that answers
 	// a tool that failed by reaching for it again.
 	keepCalling bool
+	// callsOn is which request, counted from 1, asks for calls when it is not the first.
+	callsOn int
+	// senders are who each request was asked in the name of, in the order asked.
+	senders []routing.Caller
 
 	// holdCreate, if set, is waited on after the request is recorded and before a stream
 	// is returned, so a test can interrupt while Create has not come back.
@@ -228,6 +232,8 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	}
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
+	sender, _ := routing.CallerFrom(ctx)
+	s.senders = append(s.senders, sender)
 	hold, refuses := s.holdCreate, s.refuses
 	s.mu.Unlock()
 
@@ -259,7 +265,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		reply = append([]string(nil), s.then...)
 	}
 	var calls []llm.ToolCall
-	if first || s.keepCalling {
+	if len(s.asked) == max(s.callsOn, 1) || s.keepCalling {
 		calls = append([]llm.ToolCall(nil), s.calls...)
 	}
 	s.mu.Unlock()
@@ -348,6 +354,13 @@ func (s *stubLLM) Close() error {
 func (s *stubLLM) Provider() string               { return "stub" }
 func (s *stubLLM) Model() string                  { return "stub-llm" }
 func (s *stubLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+
+// sentBy is who each request was asked in the name of.
+func (s *stubLLM) sentBy() []routing.Caller {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]routing.Caller(nil), s.senders...)
+}
 
 func (s *stubLLM) requests() []llm.ResponseParams {
 	s.mu.Lock()
@@ -1753,6 +1766,84 @@ func (s *AgentSuite) TestWhatAResponseAskedForHoldsForTheAnswerToItsDelegatedWor
 		"the answer coming back never started a turn")
 	s.Equal(64, s.model.requests()[0].MaxOutputTokens)
 	s.Equal(64, s.model.requests()[1].MaxOutputTokens)
+}
+
+func (s *AgentSuite) TestATypedTurnIsAskedOfTheModelInTheNameOfWhoeverSentIt() {
+	// Whose day a reply is counted on is decided where the model is asked, so the sender
+	// has to reach it, the reply that finishes the turn included.
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = []string{"It is 12.63."}
+	user := routing.Caller{UserID: "alice", IP: "203.0.113.7"}
+
+	_, err := s.agent.RespondTo(routing.WithCaller(s.ctx, user), "what is 15% of 84.20", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the answer coming back never started a turn")
+	s.Equal([]routing.Caller{user, user}, s.model.sentBy())
+}
+
+func (s *AgentSuite) TestATurnNobodyIsNamedForIsNotAskedInTheNameOfTheLastSender() {
+	s.joinText()
+	user := routing.Caller{UserID: "alice", IP: "203.0.113.7"}
+	_, err := s.agent.RespondTo(routing.WithCaller(s.ctx, user), "hello", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.agent.History()) == 2 }, "the first turn was never answered")
+
+	_, err = s.agent.RespondTo(s.ctx, "and again", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the second turn was never asked")
+	s.Equal([]routing.Caller{user, {}}, s.model.sentBy())
+}
+
+func (s *AgentSuite) TestASpokenTurnIsNotAskedInTheNameOfWhoeverTypedBeforeIt() {
+	s.join(false)
+	user := routing.Caller{UserID: "alice", IP: "203.0.113.7"}
+	_, err := s.agent.RespondTo(routing.WithCaller(s.ctx, user), "hello", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.agent.History()) == 2 && !s.agent.floor().Talking },
+		"the typed turn was never answered")
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the spoken turn was never asked")
+	s.Equal([]routing.Caller{user, {}}, s.model.sentBy())
+}
+
+func (s *AgentSuite) TestWhatFinishesASpokenTurnIsNotAskedInTheNameOfWhoeverTypedBeforeIt() {
+	// A spoken turn is counted on whoever opened the session. One answered from a reply
+	// started early still begins a turn of its own, so the tool reply that finishes it is
+	// not the typist's.
+	s.speculates = true
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	s.model.callsOn = 2
+	user := routing.Caller{UserID: "alice", IP: "203.0.113.7"}
+	_, err := s.agent.RespondTo(routing.WithCaller(s.ctx, user), "hello", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.agent.History()) == 2 && !s.agent.floor().Talking },
+		"the typed turn was never answered")
+	ruling := make(chan struct{})
+	s.flow.holdCreate = ruling
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the reply should be asked for while the flow controller is still deciding")
+	close(ruling)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the tool result was never answered")
+	s.Equal([]routing.Caller{user, {}, {}}, s.model.sentBy())
 }
 
 func (s *AgentSuite) TestAReasoningEffortTheModelDoesNotTakeIsRefusedBeforeTheTurn() {

@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -336,4 +337,104 @@ func (s *PolicySuite) TestANewAppsFirstRequestsAreHeldToItsOrganizationsRequirem
 
 	s.Require().NoError(err)
 	s.True(requires)
+}
+
+// deployment is the daily limit a router is configured with, which a policy that says
+// nothing leaves in place.
+var deployment = quota.Limits{MessagesPerDay: 200, TokensPerDay: 5_000_000}
+
+func quotaOf(messages, tokens *int64) *store.Quota {
+	return &store.Quota{MessagesPerUserPerDay: messages, TokensPerUserPerDay: tokens}
+}
+
+func (s *PolicySuite) TestADailyLimitIsTheAppsNumberElseTheDeployments() {
+	cases := []struct {
+		name              string
+		organization, app *store.Quota
+		want              quota.Limits
+	}{
+		{name: "nobody set one, so it is the deployment's", want: deployment},
+		{
+			// Each number is decided on its own, so the tokens left out stay the deployment's.
+			name: "an app's limit may be above the deployment's",
+			app:  quotaOf(new(int64(20_000)), nil),
+			want: quota.Limits{MessagesPerDay: 20_000, TokensPerDay: deployment.TokensPerDay},
+		},
+		{
+			name: "an app's zero is no cap and lifts the deployment's",
+			app:  quotaOf(new(int64(0)), new(int64(0))),
+			want: quota.Limits{},
+		},
+		{
+			// A limit is set only on an app, so an organization's is never read, whatever
+			// its document holds.
+			name:         "an organization's limit is not one",
+			organization: quotaOf(new(int64(5)), new(int64(5))),
+			app:          quotaOf(new(int64(20_000)), nil),
+			want:         quota.Limits{MessagesPerDay: 20_000, TokensPerDay: deployment.TokensPerDay},
+		},
+		{
+			name:         "an organization's limit is not one for an app that sets none",
+			organization: quotaOf(new(int64(5)), new(int64(5))),
+			want:         deployment,
+		},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			s.save(store.ScopeOrganization, s.org, store.PolicyDocument{Quota: c.organization})
+			s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: c.app})
+
+			s.Equal(c.want, s.enforcer.Limits(s.ctx, s.app, deployment))
+		})
+	}
+}
+
+func (s *PolicySuite) TestARaisedDailyLimitIsSeenAtOnceOnTheNodeThatSavedIt() {
+	s.enforcer.Limits(s.ctx, s.app, deployment)
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: quotaOf(new(int64(3)), nil)})
+
+	limits := s.enforcer.Limits(s.ctx, s.app, deployment)
+
+	s.EqualValues(3, limits.MessagesPerDay, "the cached decision is dropped when the policy is saved")
+}
+
+func (s *PolicySuite) TestADailyLimitThatCannotBeReadIsTheDeployments() {
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	configs, err := appconfig.New(appconfig.Options{Store: closed})
+	s.Require().NoError(err)
+	enforcer, err := New(configs, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+
+	s.Equal(deployment, enforcer.Limits(s.ctx, s.app, deployment))
+}
+
+func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
+	// The policies are cached in Redis and the spend is not, so closing Postgres once the
+	// cache is warm fails the budget's read alone.
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR is not set")
+	}
+	db, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	configs, err := appconfig.New(appconfig.Options{Store: db, Address: address, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(configs.Close)
+	enforcer, err := New(configs, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.Require().NoError(enforcer.Save(s.ctx, store.ScopeApp, s.app, store.PolicyDocument{
+		Quota:  quotaOf(new(int64(20_000)), nil),
+		Budget: &store.Budget{LimitMicros: 1_000_000, Interval: store.BudgetDaily},
+	}))
+	s.Require().EqualValues(20_000, enforcer.Limits(s.ctx, s.app, deployment).MessagesPerDay)
+	s.Require().NoError(db.Close())
+	enforcer.forget(s.app)
+
+	limits := enforcer.Limits(s.ctx, s.app, deployment)
+
+	_, unread := enforcer.RequiresOwnStreamApp(s.ctx, s.app)
+	s.Require().Error(unread, "the spend could not be read")
+	s.EqualValues(20_000, limits.MessagesPerDay, "the app's limit, not the deployment's")
 }

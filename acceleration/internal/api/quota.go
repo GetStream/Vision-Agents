@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -11,30 +10,22 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 )
 
-// retryAfter is what an exhausted caller is told to wait. A daily limit resets at midnight
-// UTC, and the honest number is the time until then.
-func retryAfter(now time.Time) int {
-	midnight := now.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
-	seconds := int(midnight.Sub(now.UTC()).Seconds())
-	if seconds < 1 {
-		return 1
-	}
-	return seconds
-}
+const (
+	quotaLimitHeader     = "X-Quota-Limit"
+	quotaRemainingHeader = "X-Quota-Remaining"
+	quotaResetHeader     = "X-Quota-Reset"
+)
 
-// exemptFromQuota reports whether the day's limit says nothing about this request.
-//
-// Three reasons, and only the middle one is a decision. A request nobody authenticated has
-// no account to count against; a caller with neither a name nor an address has no bucket
-// to count in.
-//
-// The middle one is that a process the customer runs is trusted with its own spend. It is
-// asked about directly rather than inferred from having no caller, because a backend may
-// name one — that is how it says which of its users a session belongs to — and counting
-// that name would charge a person's day for work their customer chose to do for them.
-func exemptFromQuota(ctx context.Context) bool {
-	_, known := CustomerFrom(ctx)
-	return !known || ServerSideFrom(ctx) || CallerFrom(ctx).Anonymous()
+// quotaHeaders tells a counted caller where they stand, the way Stream Chat does: the
+// day's allowance, what is left of it and the unix time it resets at. A caller nothing was
+// counted for is told nothing.
+func quotaHeaders(header http.Header, status quota.Status) {
+	if status.Limit == 0 {
+		return
+	}
+	header.Set(quotaLimitHeader, strconv.FormatInt(status.Limit, 10))
+	header.Set(quotaRemainingHeader, strconv.FormatInt(status.Remaining, 10))
+	header.Set(quotaResetHeader, strconv.FormatInt(status.Reset.Unix(), 10))
 }
 
 // withQuota refuses a caller who has spent their day before any work is started.
@@ -61,21 +52,28 @@ func (s *Server) withQuota(next http.Handler) http.Handler {
 		endingSession := sessionPath &&
 			(r.Method == http.MethodDelete && sessionID != "" && !strings.Contains(sessionID, "/") ||
 				r.Method == http.MethodPost && stopping && stopped != "" && !strings.Contains(stopped, "/"))
-		if exemptFromQuota(r.Context()) || endingSession {
+		// A request nobody authenticated has no account to count against. A backend, and a
+		// caller with neither a name nor an address, are told apart by Allow itself: it
+		// counts nothing for a server-side caller even when it names a user, because
+		// counting that name would charge a person's day for work their customer chose to
+		// do for them.
+		customerID, known := CustomerFrom(r.Context())
+		if !known || endingSession {
 			next.ServeHTTP(w, r)
 			return
 		}
-		customerID, _ := CustomerFrom(r.Context())
 		caller := CallerFrom(r.Context())
 
-		if err := s.quota.Allow(r.Context(), customerID, caller); err != nil {
+		status, err := s.quota.Allow(r.Context(), customerID, caller)
+		quotaHeaders(w.Header(), status)
+		if err != nil {
 			if !errors.Is(err, quota.ErrExhausted) {
 				next.ServeHTTP(w, r)
 				return
 			}
 			s.logger.Info("refused a caller who has spent their day",
 				"method", r.Method, "path", r.URL.Path, "customer", customerID)
-			w.Header().Set("Retry-After", strconv.Itoa(retryAfter(time.Now())))
+			w.Header().Set("Retry-After", strconv.Itoa(max(int(time.Until(status.Reset).Seconds()), 1)))
 			writeError(w, rateLimited(err.Error()))
 			return
 		}
