@@ -52,8 +52,12 @@ scopes:
   # 2026-07-28, Authorization, «Scope Selection Strategy»: «Use scope parameter from the
   # initial WWW-Authenticate header in the 401 response, if provided».
   list: [default]
-# No identity: an OIDC id_token is only for clients «the Notion team allows» ([client]), and
-# the token response is documented with no account id.
+# No identity. [client], Step 6, documents TokenResponse with user_id?, workspace_id?, bot_id?
+# and workspace_name?, «sent only on authorization-code exchanges» (opened 2026-10-15T15:27:26Z).
+# They are optional there, and an identity part cannot be optional (core/manifest.go:507), and
+# no live consent has shown which of them a token response carries. So none is captured: a
+# reconnect to another workspace is not refused as an account switch. An OIDC id_token is only
+# for clients «the Notion team allows» ([client]).
 refresh:
   # «Every refresh rotates the refresh token»: [client]. No grace: [client] keeps the previous
   # token as «a one-step window» with no duration, and warns that reusing a rotated-out token

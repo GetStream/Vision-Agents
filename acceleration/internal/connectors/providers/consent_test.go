@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -342,6 +343,17 @@ func (s *ConsentSuite) TestNotionRegistersAClientThroughTheMCPEndpointsMetadataA
 	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
 	s.Equal([]string{"default"}, account.Scopes)
 	s.Empty(account.AccountID, "no identity")
+}
+
+// Notion rotates the refresh token on every refresh, an access token lasts about eight hours
+// when the response has no expires_in, and a refresh token dies after 30 days of inactivity
+// (notion.yaml, [client]). The API reads the last two as the fallback expiry and refresh_expires_at.
+func (s *ConsentSuite) TestNotionRefreshPolicyRotatesWithEightHourAccessAndThirtyDayRefreshLifetimes() {
+	refresh := s.resolve("notion", nil).Refresh
+	s.Require().NotNil(refresh.Rotating)
+	s.True(*refresh.Rotating)
+	s.Equal(core.Duration(8*time.Hour), refresh.AccessTTL)
+	s.Equal(core.Duration(720*time.Hour), refresh.RefreshTTL)
 }
 
 func (s *ConsentSuite) TestHubSpotConnectsWithTheCustomersClientAndRegistersNone() {
