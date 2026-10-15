@@ -610,13 +610,19 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 `deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
 
+### Go: `ListConnectionsParams.OwnerType` is a pointer
+
+`owner_type` is optional on `listConnections`, so the Go client's `ListConnectionsParams.OwnerType`
+is `*ConnectionOwnerType`, and nil means the app's own. Code that set `OwnerType: acceleration.ConnectionOwnerTypeApp`
+no longer compiles. Pass `&app` for a variable holding the value, or leave the field nil for the app.
+
 ## New Features
 
 ### Listing connections without `owner_type` lists the app's own
 
 `GET /v1/agents/connections` takes `owner_type` as optional. Left out, it lists the app's own
 connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` still
-needs `X-Stream-User-Id`. In Go, `ListConnectionsParams.OwnerType` is now a pointer.
+needs `X-Stream-User-Id`.
 
 ### Each app sets its own daily limit per end user
 
