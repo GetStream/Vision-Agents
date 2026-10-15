@@ -2,6 +2,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -1264,7 +1265,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 			held:      func() int { return running(sessions) },
 			telephony: telephony,
 			drain:     settings.Shutdown.Drain,
-			grace:     shutdownGrace,
 			logger:    logger,
 		})
 	}
@@ -1295,7 +1295,8 @@ type stopping struct {
 	held      func() int
 	telephony *phone.Service
 	drain     time.Duration
-	// grace is how long the requests still open on a closing listener get to finish.
+	// grace is how long the requests still open on a closing listener get to finish; zero
+	// means shutdownGrace.
 	grace  time.Duration
 	logger *slog.Logger
 }
@@ -1313,8 +1314,9 @@ const drainPoll = 250 * time.Millisecond
 // sessions.Shutdown either way.
 func stopServing(s stopping) error {
 	s.drainWork()
+	grace := cmp.Or(s.grace, shutdownGrace)
 	if s.drain <= 0 {
-		deadline := time.Now().Add(s.grace)
+		deadline := time.Now().Add(grace)
 		closePhone(s.telephony, s.logger)
 		shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
 		defer cancel()
@@ -1327,7 +1329,7 @@ func stopServing(s stopping) error {
 	timeout := time.NewTimer(s.drain)
 	defer timeout.Stop()
 
-	httpCtx, cancel := context.WithTimeout(context.Background(), s.grace)
+	httpCtx, cancel := context.WithTimeout(context.Background(), grace)
 	if err := s.public.Shutdown(httpCtx); err != nil {
 		s.logger.Warn("requests were still running when the public listener closed", "error", err)
 	}
@@ -1349,7 +1351,7 @@ func stopServing(s stopping) error {
 	}
 
 	closePhone(s.telephony, s.logger)
-	peerCtx, cancel := context.WithTimeout(context.Background(), s.grace)
+	peerCtx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
 	return shutdown(peerCtx, s.peers, s.logger)
 }

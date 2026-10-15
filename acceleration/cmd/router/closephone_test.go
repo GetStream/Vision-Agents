@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -44,9 +45,10 @@ func TestClosePhoneHangsUpTrunkCallsAndIsSafeToRepeat(t *testing.T) {
 }
 
 func TestStoppingDrainsHTTPForTheWholeGraceWhenNoTrunkCallIsUp(t *testing.T) {
-	started := make(chan struct{})
+	started, done := make(chan struct{}), make(chan struct{})
 	httpServer := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			defer close(done)
 			close(started)
 			time.Sleep(200 * time.Millisecond)
 			w.WriteHeader(http.StatusNoContent)
@@ -79,11 +81,15 @@ func TestStoppingDrainsHTTPForTheWholeGraceWhenNoTrunkCallIsUp(t *testing.T) {
 		drainWork: func() {},
 		held:      func() int { return 0 },
 		telephony: service,
-		grace:     shutdownGrace,
 		logger:    slog.New(slog.DiscardHandler),
 	})
 
 	require.NoError(t, err)
+	select {
+	case <-done:
+	default:
+		t.Fatal("stopServing returned while the request was still running")
+	}
 	require.Equal(t, http.StatusNoContent, <-status)
 }
 
@@ -153,16 +159,19 @@ func TestARouterWithNoOpenRequestStopsWithoutAnError(t *testing.T) {
 }
 
 func TestARequestOutlivingTheGraceIsNotAnError(t *testing.T) {
+	var logs bytes.Buffer
 	err := stopServing(stopping{
 		public:    servingAnOpenRequest(t),
 		drainWork: func() {},
 		held:      func() int { return 0 },
 		telephony: idlePhone(t),
 		grace:     testGrace,
-		logger:    slog.New(slog.DiscardHandler),
+		logger:    slog.New(slog.NewTextHandler(&logs, nil)),
 	})
 
 	require.NoError(t, err)
+	require.Contains(t, logs.String(), "level=WARN")
+	require.Contains(t, logs.String(), "requests were still running when the grace ran out")
 }
 
 func TestAPeerRequestOutlivingTheGraceAfterADrainIsNotAnError(t *testing.T) {
