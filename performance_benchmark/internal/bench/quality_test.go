@@ -33,6 +33,79 @@ func (s *ToneSuite) reply(seconds float64, noise float64) []int16 {
 	return samples
 }
 
+func TestRecordingSuite(t *testing.T) { suite.Run(t, new(RecordingSuite)) }
+
+type RecordingSuite struct {
+	suite.Suite
+}
+
+// play hands the recording the reply a frame a tick, with the frames in skip not arriving.
+func (s *RecordingSuite) play(samples []int16, skip map[int]bool) []int16 {
+	r := &recording{}
+	for frame := 0; frame*audio.FrameSamples < len(samples); frame++ {
+		if skip[frame] {
+			r.missed++
+			continue
+		}
+		pcm := samples[frame*audio.FrameSamples : (frame+1)*audio.FrameSamples]
+		r.add(pcm, audio.FrameEnergy(pcm) > audio.DefaultSpeechThreshold)
+	}
+	return r.pcm
+}
+
+func (s *RecordingSuite) TestASilenceTheAgentDidNotSendIsAPause() {
+	// The agent sends the first frame of a pause and then nothing until it speaks again.
+	samples := (&ToneSuite{}).reply(1, 0)
+	middle := len(samples) / 2 / audio.FrameSamples
+	clear(samples[middle*audio.FrameSamples : (middle+10)*audio.FrameSamples])
+	skip := map[int]bool{}
+	for frame := middle + 1; frame < middle+10; frame++ {
+		skip[frame] = true
+	}
+
+	quality, ok := measureTone(s.play(samples, skip))
+
+	s.True(ok)
+	s.Zero(quality.dropouts)
+	s.Zero(quality.glitches)
+}
+
+func (s *RecordingSuite) TestASilenceIsAPauseWhenItsFirstFrameArrivesLate() {
+	// The jitter buffer only lets the last frame before a gap go once the next one is in.
+	samples := (&ToneSuite{}).reply(1, 0)
+	frames := len(samples) / audio.FrameSamples
+	middle := frames / 2
+	clear(samples[middle*audio.FrameSamples : (middle+10)*audio.FrameSamples])
+	r := &recording{}
+	for frame := range frames {
+		pcm := samples[frame*audio.FrameSamples : (frame+1)*audio.FrameSamples]
+		switch {
+		case frame == middle:
+			continue
+		case frame > middle && frame < middle+10:
+			r.missed++
+			continue
+		case frame == middle+10:
+			r.add(samples[middle*audio.FrameSamples:(middle+1)*audio.FrameSamples], false)
+		}
+		r.add(pcm, audio.FrameEnergy(pcm) > audio.DefaultSpeechThreshold)
+	}
+
+	quality, ok := measureTone(r.pcm)
+
+	s.True(ok)
+	s.Zero(quality.dropouts)
+}
+
+func (s *RecordingSuite) TestAFrameLostFromSpeechIsStillAGlitch() {
+	samples := (&ToneSuite{}).reply(2, 0)
+
+	quality, ok := measureTone(s.play(samples, map[int]bool{len(samples) / 2 / audio.FrameSamples: true}))
+
+	s.True(ok)
+	s.Equal(1, quality.glitches)
+}
+
 func (s *ToneSuite) TestACleanToneScoresHigh() {
 	quality, ok := measureTone(s.reply(2, 0))
 

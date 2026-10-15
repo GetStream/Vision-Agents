@@ -192,10 +192,10 @@ func (c Caller) send(ctx context.Context, media transport.Media, ticker *time.Ti
 func (c Caller) listen(ctx context.Context, media transport.Media, ticker *time.Ticker, silence []int16) (heard turn, err error) {
 	askedAt := time.Now()
 	var startedAt, lastAudibleAt time.Time
-	var recorded *[]int16
+	var recorded *recording
 	if c.Probe {
-		recorded = new([]int16)
-		defer func() { heard.quality, heard.scored = measureTone(*recorded) }()
+		recorded = &recording{}
+		defer func() { heard.quality, heard.scored = measureTone(recorded.pcm) }()
 	}
 
 	for {
@@ -232,21 +232,45 @@ func (c Caller) listen(ctx context.Context, media transport.Media, ticker *time.
 
 // audible drains whatever arrived since the last tick, onto recorded when it is not nil,
 // and reports whether any of it was the agent speaking.
-func audible(media transport.Media, recorded *[]int16) bool {
-	speaking := false
+func audible(media transport.Media, recorded *recording) bool {
+	speaking, arrived := false, false
 	for {
 		select {
 		case frame := <-media.Recv():
+			arrived = true
+			loud := audio.FrameEnergy(frame.PCM) > audio.DefaultSpeechThreshold
 			if recorded != nil {
-				*recorded = append(*recorded, frame.PCM...)
+				recorded.add(frame.PCM, loud)
 			}
-			if audio.FrameEnergy(frame.PCM) > audio.DefaultSpeechThreshold {
-				speaking = true
-			}
+			speaking = speaking || loud
 		default:
+			if recorded != nil && !arrived {
+				recorded.missed++
+			}
 			return speaking
 		}
 	}
+}
+
+// recording is what a probe caller heard, played out as a browser would: the agent sends
+// nothing through most of a silence (Opus DTX), and the decoder plays the time it skipped as
+// silence. The decoder here only hands over what arrived, so that time is put back.
+type recording struct {
+	pcm []int16
+	// missed counts the ticks nothing arrived on since the last frame.
+	missed int
+	quiet  bool
+}
+
+func (r *recording) add(frame []int16, loud bool) {
+	// Only next to a quiet frame: a frame missing from speech is loss, which the score has to
+	// see, rather than a silence the agent did not send. Either side will do, because the
+	// jitter buffer holds the last frame before a gap until the one after it arrives.
+	if r.quiet || !loud {
+		r.pcm = append(r.pcm, make([]int16, r.missed*len(frame))...)
+	}
+	r.pcm = append(r.pcm, frame...)
+	r.missed, r.quiet = 0, !loud
 }
 
 // drain throws away inbound audio nobody is measuring, so the leg's queue stays empty and
