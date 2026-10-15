@@ -1393,8 +1393,12 @@ func servePprof(addr string, logger *slog.Logger) {
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	logger.Info("serving pprof", "address", addr, "setting", "pprof_addr")
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout}
-	if err := server.ListenAndServe(); err != nil {
-		logger.Error("pprof stopped", "error", err)
+	// A router taking over from one still draining its calls finds the address held until
+	// that one ends, so it keeps trying rather than going without.
+	for {
+		err := server.ListenAndServe()
+		logger.Warn("pprof is not serving, trying again", "error", err)
+		time.Sleep(5 * time.Second)
 	}
 }
 
