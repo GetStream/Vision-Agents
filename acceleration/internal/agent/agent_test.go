@@ -2439,8 +2439,8 @@ func (s *AgentSuite) TestAnInterruptionKeepsReturnedWorkUntilTheVoiceReconnects(
 	}, "the model response stream never opened")
 	turnID := s.model.requests()[0].ID
 
-	s.model.writes(turnID, "One moment.")
-	s.eventually(func() bool { return s.spokenText("One moment.") }, "the reply never reached the voice")
+	s.model.writes(turnID, "One moment, checking.")
+	s.eventually(func() bool { return s.spokenText("One moment, checking.") }, "the reply never reached the voice")
 	s.model.writes(turnID, `<ask skill="think">15% of 84.20</ask>`)
 	s.eventually(func() bool {
 		requests := s.subagent.requests()
