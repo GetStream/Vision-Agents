@@ -2,8 +2,11 @@ package run
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,6 +15,71 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/target"
 )
+
+func TestAnUnseededRunKeepsScenarioOrder(t *testing.T) {
+	sum, ids := runOrder(t, nil)
+	want := []string{"a-t1", "a-t2", "b-t1", "b-t2", "c-t1", "c-t2", "d-t1", "d-t2", "e-t1", "e-t2"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("order = %v, want %v", ids, want)
+	}
+	if sum.Manifest.Seed != nil {
+		t.Fatal("unseeded runs must not acquire a seed")
+	}
+}
+
+func TestASeedReplaysTheSameScenarioOrder(t *testing.T) {
+	seed := uint64(0)
+	first, ids := runOrder(t, &seed)
+	second, replay := runOrder(t, &seed)
+	if !slices.Equal(ids, replay) || first.Manifest.ScenarioHash != second.Manifest.ScenarioHash {
+		t.Fatalf("same seed changed the order: %v vs %v", ids, replay)
+	}
+	raw, err := json.Marshal(first.Manifest)
+	if err != nil || !strings.Contains(string(raw), `"seed":0`) {
+		t.Fatalf("zero seed missing from manifest: %s, %v", raw, err)
+	}
+}
+
+func TestChangingTheSeedReordersWithoutDroppingTrials(t *testing.T) {
+	zero, one := uint64(0), uint64(1)
+	_, first := runOrder(t, &zero)
+	_, second := runOrder(t, &one)
+	_, original := runOrder(t, nil)
+	if slices.Equal(first, second) || slices.Equal(first, original) {
+		t.Fatalf("seed did not change the order: %v vs %v", first, second)
+	}
+	slices.Sort(first)
+	slices.Sort(second)
+	if !slices.Equal(first, original) || !slices.Equal(second, original) {
+		t.Fatal("shuffling lost or duplicated trials")
+	}
+}
+
+func runOrder(t *testing.T, seed *uint64) (report.Summary, []string) {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, "scenarios", "restaurant")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "b", "c", "d", "e"} {
+		data := fmt.Sprintf("id: %s\npack: restaurant\ncategory: interrupt\nturns:\n  - id: noise\n    overlap_sound: cough\n", id)
+		if err := os.WriteFile(filepath.Join(dir, id+".yaml"), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Exercise scheduling and persisted reports without provider calls or synthesized speech.
+	sum, err := Run(context.Background(), Config{Root: root, Pack: "restaurant", K: 2, Seed: seed,
+		WorldAddr: "127.0.0.1:0", Transport: "unavailable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, call := range sum.Calls {
+		ids = append(ids, fmt.Sprintf("%s-t%d", call.ScenarioID, call.Trial))
+	}
+	return sum, ids
+}
 
 func TestLoadRestaurantPack(t *testing.T) {
 	root := findTestRoot(t)
