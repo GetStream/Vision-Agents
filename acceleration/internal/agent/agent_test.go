@@ -1264,6 +1264,9 @@ func (s *AgentSuite) TestASecondVoiceAtTheSameMicrophoneIsNotTakenForTheCaller()
 	s.NotContains(asked[0].Input[0].Content, "different voice",
 		"the first voice heard on a track is the caller's")
 	s.Contains(asked[1].Input[0].Content, "different voice")
+	// The caller's answer is asked for on the turn's goroutine, once the flow decision is in,
+	// so it can still be on its way when the second voice has been considered.
+	s.eventually(func() bool { return len(s.model.requests()) > 0 }, "the caller was never answered")
 	s.Len(s.model.requests(), 1, "only the caller was answered")
 }
 
