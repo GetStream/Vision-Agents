@@ -44,6 +44,23 @@ type ConnectionToolsSuite struct {
 	token string
 	// builtinID is the built-in connector the test's builtin made last.
 	builtinID string
+	// afterList, when set, runs after the mcp source listed a connection's tools, before the
+	// validate goes on: where a consent can finish while a validate is listing.
+	afterList func()
+}
+
+// afterListSource is the mcp source that calls the suite's afterList once Discover returns.
+type afterListSource struct {
+	core.ToolSource
+	suite *ConnectionToolsSuite
+}
+
+func (a *afterListSource) Discover(ctx context.Context, b core.ResolvedBinding) ([]core.ToolSpec, error) {
+	specs, err := a.ToolSource.Discover(ctx, b)
+	if hook := a.suite.afterList; hook != nil {
+		hook()
+	}
+	return specs, err
 }
 
 func TestConnectionToolsSuite(t *testing.T) {
@@ -69,7 +86,7 @@ func (s *ConnectionToolsSuite) SetupSuite() {
 	s.connectors = core.Registry{
 		Schemes: map[string]core.Scheme{oauth2code.Name: code, oauth2cc.Name: clientCredentials,
 			bearer.Name: bearer.New(), none.Name: none.New(), apikey.Name: apikey.New()},
-		ToolSources: map[string]core.ToolSource{mcp.Kind: mcp.New()},
+		ToolSources: map[string]core.ToolSource{mcp.Kind: &afterListSource{ToolSource: mcp.New(), suite: s}},
 	}
 	s.connectorHTTP = s.provider.Client()
 	s.token = s.issue()
@@ -648,6 +665,44 @@ func (s *ConnectionToolsSuite) TestAPinnedToolTheProviderNoLongerListsIsNotAChan
 	s.Equal(validationConnected, string(validation.Status))
 	s.Empty(validation.Code)
 	s.Empty(validation.ChangedTools)
+}
+
+// TestAConsentThatFinishesWhileTheToolsAreListedIsReadForTheNewGrant: the pin of the old grant
+// is at another digest, but a validate that reads the connection again after the list sees the
+// new grant, which has no pins, and answers connected.
+func (s *ConnectionToolsSuite) TestAConsentThatFinishesWhileTheToolsAreListedIsReadForTheNewGrant() {
+	id := s.connected(bearer.Name)
+	s.pin(id, map[string]string{"echo": "pinned-for-the-old-grant"})
+	before := s.connectedAt(id)
+	listed := 0
+	s.afterList = func() {
+		listed++
+		_, err := s.store.DB().ExecContext(context.Background(),
+			"UPDATE connector_connections SET connected_at = ? WHERE id = ?", before.Add(time.Hour), id)
+		s.Require().NoError(err)
+	}
+	defer func() { s.afterList = nil }()
+
+	validation := s.validate(id)
+
+	s.Equal(1, listed)
+	s.Equal(before.Add(time.Hour).UTC(), s.connectedAt(id).UTC(), "the grant moved during the list")
+	s.Equal(validationConnected, string(validation.Status))
+	s.Empty(validation.ChangedTools)
+}
+
+// TestEveryPinIsCheckedNotOnlyTheToolsTheBodyNames: the body narrows the scope check, not the
+// drift report, since a session offers every tool of the connection.
+func (s *ConnectionToolsSuite) TestEveryPinIsCheckedNotOnlyTheToolsTheBodyNames() {
+	id := s.connected(bearer.Name)
+	s.pin(id, map[string]string{"fail": "pinned-before-it-changed"})
+
+	var validation ConnectionValidation
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate",
+		map[string]any{"tools": []string{"echo"}}, &validation))
+
+	s.Equal(validationNeedsReapproval, string(validation.Status))
+	s.Equal([]string{"fail"}, validation.ChangedTools)
 }
 
 func (s *ConnectionToolsSuite) TestAPinOfAnEarlierGrantIsNotAChange() {
