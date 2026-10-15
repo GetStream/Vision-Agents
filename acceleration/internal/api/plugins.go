@@ -892,7 +892,7 @@ func (PluginEntry) Schema(registry huma.Registry) *huma.Schema {
 // McpServer is an MCP server outside the catalog that an agent reaches by its URL.
 type McpServer struct {
 	Name       string             `json:"name" minLength:"1" maxLength:"32" pattern:"^[a-z][a-z0-9_-]*$" doc:"What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id."`
-	Url        string             `json:"url" minLength:"1" maxLength:"2048" doc:"Its Streamable HTTP endpoint, over https."`
+	Url        string             `json:"url" minLength:"1" maxLength:"2048" doc:"Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses."`
 	Tools      *[]string          `json:"tools,omitempty" maxItems:"128" doc:"Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool."`
 	Scopes     *[]string          `json:"scopes,omitempty" maxItems:"32" doc:"The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted."`
 	User       *bool              `json:"user,omitempty" doc:"Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it."`

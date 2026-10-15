@@ -202,7 +202,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if message, ok := pluginEntriesComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := mcpServersComplaint(config); !ok {
+	if message, ok := mcpServersComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
 	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, before)

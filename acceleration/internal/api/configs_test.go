@@ -521,6 +521,61 @@ func (s *ConfigsSuite) TestTwoMCPServersWithOneNameAreRefused() {
 	s.Contains(failure, "twice")
 }
 
+// privateMCPURLs are servers a session could never reach, since it dials only public
+// addresses: one on a private network, a loopback or link-local address, or a name that
+// does not resolve.
+var privateMCPURLs = []string{
+	"https://10.1.2.3/mcp",            // Private-Use, RFC 1918
+	"https://100.101.102.103/mcp",     // a Tailscale node: 100.64.0.0/10, https://tailscale.com/kb/1015/100.x-addresses
+	"https://[fd7a:115c:a1e0::1]/mcp", // a Tailscale node over IPv6: fd7a:115c:a1e0::/48, same page
+	"https://127.0.0.1:8443/mcp",      // Loopback, RFC 1122 section 3.2.1.3
+	"https://169.254.169.254/mcp",     // the cloud metadata server, Link Local, RFC 3927
+	"https://localhost/mcp",           // resolves to loopback, RFC 6761 section 6.3
+	"https://mcp.wwsd.invalid/mcp",    // never resolves, RFC 6761 section 6.4
+}
+
+func (s *ConfigsSuite) TestAnMCPServerOnAPrivateAddressIsRefusedWithAPlainError() {
+	for _, url := range privateMCPURLs {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+			map[string]any{"name": "concierge", "mcp_servers": []map[string]any{{"name": "wwsd", "url": url}}})
+
+		s.Equal(http.StatusBadRequest, status, url)
+		s.Contains(failure, "mcp_servers: wwsd: only public https URLs are reachable", url)
+	}
+}
+
+func (s *ConfigsSuite) TestReplacingOrPatchingAConfigRefusesAPrivateMCPServer() {
+	created := s.createConfig(map[string]any{"name": "concierge"})
+	servers := []map[string]any{{"name": "wwsd", "url": privateMCPURLs[1]}}
+
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "concierge", "mcp_servers": servers})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "wwsd: only public https URLs are reachable")
+
+	status, failure = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"mcp_servers": servers})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "wwsd: only public https URLs are reachable")
+}
+
+func (s *ConfigsSuite) TestAPublicMCPServerKeepsThePathAndQueryItWasGiven() {
+	created := s.createConfig(map[string]any{"name": "concierge",
+		"mcp_servers": []map[string]any{{"name": "wwsd", "url": "https://8.8.8.8/mcp?workspace=wwsd"}}})
+
+	s.Equal([]McpServer{{Name: "wwsd", Url: "https://8.8.8.8/mcp?workspace=wwsd"}}, value(created.McpServers))
+}
+
+func (s *ConfigsSuite) TestAConfigStoredWithAPrivateMCPServerStillReads() {
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "concierge", Mode: "text",
+		MCPServers: []store.MCPServer{{Name: "wwsd", URL: privateMCPURLs[1]}}}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+config.ID, nil, &read))
+	s.Equal([]McpServer{{Name: "wwsd", Url: privateMCPURLs[1]}}, value(read.McpServers))
+}
+
 func (s *ConfigsSuite) TestAConfigNamingASandboxNobodyRunsIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
 		map[string]any{"name": "support", "sandbox": "docker"})
@@ -892,7 +947,7 @@ func (s *ConfigsSuite) TestAFixedBindingToAConnectionDeletedDuringTheSaveIsRefus
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
 		"name":        "support",
-		"mcp_servers": []map[string]any{{"name": "crm", "url": "https://crm.example.com/mcp"}},
+		"mcp_servers": []map[string]any{{"name": "crm", "url": "https://8.8.8.8/mcp"}},
 		"connectors":  []map[string]any{fixedSlack("inbox", connection)},
 	})
 
@@ -1429,7 +1484,7 @@ func (s *ConfigsSuite) TestASavedPluginEntryABindingReplacesIsNotCountedAsUnboun
 func (s *ConfigsSuite) TestABindingCalledWhatAnMCPServerOfTheConfigIsIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
 		"name":        "support",
-		"mcp_servers": []map[string]any{{"name": "crm", "url": "https://crm.example.com/mcp"}},
+		"mcp_servers": []map[string]any{{"name": "crm", "url": "https://8.8.8.8/mcp"}},
 		"connectors":  []map[string]any{sessionSlack("crm")},
 	})
 
