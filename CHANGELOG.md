@@ -624,6 +624,10 @@ no longer compiles. Pass `&app` for a variable holding the value, or leave the f
 connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` still
 needs `X-Stream-User-Id`.
 
+### A built-in Notion connector
+
+The connector catalog (`GET /v1/agents/connectors`) has `notion`: Notion's hosted MCP server at `https://mcp.notion.com/mcp`. A connection signs in with `oauth2_code`. The router registers its own client with Notion (`dcr`) and asks for the `default` scope, so no app registers anything first. The agent can search, read and update the pages and databases that the person who signed in can access (AI-1292).
+
 ### Each app sets its own daily limit per end user
 
 An app sets what one of its end users may spend in a UTC day as `quota` in its policy,
