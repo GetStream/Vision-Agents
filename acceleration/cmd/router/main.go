@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -444,6 +445,9 @@ func run(settings config.Config, logger *slog.Logger) error {
 	defaultTransport := http.DefaultTransport.(*http.Transport)
 	defaultTransport.MaxIdleConns = 1024
 	defaultTransport.MaxIdleConnsPerHost = 256
+	// Each join still dials its SFU anew, and verifying the server's certificate chain was
+	// most of that handshake. A resumed session skips it.
+	defaultTransport.TLSClientConfig = &tls.Config{ClientSessionCache: tls.NewLRUClientSessionCache(1024)}
 
 	capabilities, err := routing.LoadConfig(settings.RoutingConfig)
 	if err != nil {
