@@ -162,6 +162,7 @@ func TestARequestOutlivingTheGraceIsNotAnError(t *testing.T) {
 	var logs bytes.Buffer
 	err := stopServing(stopping{
 		public:    servingAnOpenRequest(t),
+		peers:     servingAnOpenRequest(t),
 		drainWork: func() {},
 		held:      func() int { return 0 },
 		telephony: idlePhone(t),
@@ -172,8 +173,8 @@ func TestARequestOutlivingTheGraceIsNotAnError(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, logs.String(), "level=WARN")
 	require.Contains(t, logs.String(), "requests were still running when the grace ran out")
-	require.Contains(t, logs.String(), "listener=public")
-	require.Contains(t, logs.String(), "grace="+testGrace.String())
+	require.Contains(t, logs.String(), "listener=public grace="+testGrace.String())
+	require.Contains(t, logs.String(), "listener=peers grace="+testGrace.String())
 }
 
 func TestAPeerRequestOutlivingTheGraceAfterADrainIsNotAnError(t *testing.T) {
@@ -190,7 +191,7 @@ func TestAPeerRequestOutlivingTheGraceAfterADrainIsNotAnError(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.Contains(t, logs.String(), "listener=peers")
+	require.Contains(t, logs.String(), "listener=peers grace="+testGrace.String())
 }
 
 // servingASlowRequest is a server with one request open that finishes on its own in 200 ms:
