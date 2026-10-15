@@ -601,6 +601,7 @@ const (
 	GrantRevoked   ConnectorAuditAction = "grant_revoked"
 	ProxyCall      ConnectorAuditAction = "proxy_call"
 	TokenExport    ConnectorAuditAction = "token_export"
+	ToolReapproved ConnectorAuditAction = "tool_reapproved"
 )
 
 // Valid indicates whether the value is a known member of the ConnectorAuditAction enum.
@@ -615,6 +616,8 @@ func (e ConnectorAuditAction) Valid() bool {
 	case ProxyCall:
 		return true
 	case TokenExport:
+		return true
+	case ToolReapproved:
 		return true
 	default:
 		return false
@@ -2871,6 +2874,25 @@ type AppSettings struct {
 	Stream StreamSettings `json:"stream"`
 }
 
+// ApprovedConnectionTool defines model for ApprovedConnectionTool.
+type ApprovedConnectionTool struct {
+	Name string `json:"name"`
+
+	// PreviousSchemaDigest The digest it was pinned at before. Absent when it was not pinned for the connection's grant.
+	PreviousSchemaDigest *string `json:"previous_schema_digest,omitempty"`
+
+	// SchemaDigest The digest the tool is pinned at now.
+	SchemaDigest string `json:"schema_digest"`
+}
+
+// ApprovedConnectionTools defines model for ApprovedConnectionTools.
+type ApprovedConnectionTools struct {
+	ConnectionId string `json:"connection_id"`
+
+	// Tools The tools approved, by name, sorted.
+	Tools *[]ApprovedConnectionTool `json:"tools"`
+}
+
 // AttachNumberRequest defines model for AttachNumberRequest.
 type AttachNumberRequest struct {
 	// AllowedIps The vendor's signalling addresses, as IPs or CIDR blocks.
@@ -3716,7 +3738,7 @@ type ConnectionLastValidation struct {
 	// Error Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote.
 	Error *string `json:"error,omitempty"`
 
-	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and a new grant (a consent) approves them. failed: the provider could not be reached or listed nothing usable; error says why.
+	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable; error says why.
 	Status ConnectionValidationStatus `json:"status"`
 }
 
@@ -3793,6 +3815,15 @@ type ConnectionTool struct {
 	SchemaDigest string `json:"schema_digest"`
 }
 
+// ConnectionToolApproval defines model for ConnectionToolApproval.
+type ConnectionToolApproval struct {
+	// Name The tool's name at the provider, as GET .../tools lists it.
+	Name string `json:"name"`
+
+	// SchemaDigest Its schema_digest as GET .../tools lists it now: what the caller approves.
+	SchemaDigest string `json:"schema_digest"`
+}
+
 // ConnectionTools The tools a connection offered when it was last validated, in one piece: the provider's own list, not a page of one.
 type ConnectionTools struct {
 	// CheckedAt When the list was read. Absent until a validate listed it.
@@ -3802,6 +3833,12 @@ type ConnectionTools struct {
 	// Digest The digest of the whole list. Absent until a validate listed it.
 	Digest *string           `json:"digest,omitempty"`
 	Tools  *[]ConnectionTool `json:"tools"`
+}
+
+// ConnectionToolsApproval The tools of a connection to approve at the schema the provider lists now. An unknown field is refused rather than ignored.
+type ConnectionToolsApproval struct {
+	// Tools The tools to approve, each named once. Up to 128.
+	Tools *[]ConnectionToolApproval `json:"tools"`
 }
 
 // ConnectionUse defines model for ConnectionUse.
@@ -3814,7 +3851,7 @@ type ConnectionUse struct {
 
 // ConnectionValidation Whether a connection's credential works, found by asking the provider for its tools.
 type ConnectionValidation struct {
-	// ChangedTools With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back.
+	// ChangedTools With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again with POST .../tools/approve, or an OAuth connection reconnects. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back.
 	ChangedTools *[]string `json:"changed_tools,omitempty"`
 
 	// CheckedAt When the tools were listed. Absent until a validate listed them.
@@ -3830,7 +3867,7 @@ type ConnectionValidation struct {
 	// MissingScopes With needs_scopes: the scopes the checked tools need that the grant lacks, sorted.
 	MissingScopes *[]string `json:"missing_scopes,omitempty"`
 
-	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and a new grant (a consent) approves them. failed: the provider could not be reached or listed nothing usable; error says why.
+	// Status connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable; error says why.
 	Status ConnectionValidationStatus `json:"status"`
 
 	// ToolsDigest The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them.
@@ -3843,7 +3880,7 @@ type ConnectionValidationRequest struct {
 	Tools *[]string `json:"tools,omitempty"`
 }
 
-// ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and a new grant (a consent) approves them. failed: the provider could not be reached or listed nothing usable; error says why.
+// ConnectionValidationStatus connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable; error says why.
 type ConnectionValidationStatus string
 
 // Connector A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router.
@@ -3886,7 +3923,7 @@ type Connector struct {
 	Setup *ConnectorSetup `json:"setup,omitempty"`
 }
 
-// ConnectorAuditAction grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection.
+// ConnectorAuditAction grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
 type ConnectorAuditAction string
 
 // ConnectorAuditCredential The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
@@ -3915,7 +3952,7 @@ type ConnectorAuditCredential struct {
 
 // ConnectorAuditEvent One grant a connection got, renewed or lost, one export of its access credential, or one direct call sent through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
 type ConnectorAuditEvent struct {
-	// Action grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection.
+	// Action grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
 	Action ConnectorAuditAction `json:"action"`
 
 	// AttemptId The authorization attempt a consent finished. Absent once the connection's user was deleted.
@@ -3953,6 +3990,9 @@ type ConnectorAuditEvent struct {
 
 	// Target The host a proxy_call reached. Absent for a grant.
 	Target *string `json:"target,omitempty"`
+
+	// Tools A tool_reapproved row's tools, by name, sorted, each with the digest approved and the one it was pinned at before. Absent for every other action.
+	Tools *[]ApprovedConnectionTool `json:"tools,omitempty"`
 }
 
 // ConnectorAuditPage defines model for ConnectorAuditPage.
@@ -8245,6 +8285,9 @@ type CreateConnectionJSONRequestBody = ConnectionRequest
 // PutConnectionCredentialsJSONRequestBody defines body for PutConnectionCredentials for application/json ContentType.
 type PutConnectionCredentialsJSONRequestBody = ConnectionCredentials
 
+// ApproveConnectionToolsJSONRequestBody defines body for ApproveConnectionTools for application/json ContentType.
+type ApproveConnectionToolsJSONRequestBody = ConnectionToolsApproval
+
 // ValidateConnectionJSONRequestBody defines body for ValidateConnection for application/json ContentType.
 type ValidateConnectionJSONRequestBody = ConnectionValidationRequest
 
@@ -9332,9 +9375,35 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id}/tools (the `ListConnectionTools` operationId).
 	ListConnectionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ApproveConnectionToolsWithBody Approve a connection's tools again
+	//
+	// Pins tools of the connection at the schema the provider lists now, for the connection's current grant. A session pins a tool granted by name or by pattern the first time it offers it, and leaves it out while the provider lists it at another schema, which validate reports as needs_reapproval with the changed_tools. This is how a bearer or api_key connection gets them back; an OAuth one may reconnect instead, which begins a new grant.
+	//
+	// Each tool named must be one GET .../tools lists, which a validate refreshes, at the schema_digest sent: a tool it does not list is a 400, and one it lists at another digest a 409. The pins move together, and only while each is still what it was when read and the grant has not changed since; otherwise a 409. A refused approve writes nothing. The next session offers the tools, and the next validate answers connected when no other tool changed; last_validation keeps what the last validate found until then. One audit row, tool_reapproved, names the tools and their digests. A schema_digest an agent config grants is not a pin: change the config instead. Who may approve them is who may read the connection.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/tools/approve (the `ApproveConnectionTools` operationId).
+	ApproveConnectionToolsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApproveConnectionTools Approve a connection's tools again
+	//
+	// Pins tools of the connection at the schema the provider lists now, for the connection's current grant. A session pins a tool granted by name or by pattern the first time it offers it, and leaves it out while the provider lists it at another schema, which validate reports as needs_reapproval with the changed_tools. This is how a bearer or api_key connection gets them back; an OAuth one may reconnect instead, which begins a new grant.
+	//
+	// Each tool named must be one GET .../tools lists, which a validate refreshes, at the schema_digest sent: a tool it does not list is a 400, and one it lists at another digest a 409. The pins move together, and only while each is still what it was when read and the grant has not changed since; otherwise a 409. A refused approve writes nothing. The next session offers the tools, and the next validate answers connected when no other tool changed; last_validation keeps what the last validate found until then. One audit row, tool_reapproved, names the tools and their digests. A schema_digest an agent config grants is not a pin: change the config instead. Who may approve them is who may read the connection.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/tools/approve (the `ApproveConnectionTools` operationId).
+	ApproveConnectionTools(ctx context.Context, id string, body ApproveConnectionToolsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ValidateConnectionWithBody Validate a connection
 	//
-	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
+	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again, POST .../tools/approve does. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -9345,7 +9414,7 @@ type ClientInterface interface {
 
 	// ValidateConnection Validate a connection
 	//
-	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
+	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again, POST .../tools/approve does. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -12607,9 +12676,55 @@ func (c *Client) ListConnectionTools(ctx context.Context, id string, reqEditors 
 	return c.Client.Do(req)
 }
 
+// ApproveConnectionToolsWithBody Approve a connection's tools again
+//
+// Pins tools of the connection at the schema the provider lists now, for the connection's current grant. A session pins a tool granted by name or by pattern the first time it offers it, and leaves it out while the provider lists it at another schema, which validate reports as needs_reapproval with the changed_tools. This is how a bearer or api_key connection gets them back; an OAuth one may reconnect instead, which begins a new grant.
+//
+// Each tool named must be one GET .../tools lists, which a validate refreshes, at the schema_digest sent: a tool it does not list is a 400, and one it lists at another digest a 409. The pins move together, and only while each is still what it was when read and the grant has not changed since; otherwise a 409. A refused approve writes nothing. The next session offers the tools, and the next validate answers connected when no other tool changed; last_validation keeps what the last validate found until then. One audit row, tool_reapproved, names the tools and their digests. A schema_digest an agent config grants is not a pin: change the config instead. Who may approve them is who may read the connection.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/connections/{id}/tools/approve (the `ApproveConnectionTools` operationId).
+func (c *Client) ApproveConnectionToolsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApproveConnectionToolsRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApproveConnectionTools Approve a connection's tools again
+//
+// Pins tools of the connection at the schema the provider lists now, for the connection's current grant. A session pins a tool granted by name or by pattern the first time it offers it, and leaves it out while the provider lists it at another schema, which validate reports as needs_reapproval with the changed_tools. This is how a bearer or api_key connection gets them back; an OAuth one may reconnect instead, which begins a new grant.
+//
+// Each tool named must be one GET .../tools lists, which a validate refreshes, at the schema_digest sent: a tool it does not list is a 400, and one it lists at another digest a 409. The pins move together, and only while each is still what it was when read and the grant has not changed since; otherwise a 409. A refused approve writes nothing. The next session offers the tools, and the next validate answers connected when no other tool changed; last_validation keeps what the last validate found until then. One audit row, tool_reapproved, names the tools and their digests. A schema_digest an agent config grants is not a pin: change the config instead. Who may approve them is who may read the connection.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/connections/{id}/tools/approve (the `ApproveConnectionTools` operationId).
+func (c *Client) ApproveConnectionTools(ctx context.Context, id string, body ApproveConnectionToolsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApproveConnectionToolsRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ValidateConnectionWithBody Validate a connection
 //
-// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
+// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again, POST .../tools/approve does. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -12630,7 +12745,7 @@ func (c *Client) ValidateConnectionWithBody(ctx context.Context, id string, cont
 
 // ValidateConnection Validate a connection
 //
-// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
+// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again, POST .../tools/approve does. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -19102,6 +19217,53 @@ func NewListConnectionToolsRequest(server string, id string) (*http.Request, err
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewApproveConnectionToolsRequest calls the generic ApproveConnectionTools builder with application/json body
+func NewApproveConnectionToolsRequest(server string, id string, body ApproveConnectionToolsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApproveConnectionToolsRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewApproveConnectionToolsRequestWithBody constructs an http.Request for the ApproveConnectionTools method, with any body, and a specified content type
+func NewApproveConnectionToolsRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/connections/%s/tools/approve", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -27648,9 +27810,35 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/connections/{id}/tools (the `ListConnectionTools` operationId).
 	ListConnectionToolsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListConnectionToolsResponse, error)
 
+	// ApproveConnectionToolsWithBodyWithResponse Approve a connection's tools again
+	//
+	// Pins tools of the connection at the schema the provider lists now, for the connection's current grant. A session pins a tool granted by name or by pattern the first time it offers it, and leaves it out while the provider lists it at another schema, which validate reports as needs_reapproval with the changed_tools. This is how a bearer or api_key connection gets them back; an OAuth one may reconnect instead, which begins a new grant.
+	//
+	// Each tool named must be one GET .../tools lists, which a validate refreshes, at the schema_digest sent: a tool it does not list is a 400, and one it lists at another digest a 409. The pins move together, and only while each is still what it was when read and the grant has not changed since; otherwise a 409. A refused approve writes nothing. The next session offers the tools, and the next validate answers connected when no other tool changed; last_validation keeps what the last validate found until then. One audit row, tool_reapproved, names the tools and their digests. A schema_digest an agent config grants is not a pin: change the config instead. Who may approve them is who may read the connection.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/tools/approve (the `ApproveConnectionTools` operationId).
+	ApproveConnectionToolsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveConnectionToolsResponse, error)
+
+	// ApproveConnectionToolsWithResponse Approve a connection's tools again
+	//
+	// Pins tools of the connection at the schema the provider lists now, for the connection's current grant. A session pins a tool granted by name or by pattern the first time it offers it, and leaves it out while the provider lists it at another schema, which validate reports as needs_reapproval with the changed_tools. This is how a bearer or api_key connection gets them back; an OAuth one may reconnect instead, which begins a new grant.
+	//
+	// Each tool named must be one GET .../tools lists, which a validate refreshes, at the schema_digest sent: a tool it does not list is a 400, and one it lists at another digest a 409. The pins move together, and only while each is still what it was when read and the grant has not changed since; otherwise a 409. A refused approve writes nothing. The next session offers the tools, and the next validate answers connected when no other tool changed; last_validation keeps what the last validate found until then. One audit row, tool_reapproved, names the tools and their digests. A schema_digest an agent config grants is not a pin: change the config instead. Who may approve them is who may read the connection.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/connections/{id}/tools/approve (the `ApproveConnectionTools` operationId).
+	ApproveConnectionToolsWithResponse(ctx context.Context, id string, body ApproveConnectionToolsJSONRequestBody, reqEditors ...RequestEditorFn) (*ApproveConnectionToolsResponse, error)
+
 	// ValidateConnectionWithBodyWithResponse Validate a connection
 	//
-	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
+	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again, POST .../tools/approve does. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -27661,7 +27849,7 @@ type ClientWithResponsesInterface interface {
 
 	// ValidateConnectionWithResponse Validate a connection
 	//
-	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
+	// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again, POST .../tools/approve does. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -33665,6 +33853,89 @@ func (r ListConnectionToolsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListConnectionToolsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ApproveConnectionToolsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ApprovedConnectionTools
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ApproveConnectionToolsResponse) GetJSON200() *ApprovedConnectionTools {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ApproveConnectionToolsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ApproveConnectionToolsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ApproveConnectionToolsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ApproveConnectionToolsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ApproveConnectionToolsResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ApproveConnectionToolsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ApproveConnectionToolsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApproveConnectionToolsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApproveConnectionToolsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApproveConnectionToolsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -46905,9 +47176,47 @@ func (c *ClientWithResponses) ListConnectionToolsWithResponse(ctx context.Contex
 	return ParseListConnectionToolsResponse(rsp)
 }
 
+// ApproveConnectionToolsWithBodyWithResponse Approve a connection's tools again
+//
+// Pins tools of the connection at the schema the provider lists now, for the connection's current grant. A session pins a tool granted by name or by pattern the first time it offers it, and leaves it out while the provider lists it at another schema, which validate reports as needs_reapproval with the changed_tools. This is how a bearer or api_key connection gets them back; an OAuth one may reconnect instead, which begins a new grant.
+//
+// Each tool named must be one GET .../tools lists, which a validate refreshes, at the schema_digest sent: a tool it does not list is a 400, and one it lists at another digest a 409. The pins move together, and only while each is still what it was when read and the grant has not changed since; otherwise a 409. A refused approve writes nothing. The next session offers the tools, and the next validate answers connected when no other tool changed; last_validation keeps what the last validate found until then. One audit row, tool_reapproved, names the tools and their digests. A schema_digest an agent config grants is not a pin: change the config instead. Who may approve them is who may read the connection.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connections/{id}/tools/approve (the `ApproveConnectionTools` operationId).
+func (c *ClientWithResponses) ApproveConnectionToolsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveConnectionToolsResponse, error) {
+	rsp, err := c.ApproveConnectionToolsWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApproveConnectionToolsResponse(rsp)
+}
+
+// ApproveConnectionToolsWithResponse Approve a connection's tools again
+//
+// Pins tools of the connection at the schema the provider lists now, for the connection's current grant. A session pins a tool granted by name or by pattern the first time it offers it, and leaves it out while the provider lists it at another schema, which validate reports as needs_reapproval with the changed_tools. This is how a bearer or api_key connection gets them back; an OAuth one may reconnect instead, which begins a new grant.
+//
+// Each tool named must be one GET .../tools lists, which a validate refreshes, at the schema_digest sent: a tool it does not list is a 400, and one it lists at another digest a 409. The pins move together, and only while each is still what it was when read and the grant has not changed since; otherwise a 409. A refused approve writes nothing. The next session offers the tools, and the next validate answers connected when no other tool changed; last_validation keeps what the last validate found until then. One audit row, tool_reapproved, names the tools and their digests. A schema_digest an agent config grants is not a pin: change the config instead. Who may approve them is who may read the connection.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/connections/{id}/tools/approve (the `ApproveConnectionTools` operationId).
+func (c *ClientWithResponses) ApproveConnectionToolsWithResponse(ctx context.Context, id string, body ApproveConnectionToolsJSONRequestBody, reqEditors ...RequestEditorFn) (*ApproveConnectionToolsResponse, error) {
+	rsp, err := c.ApproveConnectionTools(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApproveConnectionToolsResponse(rsp)
+}
+
 // ValidateConnectionWithBodyWithResponse Validate a connection
 //
-// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
+// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again, POST .../tools/approve does. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -46924,7 +47233,7 @@ func (c *ClientWithResponses) ValidateConnectionWithBodyWithResponse(ctx context
 
 // ValidateConnectionWithResponse Validate a connection
 //
-// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
+// Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again, POST .../tools/approve does. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -53583,6 +53892,74 @@ func ParseListConnectionToolsResponse(rsp *http.Response) (*ListConnectionToolsR
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApproveConnectionToolsResponse parses an HTTP response from a ApproveConnectionToolsWithResponse call
+func ParseApproveConnectionToolsResponse(rsp *http.Response) (*ApproveConnectionToolsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApproveConnectionToolsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ApprovedConnectionTools
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

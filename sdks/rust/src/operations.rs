@@ -759,6 +759,26 @@ impl Client {
         )
         .await
     }
+    /// Approve a connection's tools again
+    ///
+    /// `POST /v1/agents/connections/{id}/tools/approve` (`approveConnectionTools`).
+    pub async fn approve_connection_tools(
+        &self,
+        id: &str,
+        body: &types::ConnectionToolsApproval,
+    ) -> Result<types::ApprovedConnectionTools> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/agents/connections/{id}/tools/approve",
+                id = segment(id)
+            ),
+            None::<&()>,
+            Some(body),
+            "approveConnectionTools",
+        )
+        .await
+    }
     /// Validate a connection
     ///
     /// `POST /v1/agents/connections/{id}/validate` (`validateConnection`).

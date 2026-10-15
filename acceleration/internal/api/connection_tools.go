@@ -88,7 +88,8 @@ func (ConnectionValidationStatus) Schema(registry huma.Registry) *huma.Schema {
 			"missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the "+
 			"tools were listed, and the provider changed the schema of a tool sessions pinned for the "+
 			"connection's current grant, so sessions leave it out until it is approved again; "+
-			"changed_tools names them, and a new grant (a consent) approves them. failed: the provider "+
+			"changed_tools names them, and POST .../tools/approve approves them, as does a reconnect "+
+			"of an OAuth connection, which begins a new grant. failed: the provider "+
 			"could not be reached or listed nothing usable; error says why.",
 		validationConnected, validationPending, validationNeedsReauthorization, validationNeedsScopes,
 		validationNeedsReapproval, validationFailed)
@@ -117,7 +118,7 @@ type ConnectionValidation struct {
 	Status        ConnectionValidationStatus `json:"status"`
 	Code          string                     `json:"code,omitempty" doc:"What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_tool_schema_changed with needs_reapproval; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added."`
 	MissingScopes []string                   `json:"missing_scopes,omitempty" doc:"With needs_scopes: the scopes the checked tools need that the grant lacks, sorted."`
-	ChangedTools  []string                   `json:"changed_tools,omitempty" doc:"With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back."`
+	ChangedTools  []string                   `json:"changed_tools,omitempty" doc:"With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again with POST .../tools/approve, or an OAuth connection reconnects. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back."`
 	Error         string                     `json:"error,omitempty" doc:"Why the status is not connected, for a person to read."`
 	ToolsDigest   string                     `json:"tools_digest,omitempty" doc:"The digest of the tools the connection offers, as GET .../tools shows them. Absent until a validate listed them."`
 	CheckedAt     *time.Time                 `json:"checked_at,omitempty" doc:"When the tools were listed. Absent until a validate listed them."`
@@ -200,7 +201,7 @@ func (s *Server) registerConnectionTools(api huma.API) {
 			"missing scopes. The tools sessions pinned for the connection's current grant are then " +
 			"compared with the list: one listed at another schema is needs_reapproval with code " +
 			"connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; " +
-			"a validate never pins a tool again. needs_scopes comes first, since the consent it " +
+			"a validate never pins a tool again, POST .../tools/approve does. needs_scopes comes first, since the consent it " +
 			"asks for begins a new grant, which approves the changed tools too. Who may validate " +
 			"it is who may read it.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
@@ -221,6 +222,7 @@ func (s *Server) registerConnectionTools(api huma.API) {
 		Responses: map[string]*huma.Response{"200": {Description: "The connection's tools"}},
 		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.listConnectionTools)
+	s.registerToolApprovals(api)
 }
 
 // putConnectionCredentials completes the connection's scheme with the values sent and stores
@@ -503,7 +505,7 @@ func (s *Server) checkConnection(ctx context.Context, connection store.Connector
 	} else if len(changed) > 0 {
 		validation.Status, validation.Code, validation.ChangedTools = validationNeedsReapproval, codeToolSchemaChanged, changed
 		validation.Error = "the provider changed the schema of tools sessions pinned for this grant, so they are not offered: " +
-			strings.Join(changed, ", ") + "; approve them again"
+			strings.Join(changed, ", ") + "; approve them with POST /v1/agents/connections/{id}/tools/approve"
 	}
 	return &validationResponse{Body: validation}, nil
 }

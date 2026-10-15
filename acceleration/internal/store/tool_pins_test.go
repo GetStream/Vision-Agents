@@ -179,3 +179,173 @@ func (s *StoreSuite) TestAnOffboardedUsersConnectionsTakeTheirToolPinsWithThem()
 
 	s.Zero(s.pinRows(connection.ID))
 }
+
+// consented is connection with a grant that began now, as a consent leaves it, read back.
+func (s *StoreSuite) consented(connection ConnectorConnection) ConnectorConnection {
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE connector_connections SET connected_at = ? WHERE id = ?",
+		time.Now().UTC().Truncate(time.Microsecond), connection.ID)
+	s.Require().NoError(err)
+	read, err := s.store.ConnectorConnection(s.ctx, connection.CustomerID, connection.ID)
+	s.Require().NoError(err)
+	s.Require().NotNil(read.ConnectedAt)
+	return read
+}
+
+// reapprovals are connection's tool_reapproved audit rows.
+func (s *StoreSuite) reapprovals(connection ConnectorConnection) []ConnectorAuditEvent {
+	events, err := s.store.ConnectorAuditEvents(s.ctx, connection.CustomerID, AuditFilter{ConnectionID: connection.ID})
+	s.Require().NoError(err)
+	var kept []ConnectorAuditEvent
+	for _, event := range events {
+		if event.Action == AuditToolReapproved {
+			kept = append(kept, event)
+		}
+	}
+	return kept
+}
+
+func (s *StoreSuite) TestAReapprovalMovesThePinsAndRecordsOneAuditRowNamingThem() {
+	connection := s.consented(s.connection("acme-app", userOwned("alice")))
+	_, err := s.store.PinConnectorTools(s.ctx, connection.ID, connection.ConnectedAt,
+		map[string]string{"search": digestOf("a"), "fetch": digestOf("a")})
+	s.Require().NoError(err)
+
+	err = s.store.ReapproveConnectorTools(s.ctx, connection, "request-1", []ApprovedTool{
+		{Name: "search", SchemaDigest: digestOf("b"), PreviousSchemaDigest: digestOf("a")},
+		{Name: "fetch", SchemaDigest: digestOf("c"), PreviousSchemaDigest: digestOf("a")},
+	})
+	s.Require().NoError(err)
+
+	pins, err := s.store.ConnectorToolPins(s.ctx, connection.ID, connection.ConnectedAt)
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"search": digestOf("b"), "fetch": digestOf("c")}, pins)
+	audited := s.reapprovals(connection)
+	s.Require().Len(audited, 1)
+	s.Equal("request-1", audited[0].RequestID)
+	s.Equal(OwnerUser, audited[0].OwnerType)
+	s.Equal([]ApprovedTool{
+		{Name: "fetch", SchemaDigest: digestOf("c"), PreviousSchemaDigest: digestOf("a")},
+		{Name: "search", SchemaDigest: digestOf("b"), PreviousSchemaDigest: digestOf("a")},
+	}, audited[0].Tools)
+	s.Nil(audited[0].Credential)
+}
+
+// TestAReapprovalOfAPinThatMovedSinceItWasReadWritesNothing: another approve came first.
+func (s *StoreSuite) TestAReapprovalOfAPinThatMovedSinceItWasReadWritesNothing() {
+	connection := s.consented(s.connection("acme-app", userOwned("alice")))
+	_, err := s.store.PinConnectorTools(s.ctx, connection.ID, connection.ConnectedAt, map[string]string{"search": digestOf("c")})
+	s.Require().NoError(err)
+
+	err = s.store.ReapproveConnectorTools(s.ctx, connection, "", []ApprovedTool{
+		{Name: "search", SchemaDigest: digestOf("b"), PreviousSchemaDigest: digestOf("a")},
+	})
+
+	s.Require().ErrorIs(err, ErrConnectorToolPinMoved)
+	pins, err := s.store.ConnectorToolPins(s.ctx, connection.ID, connection.ConnectedAt)
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"search": digestOf("c")}, pins)
+	s.Empty(s.reapprovals(connection))
+}
+
+// TestAReapprovalAfterTheGrantMovedWritesNothing: a consent began a new grant after the
+// connection was read, so the pin read belongs to a grant that has ended.
+func (s *StoreSuite) TestAReapprovalAfterTheGrantMovedWritesNothing() {
+	connection := s.consented(s.connection("acme-app", userOwned("alice")))
+	_, err := s.store.PinConnectorTools(s.ctx, connection.ID, connection.ConnectedAt, map[string]string{"search": digestOf("a")})
+	s.Require().NoError(err)
+	_, err = s.store.DB().ExecContext(s.ctx, "UPDATE connector_connections SET connected_at = ? WHERE id = ?",
+		connection.ConnectedAt.Add(time.Minute), connection.ID)
+	s.Require().NoError(err)
+
+	err = s.store.ReapproveConnectorTools(s.ctx, connection, "", []ApprovedTool{
+		{Name: "search", SchemaDigest: digestOf("b"), PreviousSchemaDigest: digestOf("a")},
+	})
+
+	s.Require().ErrorIs(err, ErrConnectorToolPinMoved)
+	pins, err := s.store.ConnectorToolPins(s.ctx, connection.ID, connection.ConnectedAt)
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"search": digestOf("a")}, pins)
+	s.Empty(s.reapprovals(connection))
+}
+
+// TestAReapprovalIsAllOrNothing: fetch's pin moved, so search's, which had not, stays too.
+func (s *StoreSuite) TestAReapprovalIsAllOrNothing() {
+	connection := s.consented(s.connection("acme-app", userOwned("alice")))
+	_, err := s.store.PinConnectorTools(s.ctx, connection.ID, connection.ConnectedAt,
+		map[string]string{"search": digestOf("a"), "fetch": digestOf("c")})
+	s.Require().NoError(err)
+
+	err = s.store.ReapproveConnectorTools(s.ctx, connection, "", []ApprovedTool{
+		{Name: "search", SchemaDigest: digestOf("b"), PreviousSchemaDigest: digestOf("a")},
+		{Name: "fetch", SchemaDigest: digestOf("b"), PreviousSchemaDigest: digestOf("a")},
+	})
+
+	s.Require().ErrorIs(err, ErrConnectorToolPinMoved)
+	pins, err := s.store.ConnectorToolPins(s.ctx, connection.ID, connection.ConnectedAt)
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"search": digestOf("a"), "fetch": digestOf("c")}, pins)
+	s.Empty(s.reapprovals(connection))
+}
+
+// TestOfTwoReapprovalsFromOnePinOnlyOneIsWritten: neither replaces the other's unseen.
+func (s *StoreSuite) TestOfTwoReapprovalsFromOnePinOnlyOneIsWritten() {
+	connection := s.consented(s.connection("acme-app", userOwned("alice")))
+	_, err := s.store.PinConnectorTools(s.ctx, connection.ID, connection.ConnectedAt, map[string]string{"search": digestOf("a")})
+	s.Require().NoError(err)
+	const approves = 8
+	errs := make([]error, approves)
+	var wg sync.WaitGroup
+	for i := range approves {
+		wg.Go(func() {
+			errs[i] = s.store.ReapproveConnectorTools(s.ctx, connection, "", []ApprovedTool{
+				{Name: "search", SchemaDigest: digestOf(string(rune('b' + i))), PreviousSchemaDigest: digestOf("a")},
+			})
+		})
+	}
+	wg.Wait()
+
+	won := -1
+	for i, err := range errs {
+		if err == nil {
+			s.Equal(-1, won, "a second approve was written")
+			won = i
+			continue
+		}
+		s.ErrorIs(err, ErrConnectorToolPinMoved)
+	}
+	s.Require().NotEqual(-1, won)
+	pins, err := s.store.ConnectorToolPins(s.ctx, connection.ID, connection.ConnectedAt)
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"search": digestOf(string(rune('b' + won)))}, pins)
+	s.Len(s.reapprovals(connection), 1)
+}
+
+// TestAToolUnpinnedForTheGrantIsPinnedByAReapproval, over a pin of an earlier grant, and a
+// session's first pin since it was read is not replaced.
+func (s *StoreSuite) TestAToolUnpinnedForTheGrantIsPinnedByAReapproval() {
+	connection := s.consented(s.connection("acme-app", userOwned("alice")))
+	earlier := connection.ConnectedAt.Add(-time.Minute)
+	_, err := s.store.PinConnectorTools(s.ctx, connection.ID, &earlier, map[string]string{"search": digestOf("a")})
+	s.Require().NoError(err)
+	_, err = s.store.PinConnectorTools(s.ctx, connection.ID, connection.ConnectedAt, map[string]string{"fetch": digestOf("c")})
+	s.Require().NoError(err)
+
+	pinned := s.store.ReapproveConnectorTools(s.ctx, connection, "", []ApprovedTool{{Name: "search", SchemaDigest: digestOf("b")}})
+	raced := s.store.ReapproveConnectorTools(s.ctx, connection, "", []ApprovedTool{{Name: "fetch", SchemaDigest: digestOf("b")}})
+
+	s.Require().NoError(pinned)
+	s.Require().ErrorIs(raced, ErrConnectorToolPinMoved)
+	pins, err := s.store.ConnectorToolPins(s.ctx, connection.ID, connection.ConnectedAt)
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"search": digestOf("b"), "fetch": digestOf("c")}, pins)
+}
+
+func (s *StoreSuite) TestADeletedConnectionIsNotReapproved() {
+	connection := s.consented(s.connection("acme-app", userOwned("alice")))
+	s.Require().NoError(s.store.DeleteConnectorConnection(s.ctx, "acme-app", connection.ID))
+
+	err := s.store.ReapproveConnectorTools(s.ctx, connection, "", []ApprovedTool{{Name: "search", SchemaDigest: digestOf("b")}})
+
+	s.Require().ErrorIs(err, ErrNoConnectorConnection)
+	s.Empty(s.reapprovals(connection))
+}
