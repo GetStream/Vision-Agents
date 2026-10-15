@@ -438,6 +438,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// The WebRTC SDK signals every call's SFU and coordinator through the default transport.
+	// Its two idle connections a host are shared by every agent on the router, so past two
+	// requests at once each one paid a TLS handshake for a connection then thrown away.
+	defaultTransport := http.DefaultTransport.(*http.Transport)
+	defaultTransport.MaxIdleConns = 1024
+	defaultTransport.MaxIdleConnsPerHost = 256
+
 	capabilities, err := routing.LoadConfig(settings.RoutingConfig)
 	if err != nil {
 		return err
