@@ -22,6 +22,17 @@ endpoints:
   # (docs/connector-design.md:38 at cf62af0d). A revoke endpoint is left out for the same
   # reason: [oauth]'s https://api.linear.app/oauth/revoke is for Linear's own apps.
   mcp: https://mcp.linear.app/mcp
+  # No api_base, so Linear takes no direct calls through the connection proxy: MCP only
+  # (AI-1308). A token here comes from a client registered by DCR with the authorization
+  # server the MCP server names, and nothing says https://api.linear.app/graphql takes it.
+  # GET https://mcp.linear.app/.well-known/oauth-protected-resource/mcp at
+  # 2026-10-15T18:13:39Z: resource https://mcp.linear.app/mcp, authorization_servers
+  # [https://mcp.linear.app]; its oauth-authorization-server document: issuer
+  # https://mcp.linear.app, its own authorize, token and register endpoints, resource
+  # https://mcp.linear.app/mcp. So the token is issued for the MCP server, by an issuer that is
+  # not [oauth]'s (https://api.linear.app/oauth/token). [mcp], opened 2026-10-15, says that a
+  # client that requests read gets a token that «can't reach write APIs», and names no other
+  # API the token reaches. Add api_base once a Linear page says the GraphQL API accepts it.
 # Authorization code with PKCE: row 1 («Auth code + PKCE (Slack, Linear)»); [proto]:72.
 schemes: [oauth2_code]
 client:

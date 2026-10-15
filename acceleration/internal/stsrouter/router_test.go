@@ -411,12 +411,9 @@ func (s *STSRouterSuite) TestInterruptMutesTheReplyBeforeTheProviderHearsOfIt() 
 	provider.emitter.Send(sts.ResponseStarted{ResponseID: "r", Generation: 1, At: time.Now()})
 	provider.emitter.Send(chunk(1, 0))
 	// Let the start and the chunk through before interrupting, so the interrupt is
-	// unambiguously about a reply in flight.
-	s.Eventually(func() bool {
-		session.mu.Lock()
-		defer session.mu.Unlock()
-		return session.current == 1
-	}, time.Second, 10*time.Millisecond)
+	// unambiguously about a reply in flight. Nothing reads the events until the drain, so
+	// both are forwarded once both are queued.
+	s.Eventually(func() bool { return len(session.Events()) == 2 }, time.Second, 10*time.Millisecond)
 
 	s.Require().NoError(session.Interrupt(350))
 	provider.emitter.Send(chunk(1, 1))

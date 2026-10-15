@@ -698,6 +698,8 @@ func (s *HarnessSuite) TestTheModelAskingAgainDoesNotReplaceTheCallersImages() {
 
 	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the subagent was never asked")
 	s.True(s.slow.requests()[0].HasImage(), "the task that ran is the one with the picture")
+	// The delegation reaches the collector on its own goroutine, after the task has started.
+	s.eventually(func() bool { return len(delegatedIn(s.events.seen())) > 0 }, "the delegation was never reported")
 	for _, settled := range settledIn(s.events.seen()) {
 		s.NotEqual(ReasonSuperseded, settled.Result.Reason, "the picture's task was replaced")
 	}
