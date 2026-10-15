@@ -1343,3 +1343,82 @@ func (s *AgentSuite) TestAVoiceCallThatKeepsChainingToolsIsMadeToAnswer() {
 	s.Empty(capped.Tools, "the capped reply has nothing to reach for")
 	s.Contains(capped.Instructions, "answer the caller now")
 }
+
+func (s *AgentSuite) TestADeferredToolReplyStillLimitsTheChain() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"It ships tomorrow."}
+	call := llm.ToolCall{ID: "chained", Name: "lookup_order", Arguments: `{}`}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "where is my order"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{call}},
+	}
+	s.agent.toolRounds = maxToolRounds - 1
+	s.agent.generating = true
+	s.agent.mu.Unlock()
+
+	// The result arrives while another reply still owns the floor.
+	s.agent.runTool(harness.ToolRequested{TurnID: toolPrefix + "late-round", Call: call})
+	s.Empty(s.model.requests())
+	s.agent.mu.Lock()
+	s.agent.generating = false
+	s.agent.mu.Unlock()
+	s.Require().NoError(s.agent.follow())
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the deferred result was never spoken")
+	s.Require().Len(s.model.requests(), 1)
+	capped := s.model.requests()[0]
+	s.Empty(capped.Tools, "deferring a reply must not bypass the tool limit")
+	s.Contains(capped.Instructions, "answer the caller now")
+}
+
+func (s *AgentSuite) TestANewQuestionIncludesTheDeferredResultWithoutRepeatingIt() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"It ships tomorrow morning."}
+	call := llm.ToolCall{ID: "lookup", Name: "lookup_order", Arguments: `{}`}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "where is my order"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{call}},
+	}
+	s.agent.generating = true
+	s.agent.mu.Unlock()
+	s.agent.runTool(harness.ToolRequested{TurnID: "lookup-turn", Call: call})
+
+	s.Require().NoError(s.agent.SimpleResponse(context.Background(), "What time tomorrow?"))
+
+	s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the new question was never answered")
+	input := s.model.requests()[0].Input
+	s.Contains(input[len(input)-2].Content, "order 12 ships tomorrow")
+	s.Equal("What time tomorrow?", input[len(input)-1].Content)
+	model := s.model
+	s.never(func() bool { return len(model.requests()) > 1 }, "a result already included in the answer was spoken again")
+}
+
+func (s *AgentSuite) TestAnEarlyReplyIncludesTheDeferredResultWithoutRepeatingIt() {
+	s.speculates = true
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"It ships tomorrow morning."}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "where is my order"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "lookup", Name: "lookup_order", Arguments: `{}`}}},
+		{Role: llm.ToolResult, ToolCallID: "lookup", Content: "order 12 ships tomorrow"},
+	}
+	s.agent.toolReply = true
+	s.agent.mu.Unlock()
+	ready := candidate{ID: "next-question", Text: "What time tomorrow?", ReadyAt: time.Now()}
+
+	s.agent.speculate(s.agent.harness, ready, false, false)
+	s.Require().True(s.agent.adoptSpeculation(ready, ""))
+
+	s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the early reply was never spoken")
+	input := s.model.requests()[0].Input
+	s.Contains(input[len(input)-2].Content, "order 12 ships tomorrow")
+	s.Equal("What time tomorrow?", input[len(input)-1].Content)
+	model := s.model
+	s.never(func() bool { return len(model.requests()) > 1 }, "adopting the early reply repeated its tool result")
+}

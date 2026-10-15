@@ -1521,13 +1521,12 @@ func (a *Agent) noteToolDone(hold *toolHold) {
 	a.mu.Unlock()
 }
 
-// queueToolReply starts a turn that says what the tools came back with, or marks one as
-// owed if a generate is already in flight or more tools from this turn are still running.
+// queueToolReply starts a turn that says what the tools came back with, or leaves it
+// pending if a generate is already in flight or more tools are still running.
 // Two tools in one reply used to each start a generate, and the second stole speakingTurn
 // so the first result was never said.
 func (a *Agent) queueToolReply() {
 	a.mu.Lock()
-	a.toolReply = true
 	wait := a.pendingTools > 0 || a.generating
 	a.mu.Unlock()
 	// A caller who is talking holds the floor, so the tool result waits for follow to pick
@@ -1605,6 +1604,7 @@ func (a *Agent) respondTurn(
 	a.speakingTurn = turnID
 	a.generating = true
 	a.toolRounds = 0
+	a.toolReply = false
 	a.asked = asked
 	a.sender = sender
 	a.lastParticipant = participant
@@ -2496,8 +2496,10 @@ func (a *Agent) follow() error {
 		a.mu.Unlock()
 		return nil
 	}
-	afterTool := a.toolReply
-	a.toolReply = false
+	if a.toolReply {
+		a.mu.Unlock()
+		return a.respondAfterTool(toolPrefix + turnStamp())
+	}
 	history := a.replayLocked()
 	turnID := replyPrefix + turnStamp()
 	a.speakingTurn = turnID
@@ -2517,7 +2519,6 @@ func (a *Agent) follow() error {
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
-		AfterTool:    afterTool,
 		Asked:        asked,
 	}, "")
 }

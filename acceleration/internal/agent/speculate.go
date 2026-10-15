@@ -152,6 +152,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) bool {
 	a.speakingTurn = ready.ID
 	a.generating = true
 	a.toolRounds = 0
+	a.toolReply = false
 	a.asked = options.LLM{}
 	a.sender = routing.Caller{}
 	a.lastParticipant = ready.Participant
