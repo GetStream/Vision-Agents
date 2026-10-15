@@ -124,6 +124,7 @@ profile.html
 .ralph-tui/
 .claude/*
 !.claude/skills/
+!.claude/rules/
 
 .uv-cache/
 
