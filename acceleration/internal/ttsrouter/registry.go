@@ -1,6 +1,8 @@
 package ttsrouter
 
 import (
+	"errors"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/breeze"
@@ -24,7 +26,8 @@ func DefaultRegistry() *Registry {
 
 	registry.Register(elevenlabs.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
 		settings := elevenlabsSettings{}
-		if err := spec.Settings(&settings); err != nil {
+		err := spec.Settings(&settings)
+		if err != nil {
 			return nil, err
 		}
 
@@ -39,10 +42,21 @@ func DefaultRegistry() *Registry {
 		}
 		// The v3 models are served on a different socket, so which endpoint to open is
 		// decided by the model the router picked rather than by a second provider name.
+		var provider tts.TTS
 		if elevenlabs.Performs(spec.Model) {
-			return elevenlabs.NewDialogue(options)
+			provider, err = elevenlabs.NewDialogue(options)
+		} else {
+			provider, err = elevenlabs.New(options)
 		}
-		return elevenlabs.New(options)
+		// A value the model will not take is the caller's mistake, which the router
+		// neither counts against the model nor routes around.
+		if errors.Is(err, elevenlabs.ErrRefused) {
+			return nil, routing.Refused(err)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return provider, nil
 	})
 
 	registry.Register(cartesia.ProviderName, func(spec routing.Spec) (tts.TTS, error) {

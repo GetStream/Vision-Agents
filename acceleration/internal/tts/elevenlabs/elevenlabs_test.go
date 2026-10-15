@@ -282,6 +282,7 @@ func (s *ElevenLabsSuite) TestAVoiceSettingOutsideZeroToOneIsRefused() {
 	above, below := 1.5, -0.2
 
 	_, err := New(Options{APIKey: "k", Stability: &above})
+	s.ErrorIs(err, ErrRefused, "the caller's mistake, not the provider's fault")
 	s.ErrorContains(err, "stability 1.5 is outside 0 to 1")
 
 	_, err = New(Options{APIKey: "k", Similarity: &below})

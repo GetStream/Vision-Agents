@@ -62,6 +62,10 @@ const (
 	defaultSimilarity = 0.8
 )
 
+// ErrRefused marks a setting this provider will not take: a value out of range, or one the
+// model has no place for. It is the caller's to fix, not a fault of the provider.
+var ErrRefused = errors.New("elevenlabs: refused")
+
 // minVoiceSetting and maxVoiceSetting bound stability and similarity_boost: 0 to 1 per
 // https://elevenlabs.io/docs/api-reference/text-to-dialogue/ttd-websocket (opened 2026-10-15).
 // Live, 1.5 or -0.2 on the text-to-speech socket closes it with an unexplained 1011.
@@ -250,7 +254,7 @@ func inRange(name string, value *float64) error {
 	if value == nil || (*value >= minVoiceSetting && *value <= maxVoiceSetting) {
 		return nil
 	}
-	return stack.Wrap(fmt.Errorf("elevenlabs: %s %g is outside %d to %d", name, *value, minVoiceSetting, maxVoiceSetting))
+	return stack.Wrap(fmt.Errorf("%w: %s %g is outside %d to %d", ErrRefused, name, *value, minVoiceSetting, maxVoiceSetting))
 }
 
 // New validates the options and returns an unstarted provider.

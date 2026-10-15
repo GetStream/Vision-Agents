@@ -90,11 +90,13 @@ did not have to know which vendor answered. So options become `Terms()`, and onl
 
 Today the batch entry `elevenlabs/eleven_v3` declares `[speed, stability, format]`, which is
 the recorded path. Of the live entries, `eleven_flash_v2_5` and `eleven_multilingual_v2`
-declare `[speed, stability]`, sent as `voice_settings` when each context opens (stability 0.5,
+declare `[speed, stability, similarity]`, sent as `voice_settings` when each context opens (stability 0.5,
 similarity 0.8 when not asked); a speed outside 0.7–1.2 or a stability or similarity outside
 0–1 is refused when the provider is built. The dialogue models (v3 conversational, v4, v4
 Turbo) declare `[stability]` and have no speed, so a request naming one routes past them, and
-`NewDialogue` refuses a speed or a similarity (which shares the term) rather than drop it. Every other live entry declares nothing, so it
+`NewDialogue` refuses a speed or a similarity rather than drop it. A refused value is the
+caller's mistake (`routing.ErrRequest`): no stat is recorded, so it cannot mark the model
+unavailable for everyone. Every other live entry declares nothing, so it
 serves requests that ask only for a target, a voice and a language. Cartesia
 (`generation_config.speed`, 0.6–1.5) and Inworld (`audioConfig.speakingRate`, 0.5–1.5) can
 express a speed but do not send one yet; wire it in their package, refuse outside their range,
@@ -128,8 +130,9 @@ the provider's library.
   elsewhere is opted out and its entry is edited.
 - `overwrites` is per vendor, decoded into a typed struct with `DisallowUnknownFields`, so a
   misspelt key or a wrong type fails the request with `routing.ErrOverwrite`, naming the
-  provider and the field. `Select` does not fail over on it: the next candidate is handed its
-  own block, so serving it would drop the overwrite in silence. What a live voice can be
+  provider and the field. `Select` then tries only that vendor's other models (OpenAI's
+  realtime and Live models read different structs out of one block) and never another
+  vendor, which is handed its own block and would drop the overwrite in silence. What a live voice can be
   steered by this way: `elevenlabs: {voice_id}`, `inworld: {voice_id, delivery_mode}`.
 
 ## Adding an option

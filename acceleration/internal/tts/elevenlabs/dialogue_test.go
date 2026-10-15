@@ -209,6 +209,7 @@ func (s *DialogueSuite) TestASimilarityIsRefusedRatherThanDropped() {
 	similarity := 0.7
 
 	_, err := NewDialogue(Options{APIKey: "k", Similarity: &similarity})
+	s.ErrorIs(err, ErrRefused, "the caller's mistake, not the provider's fault")
 	s.ErrorContains(err, "takes no similarity")
 }
 

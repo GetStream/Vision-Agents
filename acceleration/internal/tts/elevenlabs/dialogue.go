@@ -128,7 +128,7 @@ func NewDialogue(options Options) (*Dialogue, error) {
 		return nil, stack.Wrap(fmt.Errorf("elevenlabs: %s takes no speed", options.Model))
 	}
 	if options.Similarity != nil {
-		return nil, stack.Wrap(fmt.Errorf("elevenlabs: %s takes no similarity", options.Model))
+		return nil, stack.Wrap(fmt.Errorf("%w: %s takes no similarity", ErrRefused, options.Model))
 	}
 
 	return &Dialogue{

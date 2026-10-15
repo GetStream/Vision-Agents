@@ -429,7 +429,7 @@ func (s *TTSRouterSuite) TestAnOverwriteElevenLabsHasNoFieldForIsRefusedRatherTh
 	s.Require().ErrorIs(err, routing.ErrOverwrite)
 	s.ErrorContains(err, "elevenlabs/eleven_v4")
 	s.ErrorContains(err, "voice_settings")
-	s.Equal([]string{"elevenlabs/eleven_v4"}, built,
+	s.Equal([]string{"elevenlabs/eleven_v4", "elevenlabs/eleven_v4_turbo"}, built,
 		"cartesia never reads the elevenlabs block, so serving with it would drop the overwrite in silence")
 }
 
@@ -470,7 +470,7 @@ func (s *TTSRouterSuite) TestAStabilityOnTheQualityShortcutIsServedByElevenLabs(
 	s.Equal(&stability, built[0].TTS.Stability)
 }
 
-func (s *TTSRouterSuite) TestASimilarityOnTheQualityShortcutIsRefusedRatherThanDropped() {
+func (s *TTSRouterSuite) TestASimilarityOnTheQualityShortcutIsRefusedAtRouting() {
 	var built []string
 	router := s.newRouterOverRealElevenLabs(&built)
 	similarity := 0.7
@@ -481,9 +481,44 @@ func (s *TTSRouterSuite) TestASimilarityOnTheQualityShortcutIsRefusedRatherThanD
 		Options:    options.TTS{Similarity: &similarity},
 	})
 
-	s.ErrorContains(err, "takes no similarity",
-		"the dialogue socket has no similarity, and nothing else on the shortcut declares one")
-	s.Equal([]string{"elevenlabs/eleven_v4", "elevenlabs/eleven_v4_turbo"}, built)
+	// Refused at routing, as on the commit before this PR (which named the term
+	// stability), since the dialogue socket has no similarity and nothing else on the
+	// shortcut declares one.
+	s.ErrorContains(err, "routing: no provider can express similarity")
+	s.Empty(built, "nothing is built, so nothing is counted against a model")
+}
+
+func (s *TTSRouterSuite) TestASimilarityOnTheDefaultShortcutSkipsTheDialogueModel() {
+	var built []string
+	router := s.newRouterOverRealElevenLabs(&built)
+	similarity := 0.7
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "en-low-latency",
+		Options:    options.TTS{Similarity: &similarity},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("eleven_flash_v2_5", session.Model())
+	s.Equal([]string{"elevenlabs/eleven_flash_v2_5"}, built, "v4 Turbo takes no similarity, so it is never built")
+}
+
+func (s *TTSRouterSuite) TestAStabilityElevenLabsWillNotTakeIsRefusedAsTheCallersMistake() {
+	var built []string
+	router := s.newRouterOverRealElevenLabs(&built)
+	outside := 1.5
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "tts-quality",
+		Options:    options.TTS{Stability: &outside},
+	})
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "a request error is not counted against the model's health")
+	s.ErrorContains(err, "stability 1.5 is outside 0 to 1")
+	s.NotContains(err.Error(), "every candidate", "the caller's mistake is not an outage")
 }
 
 func (s *TTSRouterSuite) TestRegistryHandsTheStabilityAndSimilarityToElevenLabs() {
