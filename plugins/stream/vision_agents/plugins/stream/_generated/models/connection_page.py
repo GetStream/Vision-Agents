@@ -23,7 +23,7 @@ class ConnectionPage:
         has_more (bool):
         items (list[Connection] | None):
         next_cursor (str | Unset): Pass as cursor for the next page, with the same owner_type and connector_id (an
-            omitted owner_type is app). Absent on the last one.
+            omitted owner_type is app) and the same X-Stream-User-Id, or again none. Absent on the last one.
     """
 
     has_more: bool

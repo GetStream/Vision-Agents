@@ -99,7 +99,8 @@ def sync_detailed(
 ) -> Response[ConnectionPage | ErrorResponse]:
     """List connections
 
-     One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+     Connections, newest first: the app's own, those of the user the backend acts for, or every user's
+    when it acts for none.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -141,7 +142,8 @@ def sync(
 ) -> ConnectionPage | ErrorResponse | None:
     """List connections
 
-     One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+     Connections, newest first: the app's own, those of the user the backend acts for, or every user's
+    when it acts for none.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -178,7 +180,8 @@ async def asyncio_detailed(
 ) -> Response[ConnectionPage | ErrorResponse]:
     """List connections
 
-     One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+     Connections, newest first: the app's own, those of the user the backend acts for, or every user's
+    when it acts for none.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -218,7 +221,8 @@ async def asyncio(
 ) -> ConnectionPage | ErrorResponse | None:
     """List connections
 
-     One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+     Connections, newest first: the app's own, those of the user the backend acts for, or every user's
+    when it acts for none.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

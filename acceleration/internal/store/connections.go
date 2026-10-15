@@ -153,8 +153,11 @@ type ConnectorTool struct {
 // ConnectionFilter picks one owner's live connections, optionally of one connector, a page
 // at a time.
 type ConnectionFilter struct {
-	OwnerType   string
-	OwnerID     string
+	OwnerType string
+	OwnerID   string
+	// EveryUser, with OwnerType user and no OwnerID, picks every user's instead of one's. It is
+	// asked for by name so a user id left empty by mistake is still refused.
+	EveryUser   bool
 	ConnectorID string
 	// Status keeps only connections in that status (Connection*). Empty keeps every status.
 	Status string
@@ -465,21 +468,28 @@ func (s *Store) SetConnectorConnectionTools(ctx context.Context, customerID, id 
 	return nil
 }
 
-// ConnectorConnectionsByOwner lists one owner's live connections, newest first, one more
-// than ConnectionLimit(filter.Limit).
+// ConnectorConnectionsByOwner lists one owner's live connections, or with filter.EveryUser
+// every user's, newest first, one more than ConnectionLimit(filter.Limit).
 func (s *Store) ConnectorConnectionsByOwner(ctx context.Context, customerID string, filter ConnectionFilter) ([]ConnectorConnection, error) {
 	if customerID == "" {
 		return nil, stack.Wrap(errors.New("store: a customer id is required"))
 	}
-	if !validOwner(filter.OwnerType, filter.OwnerID) {
+	if filter.EveryUser && (filter.OwnerType != OwnerUser || filter.OwnerID != "") {
+		return nil, stack.Wrap(fmt.Errorf("store: every user's connections are owner %q with no id, not %q with id %q", OwnerUser, filter.OwnerType, filter.OwnerID))
+	}
+	if !filter.EveryUser && !validOwner(filter.OwnerType, filter.OwnerID) {
 		return nil, stack.Wrap(fmt.Errorf("store: owner %q with id %q: an app owner has no id and a user owner has one", filter.OwnerType, filter.OwnerID))
 	}
 	connections := []ConnectorConnection{}
+	// connector_connections_owner_idx leads with (customer_id, owner_type), so every user's
+	// are read from it too, and sorted after.
 	query := s.db.NewSelect().Model(&connections).
 		Where("customer_id = ?", customerID).
 		Where("owner_type = ?", filter.OwnerType).
-		Where("owner_id = ?", filter.OwnerID).
 		Where("deleted_at IS NULL")
+	if !filter.EveryUser {
+		query = query.Where("owner_id = ?", filter.OwnerID)
+	}
 	if filter.ConnectorID != "" {
 		query = query.Where("connector_id = ?", filter.ConnectorID)
 	}
