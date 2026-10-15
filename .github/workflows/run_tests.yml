@@ -16,6 +16,11 @@ on:
         required: false
         default: false
         type: boolean
+      ref:
+        description: 'Branch to check out; empty checks out the commit that triggered the run'
+        required: false
+        default: ""
+        type: string
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.marker }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
@@ -35,6 +40,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
         with:
@@ -97,6 +104,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
       - name: Clean space as per https://github.com/actions/virtual-environments/issues/709
         run: |
           sudo rm -rf "/usr/share/dotnet" || true
