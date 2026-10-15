@@ -43,12 +43,16 @@ Versions are `vX.Y.Z` or `vX.Y.Z-<prerelease>`, an unreleased build is named aft
 commit (`v0.6.9-dev-<short sha>`), and a published one is immutable. The build is
 reproducible, so the checksum a pod reports traces back to a commit.
 
-## Overlap deploys (the benchmark release)
+## Overlap deploys (staging and the benchmark release)
 
-The benchmark release (`perfbench -target benchmark`, nobody else's traffic) ships a router
-without dropping a call. The runbook is `infra/docs/accelerate_overlap_deploy.md` in the
-private repo; `rocky fastdeploy --service accelerate-benchmark` builds this checkout and swaps
-it in, in 11-20 s warm. Staging and prod still deploy as above.
+Staging and the benchmark release (`perfbench -target benchmark`, nobody else's traffic) ship
+a router without dropping a call. The runbook is `infra/docs/accelerate_overlap_deploy.md` in
+the private repo; `rocky fastdeploy --service accelerate-staging` (or `accelerate-benchmark`)
+builds this checkout and swaps it in, in 11-20 s warm. Prod still deploys as above.
+
+- On staging a fastdeploy and a tagged release move the same pointer, and a restarted pod
+  comes back on whichever was last. Pull before a fastdeploy, or it rolls back a teammate's
+  release. Load-test on benchmark, not staging.
 
 - A supervisor (devrun) owns the public socket and hands it to each router as fd 3
   (`listen_fd`), with a peer port of its own (`node.listen`). A swap starts the new router on
