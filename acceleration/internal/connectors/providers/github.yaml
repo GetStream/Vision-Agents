@@ -67,7 +67,7 @@ endpoints:
   # rewrites each such link to the connection's proxy URL (api.proxiedLinks). URLs in a body
   # (url, comments_url and the like) name api.github.com too and are passed as they came: a
   # client must not follow one with the router's credential, but call its path through the
-  # proxy.
+  # proxy. With no ROUTER_PUBLIC_URL every Link is dropped (fail closed), so paging needs it set.
   api_base: https://api.github.com
 # Authorization code with PKCE S256: [oauth], [user] (code_challenge_method S256); [as].
 # And a personal access token the developer supplies, sent to the same endpoint as

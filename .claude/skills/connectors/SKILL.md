@@ -87,7 +87,8 @@ A provider's `Link` header (RFC 8288) that names a URL under `api_base`, such as
 URL (`ROUTER_PUBLIC_URL` + `/v1/agents/connections/{id}/proxy`), so a client that follows it,
 Octokit's paginate included, stays on the proxy. URLs in a body (`url`, `comments_url`) still
 name `https://api.github.com`: never send the router's credential there; call their path
-through the proxy.
+through the proxy. With `ROUTER_PUBLIC_URL` unset the router has no proxy URL to name, so it drops every
+`Link` (fail closed): a connection then loses GitHub's pagination until the URL is set.
 
 Every other built-in, `linear` included, is MCP-only: a direct call answers 400 «connector
 "linear" has no api_base endpoint». Why Linear has none is in `linear.yaml`. A connection keeps

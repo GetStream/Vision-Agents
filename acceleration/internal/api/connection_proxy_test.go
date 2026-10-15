@@ -537,6 +537,22 @@ func (s *ConnectionProxySuite) TestAGitHubConnectionsDirectCallGoesToGitHubsREST
 	s.NotEmpty(got.Header.Get("User-Agent"))
 }
 
+// TestAProviderLinkIsDroppedWhenTheRouterHasNoPublicURL: with no ROUTER_PUBLIC_URL there is no
+// proxy URL to rewrite a Link to, and passing it as it came would send a client to
+// api.github.com with the router's token, so the answer carries no Link (fail closed).
+func (s *ConnectionProxySuite) TestAProviderLinkIsDroppedWhenTheRouterHasNoPublicURL() {
+	id := s.connectedWithToken("github", "token-"+s.utils.uuid())
+	public := s.router.publicURL
+	s.router.publicURL = ""
+	s.T().Cleanup(func() { s.router.publicURL = public })
+
+	response, _ := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "user/repos?per_page=1"), "",
+		http.Header{echoLinkHeader: {`<https://api.github.com/user/repos?per_page=1&page=2>; rel="next"`}})
+
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	s.Empty(response.Header.Values("Link"))
+}
+
 // TestAGitHubPageLinkComesBackThroughTheProxy: GitHub REST pages with a Link naming
 // api.github.com, which a client such as Octokit follows as it is with its token, the
 // router's. So the answer's Link names this connection's proxy instead, under the router's
