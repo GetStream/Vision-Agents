@@ -99,7 +99,7 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	pack := fs.String("pack", "restaurant", "scenario pack")
 	id := fs.String("scenario", "", "run a single scenario id")
 	k := fs.Int("k", 3, "trials per scenario")
-	seedText := fs.String("seed", os.Getenv("VOICEBENCH_SEED"), "shuffle scenario order with this seed (optional)")
+	seedText := fs.String("seed", os.Getenv("VOICEBENCH_SEED"), "shuffle scenarios reproducibly; with --short, sample equally by category (optional)")
 	callID := fs.String("call-id", "", "call id / room name. Empty generates one per trial")
 	callType := fs.String("call-type", "default", "Stream call type")
 	transport := fs.String("transport", "stream", "media transport (stream, livekit)")
