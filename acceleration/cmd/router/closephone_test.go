@@ -172,9 +172,12 @@ func TestARequestOutlivingTheGraceIsNotAnError(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, logs.String(), "level=WARN")
 	require.Contains(t, logs.String(), "requests were still running when the grace ran out")
+	require.Contains(t, logs.String(), "listener=public")
+	require.Contains(t, logs.String(), "grace="+testGrace.String())
 }
 
 func TestAPeerRequestOutlivingTheGraceAfterADrainIsNotAnError(t *testing.T) {
+	var logs bytes.Buffer
 	err := stopServing(stopping{
 		public:    &http.Server{ReadHeaderTimeout: time.Second},
 		peers:     servingAnOpenRequest(t),
@@ -183,10 +186,11 @@ func TestAPeerRequestOutlivingTheGraceAfterADrainIsNotAnError(t *testing.T) {
 		telephony: idlePhone(t),
 		drain:     time.Hour,
 		grace:     testGrace,
-		logger:    slog.New(slog.DiscardHandler),
+		logger:    slog.New(slog.NewTextHandler(&logs, nil)),
 	})
 
 	require.NoError(t, err)
+	require.Contains(t, logs.String(), "listener=peers")
 }
 
 // unclosable closes but says it could not. Besides its deadline, a listener that fails to
