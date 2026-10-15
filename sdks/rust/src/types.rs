@@ -850,6 +850,24 @@ pub struct AnalyzeReviewsRequest {
 pub struct AppSettings {
     pub stream: StreamSettings,
 }
+///`ApprovedConnectionTool`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ApprovedConnectionTool {
+    pub name: ::std::string::String,
+    ///The digest it was pinned at before. Absent when it was not pinned for the connection's grant.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub previous_schema_digest: ::std::option::Option<::std::string::String>,
+    ///The digest the tool is pinned at now.
+    pub schema_digest: ::std::string::String,
+}
+///`ApprovedConnectionTools`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ApprovedConnectionTools {
+    pub connection_id: ::std::string::String,
+    ///The tools approved, by name, sorted.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub tools: ::std::option::Option<::std::vec::Vec<ApprovedConnectionTool>>,
+}
 ///`AttachNumberRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct AttachNumberRequest {
@@ -2493,7 +2511,7 @@ pub struct ConnectionInvocationPage {
 pub struct ConnectionLastValidation {
     ///When the validate ran.
     pub checked_at: ::std::string::String,
-    ///The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+    ///The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub code: ::std::option::Option<::std::string::String>,
     ///Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote.
@@ -2677,6 +2695,14 @@ pub struct ConnectionTool {
     ///The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
     pub schema_digest: ::std::string::String,
 }
+///`ConnectionToolApproval`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ConnectionToolApproval {
+    ///The tool's name at the provider, as GET .../tools lists it.
+    pub name: ::std::string::String,
+    ///Its schema_digest as GET .../tools lists it now: what the caller approves.
+    pub schema_digest: ::std::string::String,
+}
 ///The tools a connection offered when it was last validated, in one piece: the provider's own list, not a page of one.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct ConnectionTools {
@@ -2690,6 +2716,15 @@ pub struct ConnectionTools {
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub tools: ::std::option::Option<::std::vec::Vec<ConnectionTool>>,
 }
+///The tools of a connection to approve at the schema the provider lists now. An unknown field is refused rather than ignored.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+#[derive(Default)]
+pub struct ConnectionToolsApproval {
+    ///The tools to approve, each named once. Up to 128.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub tools: ::std::option::Option<::std::vec::Vec<ConnectionToolApproval>>,
+}
 ///`ConnectionUse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct ConnectionUse {
@@ -2701,10 +2736,13 @@ pub struct ConnectionUse {
 ///Whether a connection's credential works, found by asking the provider for its tools.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ConnectionValidation {
+    ///With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again with POST .../tools/approve, or an OAuth connection reconnects. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub changed_tools: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     ///When the tools were listed. Absent until a validate listed them.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub checked_at: ::std::option::Option<::std::string::String>,
-    ///What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added.
+    ///What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_tool_schema_changed with needs_reapproval; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub code: ::std::option::Option<::std::string::String>,
     pub connection_id: ::std::string::String,
@@ -2727,7 +2765,7 @@ pub struct ConnectionValidationRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tools: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
 }
-///connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+///connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable; error says why.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2749,6 +2787,8 @@ pub enum ConnectionValidationStatus {
     NeedsReauthorization,
     #[serde(rename = "needs_scopes")]
     NeedsScopes,
+    #[serde(rename = "needs_reapproval")]
+    NeedsReapproval,
     #[serde(rename = "failed")]
     Failed,
 }
@@ -2759,6 +2799,7 @@ impl ::std::fmt::Display for ConnectionValidationStatus {
             Self::Pending => f.write_str("pending"),
             Self::NeedsReauthorization => f.write_str("needs_reauthorization"),
             Self::NeedsScopes => f.write_str("needs_scopes"),
+            Self::NeedsReapproval => f.write_str("needs_reapproval"),
             Self::Failed => f.write_str("failed"),
         }
     }
@@ -2771,6 +2812,7 @@ impl ::std::str::FromStr for ConnectionValidationStatus {
             "pending" => Ok(Self::Pending),
             "needs_reauthorization" => Ok(Self::NeedsReauthorization),
             "needs_scopes" => Ok(Self::NeedsScopes),
+            "needs_reapproval" => Ok(Self::NeedsReapproval),
             "failed" => Ok(Self::Failed),
             _ => Err("invalid value".into()),
         }
@@ -2825,7 +2867,7 @@ pub struct Connector {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub setup: ::std::option::Option<ConnectorSetup>,
 }
-///grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection.
+///grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2849,6 +2891,8 @@ pub enum ConnectorAuditAction {
     TokenExport,
     #[serde(rename = "proxy_call")]
     ProxyCall,
+    #[serde(rename = "tool_reapproved")]
+    ToolReapproved,
 }
 impl ::std::fmt::Display for ConnectorAuditAction {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -2858,6 +2902,7 @@ impl ::std::fmt::Display for ConnectorAuditAction {
             Self::GrantRevoked => f.write_str("grant_revoked"),
             Self::TokenExport => f.write_str("token_export"),
             Self::ProxyCall => f.write_str("proxy_call"),
+            Self::ToolReapproved => f.write_str("tool_reapproved"),
         }
     }
 }
@@ -2870,6 +2915,7 @@ impl ::std::str::FromStr for ConnectorAuditAction {
             "grant_revoked" => Ok(Self::GrantRevoked),
             "token_export" => Ok(Self::TokenExport),
             "proxy_call" => Ok(Self::ProxyCall),
+            "tool_reapproved" => Ok(Self::ToolReapproved),
             _ => Err("invalid value".into()),
         }
     }
@@ -2949,6 +2995,9 @@ pub struct ConnectorAuditEvent {
     ///The host a proxy_call reached. Absent for a grant.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub target: ::std::option::Option<::std::string::String>,
+    ///A tool_reapproved row's tools, by name, sorted, each with the digest approved and the one it was pinned at before. Absent for every other action.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tools: ::std::option::Option<::std::vec::Vec<ApprovedConnectionTool>>,
 }
 ///`ConnectorAuditPage`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]

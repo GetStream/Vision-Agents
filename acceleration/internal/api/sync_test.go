@@ -115,6 +115,16 @@ func (s *SyncSuite) TestSyncingAnAgentStoresTheMCPServersItNamesByURL() {
 	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp"}}, value(result.Config.McpServers))
 }
 
+func (s *SyncSuite) TestASyncNamingAPrivateMCPServerIsRefusedWithAPlainError() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "concierge", "hash": "v1",
+		"mcp_servers": []map[string]any{{"name": "wwsd", "url": privateMCPURLs[1]}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "mcp_servers: wwsd: only public https URLs are reachable")
+}
+
 func (s *SyncSuite) TestSyncingAVoiceAgentStoresItsSubagent() {
 	result := s.sync(map[string]any{
 		"name": "support", "hash": "v1", "mode": "voice", "subagent": "llm-flow",

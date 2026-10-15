@@ -610,7 +610,55 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 `deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
 
+### Go: `ListConnectionsParams.OwnerType` is a pointer
+
+`owner_type` is optional on `listConnections`, so the Go client's `ListConnectionsParams.OwnerType`
+is `*ConnectionOwnerType`, and nil means the app's own. Code that set `OwnerType: acceleration.ConnectionOwnerTypeApp`
+no longer compiles. Pass `&app` for a variable holding the value, or leave the field nil for the app.
+
+### An agent config refuses an MCP server on a private address
+
+The router reaches only MCP servers on a public https URL. Saving a config (create, replace, patch or `syncAgent`) now answers 400 `mcp_servers: <name>: only public https URLs are reachable` for a server whose host is on a private network (a Tailscale node included), loopback or link-local, or does not resolve. Such a server used to be saved, and then no session could reach it. A config already stored with one still reads.
+
 ## New Features
+
+### Listing connections without `owner_type` lists the app's own
+
+`GET /v1/agents/connections` takes `owner_type` as optional. Left out, it lists the app's own
+connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` still
+needs `X-Stream-User-Id`.
+
+### Approve a connection's changed tools again
+
+`POST /v1/agents/connections/{id}/tools/approve` (`approveConnectionTools`) takes
+`{"tools": [{"name", "schema_digest"}]}` and pins each tool at that digest for the connection's
+current grant, so the next session offers it again and the next validate answers `connected`
+when no other tool changed (AI-1305). It is the way out of `needs_reapproval` for a bearer or
+`api_key` connection, which no consent moves to a new grant. Each `schema_digest` must be the
+one `GET .../tools` lists now, which a validate refreshes: a tool it does not list is a 400, one
+listed at another digest a 409. A pin or grant that changed since it was read is a 409 too, and
+a refused approve writes nothing. Each approve is one audit row, the new `ConnectorAuditAction`
+`tool_reapproved`, whose new `tools` field names each tool with the digest approved and the one
+it was pinned at. Server-side only; who may approve is who may read the connection. Migration
+`20261101130000` widens the CHECK on `connector_audit.action` and adds `connector_audit.tools`.
+
+### Validate says when a provider changed a tool sessions pinned
+
+`POST /v1/agents/connections/{id}/validate` now compares the tools the provider lists with the
+schema each was pinned at for the connection's current grant, the pin a session takes the
+first time it offers a tool granted by name or by pattern. A tool listed at another schema is
+`status: needs_reapproval`, a new `ConnectionValidationStatus`, with
+`code: connector_tool_schema_changed` and the tools in `changed_tools`, sorted; the connection's
+`last_validation` keeps the status, the code and an error naming them. It used to answer
+`connected` while sessions left the tool out. Sessions still leave it out, and a validate never
+pins it again: `POST /v1/agents/connections/{id}/tools/approve` approves it, as does a
+reconnect of an OAuth connection, which begins a new grant. A pinned tool the provider no longer lists
+is not reported. A grant lacking scopes is still `needs_scopes`, since the consent it asks for
+approves the changed tools too. A connection with no changed tool answers as before.
+
+### A built-in Notion connector
+
+The connector catalog (`GET /v1/agents/connectors`) has `notion`: Notion's hosted MCP server at `https://mcp.notion.com/mcp`. A connection signs in with `oauth2_code`. The router registers its own client with Notion (`dcr`) and asks for the `default` scope, so no app registers anything first. The agent can search, read and update the pages and databases that the person who signed in can access (AI-1292).
 
 ### Each app sets its own daily limit per end user
 
@@ -1936,6 +1984,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A router stopping with a request still open when its 10 s shutdown grace runs out logs a warning and exits 0. It reported `context deadline exceeded` to Sentry and exited 1, so a rollout that outlasted one slow request paged as a failure (AI-1283).
 - The daily message and token limits count per user behind the proxy again. With `ROUTER_TRUSTED_PROXIES` unset, every request's address was the proxy's, so all end users shared one address allowance and the deployment as a whole was cut off after 200 responses a day. In `proxy` auth mode with no trusted ranges a named user is now counted only by user, and a guest still by address; set `ROUTER_TRUSTED_PROXIES` to count by the forwarded client address as well.
 - A request with a data policy can be answered by Gemini 3.8 Flash, the model `llm-fast` prefers. It declared no data policy, so any request that asked for no training passed it over.
 - The router starts on a database that already applied the migrations shipped before customer-hosted models. That migration was numbered earlier than one already applied, and goose refuses to start when it finds an unapplied migration below the database version. It now runs after that version. A database that already created `custom_models` under the old number keeps the table.

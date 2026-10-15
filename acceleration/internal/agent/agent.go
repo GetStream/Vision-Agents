@@ -282,8 +282,8 @@ type Agent struct {
 	// turns measures each exchange end to end and, when a store is configured, records it.
 	turns     *turnTracker
 	turnStore *turnRecorder
-	// decisionStore keeps what the conversation decided, so a call can be read back after
-	// the process that held it is gone.
+	// decisionStore keeps what the conversation decided for an hour, so a call can be read
+	// back after the process that held it is gone.
 	decisionStore *decisionRecorder
 	// memory carries what earlier conversations established into this one.
 	memory *memoryWriter
@@ -537,13 +537,14 @@ func New(options Options) (*Agent, error) {
 
 	// Turns are keyed by agent id and decisions by call id, so an agent missing either is
 	// still measured and still reports itself, it is just not kept. Neither is kept for an
-	// incognito session: a decision holds what was heard, and a turn names the agent.
-	if options.Store != nil && options.AgentID != "" && !options.Incognito {
-		agent.turnStore = newTurnRecorder(options.Store, owner, logger)
+	// incognito session: a decision holds what was heard, and a turn names the agent. Both
+	// are kept in Redis; a turn's counts also go to Postgres for the stats.
+	if (options.Store != nil || options.Live != nil) && options.AgentID != "" && !options.Incognito {
+		agent.turnStore = newTurnRecorder(options.Store, options.Live, owner, logger)
 	}
 	var record func(Decided)
-	if options.Store != nil && options.CallID != "" && !options.Incognito {
-		agent.decisionStore = newDecisionRecorder(options.Store, owner, logger)
+	if options.Live != nil && options.CallID != "" && !options.Incognito {
+		agent.decisionStore = newDecisionRecorder(options.Live, owner, logger)
 		record = agent.decisionStore.Record
 	}
 	agent.converse = newConverse(settling, listening, emitter, record, 0, logger)
@@ -1521,13 +1522,12 @@ func (a *Agent) noteToolDone(hold *toolHold) {
 	a.mu.Unlock()
 }
 
-// queueToolReply starts a turn that says what the tools came back with, or marks one as
-// owed if a generate is already in flight or more tools from this turn are still running.
+// queueToolReply starts a turn that says what the tools came back with, or leaves it
+// pending if a generate is already in flight or more tools are still running.
 // Two tools in one reply used to each start a generate, and the second stole speakingTurn
 // so the first result was never said.
 func (a *Agent) queueToolReply() {
 	a.mu.Lock()
-	a.toolReply = true
 	wait := a.pendingTools > 0 || a.generating
 	a.mu.Unlock()
 	// A caller who is talking holds the floor, so the tool result waits for follow to pick
@@ -1605,6 +1605,7 @@ func (a *Agent) respondTurn(
 	a.speakingTurn = turnID
 	a.generating = true
 	a.toolRounds = 0
+	a.toolReply = false
 	a.asked = asked
 	a.sender = sender
 	a.lastParticipant = participant
@@ -1838,7 +1839,7 @@ func (a *Agent) startReply(
 	a.turns.modelStarted(turn.ID, time.Now())
 	stream, err := current.Respond(ctx, turn)
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if ctx.Err() != nil {
 			return
 		}
 		// Ended the way a reply failing mid-stream ends, so the turn is over: left
@@ -2024,6 +2025,7 @@ func (a *Agent) handle(event llm.Event) {
 
 // say sends one delta of a reply on its way to the voice.
 func (a *Agent) say(turnID, delta string) {
+	a.claimReply(turnID)
 	// What the model wrote is not all meant for the caller: a request for help is
 	// addressed to the harness, and is taken out here rather than spoken.
 	speech := a.harness.Filter(turnID, delta)
@@ -2031,7 +2033,6 @@ func (a *Agent) say(turnID, delta string) {
 		return
 	}
 	a.turns.firstText(turnID, time.Now())
-	a.replying = turnID
 
 	// A stage direction is addressed to the voice, not to the caller: it is taken out of
 	// what is read and remembered, and left in only for a voice that can act it. A
@@ -2069,6 +2070,7 @@ func (a *Agent) say(turnID, delta string) {
 
 // finish closes out a reply the caller heard.
 func (a *Agent) finish(response llm.Response) {
+	a.claimReply(response.ID)
 	// Text the harness was holding on the chance it began a request for help was only
 	// ever text, so it is spoken.
 	tail := a.harness.Flush()
@@ -2495,8 +2497,10 @@ func (a *Agent) follow() error {
 		a.mu.Unlock()
 		return nil
 	}
-	afterTool := a.toolReply
-	a.toolReply = false
+	if a.toolReply {
+		a.mu.Unlock()
+		return a.respondAfterTool(toolPrefix + turnStamp())
+	}
 	history := a.replayLocked()
 	turnID := replyPrefix + turnStamp()
 	a.speakingTurn = turnID
@@ -2516,7 +2520,6 @@ func (a *Agent) follow() error {
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
-		AfterTool:    afterTool,
 		Asked:        asked,
 	}, "")
 }
@@ -2641,6 +2644,15 @@ func (a *Agent) expectedSyntheses(turnID string) int {
 		return 0
 	}
 	return a.sentences
+}
+
+// claimReply gives the model consumer's buffers to this reply before any text is
+// filtered or flushed. An abandoned stream may deliver its completion later.
+func (a *Agent) claimReply(turnID string) {
+	if a.replying != turnID {
+		a.resetTurn()
+		a.replying = turnID
+	}
 }
 
 // resetTurn forgets the text and the utterance of a turn that has ended, whether it

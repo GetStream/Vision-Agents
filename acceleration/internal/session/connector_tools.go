@@ -386,7 +386,7 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 		}
 		if len(changed) > 0 {
 			m.logger.Warn("a tool granted by name is not offered: the connection no longer lists it with the "+
-				"schema it was pinned at, and a reconnect approves it again", "connector", binding.Name,
+				"schema it was pinned at, and approving it (POST .../tools/approve) or a reconnect gives it back", "connector", binding.Name,
 				"connection", connection.ID, "tools", changed)
 		}
 		return unavailableTool, nil
@@ -469,7 +469,7 @@ func (m *Manager) patternGrants(ctx context.Context, binding store.ConnectorBind
 	}
 	if len(missed) > 0 {
 		m.logger.Warn("a tool a pattern matches is not offered: the connection no longer lists it with the "+
-			"schema it was pinned at, and a reconnect approves it again",
+			"schema it was pinned at, validate reports it as needs_reapproval, and approving it (POST .../tools/approve) or a reconnect gives it back",
 			"connector", binding.Name, "connection", connection.ID, "tools", missed)
 	}
 	return grants, missed, "", nil

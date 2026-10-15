@@ -66,4 +66,5 @@ func (s *GitHubLiveSuite) TestAPersonalAccessTokenListsGitHubsTools() {
 		names = append(names, spec.Name)
 	}
 	s.Contains(names, "get_me", "github-mcp-server's default toolset")
+	s.Contains(names, "actions_list", "the actions toolset, which X-MCP-Toolsets asks for")
 }

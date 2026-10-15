@@ -73,21 +73,24 @@ type Config struct {
 	// a thousand conversations cost what one does. Off by default: with it off the
 	// catalogue still declares them and nothing can be built for them, which is what a
 	// deployment carrying real traffic wants.
-	MockProviders bool       `koanf:"mock_providers"`
-	Postgres      Postgres   `koanf:"postgres"`
-	Redis         Redis      `koanf:"redis"`
-	Node          Node       `koanf:"node"`
-	Shutdown      Shutdown   `koanf:"shutdown"`
-	Auth          Auth       `koanf:"auth"`
-	RateLimit     RateLimit  `koanf:"rate_limit"`
-	DataMove      DataMove   `koanf:"data_move"`
-	Stream        Stream     `koanf:"stream"`
-	Agent         Agent      `koanf:"agent"`
-	Connectors    Connectors `koanf:"connectors"`
-	Episodes      Episodes   `koanf:"episodes"`
-	Sandbox       Sandbox    `koanf:"sandbox"`
-	Models        Models     `koanf:"models"`
-	Telnyx        Telnyx     `koanf:"telnyx"`
+	MockProviders bool `koanf:"mock_providers"`
+	// PprofAddr serves net/http/pprof on its own listener, never the public one. Empty
+	// means no profiling endpoint.
+	PprofAddr  string     `koanf:"pprof_addr"`
+	Postgres   Postgres   `koanf:"postgres"`
+	Redis      Redis      `koanf:"redis"`
+	Node       Node       `koanf:"node"`
+	Shutdown   Shutdown   `koanf:"shutdown"`
+	Auth       Auth       `koanf:"auth"`
+	RateLimit  RateLimit  `koanf:"rate_limit"`
+	DataMove   DataMove   `koanf:"data_move"`
+	Stream     Stream     `koanf:"stream"`
+	Agent      Agent      `koanf:"agent"`
+	Connectors Connectors `koanf:"connectors"`
+	Episodes   Episodes   `koanf:"episodes"`
+	Sandbox    Sandbox    `koanf:"sandbox"`
+	Models     Models     `koanf:"models"`
+	Telnyx     Telnyx     `koanf:"telnyx"`
 }
 
 // Models are the language models a customer serves themselves, named custom/<name>.
@@ -292,6 +295,7 @@ var variables = map[string]string{
 	"phone_config":        "ROUTER_PHONE_CONFIG",
 	"voices_bucket_url":   "ROUTER_VOICES_BUCKET_URL",
 	"mock_providers":      "ROUTER_MOCK_PROVIDERS",
+	"pprof_addr":          "ROUTER_PPROF_ADDR",
 	"postgres.dsn":        "ROUTER_POSTGRES_DSN",
 	"redis.addr":          "ROUTER_REDIS_ADDR",
 	"redis.username":      "ROUTER_REDIS_USERNAME",
@@ -359,11 +363,15 @@ func Defaults() Config {
 		Sandbox:  Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
 		// Slack's rate limits page (https://docs.slack.dev/apis/web-api/rate-limits, opened
 		// 2026-10-09): «we do recommend you design your apps with a limit of 1 request per
-		// second for any given API call». slack_bot is the only built-in with an api_base, so
-		// the only one the proxy reaches, and that page names no limit per IP address. One a
-		// second is the rate Slack tells an app to design for. Whether Slack keeps a limit per
-		// egress address, and so whether 60 keeps one customer from spending it for the others,
-		// is not on that page. # unverified
+		// second for any given API call». slack_bot and github are the built-ins with an
+		// api_base, so the ones the proxy reaches, and that page names no limit per IP address.
+		// One a second is the rate Slack tells an app to design for. Whether Slack keeps a limit
+		// per egress address, and so whether 60 keeps one customer from spending it for the
+		// others, is not on that page. # unverified
+		// GitHub (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api,
+		// opened 2026-10-15) counts an authenticated call against the user, not the address,
+		// and 60 a minute is under its «5,000 requests per hour» and «80 content-generating
+		// requests per minute».
 		Connectors: Connectors{ProxyCallsPerMinute: 60},
 	}
 }
@@ -537,6 +545,7 @@ func (c Config) export() error {
 		"phone_config":                  c.PhoneConfig,
 		"voices_bucket_url":             c.VoicesBucketURL,
 		"mock_providers":                fmt.Sprint(c.MockProviders),
+		"pprof_addr":                    c.PprofAddr,
 		"postgres.dsn":                  c.Postgres.DSN,
 		"redis.addr":                    c.Redis.Addr,
 		"redis.username":                c.Redis.Username,

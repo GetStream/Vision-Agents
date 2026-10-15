@@ -41,6 +41,9 @@ final readonly class ConnectorAuditEvent
         public ?int $statusCode = null,
         // The host a proxy_call reached. Absent for a grant.
         public ?string $target = null,
+        // A tool_reapproved row's tools, by name, sorted, each with the digest approved and the one it was pinned at...
+        /** @var list<ApprovedConnectionTool>|null */
+        public ?array $tools = null,
     ) {
     }
 
@@ -65,6 +68,7 @@ final readonly class ConnectorAuditEvent
             sessionId: array_key_exists('session_id', $data) && $data['session_id'] !== null ? Json::string($data, 'session_id') : null,
             statusCode: array_key_exists('status_code', $data) && $data['status_code'] !== null ? Json::int($data, 'status_code') : null,
             target: array_key_exists('target', $data) && $data['target'] !== null ? Json::string($data, 'target') : null,
+            tools: array_key_exists('tools', $data) && $data['tools'] !== null ? array_map(ApprovedConnectionTool::fromArray(...), Json::objects($data, 'tools')) : null,
         );
     }
 
@@ -108,6 +112,9 @@ final readonly class ConnectorAuditEvent
         }
         if ($this->target !== null) {
             $out['target'] = $this->target;
+        }
+        if ($this->tools !== null) {
+            $out['tools'] = array_map(static fn (ApprovedConnectionTool $each): array => $each->toArray(), $this->tools);
         }
         return $out;
     }

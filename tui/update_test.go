@@ -118,7 +118,7 @@ func TestQuitLeaves(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("/quit did not leave")
 	}
-	if messages := step(cmd); len(messages) == 0 {
+	if messages := step(cmd, silence); len(messages) == 0 {
 		t.Fatal("/quit produced nothing")
 	} else if _, quit := messages[0].(tea.QuitMsg); !quit {
 		t.Errorf("/quit produced %T", messages[0])

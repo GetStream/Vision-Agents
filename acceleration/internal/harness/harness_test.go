@@ -698,10 +698,12 @@ func (s *HarnessSuite) TestTheModelAskingAgainDoesNotReplaceTheCallersImages() {
 
 	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the subagent was never asked")
 	s.True(s.slow.requests()[0].HasImage(), "the task that ran is the one with the picture")
+	// The delegation reaches the collector on its own goroutine, after the task has started.
+	s.eventually(func() bool { return len(delegatedIn(s.events.seen())) > 0 }, "the delegation was never reported")
 	for _, settled := range settledIn(s.events.seen()) {
 		s.NotEqual(ReasonSuperseded, settled.Result.Reason, "the picture's task was replaced")
 	}
-	s.Len(delegatedIn(s.events.seen()), 1)
+	s.awaitDelegated(1)
 }
 
 func (s *HarnessSuite) TestATurnsImagesAreHandedToTheModelBesideTheWordsTheyCameWith() {
@@ -1161,6 +1163,93 @@ func (s *HarnessSuite) TestARevisedConversationCancelsWorkFromItsOldTurn() {
 	s.Equal(Cancelled, settled.State)
 	s.Equal(ReasonSuperseded, settled.Reason)
 	s.False(settled.Actionable())
+}
+
+func (s *HarnessSuite) TestARevisedConversationDiscardsACompletedClarificationFromItsOldTurn() {
+	s.build(true)
+	s.respond("turn-1", "work out the discount")
+	s.reply("turn-1", `<ask skill="think">work out the discount</ask>`)
+	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the task never started")
+	s.slow.settle(s.slow.requests()[0].ID, "NEED: What percentage should I use?")
+	s.awaitSettled(1)
+	s.Require().True(s.harness.Pending(), "the completed question must be waiting for delivery")
+
+	s.harness.CancelTurn("turn-1", ReasonSuperseded)
+
+	s.False(s.harness.Pending(), "a completed question is stale when its originating turn is cancelled")
+	s.respond("turn-2", "use twenty percent")
+	s.NotContains(s.fast.requests()[1].Instructions, "What percentage should I use?")
+}
+
+func (s *HarnessSuite) TestCancellingOneTurnPreservesAnotherTurnsCompletedWork() {
+	s.build(true)
+	first, err := s.harness.Delegate("think", "work out the discount", "turn-1", nil, nil)
+	s.Require().NoError(err)
+	second, err := s.harness.Delegate("recall", "remember the delivery address", "turn-2", nil, nil)
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.slow.requests()) == 2 }, "both tasks must start")
+	s.slow.settle(first, "NEED: What percentage should I use?")
+	s.slow.settle(second, "The delivery address is Oak Street.")
+	s.awaitSettled(2)
+
+	s.harness.CancelTurn("turn-1", ReasonSuperseded)
+
+	s.True(s.harness.Pending(), "the unrelated completed work is still owed")
+	s.respond("turn-3", "use twenty percent")
+	instructions := s.fast.requests()[0].Instructions
+	s.NotContains(instructions, "What percentage should I use?")
+	s.Contains(instructions, "The delivery address is Oak Street.")
+}
+
+func (s *HarnessSuite) TestACompletedResultQueuedBeforeCancellationIsDiscarded() {
+	s.fast, s.slow = newStubLLM(), newStubLLM()
+	tools := testTools()
+	h, err := New(Options{
+		Model: s.session(s.fast), Subagent: s.session(s.slow), Skills: s.skills, Tools: tools,
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.harness = h
+	var events *collector
+	s.T().Cleanup(func() {
+		if events == nil {
+			events = collect(h)
+		}
+		s.NoError(h.Close())
+		<-events.done
+	})
+	first, err := h.Delegate("recall", "remember the delivery address", "turn-1", nil, nil)
+	s.Require().NoError(err)
+	second, err := h.Delegate("think", "work out the discount", "turn-2", nil, nil)
+	s.Require().NoError(err)
+	<-h.Events()
+	<-h.Events()
+	s.eventually(func() bool { return len(s.slow.requests()) == 2 }, "both tasks must start")
+
+	// A slow event reader holds the first result's delivery, so the second finishes in
+	// the manager but cannot be consumed by the harness until after cancellation.
+	for range eventBuffer {
+		h.Requested("event-backlog", []llm.ToolCall{{Name: tools.Tools[0].Name}})
+	}
+	s.slow.settle(first, "The delivery address is Oak Street.")
+	s.eventually(h.Pending, "the first result never reached the harness")
+	s.slow.settle(second, "NEED: What percentage should I use?")
+	s.eventually(func() bool { return h.tasks.Running() == 0 }, "both tasks must finish before cancellation")
+	h.CancelTurn("turn-2", ReasonSuperseded)
+
+	events = collect(h)
+	s.eventually(func() bool { return len(settledIn(events.seen())) == 2 }, "the queued results were not delivered")
+	for _, settled := range settledIn(events.seen()) {
+		if settled.TaskID == second {
+			s.Equal(Cancelled, settled.State)
+			s.Equal(ReasonSuperseded, settled.Reason)
+			s.False(settled.Actionable())
+		}
+	}
+	s.respond("turn-3", "use twenty percent")
+	instructions := s.fast.requests()[0].Instructions
+	s.NotContains(instructions, "What percentage should I use?")
+	s.Contains(instructions, "The delivery address is Oak Street.")
 }
 
 func (s *HarnessSuite) TestTheModelCanDropWorkTheCallerHasMovedPast() {

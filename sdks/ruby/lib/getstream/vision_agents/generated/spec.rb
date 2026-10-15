@@ -44,6 +44,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "approveConnectionTools" => {
+          method: :post, path: "/v1/agents/connections/{id}/tools/approve",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: "ConnectionToolsApproval", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "attachPhoneNumber" => {
           method: :post, path: "/v1/phone/numbers/{e164}/attach",
           path_params: %w[e164].freeze, query: [].freeze,
@@ -1435,6 +1441,14 @@ module GetStream
           properties: %w[stream].freeze,
           required: %w[stream].freeze, open: false
         }.freeze,
+        "ApprovedConnectionTool" => {
+          properties: %w[name previous_schema_digest schema_digest].freeze,
+          required: %w[name schema_digest].freeze, open: false
+        }.freeze,
+        "ApprovedConnectionTools" => {
+          properties: %w[connection_id tools].freeze,
+          required: %w[connection_id tools].freeze, open: false
+        }.freeze,
         "AttachNumberRequest" => {
           properties: %w[allowed_ips].freeze,
           required: [].freeze, open: false
@@ -1627,16 +1641,24 @@ module GetStream
           properties: %w[description input_schema name needs_scopes schema_digest].freeze,
           required: %w[name description input_schema schema_digest].freeze, open: false
         }.freeze,
+        "ConnectionToolApproval" => {
+          properties: %w[name schema_digest].freeze,
+          required: %w[name schema_digest].freeze, open: false
+        }.freeze,
         "ConnectionTools" => {
           properties: %w[checked_at connection_id digest tools].freeze,
           required: %w[connection_id tools].freeze, open: false
+        }.freeze,
+        "ConnectionToolsApproval" => {
+          properties: %w[tools].freeze,
+          required: %w[tools].freeze, open: false
         }.freeze,
         "ConnectionUse" => {
           properties: %w[binding config_id config_name].freeze,
           required: %w[config_id config_name binding].freeze, open: false
         }.freeze,
         "ConnectionValidation" => {
-          properties: %w[checked_at code connection_id error missing_scopes status tools_digest].freeze,
+          properties: %w[changed_tools checked_at code connection_id error missing_scopes status tools_digest].freeze,
           required: %w[connection_id status].freeze, open: false
         }.freeze,
         "ConnectionValidationRequest" => {
@@ -1652,7 +1674,7 @@ module GetStream
           required: %w[rotated].freeze, open: false
         }.freeze,
         "ConnectorAuditEvent" => {
-          properties: %w[action attempt_id connection_id connector_id created_at credential id latency_ms owner_type reason request_id revision session_id status_code target].freeze,
+          properties: %w[action attempt_id connection_id connector_id created_at credential id latency_ms owner_type reason request_id revision session_id status_code target tools].freeze,
           required: %w[id connection_id connector_id owner_type action created_at].freeze, open: false
         }.freeze,
         "ConnectorAuditPage" => {

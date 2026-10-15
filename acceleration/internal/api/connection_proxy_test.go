@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -24,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
@@ -35,6 +37,8 @@ import (
 const (
 	echoStatusHeader     = "X-Echo-Status"
 	echoRetryAfterHeader = "X-Echo-Retry-After"
+	// echoLinkHeader has the echo answer with its value as its Link header.
+	echoLinkHeader = "X-Echo-Answer-Link"
 	// echoRawHeader has the echo answer rawAnswer with rawServerTiming instead.
 	echoRawHeader = "X-Echo-Raw"
 	// echoStallHeader has the echo answer a 502 with stalledStart, then wait until the test
@@ -42,6 +46,13 @@ const (
 	// with stalledEnd.
 	echoStallHeader = "X-Echo-Stall"
 )
+
+// proxyPublicURL is the suite router's ROUTER_PUBLIC_URL.
+const proxyPublicURL = "https://router.example"
+
+// gitHubAPI is the host of the built-in github's api_base (providers/github.yaml), which the
+// suite's transport dials at the echo.
+const gitHubAPI = "api.github.com:443"
 
 // echoNotFoundPath is the provider path the echo answers with a 404, for a call that must
 // forward no header but plainHeaders and no query (the proxy forwards both).
@@ -83,6 +94,8 @@ type ConnectionProxySuite struct {
 	logged *lockedLog
 	// stalls are the channels a stalled answer waits on, by its echoStallHeader.
 	stalls sync.Map
+	// hosts is the Host each path reached the echo with, by its escaped path.
+	hosts sync.Map
 }
 
 func TestConnectionProxySuite(t *testing.T) {
@@ -102,13 +115,27 @@ func (s *ConnectionProxySuite) SetupSuite() {
 	roots := transport.TLSClientConfig.RootCAs.Clone()
 	roots.AddCert(s.echo.Certificate())
 	transport.TLSClientConfig.RootCAs = roots
+	// GitHub's API host is the echo, so a built-in github connection's call stays on loopback.
+	// The echo's certificate is net/http's test one, issued for example.com and the loopback
+	// addresses (net/http/internal/testcert), as the fake's is, so both are checked as that name.
+	dialer := &net.Dialer{}
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address == gitHubAPI {
+			address = s.echo.Listener.Addr().String()
+		}
+		return dialer.DialContext(ctx, network, address)
+	}
+	transport.TLSClientConfig.ServerName = "example.com"
 	s.connectorHTTP = &http.Client{Transport: transport}
 	// The router's default cap, as a deployment that sets none runs (AI-958). Every test but
 	// the cap's own stays under it, so each asserts what base answered.
 	s.proxyCallsPerMinute = config.Defaults().Connectors.ProxyCallsPerMinute
 	s.logged = &lockedLog{}
 	s.logs = s.logged
+	// A Link's target under api_base is rewritten to the proxy under this URL.
+	s.publicURL = proxyPublicURL
 	s.RouterSuite.SetupSuite()
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
 
 // TestCallsUpToTheDefaultCapAllReachTheProvider: the default cap's worth of calls on one
@@ -489,6 +516,68 @@ func (s *ConnectionProxySuite) TestAPathCannotNameAnotherHost() {
 	}
 }
 
+// TestAGitHubConnectionsDirectCallGoesToGitHubsRESTAPI: the built-in github has an api_base
+// (revision 4, AI-1308), so a backend's call through a github connection reaches
+// api.github.com under the path it named, with the connection's token. A caller that sends no
+// User-Agent still sends one to GitHub, which refuses a request without it.
+func (s *ConnectionProxySuite) TestAGitHubConnectionsDirectCallGoesToGitHubsRESTAPI() {
+	token := "token-" + s.utils.uuid()
+	id := s.connectedWithToken("github", token)
+
+	// An empty User-Agent makes Go's client send none to the router.
+	status, answer := s.send(s.serverClient, http.MethodGet, proxy(id, "repos/octo/hello/issues"), "",
+		http.Header{"User-Agent": {""}})
+
+	s.Require().Equal(http.StatusOK, status, string(answer))
+	got := s.echoed(answer)
+	s.Equal("/repos/octo/hello/issues", got.Path)
+	host, _ := s.hosts.Load(got.Path)
+	s.Equal("api.github.com", host)
+	s.True(got.Header.Get("Authorization") == "Bearer "+token, "GitHub got the connection's token")
+	s.NotEmpty(got.Header.Get("User-Agent"))
+}
+
+// TestAProviderLinkIsDroppedWhenTheRouterHasNoPublicURL: with no ROUTER_PUBLIC_URL there is no
+// proxy URL to rewrite a Link to, and passing it as it came would send a client to
+// api.github.com with the router's token, so the answer carries no Link (fail closed).
+func (s *ConnectionProxySuite) TestAProviderLinkIsDroppedWhenTheRouterHasNoPublicURL() {
+	id := s.connectedWithToken("github", "token-"+s.utils.uuid())
+	public := s.router.publicURL
+	s.router.publicURL = ""
+	s.T().Cleanup(func() { s.router.publicURL = public })
+
+	response, _ := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "user/repos?per_page=1"), "",
+		http.Header{echoLinkHeader: {`<https://api.github.com/user/repos?per_page=1&page=2>; rel="next"`}})
+
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	s.Empty(response.Header.Values("Link"))
+}
+
+// TestAGitHubPageLinkComesBackThroughTheProxy: GitHub REST pages with a Link naming
+// api.github.com, which a client such as Octokit follows as it is with its token, the
+// router's. So the answer's Link names this connection's proxy instead, under the router's
+// public URL (RFC 8288 section 3), and following it reaches the next page with the
+// connection's token. A link elsewhere comes back as it came.
+func (s *ConnectionProxySuite) TestAGitHubPageLinkComesBackThroughTheProxy() {
+	token := "token-" + s.utils.uuid()
+	id := s.connectedWithToken("github", token)
+	page := `<https://api.github.com/user/repos?per_page=1&page=2>; rel="next"`
+	elsewhere := `<https://api.github.com.evil.example/user/repos?page=2>; rel="next"`
+
+	response, _ := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "user/repos?per_page=1"), "",
+		http.Header{echoLinkHeader: {page + ", " + elsewhere}})
+
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	next := proxyPublicURL + proxy(id, "user/repos?per_page=1&page=2")
+	s.Equal(`<`+next+`>; rel="next", `+elsewhere, response.Header.Get("Link"))
+	status, answer := s.send(s.serverClient, http.MethodGet, strings.TrimPrefix(next, proxyPublicURL), "", nil)
+	s.Require().Equal(http.StatusOK, status, string(answer))
+	got := s.echoed(answer)
+	s.Equal("/user/repos", got.Path)
+	s.Equal("per_page=1&page=2", got.Query)
+	s.Equal("Bearer "+token, got.Header.Get("Authorization"))
+}
+
 func (s *ConnectionProxySuite) TestAConnectorWithoutAnAPIBaseTakesNoDirectCalls() {
 	id := s.connected(s.connectorWithout(), bearer.Name)
 
@@ -627,6 +716,7 @@ func (s *ConnectionProxySuite) proxyCalls(id string) []ConnectorAuditEvent {
 // Retry-After the test asked for, or with rawAnswer when asked.
 func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	s.hits.Add(1)
+	s.hosts.Store(r.URL.EscapedPath(), r.Host)
 	if key := r.Header.Get(echoStallHeader); key != "" {
 		release, _ := s.stalls.Load(key)
 		w.WriteHeader(http.StatusBadGateway)
@@ -655,6 +745,9 @@ func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	}
 	if wait := r.Header.Get(echoRetryAfterHeader); wait != "" {
 		w.Header().Set("Retry-After", wait)
+	}
+	if link := r.Header.Get(echoLinkHeader); link != "" {
+		w.Header().Set("Link", link)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Echo-Seen", "yes")
@@ -894,15 +987,18 @@ func (s *ConnectionProxyOffSuite) SetupTest() {
 
 // TestTheConnectionEndpointsAnswerAsOnBase: the answers base ad3fffd0 gave with connectors off
 // (probe, <scratchpad>/pr-w3d-t44/probe-base.txt): a missing connection is connection_not_found
-// and a list without owner_type a validation failure.
+// and a list without owner_type a validation failure, which since AI-1293 lists the app's own
+// as owner_type=app does.
 func (s *ConnectionProxyOffSuite) TestTheConnectionEndpointsAnswerAsOnBase() {
 	status, body := s.serverClient.call(http.MethodGet, "/v1/agents/connections/x", nil)
 	s.Equal(http.StatusNotFound, status)
 	s.JSONEq(`{"error":{"message":"no such connection","type":"not_found","code":"connection_not_found","doc_url":"https://getstream.io/agents/docs/api/errors/#connection_not_found"}}`, withoutDuration(body))
 
 	status, body = s.serverClient.call(http.MethodGet, "/v1/agents/connections", nil)
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(string(body), `"code":"validation_failed"`)
+	appStatus, apps := s.serverClient.call(http.MethodGet, "/v1/agents/connections?owner_type=app", nil)
+	s.Equal(http.StatusOK, status)
+	s.Equal(http.StatusOK, appStatus)
+	s.JSONEq(withoutDuration(apps), withoutDuration(body))
 }
 
 // TestTheProxyIsNoRouteAsOnBase: base fd4b4405 with connectors off answered every method on

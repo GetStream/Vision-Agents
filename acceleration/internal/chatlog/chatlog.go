@@ -107,6 +107,9 @@ type Options struct {
 	// AgentID. A bound Athena conversation passes the id from its CID so voice does not
 	// open a second channel.
 	Channel string
+	// Opened says the caller has just made or read Channel, so Start does not ask Stream for
+	// it again.
+	Opened bool
 	// Agent is the user the agent's own replies are written as.
 	Agent User
 	// VisibleTools are the agent config's visible_tools. A shown tool's stored artifacts
@@ -144,6 +147,7 @@ type Log struct {
 	agentID  string
 	channel  string
 	existing bool
+	opened   bool
 	customer string
 	agent    User
 	visible  []string
@@ -208,6 +212,7 @@ func New(options Options) (*Log, error) {
 		agentID:  options.AgentID,
 		channel:  channel,
 		existing: options.Channel != "",
+		opened:   options.Channel != "" && options.Opened,
 		customer: options.CustomerID,
 		agent:    options.Agent,
 		visible:  options.VisibleTools,
@@ -227,19 +232,20 @@ func (l *Log) Start(ctx context.Context) error {
 	if err := l.upsert(ctx, l.agent); err != nil {
 		return err
 	}
-	request := &getstream.GetOrCreateChannelRequest{}
-	if l.existing {
-		state := true
-		request.State = &state
-	} else {
-		request.Data = &getstream.ChannelInput{CreatedByID: &l.agent.ID}
-		if l.customer != "" {
-			request.Data.Custom = map[string]any{conversation.CustomerField: l.customer}
+	if !l.opened {
+		request := &getstream.GetOrCreateChannelRequest{}
+		if l.existing {
+			state := true
+			request.State = &state
+		} else {
+			request.Data = &getstream.ChannelInput{CreatedByID: &l.agent.ID}
+			if l.customer != "" {
+				request.Data.Custom = map[string]any{conversation.CustomerField: l.customer}
+			}
 		}
-	}
-	_, err := l.client.Chat().GetOrCreateChannel(ctx, ChannelType, l.channel, request)
-	if err != nil {
-		return stack.Wrap(err)
+		if _, err := l.client.Chat().GetOrCreateChannel(ctx, ChannelType, l.channel, request); err != nil {
+			return stack.Wrap(err)
+		}
 	}
 
 	l.started.Store(true)
@@ -401,6 +407,10 @@ type writer struct {
 	// met, and turns is the order they were first held in, oldest first.
 	recent map[string]*turnRecord
 	turns  []string
+	// quietUntil is when showing what is being written may be tried again, after a show
+	// Stream refused. Every tick would otherwise send it again, and Stream answers a 429
+	// by closing the connection, so a limited app spent a new connection on each.
+	quietUntil time.Time
 }
 
 func newWriter(l *Log) *writer {
@@ -495,6 +505,9 @@ func (w *writer) storeArtifacts(queued message) {
 // first revision is stored, so the channel has a message to update and to keep if it never
 // settles; the rest are ephemeral, which reach watchers without a write per token.
 func (w *writer) show() {
+	if time.Now().Before(w.quietUntil) {
+		return
+	}
 	for turnID, writing := range w.writing {
 		w.showOne(writing, SourceAgent, "turn", turnID)
 	}
@@ -504,7 +517,7 @@ func (w *writer) show() {
 }
 
 func (w *writer) showOne(writing *reply, source string, key, id string) {
-	if writing.text == writing.shown {
+	if writing.text == writing.shown || time.Now().Before(w.quietUntil) {
 		return
 	}
 
@@ -523,10 +536,28 @@ func (w *writer) showOne(writing *reply, source string, key, id string) {
 			})
 	}
 	if err != nil {
+		w.quietUntil = time.Now().Add(quietFor(err))
 		w.log.logger.Error("could not show a message being written", key, id, "error", err)
 		return
 	}
 	writing.shown = writing.text
+}
+
+// quietFor is how long to stop showing what is being written after Stream refused to: until
+// the limit it hit resets, or a moment for any other failure. What is finished is still
+// stored in the meantime, so only the live view goes quiet.
+func quietFor(err error) time.Duration {
+	var refused *getstream.StreamError
+	if !errors.As(err, &refused) || !errors.Is(err, getstream.ErrRateLimited) {
+		return time.Second
+	}
+	if refused.RetryAfter > 0 {
+		return refused.RetryAfter
+	}
+	if refused.RateLimit != nil && refused.RateLimit.Reset > 0 {
+		return time.Until(time.Unix(refused.RateLimit.Reset, 0))
+	}
+	return 10 * time.Second
 }
 
 // retract removes what a participant was heard saying before it settled, so words the

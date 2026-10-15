@@ -2,8 +2,11 @@ package run
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,6 +15,106 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/target"
 )
+
+func TestAnUnseededRunKeepsScenarioOrder(t *testing.T) {
+	sum, ids := runOrder(t, Config{})
+	want := []string{"a-t1", "a-t2", "b-t1", "b-t2", "c-t1", "c-t2", "d-t1", "d-t2", "e-t1", "e-t2"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("order = %v, want %v", ids, want)
+	}
+	if sum.Manifest.Seed != nil {
+		t.Fatal("unseeded runs must not acquire a seed")
+	}
+}
+
+func TestASeedReplaysTheSameScenarioOrder(t *testing.T) {
+	seed := uint64(0)
+	first, ids := runOrder(t, Config{Seed: &seed})
+	second, replay := runOrder(t, Config{Seed: &seed})
+	if !slices.Equal(ids, replay) || first.Manifest.ScenarioHash != second.Manifest.ScenarioHash {
+		t.Fatalf("same seed changed the order: %v vs %v", ids, replay)
+	}
+	raw, err := json.Marshal(first.Manifest)
+	if err != nil || !strings.Contains(string(raw), `"seed":0`) {
+		t.Fatalf("zero seed missing from manifest: %s, %v", raw, err)
+	}
+}
+
+func TestChangingTheSeedReordersWithoutDroppingTrials(t *testing.T) {
+	zero, one := uint64(0), uint64(1)
+	_, first := runOrder(t, Config{Seed: &zero})
+	_, second := runOrder(t, Config{Seed: &one})
+	_, original := runOrder(t, Config{})
+	if slices.Equal(first, second) || slices.Equal(first, original) {
+		t.Fatalf("seed did not change the order: %v vs %v", first, second)
+	}
+	slices.Sort(first)
+	slices.Sort(second)
+	if !slices.Equal(first, original) || !slices.Equal(second, original) {
+		t.Fatal("shuffling lost or duplicated trials")
+	}
+}
+
+func TestSeededShortRunsBalanceTypesAndRotateVariants(t *testing.T) {
+	seen := map[string]bool{}
+	for seed := uint64(0); seed < 10; seed++ {
+		sum, ids := runOrder(t, Config{Seed: &seed, Short: true})
+		_, replay := runOrder(t, Config{Seed: &seed, Short: true})
+		if !slices.Equal(ids, replay) {
+			t.Fatalf("seed %d changed selection: %v vs %v", seed, ids, replay)
+		}
+		counts := map[string]int{}
+		for _, call := range sum.Calls {
+			counts[call.Category]++
+			seen[call.ScenarioID] = true
+		}
+		if len(sum.Calls) != 6 || counts["golden"] != 2 || counts["interrupt"] != 2 || counts["checklist"] != 2 {
+			t.Fatalf("seed %d changed the type weights: %v", seed, counts)
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("different seeds did not cover the full pool: %v", seen)
+	}
+}
+
+func TestUnseededShortRunsKeepTheFixedList(t *testing.T) {
+	_, ids := runOrder(t, Config{Short: true})
+	want := []string{"a-t1", "a-t2", "b-t1", "b-t2", "c-t1", "c-t2"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("unseeded short selection = %v, want %v", ids, want)
+	}
+}
+
+func runOrder(t *testing.T, cfg Config) (report.Summary, []string) {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, "scenarios", "restaurant")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i, category := range []string{"golden", "interrupt", "checklist", "checklist", "checklist"} {
+		id := string(rune('a' + i))
+		data := fmt.Sprintf("id: %s\npack: restaurant\ncategory: %s\nturns:\n  - id: noise\n    overlap_sound: cough\n", id, category)
+		if err := os.WriteFile(filepath.Join(dir, id+".yaml"), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "scenarios", "short.txt"), []byte("a\nb\nc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Exercise scheduling and persisted reports without provider calls or synthesized speech.
+	cfg.Root, cfg.Pack, cfg.K = root, "restaurant", 2
+	cfg.WorldAddr, cfg.Transport = "127.0.0.1:0", "unavailable"
+	sum, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, call := range sum.Calls {
+		ids = append(ids, fmt.Sprintf("%s-t%d", call.ScenarioID, call.Trial))
+	}
+	return sum, ids
+}
 
 func TestLoadRestaurantPack(t *testing.T) {
 	root := findTestRoot(t)

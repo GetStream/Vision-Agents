@@ -7,6 +7,7 @@ class ConnectorAuditAction(StrEnum):
     GRANT_REVOKED = "grant_revoked"
     PROXY_CALL = "proxy_call"
     TOKEN_EXPORT = "token_export"
+    TOOL_REAPPROVED = "tool_reapproved"
 
     def __str__(self) -> str:
         return str(self.value)

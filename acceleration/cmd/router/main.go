@@ -2,16 +2,20 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/ed25519"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -435,6 +439,16 @@ func newAuthenticator(settings config.Config, configs *appconfig.Store, logger *
 func run(settings config.Config, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// The WebRTC SDK signals every call's SFU and coordinator through the default transport.
+	// Its two idle connections a host are shared by every agent on the router, so past two
+	// requests at once each one paid a TLS handshake for a connection then thrown away.
+	defaultTransport := http.DefaultTransport.(*http.Transport)
+	defaultTransport.MaxIdleConns = 1024
+	defaultTransport.MaxIdleConnsPerHost = 256
+	// Each join still dials its SFU anew, and verifying the server's certificate chain was
+	// most of that handshake. A resumed session skips it.
+	defaultTransport.TLSClientConfig = &tls.Config{ClientSessionCache: tls.NewLRUClientSessionCache(1024)}
 
 	capabilities, err := routing.LoadConfig(settings.RoutingConfig)
 	if err != nil {
@@ -1252,6 +1266,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 		go serve(peerServer, peers)
 	}
 
+	if settings.PprofAddr != "" {
+		go servePprof(settings.PprofAddr, logger)
+	}
+
 	select {
 	case err := <-listening:
 		return err
@@ -1294,7 +1312,10 @@ type stopping struct {
 	held      func() int
 	telephony *phone.Service
 	drain     time.Duration
-	logger    *slog.Logger
+	// grace is how long the requests still open on a closing listener get to finish; zero
+	// means shutdownGrace.
+	grace  time.Duration
+	logger *slog.Logger
 }
 
 // drainPoll is how often a draining router looks at how many sessions it still holds.
@@ -1303,19 +1324,20 @@ const drainPoll = 250 * time.Millisecond
 // stopServing stops taking work, then lets what is running finish.
 //
 // Without a drain it hangs up the calls through customers' own SIP trunks, then drains HTTP,
-// both inside shutdownGrace: the drain gets whatever the hangup left of it. With one, the
+// both inside the grace: the drain gets whatever the hangup left of it. With one, the
 // public listener closes first and the sessions this process holds, phone calls included,
 // keep going until they end or the drain runs out, still answering their peers' requests.
 // A second signal stops waiting. The sessions left are ended by the caller's
 // sessions.Shutdown either way.
 func stopServing(s stopping) error {
 	s.drainWork()
+	grace := cmp.Or(s.grace, shutdownGrace)
 	if s.drain <= 0 {
-		deadline := time.Now().Add(shutdownGrace)
+		deadline := time.Now().Add(grace)
 		closePhone(s.telephony, s.logger)
 		shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
 		defer cancel()
-		return errors.Join(s.public.Shutdown(shutdownCtx), shutdown(shutdownCtx, s.peers))
+		return errors.Join(shutdown(shutdownCtx, s.public, s.logger), shutdown(shutdownCtx, s.peers, s.logger))
 	}
 
 	again := make(chan os.Signal, 1)
@@ -1324,7 +1346,7 @@ func stopServing(s stopping) error {
 	timeout := time.NewTimer(s.drain)
 	defer timeout.Stop()
 
-	httpCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	httpCtx, cancel := context.WithTimeout(context.Background(), grace)
 	if err := s.public.Shutdown(httpCtx); err != nil {
 		s.logger.Warn("requests were still running when the public listener closed", "error", err)
 	}
@@ -1346,9 +1368,9 @@ func stopServing(s stopping) error {
 	}
 
 	closePhone(s.telephony, s.logger)
-	peerCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	peerCtx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
-	return shutdown(peerCtx, s.peers)
+	return shutdown(peerCtx, s.peers, s.logger)
 }
 
 // running is how many sessions a router holds; one without sessions holds none.
@@ -1359,12 +1381,41 @@ func running(sessions *session.Manager) int {
 	return sessions.Len()
 }
 
-// shutdown drains a server that may not exist.
-func shutdown(ctx context.Context, server *http.Server) error {
+// servePprof serves the runtime profiles on an address of their own, with lock contention
+// and blocking sampled so the mutex and block profiles have something in them.
+func servePprof(addr string, logger *slog.Logger) {
+	runtime.SetMutexProfileFraction(100)
+	runtime.SetBlockProfileRate(int(time.Millisecond))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	logger.Info("serving pprof", "address", addr, "setting", "pprof_addr")
+	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout}
+	// A router taking over from one still draining its calls finds the address held until
+	// that one ends, so it keeps trying rather than going without.
+	for {
+		err := server.ListenAndServe()
+		logger.Warn("pprof is not serving, trying again", "error", err)
+		time.Sleep(5 * time.Second)
+	}
+}
+
+// shutdown drains a server that may not exist. A request still open when ctx runs out is
+// a warning, not an error: a deploy outlasting a slow request is how a deploy goes, and an
+// error here would page Sentry and exit 1 on every such rollout.
+func shutdown(ctx context.Context, server *http.Server, logger *slog.Logger) error {
 	if server == nil {
 		return nil
 	}
-	return server.Shutdown(ctx)
+	err := server.Shutdown(ctx)
+	if errors.Is(err, context.DeadlineExceeded) {
+		logger.Warn("requests were still running when the grace ran out", "error", err)
+		return nil
+	}
+	return err
 }
 
 // pruneDataChanges drops the recorded changes nobody can resume from any more, hourly

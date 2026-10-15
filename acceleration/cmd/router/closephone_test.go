@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -43,9 +45,10 @@ func TestClosePhoneHangsUpTrunkCallsAndIsSafeToRepeat(t *testing.T) {
 }
 
 func TestStoppingDrainsHTTPForTheWholeGraceWhenNoTrunkCallIsUp(t *testing.T) {
-	started := make(chan struct{})
+	started, done := make(chan struct{}), make(chan struct{})
 	httpServer := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			defer close(done)
 			close(started)
 			time.Sleep(200 * time.Millisecond)
 			w.WriteHeader(http.StatusNoContent)
@@ -82,7 +85,142 @@ func TestStoppingDrainsHTTPForTheWholeGraceWhenNoTrunkCallIsUp(t *testing.T) {
 	})
 
 	require.NoError(t, err)
+	select {
+	case <-done:
+	default:
+		t.Fatal("stopServing returned while the request was still running")
+	}
 	require.Equal(t, http.StatusNoContent, <-status)
+}
+
+// testGrace stands in for shutdownGrace, 10 s, so a request outlives it without the test
+// waiting that long.
+const testGrace = 100 * time.Millisecond
+
+func idlePhone(t *testing.T) *phone.Service {
+	t.Helper()
+	service, err := phone.NewService(phone.ServiceOptions{
+		Registry:  phone.NewRegistry(phone.Config{}),
+		SIPTrunks: &closeRecorder{},
+	})
+	require.NoError(t, err)
+	return service
+}
+
+// servingAnOpenRequest is a server with one request that does not finish until the test
+// ends: a slow request on a router told to stop.
+func servingAnOpenRequest(t *testing.T) *http.Server {
+	t.Helper()
+	opened, release := make(chan struct{}), make(chan struct{})
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			close(opened)
+			<-release
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		ReadHeaderTimeout: time.Second,
+	}
+	t.Cleanup(func() {
+		close(release)
+		_ = server.Close()
+	})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = server.Serve(listener) }()
+	go func() {
+		if res, err := http.Get("http://" + listener.Addr().String()); err == nil {
+			_ = res.Body.Close()
+		}
+	}()
+	<-opened
+	return server
+}
+
+func TestARouterWithNoOpenRequestStopsWithoutAnError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := &http.Server{
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+		ReadHeaderTimeout: time.Second,
+	}
+	go func() { _ = server.Serve(listener) }()
+	require.True(t, answers(listener.Addr().String()))
+
+	err = stopServing(stopping{
+		public:    server,
+		drainWork: func() {},
+		held:      func() int { return 0 },
+		telephony: idlePhone(t),
+		grace:     testGrace,
+		logger:    slog.New(slog.DiscardHandler),
+	})
+
+	require.NoError(t, err)
+}
+
+func TestARequestOutlivingTheGraceIsNotAnError(t *testing.T) {
+	var logs bytes.Buffer
+	err := stopServing(stopping{
+		public:    servingAnOpenRequest(t),
+		drainWork: func() {},
+		held:      func() int { return 0 },
+		telephony: idlePhone(t),
+		grace:     testGrace,
+		logger:    slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+
+	require.NoError(t, err)
+	require.Contains(t, logs.String(), "level=WARN")
+	require.Contains(t, logs.String(), "requests were still running when the grace ran out")
+}
+
+func TestAPeerRequestOutlivingTheGraceAfterADrainIsNotAnError(t *testing.T) {
+	err := stopServing(stopping{
+		public:    &http.Server{ReadHeaderTimeout: time.Second},
+		peers:     servingAnOpenRequest(t),
+		drainWork: func() {},
+		held:      func() int { return 0 },
+		telephony: idlePhone(t),
+		drain:     time.Hour,
+		grace:     testGrace,
+		logger:    slog.New(slog.DiscardHandler),
+	})
+
+	require.NoError(t, err)
+}
+
+// unclosable closes but says it could not. Besides its deadline, a listener that fails to
+// close is the one error http.Server.Shutdown returns (closeListenersLocked in net/http),
+// and no real listener fails to close on demand.
+type unclosable struct{ net.Listener }
+
+var errUnclosable = errors.New("the listener could not close")
+
+func (u unclosable) Close() error {
+	_ = u.Listener.Close()
+	return errUnclosable
+}
+
+func TestAShutdownThatFailsForAnotherReasonIsStillAnError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := &http.Server{
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+		ReadHeaderTimeout: time.Second,
+	}
+	go func() { _ = server.Serve(unclosable{listener}) }()
+	require.True(t, answers(listener.Addr().String()))
+
+	err = stopServing(stopping{
+		public:    server,
+		drainWork: func() {},
+		held:      func() int { return 0 },
+		telephony: idlePhone(t),
+		grace:     testGrace,
+		logger:    slog.New(slog.DiscardHandler),
+	})
+
+	require.ErrorIs(t, err, errUnclosable)
 }
 
 // draining is a router on its way down with a drain, a public and a peer listener, and a
@@ -120,6 +258,7 @@ func startDraining(t *testing.T, drain time.Duration) *draining {
 			held:      func() int { return int(d.held.Load()) },
 			telephony: service,
 			drain:     drain,
+			grace:     shutdownGrace,
 			logger:    slog.New(slog.DiscardHandler),
 		})
 	}()

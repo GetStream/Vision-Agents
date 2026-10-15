@@ -174,6 +174,8 @@ type Service struct {
 	// finished is told of every reply finished in a thread channel (OnFinishedReply). It is
 	// apart from mu so a finished reply in one conversation never waits on another opening.
 	finished atomic.Pointer[func(FinishedReply)]
+	// retireAfter is how long a released conversation is held before it is let go.
+	retireAfter time.Duration
 }
 
 // known is how the service finds a conversation it holds: by its customer and its channel
@@ -215,8 +217,10 @@ type Conversation struct {
 	// parkedUntil is when a conversation whose app is out of reach tries again, and zero
 	// while it is not parked.
 	parkedUntil time.Time
-	stopped     chan struct{}
-	done        chan struct{}
+	// released is when the last session let the conversation go (retire).
+	released time.Time
+	stopped  chan struct{}
+	done     chan struct{}
 }
 
 // indication is the Stream AI indicator a reply last showed: which message, in which state.
@@ -365,7 +369,7 @@ func NewForChat(client *getstream.Stream) *Service {
 func newService(chats Chats) *Service {
 	return &Service{
 		chats: chats, all: map[known]*Conversation{},
-		opening: map[known]*gate{}, logger: slog.Default(),
+		opening: map[known]*gate{}, logger: slog.Default(), retireAfter: time.Minute,
 	}
 }
 
@@ -483,7 +487,6 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	if len(scopes) > 0 {
 		scope = scopes[0]
 	}
-	id := strings.TrimPrefix(cid, "agent:")
 	if !Openable(cid) {
 		return nil, nil, false, stack.Wrap(errors.New("invalid conversation channel"))
 	}
@@ -553,6 +556,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	if err != nil {
 		return nil, nil, false, err
 	}
+	var data *getstream.ChannelInput
 	if fresh {
 		userID := caller
 		if userID == "" {
@@ -564,12 +568,9 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 		}
 		stamped := channelCustom(custom)
 		maps.Copy(stamped, map[string]any{CustomerField: customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller, TriggerField: SessionCommandTrigger})
-		_, err = client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: stamped}})
-		if err != nil {
-			return nil, nil, false, stack.Wrap(err)
-		}
+		data = &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: stamped}
 	}
-	page, err := s.historyIn(ctx, client, customer, agentID, cid, "", caller, nil, voiceAgent)
+	page, err := s.readPage(ctx, client, customer, agentID, cid, "", caller, nil, data, voiceAgent)
 	if err != nil {
 		return nil, nil, false, stack.Wrap(err)
 	}
@@ -849,6 +850,12 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 }
 
 func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, customer, agentID, cid, before, caller string, pending []operation, voiceAgent ...string) (Page, error) {
+	return s.readPage(ctx, client, customer, agentID, cid, before, caller, pending, nil, voiceAgent...)
+}
+
+// readPage reads a page of a conversation's channel. With data it is also the request that
+// creates the channel, so a new conversation is made and read back in one.
+func (s *Service) readPage(ctx context.Context, client *getstream.Stream, customer, agentID, cid, before, caller string, pending []operation, data *getstream.ChannelInput, voiceAgent ...string) (Page, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	id := strings.TrimPrefix(cid, "agent:")
@@ -861,8 +868,9 @@ func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, custo
 	if before != "" {
 		params.IDLt = &before
 	}
-	// Query without Data: a resume must never create or overwrite a channel's ownership.
-	r, err := client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{State: &state, Messages: params})
+	// Only a new conversation sends Data: a resume must never create or overwrite a
+	// channel's ownership.
+	r, err := client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: data, State: &state, Messages: params})
 	if err != nil {
 		return Page{}, stack.Wrap(err)
 	}
@@ -1167,6 +1175,7 @@ func (c *Conversation) Release() {
 	defer c.mu.Unlock()
 	c.finish("cancelled")
 	c.active = false
+	c.released = time.Now()
 	c.emit = nil
 }
 func (c *Conversation) Begin(text string) error {
@@ -1862,6 +1871,30 @@ func (c *Conversation) finishedReply(op operation) (FinishedReply, bool) {
 	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: m.ID, Text: m.Text,
 		Files: append([]sandbox.Attachment(nil), m.Files...)}, true
 }
+
+// retire takes a conversation released retireAfter ago, with nothing left to write, out of
+// the service, so it stops holding one per session ever opened. Opening it again reads it
+// from Stream, as after a restart.
+func (c *Conversation) retire() bool {
+	c.mu.Lock()
+	idle := !c.active && !c.released.IsZero() && time.Since(c.released) >= c.service.retireAfter
+	c.mu.Unlock()
+	if !idle {
+		return false
+	}
+	s, key := c.service, known{c.data.Customer, c.data.CID}
+	opened := s.opens(key)
+	defer opened()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.active || c.stopping || len(c.data.Pending) > 0 || s.all[key] != c {
+		return false
+	}
+	delete(s.all, key)
+	return true
+}
 func (c *Conversation) run() {
 	defer close(c.done)
 	tick := time.NewTicker(liveTick)
@@ -1871,7 +1904,7 @@ func (c *Conversation) run() {
 		select {
 		case <-c.stopped:
 			if c.flush() {
-				c.indicate(nil)
+				c.indicate(indication{})
 			}
 			return
 		case <-tick.C:
@@ -1886,6 +1919,9 @@ func (c *Conversation) run() {
 				}
 				c.mu.Unlock()
 				continue
+			}
+			if c.retire() {
+				return
 			}
 			c.mu.Lock()
 			m := c.data.Current
@@ -1910,7 +1946,12 @@ func (c *Conversation) run() {
 					window = &w
 				}
 			}
-			if m != nil {
+			next := indication{}
+			if created && m.Role == "assistant" && m.FinishedAt == nil {
+				next = indication{message: m.ID, state: aiState(*m)}
+			}
+			// Only an update sends the reply, so only a tick that sends one copies it.
+			if live {
 				copy := *m
 				copy.Tools = append([]Tool{}, m.Tools...)
 				copy.Parts = append([]Part{}, m.Parts...)
@@ -1928,11 +1969,7 @@ func (c *Conversation) run() {
 			c.mu.Unlock()
 			// Every pending write is stored by now, so a settled reply's final text is
 			// already in Stream Chat when its indicator clears.
-			if created && m.Role == "assistant" && m.FinishedAt == nil {
-				c.indicate(m)
-			} else {
-				c.indicate(nil)
-			}
+			c.indicate(next)
 			if live {
 				c.lived = now
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1986,14 +2023,10 @@ func liveBackoff(err error, failures int, now time.Time) time.Duration {
 }
 
 // indicate tells watchers what a live reply is doing with Stream's AI indicator events,
-// sending one only when that changes. A nil reply clears the last indicator. They are a
+// sending one only when that changes. An empty one clears the last indicator. They are a
 // best-effort signal: the message's own state and generating fields stay authoritative,
 // so a failed send is not retried.
-func (c *Conversation) indicate(m *Message) {
-	next := indication{}
-	if m != nil {
-		next = indication{message: m.ID, state: aiState(*m)}
-	}
+func (c *Conversation) indicate(next indication) {
 	if next == c.indicated {
 		return
 	}

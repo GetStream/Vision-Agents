@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -192,6 +193,30 @@ func (s *ChatLogSuite) TestAFinishedModelReplyStaysUnspokenUntilTheVoiceFinishes
 	s.Equal("1, 2, 3, 4, 5", writer.writing["turn-1"].generated)
 	writer.handle(message{author: s.log.agent, turnID: "turn-1", kind: spoken})
 	s.Empty(writer.writing, "speech finishing is what stores the reply")
+}
+
+func (s *ChatLogSuite) TestALimitedAppIsNotAskedAgainOnEveryTick() {
+	chat := s.useChat()
+	writer := newWriter(s.log)
+	chat.RateLimit("/message")
+
+	writer.handle(message{author: s.log.agent, text: "hi", turnID: "turn-1", kind: piece})
+	writer.show()
+	writer.handle(message{author: s.log.agent, text: " there", turnID: "turn-1", kind: piece})
+	writer.show()
+	writer.show()
+
+	sends := 0
+	for _, asked := range chat.Requests("test") {
+		if strings.HasSuffix(asked.Path, "/message") {
+			sends++
+		}
+	}
+	s.Equal(1, sends, "a 429 says when to ask again, and Stream closes the connection on each")
+
+	chat.LiftRateLimit("/message")
+	writer.handle(message{author: s.log.agent, turnID: "turn-1", kind: spoken})
+	s.Equal([]string{"hi there"}, chat.Messages(s.log.channel), "the finished reply is still stored")
 }
 
 func (s *ChatLogSuite) TestASavedArtifactIsStoredEvenWithoutASpokenReply() {

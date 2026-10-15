@@ -390,6 +390,8 @@ func fixedConnection(ctx context.Context, client *acceleration.ClientWithRespons
 }
 
 func appConnections(ctx context.Context, client *acceleration.ClientWithResponses, connectorID string) ([]acceleration.Connection, error) {
+	// Named although omitted is app, so a router from before owner_type was optional answers too.
+	app := acceleration.ConnectionOwnerTypeApp
 	var cursor *string
 	asked := map[string]bool{}
 	var connections []acceleration.Connection
@@ -404,7 +406,7 @@ func appConnections(ctx context.Context, client *acceleration.ClientWithResponse
 		asked[key] = true
 
 		listed, err := client.ListConnectionsWithResponse(ctx, &acceleration.ListConnectionsParams{
-			OwnerType:   acceleration.ConnectionOwnerTypeApp,
+			OwnerType:   &app,
 			ConnectorId: &connectorID,
 			Cursor:      cursor,
 		})

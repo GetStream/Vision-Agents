@@ -168,9 +168,16 @@ func (s *ConnectionsSuite) TestListingAUsersConnectionsNeedsTheUserTheBackendAct
 func (s *ConnectionsSuite) TestAnOwnerTypeThatIsNeitherIsRefused() {
 	status, _ := s.serverClient.failure(http.MethodGet, "/v1/agents/connections?owner_type=agent", nil)
 	s.Equal(http.StatusBadRequest, status)
+}
 
-	status, _ = s.serverClient.failure(http.MethodGet, "/v1/agents/connections", nil)
-	s.Equal(http.StatusBadRequest, status, "owner_type is required")
+func (s *ConnectionsSuite) TestAListWithoutOwnerTypeIsTheAppsOwn() {
+	alice := s.data.createUser()
+	s.create(s.serverClient.actingFor(alice), userOwned("linear", alice))
+	apps := s.create(s.serverClient, appOwned("linear"))
+
+	s.Equal([]string{apps.ID}, connectionIDs(s.list(s.serverClient, "", "").Items))
+	s.Equal([]string{apps.ID}, connectionIDs(s.list(s.serverClient.actingFor(alice), "", "").Items),
+		"not the user's, even with one named")
 }
 
 func (s *ConnectionsSuite) TestAnAppOwnedConnectionIsReachedWhoeverTheBackendActsFor() {
@@ -565,7 +572,10 @@ func (s *ConnectionsSuite) get(as *testClient, id string) Connection {
 }
 
 func (s *ConnectionsSuite) list(as *testClient, ownerType, connectorID string) ConnectionPage {
-	query := url.Values{"owner_type": {ownerType}, "limit": {"200"}}
+	query := url.Values{"limit": {"200"}}
+	if ownerType != "" {
+		query.Set("owner_type", ownerType)
+	}
 	if connectorID != "" {
 		query.Set("connector_id", connectorID)
 	}

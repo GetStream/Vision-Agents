@@ -21,6 +21,9 @@ const (
 	AuditGrantRevoked   = "grant_revoked"
 	AuditProxyCall      = "proxy_call"
 	AuditTokenExport    = "token_export"
+	// AuditToolReapproved: the app's backend approved tools at the schema the provider lists
+	// now (ReapproveConnectorTools, 20261101130000_connector_audit_tool_reapproved.sql).
+	AuditToolReapproved = "tool_reapproved"
 )
 
 // Why a grant was created or revoked (ConnectorAuditEvent.Reason). A revocation the resolver
@@ -73,6 +76,8 @@ type ConnectorAuditEvent struct {
 	LatencyMs  *int64    `bun:"latency_ms"`
 	Target     string    `bun:"target,notnull"`
 	CreatedAt  time.Time `bun:"created_at,notnull"`
+	// Tools are a tool_reapproved row's tools, nil for every other action.
+	Tools []ApprovedTool `bun:"tools,type:jsonb,nullzero"`
 	// Credential names the tokens the event left, by fingerprint, nil when its scheme does not
 	// name them or the event touched no token (a proxy call, an export, a delete). Kept in
 	// connector_audit_credentials (20261011180000_connector_audit_credentials.sql).

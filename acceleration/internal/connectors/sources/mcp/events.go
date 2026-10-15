@@ -97,10 +97,10 @@ func (s *Source) eventsClient(ctx context.Context, b core.ResolvedBinding) (*rpc
 	if endpoint == "" {
 		return nil, stack.Wrap(fmt.Errorf("mcp: connector %q has no %s endpoint resolved", b.Manifest.ConnectorID, rule.Endpoint))
 	}
-	// A copy whose transport caps each response, as connect's is: the credential, the 401
-	// renewal and the egress checks all still run.
+	// A copy whose transport adds the manifest's headers and caps each response, as connect's
+	// does: the credential, the 401 renewal and the egress checks all still run.
 	http := *b.HTTP
-	http.Transport = capped{base: b.HTTP.Transport}
+	http.Transport = capped{base: b.HTTP.Transport, headers: rule.Headers}
 	client := &rpcClient{connector: b.Manifest.ConnectorID, endpoint: endpoint, http: &http, timeout: s.startupTimeout}
 	raw, err := client.call(ctx, "server/discover", map[string]any{})
 	if err != nil {

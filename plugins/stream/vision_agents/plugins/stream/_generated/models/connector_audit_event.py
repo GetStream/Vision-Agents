@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -13,6 +13,7 @@ from ..models.connector_audit_action import ConnectorAuditAction
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.approved_connection_tool import ApprovedConnectionTool
     from ..models.connector_audit_credential import ConnectorAuditCredential
 
 
@@ -29,7 +30,8 @@ class ConnectorAuditEvent:
             action (ConnectorAuditAction): grant_created: a consent, a credentials write or router plugins migrate gave the
                 connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because
                 the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its
-                access credential. proxy_call: a direct call went to the provider through the connection.
+                access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the
+                app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
             connection_id (str): The connection, which may since have been deleted.
             connector_id (str):
             created_at (datetime.datetime):
@@ -55,6 +57,8 @@ class ConnectorAuditEvent:
                 connection's user was deleted.
             status_code (int | Unset): A proxy_call's status from the provider. Absent when no answer came, and for a grant.
             target (str | Unset): The host a proxy_call reached. Absent for a grant.
+            tools (list[ApprovedConnectionTool] | None | Unset): A tool_reapproved row's tools, by name, sorted, each with
+                the digest approved and the one it was pinned at before. Absent for every other action.
     """
 
     action: ConnectorAuditAction
@@ -72,6 +76,7 @@ class ConnectorAuditEvent:
     session_id: str | Unset = UNSET
     status_code: int | Unset = UNSET
     target: str | Unset = UNSET
+    tools: list[ApprovedConnectionTool] | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -107,6 +112,18 @@ class ConnectorAuditEvent:
 
         target = self.target
 
+        tools: list[dict[str, Any]] | None | Unset
+        if isinstance(self.tools, Unset):
+            tools = UNSET
+        elif isinstance(self.tools, list):
+            tools = []
+            for tools_type_0_item_data in self.tools:
+                tools_type_0_item = tools_type_0_item_data.to_dict()
+                tools.append(tools_type_0_item)
+
+        else:
+            tools = self.tools
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -137,11 +154,14 @@ class ConnectorAuditEvent:
             field_dict["status_code"] = status_code
         if target is not UNSET:
             field_dict["target"] = target
+        if tools is not UNSET:
+            field_dict["tools"] = tools
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.approved_connection_tool import ApprovedConnectionTool
         from ..models.connector_audit_credential import ConnectorAuditCredential
 
         d = dict(src_dict)
@@ -180,6 +200,30 @@ class ConnectorAuditEvent:
 
         target = d.pop("target", UNSET)
 
+        def _parse_tools(data: object) -> list[ApprovedConnectionTool] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                tools_type_0 = []
+                _tools_type_0 = data
+                for tools_type_0_item_data in _tools_type_0:
+                    tools_type_0_item = ApprovedConnectionTool.from_dict(
+                        tools_type_0_item_data
+                    )
+
+                    tools_type_0.append(tools_type_0_item)
+
+                return tools_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[ApprovedConnectionTool] | None | Unset, data)
+
+        tools = _parse_tools(d.pop("tools", UNSET))
+
         connector_audit_event = cls(
             action=action,
             connection_id=connection_id,
@@ -196,6 +240,7 @@ class ConnectorAuditEvent:
             session_id=session_id,
             status_code=status_code,
             target=target,
+            tools=tools,
         )
 
         connector_audit_event.additional_properties = d

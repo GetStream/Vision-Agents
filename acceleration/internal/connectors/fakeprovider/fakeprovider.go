@@ -267,6 +267,9 @@ type Server struct {
 	account string
 	// mcpStatus is what every MCP request is answered with (AnswerMCP); zero answers them.
 	mcpStatus int
+	// mcpHeaders are the headers of every request that reached the MCP endpoint, in order
+	// (MCPHeader).
+	mcpHeaders []http.Header
 
 	// The fake Slack (slack.go): configuration tokens by token, refresh tokens with whether
 	// they were spent, successful rotations, and apps by id in the order they were made.
@@ -440,6 +443,18 @@ func (s *Server) Hits(path string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.hits[path]
+}
+
+// MCPHeader is the value of the header name on each request that reached the MCP endpoint,
+// in order, "" for one that did not carry it.
+func (s *Server) MCPHeader(name string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	values := make([]string, 0, len(s.mcpHeaders))
+	for _, header := range s.mcpHeaders {
+		values = append(values, header.Get(name))
+	}
+	return values
 }
 
 // Refreshes is how many refresh_token grants reached the token endpoint.

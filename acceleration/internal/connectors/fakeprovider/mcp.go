@@ -81,6 +81,7 @@ func (s *Server) AnswerMCP(status int) {
 func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.mcpHeaders = append(s.mcpHeaders, r.Header.Clone())
 	if s.mcpStatus != 0 {
 		http.Error(w, http.StatusText(s.mcpStatus), s.mcpStatus)
 		return

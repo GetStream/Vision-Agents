@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -199,6 +200,9 @@ type stubLLM struct {
 	// holdCreate, if set, is waited on after the request is recorded and before a stream
 	// is returned, so a test can interrupt while Create has not come back.
 	holdCreate <-chan struct{}
+	// holdCompletion delays the terminal event after Close, as an upstream that takes
+	// time to notice cancellation does.
+	holdCompletion <-chan struct{}
 
 	// refuses, if set, is returned instead of a response: the model a session opens onto
 	// happily but that answers nothing, which is what a rejected key looks like.
@@ -235,7 +239,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	s.asked = append(s.asked, params)
 	sender, _ := routing.CallerFrom(ctx)
 	s.senders = append(s.senders, sender)
-	hold, refuses := s.holdCreate, s.refuses
+	hold, completion, refuses := s.holdCreate, s.holdCompletion, s.refuses
 	s.mu.Unlock()
 
 	if refuses != nil {
@@ -255,6 +259,13 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		Provider:   s.Provider(),
 		Model:      s.Model(),
 	})
+	if completion != nil {
+		script.Stream().Observe(func(event llm.Event) {
+			if _, done := event.(llm.ResponseCompleted); done {
+				<-completion
+			}
+		})
+	}
 
 	s.mu.Lock()
 	s.scripts[params.ID] = script
@@ -627,8 +638,10 @@ type AgentSuite struct {
 	// performing is what a voice that acts stage directions asks to have said about it.
 	// It is set before joining, because the stub voice is built there.
 	performing string
-	// records is where turns are written, when a test gives the agent a database.
+	// records is where turns are counted, and live where they are kept, when a test gives
+	// the agent a database and a Redis.
 	records *store.Store
+	live    *live.Client
 	// agentID names the agent, so a test writing turns can find its own rows.
 	agentID string
 	// voiceAsked is what the voice was opened with.
@@ -849,6 +862,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		SessionID:          "session-1",
 		Incognito:          s.incognito,
 		Store:              s.records,
+		Live:               s.live,
 		SubagentTarget:     subagentTarget,
 		Skills:             s.skills,
 		Telephony:          calling,
@@ -1260,6 +1274,9 @@ func (s *AgentSuite) TestASecondVoiceAtTheSameMicrophoneIsNotTakenForTheCaller()
 	s.NotContains(asked[0].Input[0].Content, "different voice",
 		"the first voice heard on a track is the caller's")
 	s.Contains(asked[1].Input[0].Content, "different voice")
+	// The caller's answer is asked for on the turn's goroutine, once the flow decision is in,
+	// so it can still be on its way when the second voice has been considered.
+	s.eventually(func() bool { return len(s.model.requests()) > 0 }, "the caller was never answered")
 	s.Len(s.model.requests(), 1, "only the caller was answered")
 }
 

@@ -71,6 +71,30 @@ The same with the API (operations in `acceleration/api/openapi.yaml`):
 | A token or key | `PUT /v1/agents/connections/{id}/credentials` |
 | Check it | `POST /v1/agents/connections/{id}/validate`, then `GET /v1/agents/connections/{id}/tools` |
 
+### Direct calls from your backend
+
+Your backend can call the provider's own API with a connection's credential:
+`/v1/agents/connections/{id}/proxy/<path>` sends `<path>` under the connector's `api_base`.
+Only a connector whose manifest has an `api_base` takes direct calls.
+
+| Built-in | `api_base` | Example path |
+|---|---|---|
+| `github` (revision 4) | `https://api.github.com` | `repos/octo/hello/issues` |
+| `slack_bot` (revision 5) | `https://slack.com/api` | `chat.postMessage` |
+
+A provider's `Link` header (RFC 8288) that names a URL under `api_base`, such as GitHub's
+`rel="next"` page, comes back naming the same path and query under this connection's proxy
+URL (`ROUTER_PUBLIC_URL` + `/v1/agents/connections/{id}/proxy`), so a client that follows it,
+Octokit's paginate included, stays on the proxy. URLs in a body (`url`, `comments_url`) still
+name `https://api.github.com`: never send the router's credential there; call their path
+through the proxy. With `ROUTER_PUBLIC_URL` unset the router has no proxy URL to name, so it drops every
+`Link` (fail closed): a connection then loses GitHub's pagination until the URL is set.
+
+Every other built-in, `linear` included, is MCP-only: a direct call answers 400 «connector
+"linear" has no api_base endpoint». Why Linear has none is in `linear.yaml`. A connection keeps
+the revision it was made on, so a `github` connection made before revision 4 takes direct calls
+only after its next consent or token save.
+
 ## 3. Give an agent the tools
 
 Dashboard: open the agent › **Tools** › **Connectors** › **Add connector**.
@@ -82,6 +106,12 @@ Dashboard: open the agent › **Tools** › **Connectors** › **Add connector**
 4. Save.
 
 The agent sees each tool as `<binding name>__<tool>`, for example `github__get_me`.
+
+`github` (revision 5) offers GitHub's Actions tools beside its default ones: `actions_list`,
+`actions_get`, `actions_run_trigger` and `get_job_logs`. The manifest asks for them with the
+`X-MCP-Toolsets: default,actions` header. A binding's `tools` still narrows them: a tool that is
+not granted is never offered. A connection made before revision 5 lists them after its next
+consent or token save.
 
 With the API, the binding goes in `connectors[]` of the agent config
 (`AgentConnectorBinding`):
