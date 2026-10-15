@@ -174,6 +174,8 @@ type Service struct {
 	// finished is told of every reply finished in a thread channel (OnFinishedReply). It is
 	// apart from mu so a finished reply in one conversation never waits on another opening.
 	finished atomic.Pointer[func(FinishedReply)]
+	// retireAfter is how long a released conversation is held before it is let go.
+	retireAfter time.Duration
 }
 
 // known is how the service finds a conversation it holds: by its customer and its channel
@@ -215,8 +217,10 @@ type Conversation struct {
 	// parkedUntil is when a conversation whose app is out of reach tries again, and zero
 	// while it is not parked.
 	parkedUntil time.Time
-	stopped     chan struct{}
-	done        chan struct{}
+	// released is when the last session let the conversation go (retire).
+	released time.Time
+	stopped  chan struct{}
+	done     chan struct{}
 }
 
 // indication is the Stream AI indicator a reply last showed: which message, in which state.
@@ -365,7 +369,7 @@ func NewForChat(client *getstream.Stream) *Service {
 func newService(chats Chats) *Service {
 	return &Service{
 		chats: chats, all: map[known]*Conversation{},
-		opening: map[known]*gate{}, logger: slog.Default(),
+		opening: map[known]*gate{}, logger: slog.Default(), retireAfter: time.Minute,
 	}
 }
 
@@ -1171,6 +1175,7 @@ func (c *Conversation) Release() {
 	defer c.mu.Unlock()
 	c.finish("cancelled")
 	c.active = false
+	c.released = time.Now()
 	c.emit = nil
 }
 func (c *Conversation) Begin(text string) error {
@@ -1865,6 +1870,30 @@ func (c *Conversation) finishedReply(op operation) (FinishedReply, bool) {
 	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: m.ID, Text: m.Text,
 		Files: append([]sandbox.Attachment(nil), m.Files...)}, true
 }
+
+// retire takes a conversation released retireAfter ago, with nothing left to write, out of
+// the service, so it stops holding one per session ever opened. Opening it again reads it
+// from Stream, as after a restart.
+func (c *Conversation) retire() bool {
+	c.mu.Lock()
+	idle := !c.active && !c.released.IsZero() && time.Since(c.released) >= c.service.retireAfter
+	c.mu.Unlock()
+	if !idle {
+		return false
+	}
+	s, key := c.service, known{c.data.Customer, c.data.CID}
+	opened := s.opens(key)
+	defer opened()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.active || c.stopping || len(c.data.Pending) > 0 || s.all[key] != c {
+		return false
+	}
+	delete(s.all, key)
+	return true
+}
 func (c *Conversation) run() {
 	defer close(c.done)
 	tick := time.NewTicker(liveTick)
@@ -1889,6 +1918,9 @@ func (c *Conversation) run() {
 				}
 				c.mu.Unlock()
 				continue
+			}
+			if c.retire() {
+				return
 			}
 			c.mu.Lock()
 			m := c.data.Current
