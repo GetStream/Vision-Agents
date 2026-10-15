@@ -17,7 +17,7 @@ on:
         default: false
         type: boolean
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.marker }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:

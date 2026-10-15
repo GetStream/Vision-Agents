@@ -1,7 +1,9 @@
 name: CI (client SDKs)
+# Feature branches run through pull_request; a push of the same commit would be a second,
+# uncancellable copy of every job.
 on:
   push:
-    branches: [ "**" ]
+    branches: [ "main", "accelerate" ]
     paths:
       - 'sdks/kotlin/**'
       - 'sdks/swift/**'
@@ -147,5 +149,5 @@ jobs:
         run: xcodebuild -project SwiftDemo.xcodeproj -scheme SwiftDemo -destination 'generic/platform=iOS Simulator' build
 
 concurrency:
-  group: ci-client-sdks-${{ github.workflow }}-${{ github.ref }}
+  group: ci-client-sdks-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
