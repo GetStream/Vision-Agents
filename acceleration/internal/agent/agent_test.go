@@ -199,6 +199,9 @@ type stubLLM struct {
 	// holdCreate, if set, is waited on after the request is recorded and before a stream
 	// is returned, so a test can interrupt while Create has not come back.
 	holdCreate <-chan struct{}
+	// holdCompletion delays the terminal event after Close, as an upstream that takes
+	// time to notice cancellation does.
+	holdCompletion <-chan struct{}
 
 	// refuses, if set, is returned instead of a response: the model a session opens onto
 	// happily but that answers nothing, which is what a rejected key looks like.
@@ -235,7 +238,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	s.asked = append(s.asked, params)
 	sender, _ := routing.CallerFrom(ctx)
 	s.senders = append(s.senders, sender)
-	hold, refuses := s.holdCreate, s.refuses
+	hold, completion, refuses := s.holdCreate, s.holdCompletion, s.refuses
 	s.mu.Unlock()
 
 	if refuses != nil {
@@ -255,6 +258,13 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		Provider:   s.Provider(),
 		Model:      s.Model(),
 	})
+	if completion != nil {
+		script.Stream().Observe(func(event llm.Event) {
+			if _, done := event.(llm.ResponseCompleted); done {
+				<-completion
+			}
+		})
+	}
 
 	s.mu.Lock()
 	s.scripts[params.ID] = script

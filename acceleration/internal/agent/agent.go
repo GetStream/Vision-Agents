@@ -2024,6 +2024,7 @@ func (a *Agent) handle(event llm.Event) {
 
 // say sends one delta of a reply on its way to the voice.
 func (a *Agent) say(turnID, delta string) {
+	a.claimReply(turnID)
 	// What the model wrote is not all meant for the caller: a request for help is
 	// addressed to the harness, and is taken out here rather than spoken.
 	speech := a.harness.Filter(turnID, delta)
@@ -2031,7 +2032,6 @@ func (a *Agent) say(turnID, delta string) {
 		return
 	}
 	a.turns.firstText(turnID, time.Now())
-	a.replying = turnID
 
 	// A stage direction is addressed to the voice, not to the caller: it is taken out of
 	// what is read and remembered, and left in only for a voice that can act it. A
@@ -2069,6 +2069,7 @@ func (a *Agent) say(turnID, delta string) {
 
 // finish closes out a reply the caller heard.
 func (a *Agent) finish(response llm.Response) {
+	a.claimReply(response.ID)
 	// Text the harness was holding on the chance it began a request for help was only
 	// ever text, so it is spoken.
 	tail := a.harness.Flush()
@@ -2641,6 +2642,15 @@ func (a *Agent) expectedSyntheses(turnID string) int {
 		return 0
 	}
 	return a.sentences
+}
+
+// claimReply gives the model consumer's buffers to this reply before any text is
+// filtered or flushed. An abandoned stream may deliver its completion later.
+func (a *Agent) claimReply(turnID string) {
+	if a.replying != turnID {
+		a.resetTurn()
+		a.replying = turnID
+	}
 }
 
 // resetTurn forgets the text and the utterance of a turn that has ended, whether it
