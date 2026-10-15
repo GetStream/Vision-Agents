@@ -32,6 +32,12 @@ module GetStream
           body: "VoiceSampleRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "analyzeReviews" => {
+          method: :post, path: "/v1/agents/calls/reviews/analysis",
+          path_params: [].freeze, query: [].freeze,
+          body: "AnalyzeReviewsRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "answerProviderAppHandshake" => {
           method: :get, path: "/v1/connectors/events/{connector_id}/{provider_app_id}",
           path_params: %w[connector_id provider_app_id].freeze, query: %w[hub.mode hub.verify_token hub.challenge].freeze,
@@ -608,6 +614,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "getTelephonySuspension" => {
+          method: :get, path: "/v1/ops/customers/{customer_id}/telephony-suspension",
+          path_params: %w[customer_id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "getTranscription" => {
           method: :get, path: "/v1/stt/recordings/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -674,6 +686,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "liftTelephonySuspension" => {
+          method: :delete, path: "/v1/ops/customers/{customer_id}/telephony-suspension",
+          path_params: %w[customer_id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "linkChannelNumber" => {
           method: :post, path: "/v1/agents/channels/links",
           path_params: [].freeze, query: [].freeze,
@@ -694,7 +712,7 @@ module GetStream
         }.freeze,
         "listCalls" => {
           method: :get, path: "/v1/agents/calls",
-          path_params: [].freeze, query: %w[running limit agent_id campaign_id from to].freeze,
+          path_params: [].freeze, query: %w[running limit agent_id campaign_id from to max_review_score].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1220,6 +1238,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "suspendTelephony" => {
+          method: :put, path: "/v1/ops/customers/{customer_id}/telephony-suspension",
+          path_params: %w[customer_id].freeze, query: [].freeze,
+          body: "SuspendTelephonyRequest", body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "syncAgent" => {
           method: :post, path: "/v1/agents/sync",
           path_params: [].freeze, query: [].freeze,
@@ -1402,6 +1426,10 @@ module GetStream
         "AgentTools" => {
           properties: %w[progressive].freeze,
           required: [].freeze, open: false
+        }.freeze,
+        "AnalyzeReviewsRequest" => {
+          properties: %w[from target to].freeze,
+          required: %w[from to].freeze, open: false
         }.freeze,
         "AppSettings" => {
           properties: %w[stream].freeze,
@@ -2023,6 +2051,14 @@ module GetStream
           properties: %w[client_id request_id text].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
+        "ReviewAnalysis" => {
+          properties: %w[calls_read causes summary].freeze,
+          required: %w[calls_read summary causes].freeze, open: false
+        }.freeze,
+        "ReviewCause" => {
+          properties: %w[call_ids explanation fix title].freeze,
+          required: %w[title explanation fix call_ids].freeze, open: false
+        }.freeze,
         "ReviewPage" => {
           properties: %w[has_more items next_cursor].freeze,
           required: %w[has_more items].freeze, open: false
@@ -2060,7 +2096,7 @@ module GetStream
           required: %w[name].freeze, open: false
         }.freeze,
         "SandboxOptions" => {
-          properties: %w[cpu disk_gb image memory_gb setup timeout_ms].freeze,
+          properties: %w[allowed_domains cpu disk_gb image memory_gb network network_allow_list setup timeout_ms].freeze,
           required: [].freeze, open: false
         }.freeze,
         "SayRequest" => {
@@ -2215,6 +2251,10 @@ module GetStream
           properties: %w[channels data_policy detect_language diarize eager_end_of_turn endpointing entities events format interim keyterms languages max_speakers mode output overwrites profanity_filter providers redact sample_rate silence_ms summary target utterance_end_ms words].freeze,
           required: [].freeze, open: false
         }.freeze,
+        "SuspendTelephonyRequest" => {
+          properties: %w[reason suspended_by].freeze,
+          required: %w[reason suspended_by].freeze, open: false
+        }.freeze,
         "SyncAgentRequest" => {
           properties: %w[base_change channels check_changes connectors dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls llm mcp_servers mode name plugin_events plugins sandbox sandbox_options search simulations skills sts stt subagent tags tools tts video voice].freeze,
           required: %w[name hash].freeze, open: false
@@ -2234,6 +2274,10 @@ module GetStream
         "TagValueSummary" => {
           properties: %w[cost_micros_total request_count share value].freeze,
           required: %w[cost_micros_total request_count share value].freeze, open: false
+        }.freeze,
+        "TelephonySuspension" => {
+          properties: %w[customer_id reason suspended_at suspended_by].freeze,
+          required: %w[customer_id reason suspended_by suspended_at].freeze, open: false
         }.freeze,
         "TextContentPart" => {
           properties: %w[text type].freeze,
