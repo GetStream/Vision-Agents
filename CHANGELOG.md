@@ -616,6 +616,10 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 is `*ConnectionOwnerType`, and nil means the app's own. Code that set `OwnerType: acceleration.ConnectionOwnerTypeApp`
 no longer compiles. Pass `&app` for a variable holding the value, or leave the field nil for the app.
 
+### An agent config refuses an MCP server on a private address
+
+The router reaches only MCP servers on a public https URL. Saving a config (create, replace, patch or `syncAgent`) now answers 400 `mcp_servers: <name>: only public https URLs are reachable` for a server whose host is on a private network (a Tailscale node included), loopback or link-local, or does not resolve. Such a server used to be saved, and then no session could reach it. A config already stored with one still reads.
+
 ## New Features
 
 ### Listing connections without `owner_type` lists the app's own

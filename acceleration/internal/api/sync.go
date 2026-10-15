@@ -206,7 +206,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := pluginEntriesComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := mcpServersComplaint(config); !ok {
+	if message, ok := mcpServersComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
 	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, existing.MCPServers)
