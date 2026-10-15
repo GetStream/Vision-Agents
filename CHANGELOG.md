@@ -628,6 +628,35 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### Each app sets its own daily limit per end user
+
+An app sets what one of its end users may spend in a UTC day as `quota` in its policy,
+`PUT /v1/policies/app`: `messages_per_user_per_day` and `tokens_per_user_per_day`, each from
+`0` (no cap) to a bound that only catches a typo. Left out, the deployment's
+`ROUTER_RATE_LIMIT_*` default applies, as before. An organization has none: a `quota` sent to
+`PUT /v1/policies/organization` is a 400. A counted answer carries `X-Quota-Limit`,
+`X-Quota-Remaining` and `X-Quota-Reset`. Each answer is counted on whoever sent the
+turn: in a session a backend opened in a user's name, the backend's turns are not counted and
+the user's own are. `mock/*` answers are not counted, and an address is counted per app.
+
+### A connection's call log says why a call failed
+
+`GET /v1/agents/connections/{id}/invocations` gives each failed call a `provider_status`, the
+HTTP status the provider answered it with, and an `error_message`: the start of the provider's
+error body when it answered with a 4xx or a 5xx, or else what the call's error said, at most
+1 KiB, with every URL cut to its host and the connection's credential and the request's path
+taken out. A call the router held for a
+provider's rate limit, and so never sent, keeps `error_type: denied` and says
+`rate limited by the router: retry after <seconds>s`. Both are absent for a call that answered
+and for calls recorded before this release. What the model reads of a call is unchanged.
+
+### Fish Audio Drama 3 is `fish/drama-3`, and the `fish` default
+
+Fish's hosted Drama 3 can be routed as `fish/drama-3`, with the same `FISH_API_KEY`, and a
+`fish` target that names no model now gets it instead of `s2-pro`. Like ElevenLabs v3 it acts
+bracketed directions such as `[laughs]` or `[whispers]` rather than reading them out, so the
+model writing the lines is told it may use them. `fish/s2-pro` is still served as before.
+
 ### A customer's website can call the router directly
 
 A browser page on any site may call the API and open a session socket with an API key and a

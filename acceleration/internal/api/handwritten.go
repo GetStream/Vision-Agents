@@ -80,7 +80,7 @@ func documentHandWritten(api huma.API) {
 			"no handoff_token, and the agent carries on by itself. Activity states are thinking, queued, tools, writing, completed, " +
 			"failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and " +
 			"pre_speech when the tool's connector binding sets one in its policy; " +
-			"tool_ran also includes tool_call_id.\n" +
+			"tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.\n" +
 			"A respond command carrying request_id emits command_accepted with a nested command " +
 			"receipt (request_id, user_message_id, assistant_message_id, state, duplicate). Personal " +
 			"persistent text sessions require this ID. A retry with the same text returns the " +

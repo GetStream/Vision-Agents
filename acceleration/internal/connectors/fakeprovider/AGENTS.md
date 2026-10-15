@@ -37,6 +37,7 @@ With no personality the server is strict: PKCE with `S256` only (RFC 7636 §4.4.
 | `NonRotatingRefresh` | A refresh answers without `refresh_token`; the old one stays valid | RFC 6749 §6 | T10 |
 | `NoRefreshToken` | The exchange returns an access token alone; it expires | RFC 6749 §5.1 | T10, T12 |
 | `InvalidGrant` | Every refresh gets 400 `invalid_grant`; access tokens already issued work until they expire | RFC 6749 §5.2 | T10 InvalidGrant, T12 |
+| `DescribedRefusal` | Every refresh gets 400 `invalid_grant` with an `error_description` echoing the refresh token and the client secret, a URL with a path and a query, and over 256 bytes of two-byte runes | not a vendor behaviour: RFC 6749 §5.2's `error_description`, at its worst | AI-1245 the logged description is redacted and cut |
 | `LostResponse` | A refresh rotates, then the connection closes with no answer; combines with `RotatingRefreshWithGrace` and `NonRotatingRefresh` | RFC 9700 §4.14.2 (why a replay then fails) | T8, T10 Uncertain and the single grace retry, T12 |
 | `LostResponseOnce` | `LostResponse` for the next refresh only; the ones after it answer | as `LostResponse` | T10 grace retry that succeeds |
 | `Unavailable` | The token endpoint answers 503 and changes nothing | RFC 9110 §15.6.4 | T10 Transient, T11 |

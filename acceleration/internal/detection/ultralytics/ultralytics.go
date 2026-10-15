@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/detection"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -69,9 +70,7 @@ type Provider struct {
 
 // New validates the options and returns a Provider.
 func New(options Options) (*Provider, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(APIKeyEnvVar)
-	}
+	keys := keypool.FromEnv(options.APIKey, APIKeyEnvVar)
 	if options.Endpoint == "" {
 		options.Endpoint = os.Getenv(EndpointEnvVar)
 	}
@@ -90,13 +89,13 @@ func New(options Options) (*Provider, error) {
 		endpoint = strings.TrimSuffix(options.BaseURL, "/") + "/" + strings.Join(path, "/") + "/predict"
 	}
 	return &Provider{
-		apiKey:   options.APIKey,
+		apiKey:   keys.Peek(),
 		model:    options.Model,
 		endpoint: endpoint,
-		client: &http.Client{
+		client: keys.WrapClient(&http.Client{
 			Timeout:       requestTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
+		}, keypool.Bearer),
 	}, nil
 }
 

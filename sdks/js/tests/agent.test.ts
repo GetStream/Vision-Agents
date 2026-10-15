@@ -700,6 +700,33 @@ describe("Agent", () => {
         assert.notEqual(one["hash"], servers["hash"]);
       });
 
+      it("sends how the sandbox is built and what it may reach", async () => {
+        const body = await synced(
+          [
+            "name: jean",
+            "sandbox: daytona",
+            "sandbox_options:",
+            "  setup:",
+            "    - pip install bpy==5.2.2",
+            "  timeout: 5m",
+            "  memory_gb: 4",
+            "  network: true",
+            "  allowed_domains: [api.example.com]",
+            "  network_allow_list: [10.0.0.0/8]",
+            "",
+          ].join("\n"),
+        );
+
+        assert.deepEqual(body["sandbox_options"], {
+          setup: ["pip install bpy==5.2.2"],
+          timeout_ms: 300_000,
+          memory_gb: 4,
+          network: true,
+          allowed_domains: ["api.example.com"],
+          network_allow_list: ["10.0.0.0/8"],
+        });
+      });
+
       it("sends the same body as before for an agent.yaml that names neither", async () => {
         const body = await synced("name: jean\nllm: llm-fast\nplugins:\n  - weather\n");
 

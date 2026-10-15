@@ -97,8 +97,9 @@ def sync_detailed(
     """List a connection's tool calls
 
      Every tool call sessions ran through the connection, newest first: the binding, the tool, the
-    latency and how it failed. What a call was asked and answered is never kept, and an incognito
-    session's calls name no session. Who may read them is who may read the connection.
+    latency and how it failed. What a call was asked and answered is never kept, except the start of the
+    provider's error for a call that failed, and an incognito session's calls name no session. Who may
+    read them is who may read the connection.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -138,8 +139,9 @@ def sync(
     """List a connection's tool calls
 
      Every tool call sessions ran through the connection, newest first: the binding, the tool, the
-    latency and how it failed. What a call was asked and answered is never kept, and an incognito
-    session's calls name no session. Who may read them is who may read the connection.
+    latency and how it failed. What a call was asked and answered is never kept, except the start of the
+    provider's error for a call that failed, and an incognito session's calls name no session. Who may
+    read them is who may read the connection.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -174,8 +176,9 @@ async def asyncio_detailed(
     """List a connection's tool calls
 
      Every tool call sessions ran through the connection, newest first: the binding, the tool, the
-    latency and how it failed. What a call was asked and answered is never kept, and an incognito
-    session's calls name no session. Who may read them is who may read the connection.
+    latency and how it failed. What a call was asked and answered is never kept, except the start of the
+    provider's error for a call that failed, and an incognito session's calls name no session. Who may
+    read them is who may read the connection.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -213,8 +216,9 @@ async def asyncio(
     """List a connection's tool calls
 
      Every tool call sessions ran through the connection, newest first: the binding, the tool, the
-    latency and how it failed. What a call was asked and answered is never kept, and an incognito
-    session's calls name no session. Who may read them is who may read the connection.
+    latency and how it failed. What a call was asked and answered is never kept, except the start of the
+    provider's error for a call that failed, and an incognito session's calls name no session. Who may
+    read them is who may read the connection.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

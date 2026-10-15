@@ -3,6 +3,7 @@
 # digest to Slack.
 #
 #   scripts/digest.sh                                   nightly: k=1, LiveKit Inference
+#   VOICEBENCH_STS_ARMS=openai/gpt-live-1 scripts/digest.sh    and GPT-Live beside our stack
 #   VOICEBENCH_K=3 VOICEBENCH_LIVEKIT_ARMS="inference realtime" \
 #     VOICEBENCH_DIGEST_TITLE="Voicebench weekly" scripts/digest.sh
 #
@@ -25,6 +26,8 @@ scenario_set="${VOICEBENCH_SET:-frozen}"
 packs="${VOICEBENCH_PACKS:-restaurant healthcare telecom}"
 # An empty VOICEBENCH_LIVEKIT_ARMS runs our stack alone.
 arms="${VOICEBENCH_LIVEKIT_ARMS-inference}"
+# Speech-to-speech models on the router to run beside our stack, such as openai/gpt-live-1.
+sts_arms="${VOICEBENCH_STS_ARMS-}"
 # The bench's own LiveKit worker registers under a name of its own, so a deployed agent
 # called "voicebench" cannot be dispatched the bench's calls.
 livekit_agent="${VOICEBENCH_LIVEKIT_AGENT:-voicebench-local}"
@@ -126,35 +129,50 @@ full_log() {
   fi
 }
 
-pids=()
-i=0
-for pack in $packs; do
-  echo "== $pack: accelerated"
-  ports=()
-  if [[ "$spawned" == 1 ]]; then
-    ports=(--target-url "http://127.0.0.1:$((agent_port + i))" --world-addr "127.0.0.1:$((8090 + i))")
-  fi
-  if [[ "$parallel" == 1 ]]; then
-    run_logged "$pack: accelerated" "$out/$pack-accelerated.log" \
-      "$voicebench" run --pack "$pack" "--$scenario_set" --k "$k" "${ours[@]}" ${ports[@]+"${ports[@]}"} \
-      --network-profile "$profile" --out "$out/$pack-accelerated" &
-    pids+=("$!")
-    # Each pack's agent syncs its config to the router as it starts; a few seconds apart they
-    # do not collide.
-    sleep 3
-  else
-    run_logged "$pack: accelerated" "$out/$pack-accelerated.log" \
-      "$voicebench" run --pack "$pack" "--$scenario_set" --k "$k" "${ours[@]}" ${ports[@]+"${ports[@]}"} \
-      --network-profile "$profile" --out "$out/$pack-accelerated"
-  fi
-  i=$((i + 1))
+# run_packs runs every pack against one system, side by side unless parallel is off, each with an
+# agent and world server of its own when the run spawns them. The rest is the run's target flags.
+run_packs() {
+  local name="$1" spawns="$2"
+  shift 2
+  local pids=() i=0 pack ports
+  for pack in $packs; do
+    echo "== $pack: $name"
+    ports=()
+    if [[ "$spawns" == 1 ]]; then
+      ports=(--target-url "http://127.0.0.1:$((agent_port + i))" --world-addr "127.0.0.1:$((8090 + i))")
+    fi
+    if [[ "$parallel" == 1 ]]; then
+      run_logged "$pack: $name" "$out/$pack-$name.log" \
+        "$voicebench" run --pack "$pack" "--$scenario_set" --k "$k" "$@" ${ports[@]+"${ports[@]}"} \
+        --network-profile "$profile" --out "$out/$pack-$name" &
+      pids+=("$!")
+      # Each pack's agent syncs its config to the router as it starts; a few seconds apart they
+      # do not collide.
+      sleep 3
+    else
+      run_logged "$pack: $name" "$out/$pack-$name.log" \
+        "$voicebench" run --pack "$pack" "--$scenario_set" --k "$k" "$@" ${ports[@]+"${ports[@]}"} \
+        --network-profile "$profile" --out "$out/$pack-$name"
+    fi
+    i=$((i + 1))
+  done
+  for pid in ${pids[@]+"${pids[@]}"}; do
+    wait "$pid"
+  done
+  for pack in $packs; do
+    full_log "$pack: $name" "$out/$pack-$name.log"
+  done
+}
+
+run_packs accelerated "$spawned" "${ours[@]}"
+
+# Each speech-to-speech arm runs on the same router through a Python agent of its own, named in
+# the digest after its model: openai/gpt-live-1 is gpt-live-1.
+for arm in $sts_arms; do
+  export VOICEBENCH_STS="$arm"
+  run_packs "${arm#*/}" 1 --target sts --spawn --system "${arm#*/}"
 done
-for pid in ${pids[@]+"${pids[@]}"}; do
-  wait "$pid"
-done
-for pack in $packs; do
-  full_log "$pack: accelerated" "$out/$pack-accelerated.log"
-done
+unset VOICEBENCH_STS
 
 # The agent's speech-to-text on the same caller lines, alone: what it hears, apart from how the
 # call was taken. It places no calls; the stt bench reads frozen and short sets only.

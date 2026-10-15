@@ -34,6 +34,7 @@ import (
 	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/shared"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -113,9 +114,11 @@ func New(options Options) (*LLM, error) {
 	if options.Model == "" {
 		return nil, stack.Wrap(errors.New("openaicompat: model is required"))
 	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey)
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(fmt.Errorf("openaicompat: %s: api key is required", options.Provider))
 	}
+	options.APIKey = keys.Peek()
 	if options.BaseURL == "" {
 		return nil, stack.Wrap(fmt.Errorf("openaicompat: %s: base url is required", options.Provider))
 	}
@@ -136,9 +139,7 @@ func New(options Options) (*LLM, error) {
 	clientOptions := []option.RequestOption{
 		option.WithAPIKey(options.APIKey),
 		option.WithBaseURL(options.BaseURL),
-	}
-	if options.HTTPClient != nil {
-		clientOptions = append(clientOptions, option.WithHTTPClient(options.HTTPClient))
+		option.WithHTTPClient(keys.WrapDoer(options.HTTPClient, keypool.Bearer)),
 	}
 
 	return &LLM{

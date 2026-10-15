@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents\Folder;
 
 use GetStream\VisionAgents\Exception\ConfigurationException;
+use GetStream\VisionAgents\Folder;
 use GetStream\VisionAgents\Generated\AgentDispatch;
 use GetStream\VisionAgents\Generated\DispatchSetting;
 use GetStream\VisionAgents\Generated\Greeting;
 use GetStream\VisionAgents\Generated\GreetingMode;
+use GetStream\VisionAgents\Generated\SandboxOptions;
 use GetStream\VisionAgents\Generated\SessionVideo;
 
 /**
@@ -29,6 +31,8 @@ final readonly class Declaration
      * @param array<string, string> $tags
      * @param ?list<Connector> $connectors null when the declaration says nothing, which leaves
      *     the stored bindings; empty when it lists none, which removes them
+     * @param ?SandboxOptions $sandboxOptions how the sandbox is built and what code in it may
+     *     reach; outbound network is blocked unless network or an allow list opens it
      */
     public function __construct(
         public string $name = '',
@@ -50,6 +54,7 @@ final readonly class Declaration
         public ?SessionVideo $video = null,
         public ?AgentDispatch $dispatch = null,
         public ?array $connectors = null,
+        public ?SandboxOptions $sandboxOptions = null,
     ) {
     }
 
@@ -88,6 +93,8 @@ final readonly class Declaration
                 $values['video'] = self::video($value);
             } elseif ($key === 'dispatch') {
                 $values['dispatch'] = self::dispatch($value);
+            } elseif ($key === 'sandbox_options') {
+                $values['sandbox_options'] = self::sandboxOptions($value);
             } elseif ($key === 'connectors') {
                 $connectors = self::connectors($mapped instanceof \stdClass ? $mapped->connectors : $value);
             } else {
@@ -122,6 +129,7 @@ final readonly class Declaration
             video: ($values['video'] ?? null) instanceof SessionVideo ? $values['video'] : null,
             dispatch: ($values['dispatch'] ?? null) instanceof AgentDispatch ? $values['dispatch'] : null,
             connectors: $connectors,
+            sandboxOptions: ($values['sandbox_options'] ?? null) instanceof SandboxOptions ? $values['sandbox_options'] : null,
         );
     }
 
@@ -261,6 +269,48 @@ final readonly class Declaration
             $settings[$key] = $setting === '' ? null : (DispatchSetting::tryFrom($setting) ?? $setting);
         }
         return new AgentDispatch(incomingCall: $settings['incoming_call'], text: $settings['text']);
+    }
+
+    private static function sandboxOptions(mixed $value): ?SandboxOptions
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (!is_array($value) || (array_is_list($value) && $value !== [])) {
+            throw new ConfigurationException('sandbox_options is a mapping');
+        }
+        $options = [];
+        foreach ($value as $key => $each) {
+            $name = "sandbox_options.{$key}";
+            if (in_array($key, ['setup', 'allowed_domains', 'network_allow_list'], true)) {
+                $options[$key] = self::strings($name, $each);
+            } elseif (in_array($key, ['cpu', 'memory_gb', 'disk_gb'], true)) {
+                if (!is_int($each) || $each < 0) {
+                    throw new ConfigurationException("{$name} must be a whole number");
+                }
+                $options[$key] = $each;
+            } elseif ($key === 'network') {
+                if (!is_bool($each)) {
+                    throw new ConfigurationException("{$name} must be true or false");
+                }
+                $options[$key] = $each;
+            } elseif ($key === 'timeout') {
+                try {
+                    $seconds = Folder::deadline(self::scalar($name, $each));
+                } catch (ConfigurationException) {
+                    $seconds = 0.0;
+                }
+                if ($seconds <= 0 || $seconds > 30 * 60) {
+                    throw new ConfigurationException("{$name} must be a duration up to 30m");
+                }
+                $options['timeout_ms'] = (int) round($seconds * 1000);
+            } elseif ($key === 'image') {
+                $options[$key] = self::scalar($name, $each);
+            } else {
+                throw new ConfigurationException("\"{$name}\" is not something agent.yaml declares");
+            }
+        }
+        return SandboxOptions::fromArray($options);
     }
 
     /**

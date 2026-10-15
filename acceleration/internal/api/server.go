@@ -21,6 +21,7 @@ import (
 	"net/netip"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -85,10 +86,6 @@ type organizationContextKey struct{}
 
 // serverSideContextKey holds whether the caller is a process the customer runs.
 type serverSideContextKey struct{}
-
-// callerContextKey holds the end user the request is for and where they made it from, which
-// is what a daily limit is counted against.
-type callerContextKey struct{}
 
 // kindContextKey holds what sort of caller it is, which is what qualifies the end user's
 // name when one person's sessions are kept from another's.
@@ -369,6 +366,11 @@ type Server struct {
 	upgrader   websocket.Upgrader
 	popularity *popularity
 	logger     *slog.Logger
+
+	// draining is closed when the process stops taking work, which sends its dispatch
+	// workers to another one.
+	draining  chan struct{}
+	drainOnce sync.Once
 }
 
 // Option adjusts the options a server is built from. It exists for the settings a
@@ -497,6 +499,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		opsKey:       options.OpsKey,
 		popularity:   newPopularity(options.Store, logger),
 		logger:       logger,
+		draining:     make(chan struct{}),
 	}
 	if options.Store != nil && options.ConnectorSecrets != nil {
 		credentials, err := pgsealed.New(options.Store, options.ConnectorSecrets)
@@ -529,6 +532,13 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		server.forwarder = node.NewForwarder(logger)
 	}
 	return server, nil
+}
+
+// Drain sends every dispatch worker connected here to reconnect, which lands it on whichever
+// process is taking work now. A worker told the socket is going away reconnects; one told it
+// closed normally stops waiting for work at all.
+func (s *Server) Drain() {
+	s.drainOnce.Do(func() { close(s.draining) })
 }
 
 // methodNotAllowed is the answer to a method a route does not serve.
@@ -994,9 +1004,10 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
 			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
-			ctx = context.WithValue(ctx, callerContextKey{}, routing.Caller{
-				UserID: principal.UserID,
-				IP:     s.callerIP(r, principal.UserID),
+			ctx = routing.WithCaller(ctx, routing.Caller{
+				UserID:     principal.UserID,
+				IP:         s.callerIP(r, principal.UserID),
+				ServerSide: principal.ServerSide,
 			})
 			ctx = context.WithValue(ctx, actorContextKey{}, actorOf(r, principal.ServerSide))
 			r = r.WithContext(ctx)
@@ -1075,6 +1086,10 @@ const corsRequestHeaders = "Authorization, " + auth.AuthTypeHeader + ", " + auth
 // instructions are replaced with one; PATCH does not, because the spec serves none.
 const corsMethods = "GET, POST, PUT, DELETE, OPTIONS"
 
+// corsExposedHeaders are the response headers a page's script may read.
+const corsExposedHeaders = "Server-Timing, " + RequestIDHeader + ", " + quotaLimitHeader + ", " +
+	quotaRemainingHeader + ", " + quotaResetHeader + ", Retry-After"
+
 // withCORS lets a browser at the API from the origins originAllowed accepts.
 //
 // It exists for a customer's website that talks to the router directly with its API key
@@ -1089,7 +1104,7 @@ func withCORS(mode auth.Mode, next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", corsRequestHeaders)
 			w.Header().Set("Access-Control-Allow-Methods", corsMethods)
-			w.Header().Set("Access-Control-Expose-Headers", "Server-Timing, "+RequestIDHeader)
+			w.Header().Set("Access-Control-Expose-Headers", corsExposedHeaders)
 			w.Header().Set("Access-Control-Max-Age", "600")
 		}
 		// A preflight asks whether the real request would be allowed and carries nothing
@@ -1129,7 +1144,7 @@ func ServerSideFrom(ctx context.Context) bool {
 // still counted nothing, which withQuota decides by asking whether the caller is
 // server-side rather than by asking whether there is one.
 func CallerFrom(ctx context.Context) routing.Caller {
-	caller, _ := ctx.Value(callerContextKey{}).(routing.Caller)
+	caller, _ := routing.CallerFrom(ctx)
 	return caller
 }
 

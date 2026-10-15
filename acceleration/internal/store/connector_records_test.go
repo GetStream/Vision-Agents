@@ -5,6 +5,8 @@ package store
 import (
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 )
 
@@ -59,6 +61,81 @@ func (s *StoreSuite) TestAnInvocationIsOnlyItsOwnCustomersAndConnections() {
 
 	s.Empty(ofOther)
 	s.Empty(ofStranger)
+}
+
+func (s *StoreSuite) TestAnInvocationKeepsItsProviderStatusAndErrorMessage() {
+	connection := s.connection("acme-app", nil)
+	status := 403
+	failed := &ConnectorInvocation{
+		CustomerID: "acme-app", ConnectionID: connection.ID, ConnectorID: "acme", Tool: "search",
+		StartedAt: s.base, ErrorType: InvocationCustomerAuth, ProviderStatus: &status,
+		ErrorMessage: "the server refused the request with 403 Forbidden",
+	}
+	s.Require().NoError(s.store.RecordConnectorInvocation(s.ctx, failed))
+	answered := s.invocation(connection, time.Second, "")
+
+	rows, err := s.store.ConnectorInvocations(s.ctx, "acme-app", connection.ID, 0, nil)
+	s.Require().NoError(err)
+
+	s.Require().Len(rows, 2)
+	s.Equal(answered.ID, rows[0].ID)
+	s.Nil(rows[0].ProviderStatus)
+	s.Empty(rows[0].ErrorMessage)
+	s.Equal(failed.ID, rows[1].ID)
+	s.Equal(&status, rows[1].ProviderStatus)
+	s.Equal("the server refused the request with 403 Forbidden", rows[1].ErrorMessage)
+}
+
+// baseInvocation is ConnectorInvocation as the router before
+// 20261031130000_connector_invocation_failures.sql has it (11fae4b1), without the provider's
+// status and the error message.
+type baseInvocation struct {
+	bun.BaseModel `bun:"table:connector_invocations,alias:ci"`
+
+	ID           string    `bun:"id,pk"`
+	CustomerID   string    `bun:"customer_id,notnull"`
+	ConnectionID string    `bun:"connection_id,notnull"`
+	ConnectorID  string    `bun:"connector_id,notnull"`
+	ConfigID     string    `bun:"config_id,notnull"`
+	Binding      string    `bun:"binding,notnull"`
+	Tool         string    `bun:"tool,notnull"`
+	SessionID    string    `bun:"session_id,notnull"`
+	StartedAt    time.Time `bun:"started_at,notnull"`
+	LatencyMs    int64     `bun:"latency_ms,notnull"`
+	ErrorType    string    `bun:"error_type,notnull"`
+}
+
+// TestARouterBeforeTheMigrationStillWritesAndReadsItsRows: the migration only adds columns
+// that are nullable or have a default, so the base router's insert, with its column list, and
+// its read of the rows the new one wrote both work.
+func (s *StoreSuite) TestARouterBeforeTheMigrationStillWritesAndReadsItsRows() {
+	connection := s.connection("acme-app", nil)
+	old := &baseInvocation{
+		ID: newID(), CustomerID: "acme-app", ConnectionID: connection.ID, ConnectorID: "acme", ConfigID: "config",
+		Binding: "acme", Tool: "search", StartedAt: s.base, LatencyMs: 7, ErrorType: InvocationDenied,
+	}
+	_, err := s.store.DB().NewInsert().Model(old).Exec(s.ctx)
+	s.Require().NoError(err)
+	status := 502
+	s.Require().NoError(s.store.RecordConnectorInvocation(s.ctx, &ConnectorInvocation{
+		CustomerID: "acme-app", ConnectionID: connection.ID, ConnectorID: "acme", Tool: "search",
+		StartedAt: s.base.Add(time.Second), ErrorType: InvocationExternalServer, ProviderStatus: &status,
+		ErrorMessage: "Bad Gateway",
+	}))
+
+	rows, err := s.store.ConnectorInvocations(s.ctx, "acme-app", connection.ID, 0, nil)
+	s.Require().NoError(err)
+	var read []baseInvocation
+	s.Require().NoError(s.store.DB().NewSelect().Model(&read).Where("connection_id = ?", connection.ID).
+		Order("started_at").Scan(s.ctx))
+
+	s.Require().Len(rows, 2)
+	s.Equal(old.ID, rows[1].ID)
+	s.Nil(rows[1].ProviderStatus)
+	s.Empty(rows[1].ErrorMessage)
+	s.Require().Len(read, 2)
+	s.Equal(old.ID, read[0].ID)
+	s.Equal(InvocationExternalServer, read[1].ErrorType)
 }
 
 func (s *StoreSuite) TestAnInvocationWithAnUnknownErrorTypeIsRefused() {

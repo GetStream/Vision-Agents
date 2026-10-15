@@ -33,7 +33,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +40,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openai"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -258,6 +258,7 @@ func (e *apiError) Error() string {
 // STS is a GPT-Live conversation.
 type STS struct {
 	options Options
+	keys    *keypool.Pool
 	logger  *slog.Logger
 	emitter *sts.Emitter
 
@@ -297,12 +298,11 @@ type STS struct {
 
 // New validates the options and returns an unstarted provider.
 func New(settings Options) (*STS, error) {
-	if settings.APIKey == "" {
-		settings.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if settings.APIKey == "" {
+	keys := keypool.FromEnv(settings.APIKey, apiKeyEnvVar).Pin()
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(fmt.Errorf("openailive: api key is required (set %s)", apiKeyEnvVar))
 	}
+	settings.APIKey = keys.Peek()
 	if settings.Model == "" {
 		settings.Model = DefaultModel
 	}
@@ -331,6 +331,7 @@ func New(settings Options) (*STS, error) {
 
 	return &STS{
 		options: settings,
+		keys:    keys,
 		logger:  logger.With("provider", ProviderName, "model", settings.Model),
 		emitter: sts.NewEmitter(sts.EmitterBuffer),
 		tools:   settings.Tools,
@@ -371,8 +372,9 @@ func (s *STS) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	dialer := &websocket.Dialer{HandshakeTimeout: s.options.HandshakeTimeout}
-	header := http.Header{"Authorization": []string{"Bearer " + s.options.APIKey}}
-	conn, response, err := dialer.DialContext(ctx, s.options.URL, header)
+	conn, response, _, err := s.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+		return s.options.URL, http.Header{"Authorization": []string{"Bearer " + key}}
+	})
 	if err != nil {
 		if response != nil {
 			return stack.Wrap(fmt.Errorf("openailive: dial: %w (http %d)", err, response.StatusCode))

@@ -145,12 +145,12 @@ type Options struct {
 	// something on this call can run it: the telephony pair needs Telephony, and every
 	// other tool needs a ToolRunner.
 	Tools harness.Tools
-	// Sandbox is where the subagent runs code it writes. It is never offered to the model
-	// holding the conversation: running code takes seconds, and a conversation cannot
-	// spare them.
+	// Sandbox is where code the agent writes is run. A voice model is never offered it,
+	// since running code takes seconds a call cannot spare, so there the subagent runs it.
+	// A written conversation with no subagent runs it itself, with run_code.
 	Sandbox sandbox.Sandbox
-	// Publish puts the files the subagent's code hands back where the caller can see them,
-	// which is the conversation's channel when there is one. Nil means nowhere.
+	// Publish puts the files code hands back where the caller can see them, which is the
+	// conversation's channel when there is one. Nil means nowhere.
 	Publish sandbox.Publisher
 	// Tasks caps how much delegated work may run at once. Zero leaves the harness's own
 	// default in place.
@@ -317,6 +317,11 @@ type Agent struct {
 	// toolHolds are the calls still running that an interruption answers with
 	// stillRunning rather than cancels, by call.
 	toolHolds map[string]*toolHold
+	// skillFiles are the files of each skill a written conversation loaded, by skill, and
+	// writtenFiles the ones already put in the sandbox, so run_code writes a skill's
+	// scripts once and again only when the skill has changed.
+	skillFiles   map[string]map[string]string
+	writtenFiles map[string]map[string]string
 	// pumps are the goroutines draining those streams into replies.
 	pumps sync.WaitGroup
 
@@ -441,7 +446,11 @@ type Agent struct {
 	owedTurn string
 	// asked is what the caller asked to change about the reply to the last thing it said
 	// (RespondTo), kept for the replies that deliver that turn's tools and delegated work.
-	asked  options.LLM
+	asked options.LLM
+	// sender is who sent that last thing with RespondTo, kept the same way, so a turn a
+	// user typed into a session a backend opened for them is counted on their day. It is
+	// zero for what was heard, which is counted on whoever opened the session.
+	sender routing.Caller
 	joined bool
 	closed bool
 
@@ -869,6 +878,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 		return "", a.respondNative(text, images)
 	}
 	caller := stt.Participant{ID: "caller"}
+	sender, _ := routing.CallerFrom(ctx)
 	// Typed into a call, the words are what the caller said as much as anything transcribed,
 	// and the transcript, the review and the logs all take a caller's line from Heard. A text
 	// session reads its caller's lines from Responding instead.
@@ -908,17 +918,17 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender)
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", attached, asked)
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", attached, asked, sender)
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
 	}
 	id := replyPrefix + turnStamp()
 	typed()
-	return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", nil, asked)
+	return id, a.respondTurn(id, caller, text, heard{at: time.Now()}, "", nil, asked, sender)
 }
 
 // CheckAsked reports whether the conversation model takes what a caller asked to change
@@ -2318,7 +2328,7 @@ func turnStamp() string { return strconv.FormatInt(time.Now().UnixNano(), 10) }
 
 // respond asks the harness to reply to a turn.
 func (a *Agent) respond(participant stt.Participant, text string, listened heard, images []llm.ImagePart) error {
-	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "", images, options.LLM{})
+	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "", images, options.LLM{}, routing.Caller{})
 }
 
 // respondCandidate answers a settled turn. The note is what the conversation decided the
@@ -2340,7 +2350,7 @@ func (a *Agent) respondCandidate(ready candidate, note string) error {
 		revisedAt:    ready.RevisedAt,
 		sttLatencyMs: ready.STTLatencyMs,
 		confidence:   ready.Confidence,
-	}, note, nil, options.LLM{})
+	}, note, nil, options.LLM{}, routing.Caller{})
 }
 
 // noteToolDone records that one of the tools the current turn asked for has returned. A
@@ -2437,6 +2447,7 @@ func (a *Agent) respondTurn(
 	note string,
 	images []llm.ImagePart,
 	asked options.LLM,
+	sender routing.Caller,
 ) error {
 	a.mu.Lock()
 	if a.harness == nil {
@@ -2463,6 +2474,7 @@ func (a *Agent) respondTurn(
 	a.generating = true
 	a.toolRounds = 0
 	a.asked = asked
+	a.sender = sender
 	a.lastParticipant = participant
 	instructions := a.instructions()
 	a.mu.Unlock()
@@ -2697,7 +2709,11 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 	for _, kept := range a.kept {
 		stale = append(stale, kept.key)
 	}
-	ctx, cancel := context.WithCancel(a.ctx)
+	ctx := a.ctx
+	if !a.sender.IsZero() {
+		ctx = routing.WithCaller(ctx, a.sender)
+	}
+	ctx, cancel := context.WithCancel(ctx)
 	a.generatingCancel[turn.ID] = cancel
 	a.pumps.Add(1)
 	a.mu.Unlock()

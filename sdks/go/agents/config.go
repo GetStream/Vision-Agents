@@ -246,7 +246,8 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		cpu, memory, disk := int64(options.CPU), int64(options.MemoryGB), int64(options.DiskGB)
 		body.SandboxOptions = &acceleration.SandboxOptions{
 			Image: &options.Image, Setup: &options.Setup, TimeoutMs: &timeout,
-			Cpu: &cpu, MemoryGb: &memory, DiskGb: &disk,
+			Cpu: &cpu, MemoryGb: &memory, DiskGb: &disk, Network: &options.Network,
+			AllowedDomains: &options.AllowedDomains, NetworkAllowList: &options.NetworkAllowList,
 		}
 	}
 	body.Plugins = pluginEntries(settings.Plugins)

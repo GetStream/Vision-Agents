@@ -6,12 +6,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -35,7 +37,22 @@ const (
 	echoRetryAfterHeader = "X-Echo-Retry-After"
 	// echoRawHeader has the echo answer rawAnswer with rawServerTiming instead.
 	echoRawHeader = "X-Echo-Raw"
+	// echoStallHeader has the echo answer a 502 with stalledStart, then wait until the test
+	// closes the channel the header's value names in ConnectionProxySuite.stalls, then end it
+	// with stalledEnd.
+	echoStallHeader = "X-Echo-Stall"
 )
+
+// echoNotFoundPath is the provider path the echo answers with a 404, for a call that must
+// forward no header but plainHeaders and no query (the proxy forwards both).
+const echoNotFoundPath = "missing/7"
+
+// stalledStart is a 5xx body's first part, over 4 KiB so the router's buffers cannot hold it
+// all (the server's response bufio.Writer is 2 KiB before chunking and its connection's 4 KiB,
+// net/http/server.go in go1.27.0).
+var stalledStart = strings.Repeat("s", 8<<10)
+
+const stalledEnd = "end"
 
 // rawAnswer is a JSON object over 2 KiB, so net/http sends it chunked, with no Content-Length
 // (bufferBeforeChunkingSize in net/http/server.go is 2048).
@@ -62,6 +79,10 @@ type ConnectionProxySuite struct {
 	echo     *httptest.Server
 	// hits counts the requests the echo took.
 	hits atomic.Int64
+	// logged is what the router logged, for the line an answer other than 2xx leaves.
+	logged *lockedLog
+	// stalls are the channels a stalled answer waits on, by its echoStallHeader.
+	stalls sync.Map
 }
 
 func TestConnectionProxySuite(t *testing.T) {
@@ -85,6 +106,8 @@ func (s *ConnectionProxySuite) SetupSuite() {
 	// The router's default cap, as a deployment that sets none runs (AI-958). Every test but
 	// the cap's own stays under it, so each asserts what base answered.
 	s.proxyCallsPerMinute = config.Defaults().Connectors.ProxyCallsPerMinute
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -172,7 +195,8 @@ func (s *ConnectionProxySuite) TestTheProviderGetsTheRequestAsItCameWithTheConne
 func (s *ConnectionProxySuite) TestNoneOfTheRoutersCredentialsOrCallerNamesReachTheProvider() {
 	id := s.connected(s.connector(""), bearer.Name)
 	router := []string{"Authorization", auth.APIKeyHeader, auth.AuthTypeHeader, auth.OrganizationHeader,
-		auth.AppHeader, auth.CustomerHeader, auth.UserHeader}
+		auth.AppHeader, auth.CustomerHeader, auth.UserHeader, auth.ServerTokenHeader, auth.ServerTokenKeyHeader,
+		auth.HookAppHeader}
 	extra := http.Header{}
 	for _, name := range router[3:] {
 		extra.Set(name, "router-"+name)
@@ -213,6 +237,214 @@ func (s *ConnectionProxySuite) TestTheProvidersAnswerComesBackAsItCame() {
 	s.Empty(response.Header.Values("Keep-Alive"), "a hop-by-hop header stays with the hop")
 	s.Equal("brew", s.echoed(answer).Body)
 	s.True(strings.HasPrefix(response.Header.Get(RequestIDHeader), "caller-"), response.Header.Get(RequestIDHeader))
+}
+
+// TestAnErrorAnswerComesBackAsItCameAndIsLogged: a 404 and a 502 reach the caller as base
+// 8666b26d answered them (probe-base.txt: the status, the echo's three headers and its JSON byte
+// for byte), and each leaves one line (AI-1245) with the status and the host. The call sent a
+// body, which the echo repeats, so the line has no excerpt of the answer (R1.1).
+func (s *ConnectionProxySuite) TestAnErrorAnswerComesBackAsItCameAndIsLogged() {
+	for _, status := range []int{http.StatusNotFound, http.StatusBadGateway} {
+		token := "token-" + s.utils.uuid()
+		id := s.connectedWithToken(s.connector(""), token)
+
+		response, answer := s.sendRaw(s.serverClient, http.MethodPost, proxy(id, "items/7?q=1"), "brew",
+			http.Header{echoStatusHeader: {strconv.Itoa(status)}, "X-Echo-Link": {"https://docs.example/errors/7?q=1"}})
+
+		s.Equal(status, response.StatusCode)
+		response.Header.Del("Date")
+		response.Header.Del(RequestIDHeader)
+		s.Equal(http.Header{"Content-Length": {strconv.Itoa(len(answer))}, "Content-Type": {"application/json"},
+			"X-Echo-Seen": {"yes"}}, response.Header)
+		s.True(string(answer) == `{"method":"POST","path":"/base/items/7","query":"q=1","header":{"Accept-Encoding":["gzip"],`+
+			`"Authorization":["Bearer `+token+`"],"Content-Length":["4"],"User-Agent":["Go-http-client/1.1"],`+
+			`"X-Echo-Link":["https://docs.example/errors/7?q=1"],"X-Echo-Status":["`+strconv.Itoa(status)+`"]},"body":"brew"}`+"\n",
+			"the answer is the echo's, byte for byte")
+		line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
+		s.Contains(line, " provider_status="+strconv.Itoa(status)+" ")
+		s.Contains(line, " provider_host="+strings.TrimPrefix(s.echo.URL, "https://")+"\n")
+		s.NotContains(line, "provider_body=")
+		s.False(strings.Contains(line, "brew"), "the request's body is not logged")
+		s.False(strings.Contains(line, token), "the connection's token is not logged")
+	}
+}
+
+// TestAnErrorAnswerToACallWithOnlyPlainHeadersIsLoggedWithItsStart: a call with no body that
+// forwards only plainHeaders gets its 404 logged with the start of the body, without the
+// connection's token, the path, its URLs kept to their host (a User-Agent naming one,
+// as crawlers' do), and the router's server token, which the provider never got (R2.1, R2.2).
+func (s *ConnectionProxySuite) TestAnErrorAnswerToACallWithOnlyPlainHeadersIsLoggedWithItsStart() {
+	token := "token-" + s.utils.uuid()
+	id := s.connectedWithToken(s.connector(""), token)
+	serverToken := "server-token-" + s.utils.uuid()
+
+	response, answer := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, echoNotFoundPath), "",
+		http.Header{"Accept": {"application/json"}, "Accept-Language": {"en"},
+			"User-Agent": {"probe/1 +https://docs.example/bot?q=1"}, auth.ServerTokenHeader: {serverToken}})
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+	s.Empty(s.echoed(answer).Header.Values(auth.ServerTokenHeader), "the provider did not get the router's server token")
+	line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
+	s.Contains(line, `provider_body="{\"method\":\"GET\",\"path\":\"[redacted]\",\"query\":\"\",`)
+	s.Contains(line, `\"Authorization\":[\"Bearer [redacted]\"]`)
+	s.Contains(line, `\"User-Agent\":[\"probe/1 +https://docs.example\"]`)
+	for _, sent := range []string{token, serverToken} {
+		s.False(strings.Contains(s.logged.String(), sent), "neither the connection's token nor the server token is logged")
+	}
+}
+
+// TestAnErrorAnswerToACallThatSentABodyIsLoggedWithoutItsStart: a call that forwards only
+// plainHeaders but sends a body, which the echo repeats, gets its 404 logged with the status and
+// the host only (R1.1). The body's length is not known to the client (io.NopCloser), so it is sent chunked and no
+// Content-Length header says there is one.
+func (s *ConnectionProxySuite) TestAnErrorAnswerToACallThatSentABodyIsLoggedWithoutItsStart() {
+	id := s.connected(s.connector(""), bearer.Name)
+	body := "brew-" + s.utils.uuid()
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+proxy(id, echoNotFoundPath),
+		io.NopCloser(strings.NewReader(body)))
+	s.Require().NoError(err)
+	request.Header = s.serverClient.header.Clone()
+
+	response, err := s.server.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	answer, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+	got := s.echoed(answer)
+	s.Equal(body, got.Body)
+	line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
+	s.Contains(line, " provider_status=404 ")
+	s.NotContains(line, "provider_body=")
+	s.False(strings.Contains(s.logged.String(), body), "the request's body is not logged")
+}
+
+// TestAnErrorAnswerToACallThatForwardedAnotherHeaderIsLoggedWithoutItsStart: a call with no
+// body that forwards a Cookie, plain, quoted or holding an & the echo writes JSON-escaped, or a
+// header of the provider's own, gets its 404 logged with the status and the host only: the echo
+// repeats the header, in a form no redaction could be shown to catch (R2.2).
+func (s *ConnectionProxySuite) TestAnErrorAnswerToACallThatForwardedAnotherHeaderIsLoggedWithoutItsStart() {
+	for _, sent := range []struct{ header, value string }{
+		{"Cookie", "sid=%s"}, {"Cookie", `sid="%s"`}, {"Cookie", "sid=a&%s"}, {"X-Provider-Secret", "%s"},
+	} {
+		id := s.connected(s.connector(""), bearer.Name)
+		secret := "sec-" + s.utils.uuid()
+
+		response, answer := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, echoNotFoundPath), "",
+			http.Header{sent.header: {fmt.Sprintf(sent.value, secret)}})
+
+		s.Equal(http.StatusNotFound, response.StatusCode)
+		s.Contains(string(answer), secret, "the provider got the caller's %s", sent.header)
+		line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
+		s.Contains(line, " provider_status=404 ")
+		s.Contains(line, " provider_host="+strings.TrimPrefix(s.echo.URL, "https://")+"\n")
+		s.NotContains(line, "provider_body=", sent.value)
+		s.False(strings.Contains(s.logged.String(), secret), "the %s %q is not logged", sent.header, sent.value)
+	}
+}
+
+// TestAnErrorAnswerToACallThatForwardedAQueryIsLoggedWithoutItsStart: a call with no body and
+// only plainHeaders that carries a query gets its 404 logged with the status and the host only:
+// the proxy forwards the query, and the echo repeats it with its & JSON-escaped, which the
+// redaction of the query as one raw string misses (R3.1).
+func (s *ConnectionProxySuite) TestAnErrorAnswerToACallThatForwardedAQueryIsLoggedWithoutItsStart() {
+	id := s.connected(s.connector(""), bearer.Name)
+	secret := "sec-" + s.utils.uuid()
+
+	response, answer := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, echoNotFoundPath+"?key="+secret+"&x=1"), "", nil)
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+	s.Equal("key="+secret+"&x=1", s.echoed(answer).Query, "the provider got the caller's query")
+	line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
+	s.Contains(line, " provider_status=404 ")
+	s.Contains(line, " provider_host="+strings.TrimPrefix(s.echo.URL, "https://")+"\n")
+	s.NotContains(line, "provider_body=")
+	s.False(strings.Contains(s.logged.String(), secret), "the query's value is not logged")
+}
+
+// TestAnErrorAnswerToACallWhoseQueryHeldOnlyTheRoutersParametersIsLoggedWithItsStart: the router's
+// own parameters are not forwarded, so a call whose query held nothing else forwarded no query
+// and keeps its excerpt: the condition is on the query the provider got, not on the one the
+// caller sent (R3.1).
+func (s *ConnectionProxySuite) TestAnErrorAnswerToACallWhoseQueryHeldOnlyTheRoutersParametersIsLoggedWithItsStart() {
+	id := s.connected(s.connector(""), bearer.Name)
+
+	response, answer := s.sendRaw(s.serverClient, http.MethodGet,
+		proxy(id, echoNotFoundPath+"?api_key=router-key&token=router-token"), "", nil)
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+	s.Empty(s.echoed(answer).Query, "the provider got no query")
+	line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
+	s.Contains(line, `provider_body="{\"method\":\"GET\",\"path\":\"[redacted]\",\"query\":\"\",`)
+}
+
+// TestAStalled5xxReachesTheCallerAsItComes: a 502 whose body sends 8 KiB, then stalls until the
+// test ends the stall, gives the caller its first KiB while the stall lasts, as base 8666b26d
+// does (reviewer probe: 5 ms), so the line logged after the copy holds nothing back (R1.3). An
+// answer the router held for its line would come only once the stall ends, after the 5 s the
+// test waits.
+func (s *ConnectionProxySuite) TestAStalled5xxReachesTheCallerAsItComes() {
+	id := s.connected(s.connector(""), bearer.Name)
+	key, release := s.utils.uuid(), make(chan struct{})
+	s.stalls.Store(key, release)
+	defer s.stalls.Delete(key)
+	request, err := http.NewRequest(http.MethodGet, s.server.URL+proxy(id, "stall"), nil)
+	s.Require().NoError(err)
+	request.Header = s.serverClient.header.Clone()
+	request.Header.Set(echoStallHeader, key)
+	type started struct {
+		response *http.Response
+		first    []byte
+		err      error
+	}
+	came := make(chan started, 1)
+	go func() {
+		response, err := s.server.Client().Do(request)
+		if err != nil {
+			came <- started{err: err}
+			return
+		}
+		first := make([]byte, 1<<10)
+		_, err = io.ReadFull(response.Body, first)
+		came <- started{response: response, first: first, err: err}
+	}()
+
+	var got started
+	select {
+	case got = <-came:
+	case <-time.After(5 * time.Second):
+		close(release)
+		got = <-came
+		if got.response != nil {
+			_ = got.response.Body.Close()
+		}
+		s.FailNow("the first KiB came only once the stall ended")
+	}
+	close(release)
+
+	s.Require().NoError(got.err)
+	defer got.response.Body.Close()
+	s.Equal(http.StatusBadGateway, got.response.StatusCode)
+	s.Equal(stalledStart[:1<<10], string(got.first))
+	rest, err := io.ReadAll(got.response.Body)
+	s.Require().NoError(err)
+	s.True(string(got.first)+string(rest) == stalledStart+stalledEnd, "the whole body comes once the stall ends")
+}
+
+// TestOnlyAnAnswerOtherThan2xxIsLogged: a 200 leaves no line; a 302, which the connection's
+// client does not follow without a Location, leaves one with no body, since only a 4xx's or a
+// 5xx's is kept (core.Exchange.ErrorBody).
+func (s *ConnectionProxySuite) TestOnlyAnAnswerOtherThan2xxIsLogged() {
+	ok := s.connected(s.connector(""), bearer.Name)
+	found := s.connected(s.connector(""), bearer.Name)
+
+	s.Equal(http.StatusOK, s.serverClient.do(http.MethodGet, proxy(ok, "ping"), nil, nil))
+	status, _ := s.send(s.serverClient, http.MethodGet, proxy(found, "ping"), "", http.Header{echoStatusHeader: {"302"}})
+
+	s.Equal(http.StatusFound, status)
+	s.Empty(s.logged.lines("a direct call's provider answered with an error", ok))
+	s.Contains(s.logged.line(s.T(), "a direct call's provider answered with an error", found), ` provider_status=302 `)
 }
 
 // TestAJSONAnswerComesBackByteForByte: a chunked JSON object, with no Content-Length, gets no
@@ -395,6 +627,18 @@ func (s *ConnectionProxySuite) proxyCalls(id string) []ConnectorAuditEvent {
 // Retry-After the test asked for, or with rawAnswer when asked.
 func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	s.hits.Add(1)
+	if key := r.Header.Get(echoStallHeader); key != "" {
+		release, _ := s.stalls.Load(key)
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, stalledStart)
+		w.(http.Flusher).Flush()
+		select {
+		case <-release.(chan struct{}):
+		case <-time.After(suiteConnectorTimeout):
+		}
+		_, _ = io.WriteString(w, stalledEnd)
+		return
+	}
 	if r.Header.Get(echoRawHeader) != "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Server-Timing", rawServerTiming)
@@ -405,6 +649,9 @@ func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusOK
 	if asked := r.Header.Get(echoStatusHeader); asked != "" {
 		status, _ = strconv.Atoi(asked)
+	}
+	if r.URL.Path == "/base/"+echoNotFoundPath {
+		status = http.StatusNotFound
 	}
 	if wait := r.Header.Get(echoRetryAfterHeader); wait != "" {
 		w.Header().Set("Retry-After", wait)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -56,7 +57,7 @@ type Options struct {
 // New builds the provider, reading the API key from the environment when it is not given.
 func New(options Options) (*openaicompat.LLM, error) {
 	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
+		options.APIKey = keypool.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
 		return nil, stack.Wrap(errors.New("deepseek: " + apiKeyEnvVar + " is required"))

@@ -2,6 +2,7 @@ package cartesia
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -130,6 +131,33 @@ func (s *CartesiaSocketSuite) TestTheKeyTravelsInAHeader() {
 	s.Equal("secret", request.Header.Get(apiKeyHeader))
 	s.Empty(request.URL.Query().Get("access_token"),
 		"the token in the query string is for a browser, not for the router")
+}
+
+func (s *CartesiaSocketSuite) TestARateLimitedKeyHandsTheSessionToTheNextKey() {
+	refused, spare := "cartesia-"+rand.Text(), "cartesia-"+rand.Text()
+	fake := newFakeSTT()
+	defer fake.close()
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(apiKeyHeader) == refused {
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return
+		}
+		fake.server.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer front.Close()
+
+	provider, err := New(Options{
+		APIKey:       refused + "," + spare,
+		URL:          "ws://" + strings.TrimPrefix(front.URL, "http://"),
+		FlushTimeout: 500 * time.Millisecond,
+	})
+	s.Require().NoError(err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s.Require().NoError(provider.Start(ctx))
+	defer func() { _ = provider.Close() }()
+
+	s.Equal(spare, (<-fake.requests).Header.Get(apiKeyHeader))
 }
 
 func (s *CartesiaSocketSuite) TestEachKeytermIsItsOwnParameter() {

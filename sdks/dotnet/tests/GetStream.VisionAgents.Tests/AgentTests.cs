@@ -812,6 +812,20 @@ public sealed class AgentTests : IDisposable
             agent.Knowledge.AddUrlAsync("https://example.com/plans", refreshHours: 0, cancellationToken: TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task SyncSendsHowTheSandboxIsBuiltAndWhatItMayReach()
+    {
+        await using var router = await TestRouter.StartAsync();
+
+        var synced = await SyncDeclaringAsync(router,
+            "sandbox: daytona\nsandbox_options:\n  setup: [pip install bpy==5.2.2]\n  timeout: 5m\n  memory_gb: 4\n" +
+            "  network: true\n  allowed_domains: [api.example.com]\n  network_allow_list: [10.0.0.0/8]\n");
+
+        Assert.Equal(
+            """{"allowed_domains":["api.example.com"],"memory_gb":4,"network":true,"network_allow_list":["10.0.0.0/8"],"setup":["pip install bpy==5.2.2"],"timeout_ms":300000}""",
+            synced["sandbox_options"]!.ToJsonString());
+    }
+
     private async Task<JsonNode> SyncDeclaringAsync(TestRouter router, string declaration)
     {
         var root = Path.Combine(_workspace, "agents", "jean");

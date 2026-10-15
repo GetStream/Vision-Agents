@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
@@ -28,11 +29,22 @@ import (
 // ProviderName is the stable name used in routing config and stats.
 const ProviderName = "fish"
 
-// DefaultModel is Fish's current flagship, which is also what we self-host as s2pro.
-const DefaultModel = "s2-pro"
+// Drama3Model is the Fish model that acts bracketed stage directions.
+const Drama3Model = "drama-3"
+
+// DefaultModel is Fish's current flagship.
+const DefaultModel = Drama3Model
 
 // DefaultSampleRate is what the provider asks Fish to synthesise at.
 const DefaultSampleRate = 24_000
+
+// AudioTagPrompt is what a model writing for Drama 3 is told about directing it.
+const AudioTagPrompt = "Your words are spoken by a voice that acts stage directions. " +
+	"Write a direction in square brackets just before the words it applies to, and it " +
+	"will be performed rather than read out: [laughs], [sighs], [whispers], [excited], " +
+	"[sarcastic], [short pause]. Any direction works, not only these. Use them where a " +
+	"person would naturally have done that, and no more than once or twice a turn: a " +
+	"reply full of directions sounds like a performance rather than a conversation."
 
 // defaultBaseURL is the production endpoint.
 const defaultBaseURL = "https://api.fish.audio"
@@ -101,12 +113,11 @@ type TTS struct {
 
 // New validates the options and returns an unstarted provider.
 func New(options Options) (*TTS, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv("FISH_API_KEY")
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, "FISH_API_KEY")
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("fish: api key is required (set FISH_API_KEY)"))
 	}
+	options.APIKey = keys.Peek()
 	if options.Voice == "" {
 		options.Voice = os.Getenv("FISH_VOICE_ID")
 	}
@@ -129,6 +140,7 @@ func New(options Options) (*TTS, error) {
 	if client == nil {
 		client = &http.Client{}
 	}
+	client = keys.WrapClient(client, keypool.Bearer)
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -254,11 +266,16 @@ func (t *TTS) Voice() string { return t.options.Voice }
 // must send complete sentences rather than deltas.
 func (t *TTS) Streaming() bool { return false }
 
-// Performs reports false: Fish reads a bracketed direction out as words.
-func (t *TTS) Performs() bool { return false }
+// Performs reports whether the model acts bracketed stage directions rather than reading them out.
+func (t *TTS) Performs() bool { return t.options.Model == Drama3Model }
 
-// Prompt reports nothing: there is no direction this voice would act.
-func (t *TTS) Prompt() string { return "" }
+// Prompt tells the model writing the lines how to direct a voice that acts stage directions.
+func (t *TTS) Prompt() string {
+	if t.Performs() {
+		return AudioTagPrompt
+	}
+	return ""
+}
 
 // SampleRate is the rate the audio comes back at.
 func (t *TTS) SampleRate() int { return t.options.SampleRate }

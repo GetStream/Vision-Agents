@@ -760,6 +760,24 @@ class TestFolder:
             memory_gb=4,
         )
 
+    def test_what_the_sandbox_may_reach_is_read(self, tmp_path: Path):
+        root = tmp_path / "researcher"
+        write(
+            root,
+            "agent.yaml",
+            "name: researcher\nsandbox: daytona\nsandbox_options:\n"
+            "  network: true\n  allowed_domains: [api.example.com]\n"
+            "  network_allow_list: [10.0.0.0/8]\n",
+        )
+
+        options = load(root).settings.sandbox_options
+
+        assert options == SandboxSettings(
+            network=True,
+            allowed_domains=["api.example.com"],
+            network_allow_list=["10.0.0.0/8"],
+        )
+
     def test_a_declaration_without_sandbox_options_has_none(self, tmp_path: Path):
         root = tmp_path / "analyst"
         write(root, "agent.yaml", "name: analyst\nsandbox: daytona\n")
@@ -768,7 +786,13 @@ class TestFolder:
 
     @pytest.mark.parametrize(
         "options",
-        ["  timeout: 2h\n", "  timeout: soon\n", "  memory: 4\n", "  cpu: two\n"],
+        [
+            "  timeout: 2h\n",
+            "  timeout: soon\n",
+            "  memory: 4\n",
+            "  cpu: two\n",
+            "  network: maybe\n",
+        ],
     )
     def test_sandbox_options_nobody_can_honour_are_refused(
         self, tmp_path: Path, options: str

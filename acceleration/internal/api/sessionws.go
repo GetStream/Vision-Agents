@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -147,7 +148,7 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 	gone := make(chan struct{})
 	go func() {
 		defer close(gone)
-		s.readCommands(connection, found, owner)
+		s.readCommands(connection, found, owner, CallerFrom(r.Context()))
 	}()
 	s.writeEvents(connection, events, watching(r), gone)
 }
@@ -265,7 +266,7 @@ type watcherCommand struct {
 //
 // A frame it cannot read is reported and skipped rather than closing the socket: dropping
 // the connection over one bad message would take the tool calls in flight with it.
-func (s *Server) readCommands(connection *websocket.Conn, found *session.Session, owner session.Owner) {
+func (s *Server) readCommands(connection *websocket.Conn, found *session.Session, owner session.Owner, sender routing.Caller) {
 	connection.SetReadDeadline(time.Now().Add(pongWait))
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongWait))
@@ -281,7 +282,7 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 		}
 		connection.SetReadDeadline(time.Now().Add(pongWait))
 
-		if !s.applyCommand(found, owner, command) {
+		if !s.applyCommand(found, owner, sender, command) {
 			return
 		}
 	}
@@ -293,7 +294,9 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 // It is separate from the read loop because a relayed socket arrives at the same switch
 // from the other direction: the frame came off a socket on another node and was carried
 // here on the bus, and a watcher on either node must be able to do the same things.
-func (s *Server) applyCommand(found *session.Session, owner session.Owner, command watcherCommand) bool {
+//
+// sender is the socket's caller, whose day a turn it sends is counted on.
+func (s *Server) applyCommand(found *session.Session, owner session.Owner, sender routing.Caller, command watcherCommand) bool {
 	if command.CommandID == "" {
 		command.CommandID = command.LegacyCommandID
 	}
@@ -346,7 +349,7 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, comma
 				found.Report(fmt.Errorf("durable commands currently support text only"), "llm")
 				return true
 			}
-			if _, _, err := found.RespondCommand(context.Background(), command.CommandID, command.Text, "", options.LLM{}); err != nil {
+			if _, _, err := found.RespondCommand(routing.WithCaller(context.Background(), sender), command.CommandID, command.Text, "", options.LLM{}); err != nil {
 				found.Report(err, "llm")
 			}
 			return true
@@ -356,7 +359,7 @@ func (s *Server) applyCommand(found *session.Session, owner session.Owner, comma
 			found.Report(err, "llm")
 			return true
 		}
-		if _, err := found.Respond(context.Background(), command.Text, images, options.LLM{}); err != nil {
+		if _, err := found.Respond(routing.WithCaller(context.Background(), sender), command.Text, images, options.LLM{}); err != nil {
 			found.Report(err, "llm")
 		}
 
@@ -603,6 +606,7 @@ func frameOf(event session.Event) (frame, bool) {
 			"tool":         typed.Tool,
 			"arguments":    typed.Arguments,
 			"result":       typed.Result,
+			"files":        typed.Files,
 			"error":        errorText(typed.Err),
 		}, true
 

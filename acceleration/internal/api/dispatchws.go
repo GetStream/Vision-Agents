@@ -217,6 +217,12 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 				return
 			}
 
+		case <-s.draining:
+			connection.SetWriteDeadline(time.Now().Add(writeWait))
+			connection.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseGoingAway, "router restarting"))
+			return
+
 		case <-gone:
 			return
 		}

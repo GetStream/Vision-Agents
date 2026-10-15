@@ -7,9 +7,9 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents\Generated;
 
 /**
- * Where the subagent may run code it writes. Only the subagent is offered it: running code
- * takes seconds, and the model holding the conversation has none to spare. Omit it and the
- * subagent works everything out in its head.
+ * Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it
+ * to the subagent, since running code takes seconds a call has none of. Omit it and the agent
+ * works everything out in its head.
  */
 enum Sandbox: string
 {

@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -33,7 +33,7 @@ type LLM struct {
 
 func New(options Options) (*LLM, error) {
 	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
+		options.APIKey = keypool.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
 		return nil, stack.Wrap(errors.New("meta: META_API_KEY is required"))

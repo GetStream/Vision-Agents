@@ -19,6 +19,7 @@ def _get_kwargs(
     campaign_id: str | Unset = UNSET,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
+    max_review_score: int | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -40,6 +41,8 @@ def _get_kwargs(
     if not isinstance(to, Unset):
         json_to = to.isoformat()
     params["to"] = json_to
+
+    params["max_review_score"] = max_review_score
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -111,6 +114,7 @@ def sync_detailed(
     campaign_id: str | Unset = UNSET,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
+    max_review_score: int | Unset = UNSET,
 ) -> Response[ErrorResponse | list[Call]]:
     """The calls the calling customer has run
 
@@ -125,6 +129,7 @@ def sync_detailed(
         campaign_id (str | Unset): Narrow to the calls one campaign placed.
         from_ (datetime.datetime | Unset): Only calls that started at or after this, inclusive.
         to (datetime.datetime | Unset): Only calls that started before this, exclusive.
+        max_review_score (int | Unset): Only reviewed calls scored at or below this, from 1 to 5.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -141,6 +146,7 @@ def sync_detailed(
         campaign_id=campaign_id,
         from_=from_,
         to=to,
+        max_review_score=max_review_score,
     )
 
     response = client.get_httpx_client().request(
@@ -159,6 +165,7 @@ def sync(
     campaign_id: str | Unset = UNSET,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
+    max_review_score: int | Unset = UNSET,
 ) -> ErrorResponse | list[Call] | None:
     """The calls the calling customer has run
 
@@ -173,6 +180,7 @@ def sync(
         campaign_id (str | Unset): Narrow to the calls one campaign placed.
         from_ (datetime.datetime | Unset): Only calls that started at or after this, inclusive.
         to (datetime.datetime | Unset): Only calls that started before this, exclusive.
+        max_review_score (int | Unset): Only reviewed calls scored at or below this, from 1 to 5.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -190,6 +198,7 @@ def sync(
         campaign_id=campaign_id,
         from_=from_,
         to=to,
+        max_review_score=max_review_score,
     ).parsed
 
 
@@ -202,6 +211,7 @@ async def asyncio_detailed(
     campaign_id: str | Unset = UNSET,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
+    max_review_score: int | Unset = UNSET,
 ) -> Response[ErrorResponse | list[Call]]:
     """The calls the calling customer has run
 
@@ -216,6 +226,7 @@ async def asyncio_detailed(
         campaign_id (str | Unset): Narrow to the calls one campaign placed.
         from_ (datetime.datetime | Unset): Only calls that started at or after this, inclusive.
         to (datetime.datetime | Unset): Only calls that started before this, exclusive.
+        max_review_score (int | Unset): Only reviewed calls scored at or below this, from 1 to 5.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -232,6 +243,7 @@ async def asyncio_detailed(
         campaign_id=campaign_id,
         from_=from_,
         to=to,
+        max_review_score=max_review_score,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -248,6 +260,7 @@ async def asyncio(
     campaign_id: str | Unset = UNSET,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
+    max_review_score: int | Unset = UNSET,
 ) -> ErrorResponse | list[Call] | None:
     """The calls the calling customer has run
 
@@ -262,6 +275,7 @@ async def asyncio(
         campaign_id (str | Unset): Narrow to the calls one campaign placed.
         from_ (datetime.datetime | Unset): Only calls that started at or after this, inclusive.
         to (datetime.datetime | Unset): Only calls that started before this, exclusive.
+        max_review_score (int | Unset): Only reviewed calls scored at or below this, from 1 to 5.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -280,5 +294,6 @@ async def asyncio(
             campaign_id=campaign_id,
             from_=from_,
             to=to,
+            max_review_score=max_review_score,
         )
     ).parsed

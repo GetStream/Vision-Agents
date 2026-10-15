@@ -2,11 +2,13 @@ package openaicompat
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -35,6 +37,10 @@ type OpenAICompatSuite struct {
 	status int
 	// errorBody replaces the error a non-zero status answers with.
 	errorBody string
+	// keys records the API key each request was sent with, and refusedKey is answered
+	// with 429.
+	keys       []string
+	refusedKey string
 }
 
 func TestOpenAICompatSuite(t *testing.T) {
@@ -47,6 +53,8 @@ func (s *OpenAICompatSuite) SetupTest() {
 	s.hold = nil
 	s.status = 0
 	s.errorBody = ""
+	s.keys = nil
+	s.refusedKey = ""
 
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, err := io.ReadAll(r.Body)
@@ -54,9 +62,17 @@ func (s *OpenAICompatSuite) SetupTest() {
 
 		var body map[string]any
 		s.Require().NoError(json.Unmarshal(raw, &body))
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		s.mu.Lock()
 		s.requests = append(s.requests, body)
+		s.keys = append(s.keys, key)
 		s.mu.Unlock()
+
+		if key == s.refusedKey {
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"error":{"message":"slow down"}}`)
+			return
+		}
 
 		if s.status != 0 {
 			w.WriteHeader(s.status)
@@ -241,6 +257,29 @@ func (s *OpenAICompatSuite) TestNewRejectsAConfigItCannotUse() {
 
 	_, err = New(Options{Provider: "p", Model: "m", APIKey: "k"})
 	s.ErrorContains(err, "base url is required")
+}
+
+func (s *OpenAICompatSuite) TestARateLimitedKeyHandsTheTurnToTheNextKeyInThePool() {
+	s.frames = []string{textFrame("hello"), usageFrame(3, 0, 1, 0, "stop")}
+	refused, spare := "compat-"+rand.Text(), "compat-"+rand.Text()
+	s.refusedKey = refused
+	provider, err := New(Options{
+		Provider: "test",
+		Model:    "test-model",
+		APIKey:   refused + ", " + spare,
+		BaseURL:  s.server.URL,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { provider.Close() })
+
+	first, _ := s.ask(provider, hello())
+	second, _ := s.ask(provider, hello())
+
+	s.Equal(llm.StatusCompleted, first.Status)
+	s.Equal(llm.StatusCompleted, second.Status)
+	s.Equal([]string{refused, spare, spare}, s.keys,
+		"the refused key rests rather than being asked again on the next turn")
+	s.Equal(s.requests[0], s.requests[1], "the refused request is sent again as it was")
 }
 
 func (s *OpenAICompatSuite) TestAnErrorSentAsAListStillSaysWhy() {

@@ -283,9 +283,12 @@ func (s *Scheme) redeem(ctx context.Context, endpoint string, form url.Values, c
 		outcome.Kind = core.OutcomeTransient
 	}
 	if err == nil {
-		err = &TokenError{Status: response.StatusCode, Code: errorCode(raw)}
-		// The provider's word for why, for the resolver's log line; never its description.
-		outcome.Code = errorCode(raw)
+		// The provider's word for why and its description, for the resolver's log line. The
+		// description is redacted of the refresh token and the client secret the request
+		// carried, which a provider may echo.
+		refused := &TokenError{Status: response.StatusCode, Code: errorCode(raw),
+			Description: ErrorDescription(raw, form.Get("refresh_token"), c.Secret)}
+		outcome.Code, outcome.Description, err = refused.Code, refused.Description, refused
 	}
 	return tokenResponse{}, &core.OutcomeError{Outcome: outcome, Err: fmt.Errorf("oauth2code: refresh: %w", err)}
 }

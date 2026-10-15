@@ -15,10 +15,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -62,12 +62,11 @@ type Store struct {
 
 // New validates the options and returns a Store.
 func New(options Options) (*Store, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar)
+	if keys.Len() == 0 {
 		return nil, errors.New("mem0: " + apiKeyEnvVar + " is required")
 	}
+	options.APIKey = keys.Peek()
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
 	}
@@ -84,7 +83,7 @@ func New(options Options) (*Store, error) {
 	return &Store{
 		apiKey:  options.APIKey,
 		baseURL: strings.TrimSuffix(options.BaseURL, "/"),
-		client:  options.HTTPClient,
+		client:  keys.WrapClient(options.HTTPClient, keypool.Header("Authorization", "Token ")),
 		logger:  options.Logger,
 	}, nil
 }

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openweights"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -33,7 +34,7 @@ var Host = openweights.Host{
 // Options does not carry them.
 func New(options openweights.Options) (*openaicompat.LLM, error) {
 	if options.APIKey == "" {
-		options.APIKey = os.Getenv(Host.APIKeyEnvVar)
+		options.APIKey = keypool.Getenv(Host.APIKeyEnvVar)
 	}
 	if options.APIKey == "" {
 		return nil, stack.Wrap(errors.New(ProviderName + ": " + Host.APIKeyEnvVar + " is required"))

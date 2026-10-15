@@ -815,9 +815,6 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 		}
 	}
 	set(&next.LLMTarget, settings.LLM)
-	if next.Text {
-		next.SubagentTarget = next.writtenSubagent()
-	}
 	set(&next.STTTarget, settings.STT)
 	set(&next.TTSTarget, settings.TTS)
 	set(&next.STSTarget, settings.STS)

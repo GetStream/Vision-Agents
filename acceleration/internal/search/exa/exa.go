@@ -17,10 +17,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -93,12 +93,11 @@ type Provider struct {
 
 // New validates the options and returns a Provider.
 func New(options Options) (*Provider, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APIKey == "" {
+	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar)
+	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("exa: " + apiKeyEnvVar + " is required"))
 	}
+	options.APIKey = keys.Peek()
 	if options.Model == "" {
 		options.Model = ModelFast
 	}
@@ -126,7 +125,7 @@ func New(options Options) (*Provider, error) {
 		model:   options.Model,
 		baseURL: strings.TrimSuffix(options.BaseURL, "/"),
 		limit:   options.Limit,
-		client:  options.HTTPClient,
+		client:  keys.WrapClient(options.HTTPClient, keypool.Header("x-api-key", "")),
 		logger:  options.Logger,
 	}, nil
 }
