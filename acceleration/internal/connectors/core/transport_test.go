@@ -191,6 +191,146 @@ func (s *TransportsSuite) TestAnExchangeForgetsTheWaitOnceAnotherRequestIsAnswer
 	s.Zero(exchange.RetryAfter())
 }
 
+// Synthetic values the provider is sent or answers with, which an Exchange must not keep.
+const (
+	setCookieSecret = "set-cookie-secret-1243"
+	queryToken      = "query-token-1243"
+)
+
+// TestAnExchangeRecordsTheHostTheStartOfA403sBodyAndItsChallenge: the host without the path
+// or query, the body and WWW-Authenticate as the provider wrote them, and nothing of the
+// Authorization the scheme set or the cookie the provider set (AI-1243).
+func (s *TransportsSuite) TestAnExchangeRecordsTheHostTheStartOfA403sBodyAndItsChallenge() {
+	refusal := `{"error":"forbidden","message":"this app may not read contacts"}`
+	s.provider.answer(http.StatusForbidden, http.Header{"Content-Type": {"application/json"},
+		"Www-Authenticate": {`Bearer realm="crm"`}, "Set-Cookie": {"session=" + setCookieSecret}}, refusal)
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp/v1?access_token="+queryToken)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusForbidden, exchange.Status())
+	s.Equal(strings.TrimPrefix(s.provider.URL, "https://"), exchange.Host())
+	s.Equal(refusal, exchange.ErrorBody())
+	s.Equal(`Bearer realm="crm"`, exchange.WWWAuthenticate())
+	s.Empty(exchange.RetryAfterHeader())
+	s.Equal(refusal, s.read(response), "the caller reads the whole body")
+	kept := strings.Join([]string{exchange.Host(), exchange.ErrorBody(), exchange.WWWAuthenticate(),
+		exchange.RetryAfterHeader()}, "\n")
+	for _, secret := range []string{"token-1", "Bearer token", setCookieSecret, queryToken, "/mcp"} {
+		s.NotContains(kept, secret)
+	}
+}
+
+// TestAnExchangeKeepsTheFirstKiBOfA5xxsBodyAndTheCallerReadsItAll: the body is 3 KiB.
+func (s *TransportsSuite) TestAnExchangeKeepsTheFirstKiBOfA5xxsBodyAndTheCallerReadsItAll() {
+	page := "<html>" + strings.Repeat("bad gateway ", 256) + "</html>"
+	s.provider.answer(http.StatusBadGateway, http.Header{"Retry-After": {"120"}}, page)
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(page[:1024], exchange.ErrorBody())
+	s.Equal("120", exchange.RetryAfterHeader())
+	s.Zero(exchange.RetryAfter(), "only a 429's Retry-After holds calls")
+	s.Empty(exchange.WWWAuthenticate())
+	s.Equal(page, s.read(response))
+}
+
+// TestAnExchangeKeepsA429sRetryAfterAsWritten: beside the wait the scheme read from it.
+func (s *TransportsSuite) TestAnExchangeKeepsA429sRetryAfterAsWritten() {
+	s.provider.limit("30")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal("30", exchange.RetryAfterHeader())
+	s.Equal("slow down", exchange.ErrorBody())
+}
+
+// TestAnExchangeKeepsNothingOfA2xx: a 2xx's body is the call's answer, never kept.
+func (s *TransportsSuite) TestAnExchangeKeepsNothingOfA2xx() {
+	s.provider.answer(http.StatusOK, http.Header{"Retry-After": {"5"}, "Www-Authenticate": {"Bearer"}}, "ok")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, exchange.Status())
+	s.Empty(exchange.ErrorBody())
+	s.Empty(exchange.WWWAuthenticate())
+	s.Empty(exchange.RetryAfterHeader())
+}
+
+// TestAnExchangeForgetsTheBodyOnceAnotherRequestIsAnswered: as the status, it is the last
+// answer's.
+func (s *TransportsSuite) TestAnExchangeForgetsTheBodyOnceAnotherRequestIsAnswered() {
+	s.provider.answer(http.StatusServiceUnavailable, http.Header{"Retry-After": {"120"}}, "down")
+	ctx, exchange := core.WithExchange(context.Background())
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.provider.respondWith(nil)
+
+	_, err = s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, exchange.Status())
+	s.Empty(exchange.ErrorBody())
+	s.Empty(exchange.RetryAfterHeader())
+}
+
+// TestABodyCutOffBeforeItsKiBStillFailsTheCallersRead: the provider promises 3000 bytes and
+// sends 500. The caller sees the failure the Exchange's read met, not a clean end.
+func (s *TransportsSuite) TestABodyCutOffBeforeItsKiBStillFailsTheCallersRead() {
+	s.provider.respondWith(func(w http.ResponseWriter) {
+		w.Header().Set("Content-Length", "3000")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, strings.Repeat("x", 500))
+	})
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(strings.Repeat("x", 500), exchange.ErrorBody())
+	read, err := io.ReadAll(response.Body)
+	s.ErrorIs(err, io.ErrUnexpectedEOF)
+	s.Equal(strings.Repeat("x", 500), string(read))
+}
+
+// TestAnAnswerIsNotReadEarlyWithoutAnExchange: a request whose context carries none gets its
+// 5xx before the body has come, as it did before the Exchange kept bodies.
+func (s *TransportsSuite) TestAnAnswerIsNotReadEarlyWithoutAnExchange() {
+	release := make(chan struct{})
+	defer close(release)
+	s.provider.respondWith(func(w http.ResponseWriter) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.(http.Flusher).Flush()
+		<-release
+	})
+	request, err := http.NewRequest(http.MethodPost, s.provider.URL+"/mcp", strings.NewReader(body))
+	s.Require().NoError(err)
+	statuses := make(chan int, 1)
+	go func() {
+		response, err := s.client().Do(request)
+		if err != nil {
+			statuses <- 0
+			return
+		}
+		_ = response.Body.Close()
+		statuses <- response.StatusCode
+	}()
+
+	select {
+	case status := <-statuses:
+		s.Equal(http.StatusInternalServerError, status)
+	case <-time.After(closedWithin):
+		s.Fail("the answer waited for its body")
+	}
+}
+
 func (s *TransportsSuite) TestACorrelationIsWhatTheContextCarries() {
 	ctx := core.WithCorrelation(context.Background(), core.Correlation{RequestID: "request", SessionID: "session"})
 
@@ -788,6 +928,9 @@ type provider struct {
 	requests   []receivedRequest
 	connsSeen  map[net.Conn]bool
 	connsGone  int
+
+	// respond, when set, answers every request in place of the cases in serve.
+	respond func(http.ResponseWriter)
 }
 
 type receivedRequest struct {
@@ -823,11 +966,15 @@ func (p *provider) serve(w http.ResponseWriter, r *http.Request) {
 		signatureMatches: r.Header.Get(sha256Header) == digest(raw)})
 	before, moveTo, refused, noReason, accepted := p.before, p.moveTo, p.refused[token], p.noReason, p.accepted[token]
 	challengeStatus, challengeHeader := p.challengeStatus, p.challengeHeader
-	retryAfter := p.retryAfter
+	retryAfter, respond := p.retryAfter, p.respond
 	p.moveTo = ""
 	p.mu.Unlock()
 	if before != nil {
 		before()
+	}
+	if respond != nil {
+		respond(w)
+		return
 	}
 	switch {
 	case challengeStatus != 0:
@@ -888,6 +1035,24 @@ func (p *provider) limit(retryAfter string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.retryAfter = retryAfter
+}
+
+// answer answers every request with status, header and body, whatever token it carries.
+func (p *provider) answer(status int, header http.Header, body string) {
+	p.respondWith(func(w http.ResponseWriter) {
+		for name, values := range header {
+			w.Header()[name] = values
+		}
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	})
+}
+
+// respondWith answers every request with fn.
+func (p *provider) respondWith(fn func(http.ResponseWriter)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.respond = fn
 }
 
 // redirect answers the next request with a 307 to url.

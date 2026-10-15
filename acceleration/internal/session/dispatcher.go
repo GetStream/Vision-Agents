@@ -113,6 +113,16 @@ type failure struct {
 	// status is the provider's HTTP status for the call's last answered request
 	// (core.Exchange.Status), 0 when none was answered.
 	status int
+	// host is where the call's last request went, and body, challenge and retryAfter the
+	// start of the body, the WWW-Authenticate and the Retry-After of its answer when that was a
+	// 4xx or a 5xx (core.Exchange); "" when there was none.
+	host, body, challenge, retryAfter string
+}
+
+// answerOf is what the call's requests saw (core.Exchange), with no kind.
+func answerOf(exchange *core.Exchange) failure {
+	return failure{status: exchange.Status(), host: exchange.Host(), body: exchange.ErrorBody(),
+		challenge: exchange.WWWAuthenticate(), retryAfter: exchange.RetryAfterHeader()}
 }
 
 // record queues the row of one call that started at started and ended now, as how says.
@@ -122,7 +132,11 @@ type failure struct {
 //
 // A call that failed or was refused also leaves one Warn line, "connector call failed", on the
 // session's logger: the row's names and id, the provider's HTTP status, and what the provider
-// or the refusal said (providerMessage of err, the error the call returned). A call the model
+// or the refusal said (providerMessage of err, the error the call returned). It also names the
+// host the last request went to (provider_host) and the start of a 4xx's or a 5xx's body
+// (provider_body, through providerBody), and, when that answer had them, its WWW-Authenticate
+// (www_authenticate) and Retry-After (retry_after), each cut to providerMessageBytes (AI-1243).
+// A call the model
 // reads connector_rate_limited, outcome_unknown or a step-up of returned no error, so its line
 // has no message. An incognito session's line carries the message like any other's, by the
 // owner's decision (AI-1242, 2026-10-14), but names no session, as its row does (Spec.Incognito).
@@ -147,10 +161,18 @@ func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how f
 	if how.kind == "" {
 		return
 	}
-	d.logger.Warn("connector call failed", "customer", row.CustomerID, "connection", row.ConnectionID,
+	fields := []any{"customer", row.CustomerID, "connection", row.ConnectionID,
 		"connector", row.ConnectorID, "binding", row.Binding, "tool", row.Tool, "session", row.SessionID,
 		"invocation", row.ID, "error_type", row.ErrorType, "latency_ms", row.LatencyMs,
-		"provider_status", how.status, "provider_message", providerMessage(err))
+		"provider_status", how.status, "provider_message", providerMessage(err),
+		"provider_host", how.host, "provider_body", providerBody(how.body)}
+	if how.challenge != "" {
+		fields = append(fields, "www_authenticate", cutAtRune(how.challenge, providerMessageBytes))
+	}
+	if how.retryAfter != "" {
+		fields = append(fields, "retry_after", cutAtRune(how.retryAfter, providerMessageBytes))
+	}
+	d.logger.Warn("connector call failed", fields...)
 }
 
 // argumentShape is each top-level argument of a call's arguments with its JSON type and, for a
@@ -309,7 +331,9 @@ func (d *dispatcher) send(ctx context.Context, r route, call llm.ToolCall) ([]ll
 	result, err := r.toolset.Call(observed, call)
 	if err != nil {
 		if ctx.Err() == nil && errors.Is(bounded.Err(), context.DeadlineExceeded) {
-			return llm.TextParts(outcomeUnknown(call.Name)), failure{kind: store.InvocationOutcomeUnknown, status: exchange.Status()}, nil
+			how := answerOf(exchange)
+			how.kind = store.InvocationOutcomeUnknown
+			return llm.TextParts(outcomeUnknown(call.Name)), how, nil
 		}
 		if held := d.limiter.Block(ctx, r.limit, exchange.RetryAfter()); held > 0 {
 			return llm.TextParts(rateLimited(call.Name, held)), failed(ctx, exchange), nil
@@ -331,7 +355,7 @@ func (d *dispatcher) send(ctx context.Context, r route, call llm.ToolCall) ([]ll
 // failed is how a call that failed before the binding's deadline failed, from what its
 // requests saw (core.Exchange): a tool source's error does not say whether anything was sent,
 // and the MCP client reports a 401 only as the words of its status. The status goes with it,
-// for the call's log line.
+// for the call's log line, with the rest of what the requests saw (answerOf).
 //
 //	the connection has no credential to give (resolver.ErrNotConnected), or
 //	  the provider answered 401 or 403                      customer_auth
@@ -345,9 +369,10 @@ func (d *dispatcher) send(ctx context.Context, r route, call llm.ToolCall) ([]ll
 //
 // Example: an MCP tool that answers isError, or a 502, is external_server; a connection whose
 // refresh token the provider revoked is customer_auth.
-func failed(turn context.Context, seen *core.Exchange) failure {
-	status := seen.Status()
-	return failure{kind: failedAs(turn, seen, status), status: status}
+func failed(turn context.Context, exchange *core.Exchange) failure {
+	how := answerOf(exchange)
+	how.kind = failedAs(turn, exchange, how.status)
+	return how
 }
 
 // failedAs is the kind of failed.
