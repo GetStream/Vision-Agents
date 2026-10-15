@@ -113,8 +113,8 @@ the other commands that read them there.
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
 | `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
-| `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
-| `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off |
+| `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an app's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
+| `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off. It is the default: an app's policy sets its own (`quota`) |
 | `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
 | `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long its turn took, and the same figures as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
 | `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies are hedged, not the flow controller, the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off. `cmd/agent` takes it as `-reply-hedge` |
@@ -334,10 +334,29 @@ Two things are counted, per UTC day, and reaching either refuses the next respon
 | Model responses | 200 | What "200 messages a day" means |
 | Tokens | 5,000,000 | A backstop for the caller who asks for few responses and makes each one enormous. A turn of an agent with a few MCP servers carries tens of thousands of tokens of tool definitions, so it should not be what an ordinary day hits first |
 
+These numbers are the deployment's default. An app sets its own as `quota` in its policy,
+`PUT /v1/policies/app` (`messages_per_user_per_day`, `tokens_per_user_per_day`), above the
+default or below it, and `0` is no cap. The PUT replaces the whole policy, so one that leaves
+`quota` out clears it and the default applies again. Organizations have none: a `quota` sent
+to `PUT /v1/policies/organization` is a 400. Each number is decided on its own. A limit Stream
+sets on a whole app is the gateway's (AI-1253), a staff spend cap is AI-1254, and a history of
+policy changes is AI-1255.
+
+A turn is counted on the day of whoever sent it. In a session a backend opened in a user's
+name, the backend's own turns are not counted, and what the user sends into it with their own
+token is counted on their day. In a session the user opened, every turn is counted on their day.
+
 Each is counted against two buckets: the `user_id` the caller's token names, scoped
-to the customer who minted it, and the address the request came from. Both matter.
+to the customer who minted it, and the address the request came from, scoped to the
+customer too, since each has its own limit. Both matter.
 A user id is the honest answer to who is asking, and the address is the answer that
 still holds when a backend mints a fresh user id per request.
+
+What a backend asks for is never counted, even when it names the user it acts for, and
+neither are the backend's own turns in a session it opened. Answers from `mock/*` models are not
+counted either. A counted HTTP answer carries `X-Quota-Limit`, `X-Quota-Remaining`
+and `X-Quota-Reset` (the unix time of the next UTC midnight), for the limit nearest to
+refusing the caller.
 
 The limit is enforced where a response is created, not only where a request is
 admitted. A socket goes on sending frames and a call goes on talking long after
@@ -359,13 +378,14 @@ and share one allowance.
 
 ### Organization and app policies
 
-`GET`/`PUT /v1/policies/app` and `/v1/policies/organization` hold three settings, all
+`GET`/`PUT /v1/policies/app` and `/v1/policies/organization` hold these settings, all
 optional. The organization's are a floor its apps can tighten but not loosen.
 
 | Setting | What it does |
 | ------- | ------------ |
 | `budget` | A spend cap across every modality, reset hourly, daily, weekly or monthly on a UTC boundary. Once spent, new sessions and new LLM responses are refused. Both the app's and the organization's caps apply |
 | `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models |
+| `quota` | On an app's policy only: what one end user may spend in a UTC day, in place of the deployment's default. An organization's policy that sets it is a 400. See [Daily limits](#daily-limits) |
 | `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the decision model router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
 
 The screen asks one question per harm in OpenRouter's prompt injection list (instruction

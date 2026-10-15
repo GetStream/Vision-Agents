@@ -57,57 +57,90 @@ type Limits struct {
 // Enforced reports whether these limits constrain anything.
 func (l Limits) Enforced() bool { return l.MessagesPerDay > 0 || l.TokensPerDay > 0 }
 
+// Source answers which limits one customer's users are held to. It is given the
+// deployment's own, which are what a customer that decided nothing is held to.
+type Source interface {
+	Limits(ctx context.Context, customerID string, defaults Limits) Limits
+}
+
+// Status is what a caller has left of the limit nearest to refusing them. A zero Status is
+// a caller nothing was counted for.
+type Status struct {
+	// Limit is the day's allowance, in messages or in tokens.
+	Limit int64
+	// Remaining is what is left of it, never below zero.
+	Remaining int64
+	// Reset is when the day ends and the count starts again: the next UTC midnight.
+	Reset time.Time
+}
+
 // Limiter counts what a caller has spent today and refuses them once it is gone.
 //
 // Every path through it fails open: an unreachable Redis, an unreadable counter or a nil
 // Limiter all allow the request. Redis is optional in this deployment, and a limiter that
 // failed closed would turn a cache blip into an outage of the thing it is protecting.
 type Limiter struct {
-	redis  rueidis.Client
-	limits Limits
-	logger *slog.Logger
+	redis    rueidis.Client
+	defaults Limits
+	source   Source
+	logger   *slog.Logger
 }
 
-// New returns a Limiter counting against the given limits.
-func New(client rueidis.Client, limits Limits, logger *slog.Logger) (*Limiter, error) {
+// New returns a Limiter counting against the limits source gives each customer, or against
+// defaults for every customer when source is nil. Defaults of zero are allowed, since a
+// customer may still set limits of its own; a customer held to none is not counted.
+func New(client rueidis.Client, defaults Limits, source Source, logger *slog.Logger) (*Limiter, error) {
 	if client == nil {
 		return nil, errors.New("quota: a redis client is required")
-	}
-	if !limits.Enforced() {
-		return nil, errors.New("quota: at least one of the daily limits must be set")
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Limiter{redis: client, limits: limits, logger: logger}, nil
+	return &Limiter{redis: client, defaults: defaults, source: source, logger: logger}, nil
 }
 
-// Allow reports whether the caller may ask for another response.
+// Allow reports whether the caller may ask for another response, and what they have left
+// of the limit nearest to refusing them. The Status is returned with a refusal too.
 //
-// A caller with nothing to count against is allowed: that is a customer's own backend
-// working for itself, which is trusted with its own tokens.
-func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.Caller) error {
+// A caller with nothing to count against is allowed: one with neither a user nor an address,
+// and a customer's own process (Caller.ServerSide), which is trusted with its spend even
+// when it names a user.
+func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.Caller) (Status, error) {
 	if l == nil {
-		return nil
+		return Status{}, nil
+	}
+	// One clock reading names the day counted and the midnight it resets at.
+	now := time.Now()
+	keys := l.keys(customerID, caller, now)
+	if len(keys) == 0 {
+		return Status{}, nil
 	}
 
 	ctx, span := tracer.Start(ctx, "quota.allow")
 	defer span.End()
 
-	for _, key := range l.keys(customerID, caller) {
+	limits := l.limits(ctx, customerID)
+	if !limits.Enforced() {
+		return Status{}, nil
+	}
+	reset := nextMidnight(now)
+	var nearest Status
+	for _, key := range keys {
 		spent, err := l.spent(ctx, key)
 		if err != nil {
 			l.logger.Error("could not read a quota, allowing the request", "error", err)
-			return nil
+			return Status{}, nil
 		}
-		if l.limits.MessagesPerDay > 0 && spent.messages >= l.limits.MessagesPerDay {
-			return stack.Wrap(fmt.Errorf("%w: %d messages a day", ErrExhausted, l.limits.MessagesPerDay))
+		nearest = closer(nearest, limits.MessagesPerDay, spent.messages, reset)
+		nearest = closer(nearest, limits.TokensPerDay, spent.tokens, reset)
+		if limits.MessagesPerDay > 0 && spent.messages >= limits.MessagesPerDay {
+			return nearest, stack.Wrap(fmt.Errorf("%w: %d messages a day", ErrExhausted, limits.MessagesPerDay))
 		}
-		if l.limits.TokensPerDay > 0 && spent.tokens >= l.limits.TokensPerDay {
-			return stack.Wrap(fmt.Errorf("%w: %d tokens a day", ErrExhausted, l.limits.TokensPerDay))
+		if limits.TokensPerDay > 0 && spent.tokens >= limits.TokensPerDay {
+			return nearest, stack.Wrap(fmt.Errorf("%w: %d tokens a day", ErrExhausted, limits.TokensPerDay))
 		}
 	}
-	return nil
+	return nearest, nil
 }
 
 // Debit records one response and what it cost against every bucket the caller falls in.
@@ -119,13 +152,15 @@ func (l *Limiter) Debit(ctx context.Context, customerID string, caller routing.C
 	if l == nil {
 		return
 	}
-	keys := l.keys(customerID, caller)
+	keys := l.keys(customerID, caller, time.Now())
 	if len(keys) == 0 {
 		return
 	}
-
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
+	if !l.limits(ctx, customerID).Enforced() {
+		return
+	}
 
 	seconds := int64(retention.Seconds())
 	commands := make([]rueidis.Completed, 0, len(keys)*3)
@@ -164,20 +199,55 @@ func (l *Limiter) spent(ctx context.Context, key string) (spend, error) {
 	}, nil
 }
 
+// limits are what the customer's users are held to: what the source says, or the
+// deployment's own when there is no source.
+func (l *Limiter) limits(ctx context.Context, customerID string) Limits {
+	if l.source == nil {
+		return l.defaults
+	}
+	return l.source.Limits(ctx, customerID, l.defaults)
+}
+
 // keys are the buckets a caller falls in, which is none for one there is nothing to count
-// against. The user bucket is keyed by the customer as well, because a user id is the
-// customer's own name for somebody and two customers may use the same one.
-func (l *Limiter) keys(customerID string, caller routing.Caller) []string {
-	day := time.Now().UTC().Format("20060102")
+// against and none for a customer's own process, which is trusted with its spend even
+// when it names a user. Both buckets are keyed by the customer as well: a user id is the
+// customer's own name for somebody, and each customer sets its own limit for an address.
+func (l *Limiter) keys(customerID string, caller routing.Caller, now time.Time) []string {
+	if caller.ServerSide {
+		return nil
+	}
+	day := now.UTC().Format("20060102")
 
 	var keys []string
 	if customerID != "" && caller.UserID != "" {
 		keys = append(keys, "quota:"+day+":user:"+customerID+":"+caller.UserID)
 	}
 	if caller.IP != "" {
-		keys = append(keys, "quota:"+day+":ip:"+caller.IP)
+		keys = append(keys, "quota:"+day+":ip:"+customerID+":"+caller.IP)
 	}
 	return keys
+}
+
+// closer returns whichever of nearest and one limit's standing has the smaller share left,
+// so a caller is told about the limit that will refuse them first. A limit of zero is not
+// enforced and is never the nearest.
+func closer(nearest Status, limit, spent int64, reset time.Time) Status {
+	if limit <= 0 {
+		return nearest
+	}
+	candidate := Status{Limit: limit, Remaining: max(limit-spent, 0), Reset: reset}
+	if nearest.Limit == 0 || share(candidate) < share(nearest) {
+		return candidate
+	}
+	return nearest
+}
+
+// share is the part of a limit that is left, from 0 to 1.
+func share(status Status) float64 { return float64(status.Remaining) / float64(status.Limit) }
+
+// nextMidnight is when the UTC day containing now ends.
+func nextMidnight(now time.Time) time.Time {
+	return now.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
 }
 
 func parseInt(value string) int64 {
