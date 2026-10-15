@@ -145,7 +145,7 @@ func (s *speaker) queue(pcm audio.PcmData, marks agent.PlayoutMarks) (time.Time,
 		return time.Time{}, errors.New("streamedge: the call has been left")
 	}
 	if s.encoder == nil {
-		encoder, err := opus.NewEncoder(opus.Config{SampleRate: opusSampleRate, FrameDuration: opusFrameDuration})
+		encoder, err := opus.NewEncoder(opus.Config{SampleRate: encoderRate(pcm.SampleRate), FrameDuration: opusFrameDuration})
 		if err != nil {
 			return time.Time{}, fmt.Errorf("streamedge: build opus encoder: %w", err)
 		}
@@ -193,6 +193,18 @@ func (s *speaker) encode(samples []int16, sampleRate int) ([][]byte, error) {
 		return nil, fmt.Errorf("streamedge: encode speech: %w", err)
 	}
 	return packets, nil
+}
+
+// encoderRate is the rate to encode a voice at: its own when Opus takes it, so the speech
+// is not resampled first, and 48 kHz otherwise. The RTP clock is 48 kHz whatever the
+// encoder ran at, and every decoder plays any of them.
+func encoderRate(sampleRate int) int {
+	switch sampleRate {
+	case 8_000, 12_000, 16_000, 24_000, opusSampleRate:
+		return sampleRate
+	default:
+		return opusSampleRate
+	}
 }
 
 // waitForRoom blocks while the queue is over its bound.
