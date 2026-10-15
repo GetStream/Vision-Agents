@@ -28,9 +28,9 @@ func (s *CallLogSuite) TestAFailedCallsRowKeepsTheStatusAndTheMessageOfItsLine()
 	s.Contains(s.onlyFailedLine(logged), `provider_message="the record is locked"`)
 }
 
-// TestARowKeepsTheErrorRatherThanTheBody: a 403 with a JSON body, whose error the MCP client
-// words from the status; the row keeps the error, as the line's provider_message.
-func (s *CallLogSuite) TestARowKeepsTheErrorRatherThanTheBody() {
+// TestARowKeepsTheBodyOfA4xx: a 403 with a JSON body, whose error the MCP client words from
+// the status alone; the row keeps the body, which says why, as the line's provider_body.
+func (s *CallLogSuite) TestARowKeepsTheBodyOfA4xx() {
 	app := s.connection("", "primary")
 	d, logged := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
 	s.provider.answer("primary", http.StatusForbidden, http.Header{"Content-Type": {"application/json"}},
@@ -41,9 +41,75 @@ func (s *CallLogSuite) TestARowKeepsTheErrorRatherThanTheBody() {
 	s.Require().Error(err)
 	row := s.row(app)
 	s.Equal(statusOf(http.StatusForbidden), row.ProviderStatus)
-	s.Equal(`mcp: crm__whoami: calling "tools/call": sending "tools/call": rejected by transport: `+
-		"mcp: the server refused the request with 403 Forbidden", row.ErrorMessage)
-	s.Contains(s.onlyFailedLine(logged), `provider_body="{\"error\":\"forbidden\"`)
+	s.Equal(`{"error":"forbidden","message":"this app may not read contacts"}`, row.ErrorMessage)
+	s.Contains(s.onlyFailedLine(logged), `provider_message="mcp: crm__whoami: calling \"tools/call\": sending \"tools/call\": `+
+		`rejected by transport: mcp: the server refused the request with 403 Forbidden"`)
+}
+
+// echoed is a provider's error that names the token the call was sent with and the request's
+// path, as Express's default 404 names the path ("Cannot POST /primary/mcp").
+var echoed = "invalid token " + tokenOf("primary") + " for /primary/mcp"
+
+// TestAJSONRPCErrorThatEchoesTheTokenIsKeptWithoutIt: a 200 whose JSON-RPC error names the
+// token and the path, which the MCP client puts in the call's error; neither the row nor the
+// line keeps either. What the model reads is the error, as on the base.
+func (s *CallLogSuite) TestAJSONRPCErrorThatEchoesTheTokenIsKeptWithoutIt() {
+	app := s.connection("", "primary")
+	d, logged := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
+	s.provider.answerRPC("primary", http.StatusOK, `"error":{"code":-32603,"message":"`+echoed+`"}`)
+
+	_, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().ErrorContains(err, echoed)
+	row := s.row(app)
+	s.Equal(statusOf(http.StatusOK), row.ProviderStatus)
+	s.Equal(`mcp: crm__whoami: calling "tools/call": invalid token [redacted] for [redacted]`, row.ErrorMessage)
+	line := s.onlyFailedLine(logged)
+	s.Contains(line, `provider_message="mcp: crm__whoami: calling \"tools/call\": invalid token [redacted] for [redacted]"`)
+	s.NotContains(line, tokenOf("primary"))
+	s.NotContains(line, "/primary/mcp")
+}
+
+// TestAJSONRPCErrorIn4xxThatEchoesTheTokenIsKeptWithoutIt: the same error in a 400, which the
+// MCP client also puts in the call's error; the row keeps the body and the line both, with
+// neither the token nor the path.
+func (s *CallLogSuite) TestAJSONRPCErrorIn4xxThatEchoesTheTokenIsKeptWithoutIt() {
+	app := s.connection("", "primary")
+	d, logged := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
+	s.provider.answer("primary", http.StatusBadRequest, http.Header{"Content-Type": {"application/json"}},
+		`{"jsonrpc":"2.0","id":2,"error":{"code":-32001,"message":"`+echoed+`"}}`)
+
+	_, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().ErrorContains(err, echoed)
+	row := s.row(app)
+	s.Equal(statusOf(http.StatusBadRequest), row.ProviderStatus)
+	s.Equal(`{"jsonrpc":"2.0","id":2,"error":{"code":-32001,"message":"invalid token [redacted] for [redacted]"}}`, row.ErrorMessage)
+	line := s.onlyFailedLine(logged)
+	s.Contains(line, `provider_message="mcp: crm__whoami: calling \"tools/call\": sending \"tools/call\": `+
+		`invalid token [redacted] for [redacted]: rejected by transport: Bad Request"`)
+	s.NotContains(line, tokenOf("primary"))
+	s.NotContains(line, "/primary/mcp")
+}
+
+// TestAnIsErrorThatEchoesTheTokenIsKeptWithoutIt: a tool's isError text that names the token
+// and the path; the row and the line keep the text without either. What the model reads is the
+// tool's own words, as on the base.
+func (s *CallLogSuite) TestAnIsErrorThatEchoesTheTokenIsKeptWithoutIt() {
+	app := s.connection("", "primary")
+	d, logged := s.logging(s.spec(s.config(s.fixed("crm", app, "whoami")), "", nil))
+	s.provider.answerRPC("primary", http.StatusOK, `"result":{"content":[{"type":"text","text":"`+echoed+`"}],"isError":true}`)
+
+	_, err := s.call(d, "crm__whoami", "{}")
+
+	s.Require().ErrorContains(err, echoed)
+	row := s.row(app)
+	s.Equal(store.InvocationExternalServer, row.ErrorType)
+	s.Equal("invalid token [redacted] for [redacted]", row.ErrorMessage)
+	line := s.onlyFailedLine(logged)
+	s.Contains(line, `provider_message="invalid token [redacted] for [redacted]"`)
+	s.NotContains(line, tokenOf("primary"))
+	s.NotContains(line, "/primary/mcp")
 }
 
 // TestARowWithNoErrorKeepsTheProvidersBody: a 429 with a body and a Retry-After, which the

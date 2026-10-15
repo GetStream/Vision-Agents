@@ -206,7 +206,14 @@ func (c *credentialed) RoundTrip(request *http.Request) (*http.Response, error) 
 		return nil, err
 	}
 	for attempt := 1; ; attempt++ {
-		exchange.sending(request.URL.Host)
+		// What of this request and its credential an error must not keep, for its body
+		// (recordBody) and for Redact. Only for a request whose context carries an Exchange,
+		// as the body below: no other caller reads it.
+		var redact redaction
+		if exchange != nil {
+			redact = redactionOf(request, credential)
+		}
+		exchange.sending(request.URL.Host, redact)
 		response, err := c.scheme.Wrap(c.base, credential).RoundTrip(request)
 		if err != nil {
 			exchange.answered(0, err)
@@ -218,7 +225,7 @@ func (c *credentialed) RoundTrip(request *http.Request) (*http.Response, error) 
 			// an Exchange, as the 429 below.
 			if exchange != nil && response.StatusCode >= http.StatusBadRequest {
 				exchange.failedWith(response.Header)
-				response.Body = recordBody(request, response.Body, exchange, redactionOf(request, credential))
+				response.Body = recordBody(request, response.Body, exchange, redact)
 			}
 			// A 429 (RFC 6585 section 4) is read for the session's dispatcher, which holds
 			// further calls until its Retry-After passes (Limiter). Every scheme's Classify

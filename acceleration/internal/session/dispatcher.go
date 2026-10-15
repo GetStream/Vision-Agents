@@ -121,22 +121,27 @@ type failure struct {
 	// message is what the router says of a call it held itself, with no error and no answer
 	// to say it (heldByTheRouter); "" for every other call.
 	message string
+	// redact is the call's core.Exchange.Redact, for what the error the call returned says
+	// (providerMessage); nil for a call that sent nothing through an Exchange.
+	redact func(string) string
 }
 
 // answerOf is what the call's requests saw (core.Exchange), with no kind.
 func answerOf(exchange *core.Exchange) failure {
 	return failure{status: exchange.Status(), host: exchange.Host(), body: exchange.ErrorBody(),
-		challenge: exchange.WWWAuthenticate(), retryAfter: exchange.RetryAfterHeader()}
+		challenge: exchange.WWWAuthenticate(), retryAfter: exchange.RetryAfterHeader(), redact: exchange.Redact}
 }
 
 // record queues the row of one call that started at started and ended now, as how says.
 // The row names the binding, the connection and the tool, and the shape of call's arguments
-// (argumentShape), never what the call was asked or answered. An incognito session's names no
+// (argumentShape), never what the call was asked or answered, except the start of the
+// provider's error for a call that failed (error_message, below). An incognito session's names no
 // session and keeps no shape: the lengths come from the conversation.
 //
 // A call that failed or was refused also leaves one Warn line, "connector call failed", on the
 // session's logger: the row's names and id, the provider's HTTP status, and what the provider
-// or the refusal said (providerMessage of err, the error the call returned). It also names the
+// or the refusal said (providerMessage of err, the error the call returned, without what the
+// call's Exchange redacts: an echoed token or request path, AI-1244). It also names the
 // host the last request went to (provider_host) and the start of a 4xx's or a 5xx's body
 // (provider_body, through providerBody), and, when that answer had them, its WWW-Authenticate
 // (www_authenticate) and Retry-After (retry_after), each cut to providerMessageBytes (AI-1243).
@@ -149,9 +154,10 @@ func answerOf(exchange *core.Exchange) failure {
 // names the row it wrote.
 //
 // A failed call's row keeps the status, nil when none was answered, and an error_message: the
-// line's provider_message, or its provider_body when that is empty, so the row holds nothing
-// the line does not (AI-1244). Example: a 403 whose MCP client said only its status keeps that
-// error's words; a timed-out call with a 502 behind it keeps the start of the 502's body.
+// line's provider_body when the provider answered a 4xx or a 5xx with one, since the MCP
+// client's error for it often says only the status, else its provider_message, so the row holds
+// nothing the line does not (AI-1244). Example: a 403 whose body says why keeps that body; an
+// MCP isError, which comes in a 200, keeps the tool's words.
 func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how failure, err error) {
 	sessionID := d.spec.ID
 	var arguments []store.ArgumentShape
@@ -169,10 +175,11 @@ func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how f
 	}
 	message, body := how.message, providerBody(how.body)
 	if message == "" {
-		message = providerMessage(err)
+		message = providerMessage(err, how.redact)
 	}
-	// A call that answered has no failure to say: no status, no message.
-	row.ErrorMessage = cmp.Or(message, body)
+	// A call that answered has no failure to say: no status, no message. The body is "" unless
+	// the last answer was a 4xx or a 5xx (core.Exchange.ErrorBody).
+	row.ErrorMessage = cmp.Or(body, message)
 	if how.status != 0 {
 		row.ProviderStatus = &how.status
 	}

@@ -39,7 +39,8 @@ func CorrelationOf(ctx context.Context) Correlation {
 // and leaves it alone otherwise. For the dispatcher's log line it also keeps the host the last
 // request went to and, of an answer that was a 4xx or a 5xx, the start of its body and its
 // WWW-Authenticate and Retry-After headers (AI-1243). It holds no request header or body, no
-// path or query, no other response header, and no credential.
+// path or query, no other response header, and no credential: what Redact takes out of a text
+// is held only inside a function, which no formatting verb or log handler prints.
 type Exchange struct {
 	mu         sync.Mutex
 	sent       bool
@@ -57,6 +58,9 @@ type Exchange struct {
 	// scopeRequired is the provider asking for more access than the grant has, nil when no
 	// answer did.
 	scopeRequired *Outcome
+	// redact is Redact's redaction for the last request that left, nil when none did. A
+	// function, so that %v of an Exchange prints no secret (AGENTS.md «Secrets never print»).
+	redact func(string) string
 }
 
 type exchangeKey struct{}
@@ -113,6 +117,20 @@ func (e *Exchange) ErrorBody() string {
 	return e.errorBody
 }
 
+// Redact is text, such as the error a tool source returned for the call, with what ErrorBody
+// takes out of a body taken out of it: the last request's path and query, together and apart,
+// and each string of the credential it was sent with (redactionOf). Text is unchanged when no
+// request left. Example: the MCP client's error for a JSON-RPC error that says
+// "invalid token <the token> for /primary/mcp" says "invalid token [redacted] for [redacted]".
+func (e *Exchange) Redact(text string) string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.redact == nil {
+		return text
+	}
+	return e.redact(text)
+}
+
 // WWWAuthenticate is the WWW-Authenticate of the last answer, its values joined with ", "
 // (RFC 9110 section 5.3), when that answer was a 4xx or a 5xx; "" otherwise.
 func (e *Exchange) WWWAuthenticate() string {
@@ -166,14 +184,16 @@ func (e *Exchange) refused(err error) {
 	e.credential = err
 }
 
-// sending records that a request to host is leaving with a credential.
-func (e *Exchange) sending(host string) {
+// sending records that a request to host is leaving with a credential, and what of it and
+// that credential Redact takes out (redaction).
+func (e *Exchange) sending(host string, redact redaction) {
 	if e == nil {
 		return
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.sent, e.host = true, host
+	e.redact = func(text string) string { return redact.apply(text, true) }
 }
 
 // answered records how a request that left ended: with the provider's status, or with err.

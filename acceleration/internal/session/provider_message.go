@@ -19,21 +19,31 @@ const providerMessageBytes = 1 << 10
 // query can carry a token. The text is searched rather than a *url.Error unwrapped: the MCP
 // SDK also flattens one into text with %v, where errors.As no longer finds it (go-sdk v1.8.0
 // mcp/streamable.go:2174 and :2560), and a connector's endpoints are all https
-// (internal/connectors/core/AGENTS.md, «Untrusted values cannot steer a request»). It is then
-// cut to providerMessageBytes at a UTF-8 boundary.
+// (internal/connectors/core/AGENTS.md, «Untrusted values cannot steer a request»). It is
+// then passed through redact, when it is not nil: the call's core.Exchange.Redact, which takes
+// out the last request's path and query and the strings of its credential, since the MCP
+// client puts a JSON-RPC error's message, and a tool its isError text, in the error, and a
+// provider may echo either there (AI-1244). It is then cut to providerMessageBytes at a UTF-8
+// boundary.
 //
 // Example: `Post "https://crm.example/mcp?access_token=x": EOF` is logged as
-// `Post "https://crm.example": EOF`.
-func providerMessage(err error) string {
+// `Post "https://crm.example": EOF`, and `invalid token <the token> for /primary/mcp` as
+// `invalid token [redacted] for [redacted]`.
+func providerMessage(err error, redact func(string) string) string {
 	if err == nil {
 		return ""
 	}
-	return providerText(err.Error())
+	text := anyURL.ReplaceAllStringFunc(err.Error(), origin)
+	if redact != nil {
+		text = redact(text)
+	}
+	return cutAtRune(text, providerMessageBytes)
 }
 
 // providerText is text a provider wrote, such as the start of its error body
 // (core.Exchange.ErrorBody), with every http or https URL in it kept to its scheme and host,
-// cut to providerMessageBytes at a UTF-8 boundary: what providerMessage does to an error's text.
+// cut to providerMessageBytes at a UTF-8 boundary: what providerMessage does to an error's text
+// with no redact.
 func providerText(text string) string {
 	return cutAtRune(anyURL.ReplaceAllStringFunc(text, origin), providerMessageBytes)
 }
