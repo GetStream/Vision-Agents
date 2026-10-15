@@ -5584,6 +5584,9 @@ type Policy struct {
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
 
+	// Quota What one end user of the app may spend in a UTC day, counted per user and per address. Only an app's policy has one: an organization's that sets it is refused. A turn is counted on the day of the user who sent it, and a backend's own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+	Quota *Quota `json:"quota,omitempty"`
+
 	// RequireOwnStreamApp Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
 	RequireOwnStreamApp *bool `json:"require_own_stream_app,omitempty"`
 
@@ -5710,6 +5713,19 @@ type ProviderPrice struct {
 
 	// PerMillionOutputTokens Example: 3.75
 	PerMillionOutputTokens *float64 `json:"per_million_output_tokens,omitempty"`
+}
+
+// Quota What one end user of the app may spend in a UTC day, counted per user and per address. Only an app's policy has one: an organization's that sets it is refused. A turn is counted on the day of the user who sent it, and a backend's own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+type Quota struct {
+	// MessagesPerUserPerDay How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.
+	//
+	// Example: 20000
+	MessagesPerUserPerDay *int64 `json:"messages_per_user_per_day,omitempty"`
+
+	// TokensPerUserPerDay How many tokens, input and output, one end user's responses may cost in a UTC day. 0 is no cap. Left out, the router's default applies.
+	//
+	// Example: 50000000
+	TokensPerUserPerDay *int64 `json:"tokens_per_user_per_day,omitempty"`
 }
 
 // RCSProfile defines model for RCSProfile.

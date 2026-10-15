@@ -2,13 +2,18 @@ package main
 
 import (
 	"log/slog"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 )
@@ -27,4 +32,29 @@ func TestBuildSessionsSupportsAnLLMOnlyDeployment(t *testing.T) {
 	missing, err := buildSessions(config.Defaults(), &api.Streams{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, logger)
 	require.NoError(t, err)
 	require.Nil(t, missing)
+}
+
+func TestADeploymentWithNoDefaultDailyLimitStillCapsAnAppThatSetsOne(t *testing.T) {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		t.Skip("ROUTER_REDIS_ADDR not set")
+	}
+	logger := slog.New(slog.DiscardHandler)
+	liveClient, err := live.New(live.Options{Address: address})
+	require.NoError(t, err)
+	t.Cleanup(liveClient.Close)
+	policies, err := policy.New(&appconfig.Store{}, logger)
+	require.NoError(t, err)
+
+	limiter, err := newDailyLimiter(liveClient, quota.Limits{}, nil, logger)
+	require.NoError(t, err)
+	require.Nil(t, limiter, "nothing configured anywhere caps nobody")
+
+	limiter, err = newDailyLimiter(liveClient, quota.Limits{}, policies, logger)
+	require.NoError(t, err)
+	require.NotNil(t, limiter, "an app's policy may set a limit of its own")
+
+	limiter, err = newDailyLimiter(nil, quota.Limits{MessagesPerDay: 10}, policies, logger)
+	require.NoError(t, err)
+	require.Nil(t, limiter, "a limit nothing can count caps nobody")
 }

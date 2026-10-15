@@ -131,6 +131,70 @@ func (s *PoliciesSuite) TestUsageIsRecordedUnderThePolicysTagsOverTheRequests() 
 	}, 5*time.Second, 50*time.Millisecond)
 }
 
+func (s *PoliciesSuite) TestAnAppsDailyLimitIsStoredAndReadBack() {
+	stored := s.put(map[string]any{"quota": map[string]any{
+		"messages_per_user_per_day": 20_000, "tokens_per_user_per_day": 0,
+	}})
+	s.Require().NotNil(stored.Quota)
+
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
+	s.Require().NotNil(read.Quota)
+	s.Equal(pointerTo(int64(20_000)), read.Quota.MessagesPerUserPerDay)
+	s.Equal(pointerTo(int64(0)), read.Quota.TokensPerUserPerDay, "zero is no cap, kept apart from left out")
+}
+
+func (s *PoliciesSuite) TestAPolicyThatLeavesTheDailyLimitOutClearsIt() {
+	// A PUT replaces the whole policy, the daily limit as much as the budget.
+	s.put(map[string]any{"quota": map[string]any{"messages_per_user_per_day": 3}})
+
+	written := s.put(map[string]any{"prompt_injection": true})
+	s.Nil(written.Quota)
+
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
+	s.Nil(read.Quota)
+}
+
+func (s *PoliciesSuite) TestAnOrganizationHasNoDailyLimitToSet() {
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/policies/organization",
+		map[string]any{"quota": map[string]any{"messages_per_user_per_day": 5_000}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "an organization has no daily limit per end user")
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/organization", nil, &read))
+	s.Nil(read.Quota)
+}
+
+func (s *PoliciesSuite) TestADailyLimitOutsideItsBoundsIsRefused() {
+	for field, over := range map[string]int64{
+		"messages_per_user_per_day": 10_000_001,
+		"tokens_per_user_per_day":   1_000_000_000_001,
+	} {
+		for _, sent := range []int64{-1, over} {
+			status, body := s.serverClient.call(http.MethodPut, "/v1/policies/app",
+				map[string]any{"quota": map[string]any{field: sent}})
+
+			s.Equal(http.StatusBadRequest, status, field, sent)
+			s.Contains(string(body), `"code":"validation_failed"`, field, sent)
+			s.Contains(string(body), field, sent)
+		}
+	}
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
+	s.Nil(read.Quota)
+}
+
+func (s *PoliciesSuite) TestAQuotaSettingNeitherNumberIsStoredAsNoQuota() {
+	stored := s.put(map[string]any{"quota": map[string]any{}})
+	s.Nil(stored.Quota)
+
+	var read Policy
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
+	s.Nil(read.Quota, "a quota with no number is no opinion")
+}
+
 // put stores the policy the body describes.
 func (s *PoliciesSuite) put(body map[string]any) Policy {
 	var stored Policy
