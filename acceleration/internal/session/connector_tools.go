@@ -132,7 +132,7 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 		return nil, nil, nil, stack.Wrap(errors.New("session: connector bindings come from a stored agent config, and this session names none"))
 	}
 	d := &dispatcher{store: m.options.Store, spec: *spec, routes: map[string]route{}, invocations: m.invocations,
-		limiter: m.options.Connectors.Limiter}
+		limiter: m.options.Connectors.Limiter, logger: m.logger}
 	// Opened on the context a call runs on (dispatcher.correlated): a refresh while the tools
 	// are listed is audited as one during a call is, with no request or session id for an
 	// incognito session. The MCP client keeps the values of the context it connected on for
