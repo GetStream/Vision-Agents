@@ -109,9 +109,21 @@ its uplink queued 1.7 s of audio under load and the caller-side numbers measured
 | 9 | ndots 1 on the router pods (chart) | **512** | 3.46 | 2980 ms | **0.0000100** |
 | 10 | TLS session resumption | 256 | 3.04 | 3480 ms | 0.0000201 |
 | 10b | conversations let go after release; tick copies only to send | 256 | 3.34 | 3240 ms | 0.0000201 |
+| 11 | no TURN relays, stats decoded once, Opus DTX, turns and call events in Redis | 512, 256† | 2.55, 3.03 | 2500, 2440 ms | 0.0000100-0.0000201 |
 
 \* Iterations 1 and 3 broke on Stream rate limits (a draining old router, then Chat
 GetOrCreateChannel 429s), not on the router; the next iteration removed each cause.
+
+† Iteration 11 is two clean runs. The second broke at 512 on joins (43 of 512, 8%), all
+timeouts dialling Stream's coordinator socket or posting to its API, with reply p95 at 2.44 s
+and the router at 5 cores. Against iterations 9-10b, router CPU per joined agent fell 14% at
+256 and 11% at 512, and reply p95 at 512 fell 20-25%. The agent's track now reaches the
+caller about 260 ms later at every step (p50 700 ms, was 430-450 ms). It is a fixed cost,
+not load; replies are not slower.
+
+A run whose callers die mid-step leaves its sessions running: a voice session does not end
+when the human leaves the call. One aborted run held 346 sessions (260 mCPU, 10,000
+goroutines) on a pod with nobody on them, until the pod was restarted.
 
 "Held" is the last step where every agent joined, under 3 s reply p95, and nearly every
 turn was answered. Reply p50 sat at 1.04-1.08 s throughout; the mock models answer in
