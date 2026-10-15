@@ -24,6 +24,13 @@ const (
 	defaultMaxClients = 256
 	// requestTimeout bounds one request to Stream, as the SDK's own default does.
 	requestTimeout = 30 * time.Second
+	// maxConns is how many connections to one Stream host are open at once, and kept open
+	// between requests. Stream speaks HTTP/1.1, so each request in flight is a connection,
+	// and every agent updates the message it is writing five times a second. Each one is
+	// also a Cloud NAT port to the same address, which the node gets 8192 of: a connection
+	// closed for being past the idle limit holds its port 30s more, and at 256 agents a
+	// node the churn used them all and the next dials were dropped.
+	maxConns = 2048
 )
 
 // Bound is an identity and the client that acts with it.
@@ -94,7 +101,14 @@ type resolved struct {
 func NewClients(source Source, options ClientsOptions) *Clients {
 	httpClient := options.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: requestTimeout, Transport: http.DefaultTransport.(*http.Transport).Clone()}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		// Every session talks to the same few Stream hosts at once. Past the default two idle
+		// connections a host, each request beyond them pays a TLS handshake for a connection
+		// that is closed again as soon as it is done.
+		transport.MaxIdleConns = maxConns
+		transport.MaxIdleConnsPerHost = maxConns
+		transport.MaxConnsPerHost = maxConns
+		httpClient = &http.Client{Timeout: requestTimeout, Transport: transport}
 	}
 	maxClients := options.MaxClients
 	if maxClients <= 0 {

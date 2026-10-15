@@ -19,6 +19,7 @@ import (
 	rtc "github.com/GetStream/getstream-go-webrtc"
 	"github.com/GetStream/getstream-go-webrtc/audio/opus"
 	audiortc "github.com/GetStream/getstream-go-webrtc/audio/rtc"
+	"github.com/GetStream/getstream-go-webrtc/pc"
 	"github.com/GetStream/getstream-go-webrtc/track"
 	getstream "github.com/GetStream/getstream-go/v5"
 	sfu_events "github.com/GetStream/protocol/protobuf/video/sfu/event"
@@ -140,6 +141,12 @@ func New(options Options) (*Edge, error) {
 	}, nil
 }
 
+// publisherPeer publishes without the SFU's TURN servers. The router reaches the SFU directly,
+// as its subscriber already does with no ICE servers at all, so a relay was never chosen,
+// yet each agent allocated and refreshed one per TURN address. An empty list, not nil:
+// nil is what has the SDK fill in the SFU's.
+var publisherPeer = pc.PeerConfig{Config: webrtc.Configuration{ICEServers: []webrtc.ICEServer{}}}
+
 // Join connects, subscribes to what the participants are already saying, and publishes the
 // agent's own audio track.
 func (e *Edge) Join(ctx context.Context) error {
@@ -156,7 +163,7 @@ func (e *Edge) Join(ctx context.Context) error {
 	signalingStarted := time.Now()
 	joined, err := call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
 		e.listen(remote)
-	})))
+	})), rtc.WithPublisherPeerConfiguration(publisherPeer))
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("streamedge: join %s:%s: %w", e.options.CallType, e.options.CallID, err))
 	}

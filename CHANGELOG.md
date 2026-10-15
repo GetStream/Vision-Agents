@@ -624,6 +624,19 @@ no longer compiles. Pass `&app` for a variable holding the value, or leave the f
 connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` still
 needs `X-Stream-User-Id`.
 
+### Validate says when a provider changed a tool sessions pinned
+
+`POST /v1/agents/connections/{id}/validate` now compares the tools the provider lists with the
+schema each was pinned at for the connection's current grant, the pin a session takes the
+first time it offers a tool granted by name or by pattern. A tool listed at another schema is
+`status: needs_reapproval`, a new `ConnectionValidationStatus`, with
+`code: connector_tool_schema_changed` and the tools in `changed_tools`, sorted; the connection's
+`last_validation` keeps the status, the code and an error naming them. It used to answer
+`connected` while sessions left the tool out. Sessions still leave it out, and a validate never
+pins it again: a new grant (a consent) approves it. A pinned tool the provider no longer lists
+is not reported. A grant lacking scopes is still `needs_scopes`, since the consent it asks for
+approves the changed tools too. A connection with no changed tool answers as before.
+
 ### A built-in Notion connector
 
 The connector catalog (`GET /v1/agents/connectors`) has `notion`: Notion's hosted MCP server at `https://mcp.notion.com/mcp`. A connection signs in with `oauth2_code`. The router registers its own client with Notion (`dcr`) and asks for the `default` scope, so no app registers anything first. The agent can search, read and update the pages and databases that the person who signed in can access (AI-1292).

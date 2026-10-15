@@ -158,81 +158,27 @@ type ToolUsage struct {
 	P99Ms *float64 `bun:"p99_ms"`
 }
 
-// Turn is one exchange in a conversation, measured the way the caller experienced it.
-// The legs are pointers because a pipeline need not have all of them, and an interrupted
-// turn stops partway through.
-type Turn struct {
-	bun.BaseModel `bun:"table:turns,alias:t"`
-
-	ID         int64  `bun:"id,pk,autoincrement"`
-	CustomerID string `bun:"customer_id,notnull"`
-	AgentID    string `bun:"agent_id,notnull"`
-	CallID     string `bun:"call_id,nullzero"`
-	// TurnID is the agent's own identifier for the exchange, unique per agent.
-	TurnID             string            `bun:"turn_id,notnull"`
-	Tags               map[string]string `bun:"tags,type:jsonb,nullzero"`
-	StartedAt          time.Time         `bun:"started_at,notnull"`
-	CadenceMs          *float64          `bun:"cadence_ms"`
-	DecisionMs         *float64          `bun:"decision_ms"`
-	ModelToFirstTextMs *float64          `bun:"model_to_first_text_ms"`
-	TextToTTSMs        *float64          `bun:"text_to_tts_ms"`
-	TTSToAudioMs       *float64          `bun:"tts_to_audio_ms"`
+// TurnSample is what a finished turn adds to its hour's stats. The legs are pointers
+// because a pipeline need not have all of them, and a leg that never happened is left out
+// of the percentiles rather than counted as instant.
+type TurnSample struct {
+	CustomerID  string
+	AgentID     string
+	StartedAt   time.Time
+	Interrupted bool
+	AudioOutMs  float64
 	// STTLatencyMs is the provider's decode time for the transcript that settled the turn.
-	STTLatencyMs *float64 `bun:"stt_latency_ms"`
+	STTLatencyMs *float64
 	// LLMTTFTMs is the wait between asking the model and its first token.
-	LLMTTFTMs *float64 `bun:"llm_ttft_ms"`
+	LLMTTFTMs *float64
 	// TTSTTFBMs is the wait between sending the first sentence and the first audio.
-	TTSTTFBMs *float64 `bun:"tts_ttfb_ms"`
+	TTSTTFBMs *float64
 	// RoundtripMs is the whole delay: settled transcript to first audio published.
-	RoundtripMs *float64 `bun:"roundtrip_ms"`
-	// SpeechEndToAudioMs is voice in to voice out.
-	SpeechEndToAudioMs *float64 `bun:"speech_end_to_audio_ms"`
-	// FirstFrameQueuedMs is settled transcript to the edge queueing the first frame of the reply,
-	// FirstAudibleFrameMs to the track taking the first frame that was not silence, and
-	// SpeechEndToAudibleMs is SpeechEndToAudioMs measured to that moment. RoundtripMs stops at
-	// publishing returning, which for a long first chunk is later than both.
-	FirstFrameQueuedMs   *float64 `bun:"first_frame_queued_ms"`
-	FirstAudibleFrameMs  *float64 `bun:"first_audible_frame_ms"`
-	SpeechEndToAudibleMs *float64 `bun:"speech_end_to_audible_ms"`
-	// AudioOutMs is how much speech the agent published for this turn.
-	AudioOutMs *float64 `bun:"audio_out_ms"`
-	// AudioDroppedMs is speech that was synthesised for this turn but never published.
-	// Set on a turn that was not interrupted, it means the agent cut itself off.
-	AudioDroppedMs *float64 `bun:"audio_dropped_ms"`
-	Interrupted    bool     `bun:"interrupted,notnull"`
+	RoundtripMs *float64
 }
 
-// CallEvent is one judgement the conversation made about how to handle a call.
-//
-// A Turn says what an exchange cost the caller in waiting. This says why the call went
-// the way it did: why the agent waited rather than answering, why it read something as
-// not meant for it, why it stopped mid-sentence. Read in order they are the reasoning
-// behind a conversation, which is the only thing that explains a call that surprised
-// somebody.
-type CallEvent struct {
-	bun.BaseModel `bun:"table:call_events,alias:ce"`
-
-	ID         int64  `bun:"id,pk,autoincrement"`
-	CustomerID string `bun:"customer_id,notnull"`
-	// CallID is the session the judgement was made in.
-	CallID  string    `bun:"call_id,notnull"`
-	AgentID string    `bun:"agent_id,notnull"`
-	At      time.Time `bun:"at,notnull"`
-	// Kind is what was decided.
-	Kind string `bun:"kind,notnull"`
-	// Reason is why, in words.
-	Reason string `bun:"reason,notnull"`
-	// TurnID is the exchange it was about, so a judgement lines up with the timings of
-	// the turn it produced.
-	TurnID      string `bun:"turn_id,nullzero"`
-	Participant string `bun:"participant,nullzero"`
-	// Said is what was heard, or what the agent decided to say.
-	Said string `bun:"said,nullzero"`
-	// LatencyMs is what the flow controller took to rule, where anything was asked.
-	LatencyMs *float64 `bun:"latency_ms"`
-}
-
-// TurnBucket is one aggregated row from turn_stats_hourly or turn_stats_daily.
+// TurnBucket is one agent's turns in an hour or a day. The percentiles are read off a
+// histogram, so they are within 5% of the true ones.
 type TurnBucket struct {
 	CustomerID       string    `bun:"customer_id"`
 	AgentID          string    `bun:"agent_id"`
@@ -240,15 +186,15 @@ type TurnBucket struct {
 	TurnCount        int64     `bun:"turn_count"`
 	InterruptedCount int64     `bun:"interrupted_count"`
 	AudioOutMsTotal  float64   `bun:"audio_out_ms_total"`
-	STTLatencyP50Ms  *float64  `bun:"stt_latency_p50_ms"`
-	STTLatencyP95Ms  *float64  `bun:"stt_latency_p95_ms"`
-	LLMTTFTP50Ms     *float64  `bun:"llm_ttft_p50_ms"`
-	LLMTTFTP95Ms     *float64  `bun:"llm_ttft_p95_ms"`
-	TTSTTFBP50Ms     *float64  `bun:"tts_ttfb_p50_ms"`
-	TTSTTFBP95Ms     *float64  `bun:"tts_ttfb_p95_ms"`
-	RoundtripP50Ms   *float64  `bun:"roundtrip_p50_ms"`
-	RoundtripP95Ms   *float64  `bun:"roundtrip_p95_ms"`
-	RoundtripP99Ms   *float64  `bun:"roundtrip_p99_ms"`
+	STTLatencyP50Ms  *float64  `bun:"-"`
+	STTLatencyP95Ms  *float64  `bun:"-"`
+	LLMTTFTP50Ms     *float64  `bun:"-"`
+	LLMTTFTP95Ms     *float64  `bun:"-"`
+	TTSTTFBP50Ms     *float64  `bun:"-"`
+	TTSTTFBP95Ms     *float64  `bun:"-"`
+	RoundtripP50Ms   *float64  `bun:"-"`
+	RoundtripP95Ms   *float64  `bun:"-"`
+	RoundtripP99Ms   *float64  `bun:"-"`
 }
 
 // TagBucket is one aggregated row from stats_tags_hourly or stats_tags_daily: what the
@@ -1409,14 +1355,6 @@ func (g Granularity) tagTable() string {
 		return "stats_tags_daily"
 	}
 	return "stats_tags_hourly"
-}
-
-// turnTable returns the turn rollup table for the granularity.
-func (g Granularity) turnTable() string {
-	if g == Daily {
-		return "turn_stats_daily"
-	}
-	return "turn_stats_hourly"
 }
 
 // truncateUnit returns the Postgres date_trunc unit for the granularity.

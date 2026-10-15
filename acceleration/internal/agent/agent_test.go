@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -627,8 +628,10 @@ type AgentSuite struct {
 	// performing is what a voice that acts stage directions asks to have said about it.
 	// It is set before joining, because the stub voice is built there.
 	performing string
-	// records is where turns are written, when a test gives the agent a database.
+	// records is where turns are counted, and live where they are kept, when a test gives
+	// the agent a database and a Redis.
 	records *store.Store
+	live    *live.Client
 	// agentID names the agent, so a test writing turns can find its own rows.
 	agentID string
 	// voiceAsked is what the voice was opened with.
@@ -849,6 +852,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		SessionID:          "session-1",
 		Incognito:          s.incognito,
 		Store:              s.records,
+		Live:               s.live,
 		SubagentTarget:     subagentTarget,
 		Skills:             s.skills,
 		Telephony:          calling,

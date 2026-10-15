@@ -36,7 +36,7 @@ func (s *IncognitoSuite) TestARecordedSessionLeavesItsCallAndTurns() {
 		return err == nil
 	}, settleFor, 20*time.Millisecond, "the session's call was never recorded")
 	s.Require().Eventually(func() bool {
-		turns, err := s.store.CallTurns(ctx, s.customerID(), opened.AgentId, started, nil)
+		turns, err := s.live.CallTurns(ctx, s.customerID(), opened.AgentId, started, nil)
 		return err == nil && len(turns) > 0
 	}, settleFor, 20*time.Millisecond, "the session's turn was never timed")
 }
@@ -57,7 +57,7 @@ func (s *IncognitoSuite) TestAnIncognitoSessionLeavesNoCallAndNoTurns() {
 	_, err := s.store.Call(ctx, s.customerID(), hidden.Id)
 	s.ErrorContains(err, "there is no call", "an incognito session has no call row")
 	s.Never(func() bool {
-		turns, err := s.store.CallTurns(ctx, s.customerID(), hidden.AgentId, started, nil)
+		turns, err := s.live.CallTurns(ctx, s.customerID(), hidden.AgentId, started, nil)
 		return err != nil || len(turns) > 0
 	}, time.Second, 50*time.Millisecond, "an incognito session has no turn timings")
 }

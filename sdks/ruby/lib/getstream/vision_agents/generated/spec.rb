@@ -1636,7 +1636,7 @@ module GetStream
           required: %w[config_id config_name binding].freeze, open: false
         }.freeze,
         "ConnectionValidation" => {
-          properties: %w[checked_at code connection_id error missing_scopes status tools_digest].freeze,
+          properties: %w[changed_tools checked_at code connection_id error missing_scopes status tools_digest].freeze,
           required: %w[connection_id status].freeze, open: false
         }.freeze,
         "ConnectionValidationRequest" => {

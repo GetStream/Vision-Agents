@@ -208,7 +208,7 @@ export type paths = {
         };
         /**
          * What the conversation decided, and why
-         * @description A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+         * @description A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. They are kept for an hour. A call still running reports the same decisions live on the session socket.
          */
         readonly get: operations["getCallEvents"];
         readonly put?: never;
@@ -228,7 +228,7 @@ export type paths = {
         };
         /**
          * The call as it unfolded, said and measured together
-         * @description Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
+         * @description Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over. The timings are kept for an hour; GET /v1/turns/stats keeps their percentiles.
          */
         readonly get: operations["getCallTimeline"];
         readonly put?: never;
@@ -943,7 +943,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Validate a connection
-         * @description Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. Who may validate it is who may read it.
+         * @description Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -3724,7 +3724,7 @@ export type paths = {
         };
         /**
          * Conversational latency for the calling customer
-         * @description One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed.
+         * @description One row per bucket and agent. A request row measures one provider call; a turn measures what the caller felt, from finishing a sentence to hearing the answer start, with the transcription, model and voice legs kept apart so a slow conversation can be attributed. The percentiles are read off a histogram and are within 5% of the true ones.
          */
         readonly get: operations["getTurnStats"];
         readonly put?: never;
@@ -4862,7 +4862,7 @@ export type components = {
              * @description When the validate ran.
              */
             readonly checked_at: string;
-            /** @description The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies. */
+            /** @description The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies. */
             readonly code?: string;
             /** @description Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote. */
             readonly error?: string;
@@ -4950,12 +4950,14 @@ export type components = {
         };
         /** @description Whether a connection's credential works, found by asking the provider for its tools. */
         readonly ConnectionValidation: {
+            /** @description With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back. */
+            readonly changed_tools?: readonly string[] | null;
             /**
              * Format: date-time
              * @description When the tools were listed. Absent until a validate listed them.
              */
             readonly checked_at?: string;
-            /** @description What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added. */
+            /** @description What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_tool_schema_changed with needs_reapproval; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added. */
             readonly code?: string;
             readonly connection_id: string;
             /** @description Why the status is not connected, for a person to read. */
@@ -4972,10 +4974,10 @@ export type components = {
             readonly tools?: readonly string[] | null;
         };
         /**
-         * @description connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+         * @description connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and a new grant (a consent) approves them. failed: the provider could not be reached or listed nothing usable; error says why.
          * @enum {string}
          */
-        readonly ConnectionValidationStatus: "connected" | "pending" | "needs_reauthorization" | "needs_scopes" | "failed";
+        readonly ConnectionValidationStatus: "connected" | "pending" | "needs_reauthorization" | "needs_scopes" | "needs_reapproval" | "failed";
         /** @description A connector: an account elsewhere an agent may reach, built in or the app's own. Only what a caller chooses between is shown. Endpoints, how an account is recognised, refresh and rate limits stay with the router. */
         readonly Connector: {
             readonly category?: string;

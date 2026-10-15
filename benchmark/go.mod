@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/GetStream/Vision-Agents/sdks/go v0.0.0
-	github.com/GetStream/getstream-go-webrtc v0.0.0-20260923215301-80daf64c2fc1
+	github.com/GetStream/getstream-go-webrtc v0.0.0-20261015135610-e1adb0e63b09
 	github.com/GetStream/protocol v1.49.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/google/uuid v1.6.0
