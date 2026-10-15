@@ -802,6 +802,20 @@ public sealed class Agent : IAsyncDisposable
             ? new Greeting { Text = greeting.Text, Mode = VisionAgentsClient.Blank(greeting.Mode) }
             : null;
         request.Sandbox = VisionAgentsClient.Blank(declared.Sandbox);
+        request.SandboxOptions = declared.SandboxOptions is { } options
+            ? new SandboxOptions
+            {
+                Image = options.Image,
+                Setup = options.Setup is { } setup ? [.. setup] : null,
+                TimeoutMs = options.Timeout is { } timeout ? (long)timeout.TotalMilliseconds : null,
+                Cpu = options.Cpu,
+                MemoryGb = options.MemoryGb,
+                DiskGb = options.DiskGb,
+                Network = options.Network,
+                AllowedDomains = options.AllowedDomains is { } domains ? [.. domains] : null,
+                NetworkAllowList = options.NetworkAllowList is { } cidrs ? [.. cidrs] : null,
+            }
+            : null;
         // Deprecated for connectors, but still what the router reads until plugins are removed.
 #pragma warning disable CS0612
         request.Plugins = declared.Plugins.Count > 0 ? [.. declared.Plugins] : null;
