@@ -24,16 +24,10 @@ func LoggedDescription(text string, secrets ...string) string {
 }
 
 // LoggedBody is the start of a 4xx's or a 5xx's body (Exchange.ErrorBody, already redacted) as
-// a log line has it: without the UTF-8 sequence its 1 KiB cut may end inside, each of secrets
-// replaced by [redacted], with every http or https URL kept to its scheme and host (KeepHosts),
-// at most maxErrorExcerpt bytes. secrets are what else the request carried that the provider
-// may echo, such as the caller's cookies a direct call forwards. The body may be cut, so one
-// it ends with the start of is cut off too; one of a byte or none is left alone, as
-// redactionOf leaves it.
-//
-// Example: `{"header":{"Cookie":["sid=s-1"]}}` with secret s-1 is `{"header":{"Cookie":["sid=[redacted]"]}}`.
-func LoggedBody(body string, secrets ...string) string {
-	return CutAtRune(KeepHosts(redactionFrom(secrets).apply(wholeRunes(body), false)), maxErrorExcerpt)
+// a log line has it: without the UTF-8 sequence its 1 KiB cut may end inside, with every http or
+// https URL kept to its scheme and host (KeepHosts), at most maxErrorExcerpt bytes.
+func LoggedBody(body string) string {
+	return CutAtRune(KeepHosts(wholeRunes(body)), maxErrorExcerpt)
 }
 
 // anyURL is an http or https URL in a text, up to the space or quote that ends it.

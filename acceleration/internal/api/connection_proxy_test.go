@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -42,6 +43,10 @@ const (
 	echoStallHeader = "X-Echo-Stall"
 )
 
+// echoStatusParam asks the echo for a status as echoStatusHeader does, in the query, for a call
+// that must forward no header but plainHeaders.
+const echoStatusParam = "echo_status"
+
 // stalledStart is a 5xx body's first part, over 4 KiB so the router's buffers cannot hold it
 // all (the server's response bufio.Writer is 2 KiB before chunking and its connection's 4 KiB,
 // net/http/server.go in go1.27.0).
@@ -62,9 +67,6 @@ type echoed struct {
 	Query  string      `json:"query"`
 	Header http.Header `json:"header"`
 	Body   string      `json:"body"`
-	// Cookies is the value of each cookie the request carried, as a provider that quotes one
-	// would repeat it apart from its Cookie line.
-	Cookies []string `json:"cookies,omitempty"`
 }
 
 // ConnectionProxySuite sends direct calls through a connection (T44), end to end: the
@@ -193,7 +195,8 @@ func (s *ConnectionProxySuite) TestTheProviderGetsTheRequestAsItCameWithTheConne
 func (s *ConnectionProxySuite) TestNoneOfTheRoutersCredentialsOrCallerNamesReachTheProvider() {
 	id := s.connected(s.connector(""), bearer.Name)
 	router := []string{"Authorization", auth.APIKeyHeader, auth.AuthTypeHeader, auth.OrganizationHeader,
-		auth.AppHeader, auth.CustomerHeader, auth.UserHeader}
+		auth.AppHeader, auth.CustomerHeader, auth.UserHeader, auth.ServerTokenHeader, auth.ServerTokenKeyHeader,
+		auth.HookAppHeader}
 	extra := http.Header{}
 	for _, name := range router[3:] {
 		extra.Set(name, "router-"+name)
@@ -266,31 +269,78 @@ func (s *ConnectionProxySuite) TestAnErrorAnswerComesBackAsItCameAndIsLogged() {
 	}
 }
 
-// TestAnErrorAnswerToACallWithNoBodyIsLoggedWithoutTheCallersCookies: the call forwards the
-// caller's Cookie line, and the echo's 404 repeats it, and each cookie's value apart. The line
-// has the start of the body, without the connection's token, the path and query, the Cookie
-// line or any cookie's value, its URLs kept to their host (R1.1).
-func (s *ConnectionProxySuite) TestAnErrorAnswerToACallWithNoBodyIsLoggedWithoutTheCallersCookies() {
+// TestAnErrorAnswerToACallWithOnlyPlainHeadersIsLoggedWithItsStart: a call with no body that
+// forwards only plainHeaders gets its 404 logged with the start of the body, without the
+// connection's token, the path and query, its URLs kept to their host (a User-Agent naming one,
+// as crawlers' do), and the router's server token, which the provider never got (R2.1, R2.2).
+func (s *ConnectionProxySuite) TestAnErrorAnswerToACallWithOnlyPlainHeadersIsLoggedWithItsStart() {
 	token := "token-" + s.utils.uuid()
 	id := s.connectedWithToken(s.connector(""), token)
-	session, theme := "sid-"+s.utils.uuid(), "theme-"+s.utils.uuid()
+	serverToken := "server-token-" + s.utils.uuid()
 
-	response, answer := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "items/7?q=1"), "",
-		http.Header{echoStatusHeader: {"404"}, "X-Echo-Link": {"https://docs.example/errors/7?q=1"},
-			"Cookie": {"session=" + session + "; theme=" + theme}})
+	response, answer := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "items/7")+"?"+echoStatusParam+"=404", "",
+		http.Header{"Accept": {"application/json"}, "Accept-Language": {"en"},
+			"User-Agent": {"probe/1 +https://docs.example/bot?q=1"}, auth.ServerTokenHeader: {serverToken}})
 
 	s.Equal(http.StatusNotFound, response.StatusCode)
-	got := s.echoed(answer)
-	s.Equal([]string{"session=" + session + "; theme=" + theme}, got.Header.Values("Cookie"), "the provider got the caller's Cookie")
-	s.Equal([]string{session, theme}, got.Cookies)
+	s.Empty(s.echoed(answer).Header.Values(auth.ServerTokenHeader), "the provider did not get the router's server token")
 	line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
 	s.Contains(line, `provider_body="{\"method\":\"GET\",\"path\":\"[redacted]\",\"query\":\"[redacted]\",`)
 	s.Contains(line, `\"Authorization\":[\"Bearer [redacted]\"]`)
-	s.Contains(line, `\"Cookie\":[\"[redacted]\"]`)
-	s.Contains(line, `\"cookies\":[\"[redacted]\",\"[redacted]\"]`)
-	s.Contains(line, `\"X-Echo-Link\":[\"https://docs.example\"]`)
-	for _, sent := range []string{token, session, theme} {
-		s.False(strings.Contains(s.logged.String(), sent), "neither the token nor a cookie is logged")
+	s.Contains(line, `\"User-Agent\":[\"probe/1 +https://docs.example\"]`)
+	for _, sent := range []string{token, serverToken} {
+		s.False(strings.Contains(s.logged.String(), sent), "neither the connection's token nor the server token is logged")
+	}
+}
+
+// TestAnErrorAnswerToACallThatSentABodyIsLoggedWithoutItsStart: a call that forwards only
+// plainHeaders but sends a body, which the echo repeats, gets its 404 logged with the status and
+// the host only (R1.1). The body's length is not known to the client (io.NopCloser), so it is sent chunked and no
+// Content-Length header says there is one.
+func (s *ConnectionProxySuite) TestAnErrorAnswerToACallThatSentABodyIsLoggedWithoutItsStart() {
+	id := s.connected(s.connector(""), bearer.Name)
+	body := "brew-" + s.utils.uuid()
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+proxy(id, "items/7")+"?"+echoStatusParam+"=404",
+		io.NopCloser(strings.NewReader(body)))
+	s.Require().NoError(err)
+	request.Header = s.serverClient.header.Clone()
+
+	response, err := s.server.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	answer, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+	got := s.echoed(answer)
+	s.Equal(body, got.Body)
+	line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
+	s.Contains(line, " provider_status=404 ")
+	s.NotContains(line, "provider_body=")
+	s.False(strings.Contains(s.logged.String(), body), "the request's body is not logged")
+}
+
+// TestAnErrorAnswerToACallThatForwardedAnotherHeaderIsLoggedWithoutItsStart: a call with no
+// body that forwards a Cookie, plain, quoted or holding an & the echo writes JSON-escaped, or a
+// header of the provider's own, gets its 404 logged with the status and the host only: the echo
+// repeats the header, in a form no redaction could be shown to catch (R2.2).
+func (s *ConnectionProxySuite) TestAnErrorAnswerToACallThatForwardedAnotherHeaderIsLoggedWithoutItsStart() {
+	for _, sent := range []struct{ header, value string }{
+		{"Cookie", "sid=%s"}, {"Cookie", `sid="%s"`}, {"Cookie", "sid=a&%s"}, {"X-Provider-Secret", "%s"},
+	} {
+		id := s.connected(s.connector(""), bearer.Name)
+		secret := "sec-" + s.utils.uuid()
+
+		response, answer := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "items/7")+"?"+echoStatusParam+"=404", "",
+			http.Header{sent.header: {fmt.Sprintf(sent.value, secret)}})
+
+		s.Equal(http.StatusNotFound, response.StatusCode)
+		s.Contains(string(answer), secret, "the provider got the caller's %s", sent.header)
+		line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
+		s.Contains(line, " provider_status=404 ")
+		s.Contains(line, " provider_host="+strings.TrimPrefix(s.echo.URL, "https://")+"\n")
+		s.NotContains(line, "provider_body=", sent.value)
+		s.False(strings.Contains(s.logged.String(), secret), "the %s %q is not logged", sent.header, sent.value)
 	}
 }
 
@@ -565,6 +615,9 @@ func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	if asked := r.Header.Get(echoStatusHeader); asked != "" {
 		status, _ = strconv.Atoi(asked)
 	}
+	if asked := r.URL.Query().Get(echoStatusParam); asked != "" {
+		status, _ = strconv.Atoi(asked)
+	}
 	if wait := r.Header.Get(echoRetryAfterHeader); wait != "" {
 		w.Header().Set("Retry-After", wait)
 	}
@@ -573,12 +626,8 @@ func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Keep-Alive", "timeout=5")
 	w.Header().Set(RequestIDHeader, "provider-request")
 	w.WriteHeader(status)
-	var cookies []string
-	for _, cookie := range r.Cookies() {
-		cookies = append(cookies, cookie.Value)
-	}
 	_ = json.NewEncoder(w).Encode(echoed{Method: r.Method, Path: r.URL.EscapedPath(), Query: r.URL.RawQuery,
-		Header: r.Header, Body: string(body), Cookies: cookies})
+		Header: r.Header, Body: string(body)})
 }
 
 // proxy is the proxy path of connection id for the provider's path.

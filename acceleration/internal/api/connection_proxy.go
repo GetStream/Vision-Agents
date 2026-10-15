@@ -43,8 +43,22 @@ const maxProxyBody = 1 << 20
 // routerHeaders are what the router reads to authenticate and name the caller (internal/auth).
 // They are the caller's to the router, never the provider's, so none is forwarded. The
 // scheme's Wrap then sets the provider's own credential.
+// The gateway's server token for the app and its key, and the app it checked a webhook's
+// signature for (auth.ServerTokenHeader, auth.ServerTokenKeyHeader, auth.HookAppHeader), are the
+// router's as well: the token acts in the customer's Stream app (docs/stream-tenancy.md).
 var routerHeaders = []string{"Authorization", auth.APIKeyHeader, auth.AuthTypeHeader, auth.OrganizationHeader,
-	auth.AppHeader, auth.CustomerHeader, auth.UserHeader}
+	auth.AppHeader, auth.CustomerHeader, auth.UserHeader, auth.ServerTokenHeader, auth.ServerTokenKeyHeader,
+	auth.HookAppHeader}
+
+// plainHeaders are the caller's headers a direct call may forward and still have its error
+// answer's start logged: each names a format, a coding, a language or the client's software,
+// never a credential. Accept, Accept-Encoding and Accept-Language (RFC 9110 sections 12.5.1,
+// 12.5.3 and 12.5.4) are what the caller takes; User-Agent (section 10.1.5) is the client's name,
+// which Go's client sends (Go-http-client/1.1) as every SDK does, and Go's client sends
+// Accept-Encoding: gzip too. A body's own headers are not listed: a call that sends one leaves
+// no excerpt anyway. Any other header, a Cookie or a provider's own key such as
+// X-Provider-Secret, may carry a secret in any form, so the line keeps no excerpt.
+var plainHeaders = []string{"Accept", "Accept-Encoding", "Accept-Language", "User-Agent"}
 
 // routerParams are the query parameters the router reads a credential and a caller from
 // (auth.credentials, auth.go:457-470, and the customer and user it names).
@@ -140,6 +154,7 @@ func (s *Server) proxyConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.Header = forwardedHeader(r.Header)
+	quotable := len(body) == 0 && onlyPlainHeaders(request.Header)
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
 	started := time.Now()
 	response, err := s.connectorTransports.Client(ref, scheme).Do(request)
@@ -174,40 +189,37 @@ func (s *Server) proxyConnection(w http.ResponseWriter, r *http.Request) {
 	// The status is sent: a body cut off midway can only end the answer early.
 	_, _ = io.Copy(w, response.Body)
 	// A status other than 2xx is logged once the copy is done, so the caller's answer is neither
-	// read early nor held for the line (AI-1245): the host the call went to and the start of the
-	// body as the copy read it (core.Exchange.ErrorBody, a 4xx's or a 5xx's), redacted as every
-	// connector call's is of the path, the query and the connection's credential, with URLs kept
-	// to their host (core.LoggedBody), and of the caller's cookies, which the call forwards
-	// (forwardedHeader). It names no header.
+	// read early nor held for the line (AI-1245): the host the call went to and, for a call that
+	// forwarded nothing that could be secret, the start of the body as the copy read it
+	// (core.Exchange.ErrorBody, a 4xx's or a 5xx's), redacted as every connector call's is of the
+	// path, the query and the connection's credential, with URLs kept to their host
+	// (core.LoggedBody). It names no header.
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
 		line := []any{"connection", connection.ID, "connector", connection.ConnectorID,
 			"provider_status", status, "provider_host", exchange.Host()}
 		// Why: a provider may repeat the request in its error answer (an echo, a validation
-		// error quoting a field), and a request body is never logged (security/go.md section 7).
-		// Its echo can be any part of it in any encoding, so no redaction could be shown to
-		// catch it: a call that sent a body leaves no excerpt.
-		if len(body) == 0 {
-			line = append(line, "provider_body", core.LoggedBody(exchange.ErrorBody(), cookieValues(request.Header)...))
+		// error quoting a field), and a request body is never logged (security/go.md section 7),
+		// nor a header that may carry a secret. Its echo can be any part of it in any encoding
+		// (quoted, JSON-escaped), so no redaction could be shown to catch it: a call that sent a
+		// body, or a header outside plainHeaders, leaves no excerpt.
+		if quotable {
+			line = append(line, "provider_body", core.LoggedBody(exchange.ErrorBody()))
 		}
 		s.logger.Info("a direct call's provider answered with an error", line...)
 	}
 }
 
-// cookieValues is what of header's Cookie lines (RFC 6265 section 5.4) must not reach a log
-// line: each line whole and each cookie's value in it, as sent.
+// onlyPlainHeaders is whether every header of header, as the server read it (in canonical
+// form), is one of plainHeaders.
 //
-// Example: "sid=s-1; theme=dark" is "sid=s-1; theme=dark", "s-1" and "dark".
-func cookieValues(header http.Header) []string {
-	var found []string
-	for _, line := range header.Values("Cookie") {
-		found = append(found, line)
-		for pair := range strings.SplitSeq(line, ";") {
-			if _, value, ok := strings.Cut(textproto.TrimString(pair), "="); ok {
-				found = append(found, value)
-			}
+// Example: Accept and User-Agent are; Accept and Cookie are not.
+func onlyPlainHeaders(header http.Header) bool {
+	for name := range header {
+		if !slices.Contains(plainHeaders, name) {
+			return false
 		}
 	}
-	return found
+	return true
 }
 
 // proxiedPath is the provider's path the request names, as it was escaped on the wire: what
