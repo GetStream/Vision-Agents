@@ -1993,6 +1993,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- A consent that cannot start because the connector has no OAuth client now names every way to give it one that the connector lists, with a code of its own, `no_oauth_client` (AI-1357). For `slack_bot` that is `PUT /v1/agents/connectors/slack_bot/oauth-client` with the Slack app's `client_id`, `client_secret`, `provider_app_id` and `signing_secret`, whose client lists the redirect URI the message gives, or `PUT /v1/agents/connectors/slack_bot/provider-app` with a workspace admin's app configuration refresh token. It named only the first, without what it takes, and its code was `invalid_request`.
 - New voice replies wait until interruption cleanup finishes, so barge-in no longer loses a queued follow-up.
 - Voicebench no longer treats speech already in progress when the final caller line starts as the agent's answer; it stays open for the next reply.
 - A router stopping with a request still open when its 10 s shutdown grace runs out logs a warning and exits 0. It reported `context deadline exceeded` to Sentry and exited 1, so a rollout that outlasted one slow request paged as a failure (#935).

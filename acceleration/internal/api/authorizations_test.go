@@ -783,6 +783,58 @@ func (s *AuthorizationsSuite) TestAConsentForAConnectorTakingTheAppsOwnClientUse
 	s.Equal(ConnectionStatus(store.ConnectionConnected), s.get(created.ID).Status)
 }
 
+// TestAConsentWithoutAClientNamesEveryWayToGiveSlackBotOne (AI-1357, WWSD platform feedback
+// #4): slack_bot lists the operator's app, the app's own and the one the router creates
+// (providers/slack_bot.yaml), and the suite has no operator's app for it, so its consent cannot
+// start. The answer names both PUTs the app can make, what each takes, and a code of its own
+// whose doc_url explains it.
+func (s *AuthorizationsSuite) TestAConsentWithoutAClientNamesEveryWayToGiveSlackBotOne() {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
+
+	status, failure := s.consentFailure("slack_bot")
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("the provider's consent could not be started: oauth2code: no OAuth client available for this connector "+
+		"(client.registration [operator customer managed]); "+
+		"put the app's own OAuth client with PUT /v1/agents/connectors/slack_bot/oauth-client, giving its client_id and "+
+		"client_secret, and the app's provider_app_id and signing_secret, which its events are verified with; "+
+		"the client must list the redirect URI "+consentPublicURL+ConnectorCallbackPath+"; "+
+		"or have the router create the app with PUT /v1/agents/connectors/slack_bot/provider-app, giving the refresh "+
+		"token of an app configuration token a workspace admin generates in Slack's app settings", failure.Message)
+	s.Equal(codeNoOAuthClient, failure.Code)
+	s.Equal(ErrorType(ErrorTypeInvalidRequest), failure.Type)
+	s.Equal(errorDocs+codeNoOAuthClient, failure.DocURL)
+}
+
+// TestAConsentWithoutAClientNamesOnlyTheWaysItsConnectorLists (AI-1357): a connector that
+// takes the app's own client alone, with no channel, is not offered an app the router creates,
+// and is asked for no signing secret.
+func (s *AuthorizationsSuite) TestAConsentWithoutAClientNamesOnlyTheWaysItsConnectorLists() {
+	connector := s.connectorRegistering("customer", "")
+
+	status, failure := s.consentFailure(connector)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("the provider's consent could not be started: oauth2code: no OAuth client available for this connector "+
+		"(client.registration [customer]); put the app's own OAuth client with PUT /v1/agents/connectors/"+connector+
+		"/oauth-client, giving its client_id and client_secret; the client must list the redirect URI "+
+		consentPublicURL+ConnectorCallbackPath, failure.Message)
+	s.Equal(codeNoOAuthClient, failure.Code)
+}
+
+// TestAConsentWithoutAClientTheAppCannotGiveAnswersAsBefore (AI-1357), the control: a
+// connector that registers its client per consent (cimd) has no client for the app to put, so
+// its answer is the one base d3df090e gave (probed with this connector and the suite's own
+// discovery-less fake provider).
+func (s *AuthorizationsSuite) TestAConsentWithoutAClientTheAppCannotGiveAnswersAsBefore() {
+	status, failure := s.consentFailure(s.connectorRegistering("cimd", ""))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("the provider's consent could not be started: oauth2code: no OAuth client available for this connector "+
+		"(client.registration [cimd])", failure.Message)
+	s.Equal("invalid_request", failure.Code)
+}
+
 // TestAConsentRecordsTheClientItsGrantWasIssuedTo (AI-990 F16): a connection's reads name the
 // OAuth client its consent used, by registration and client_id, from the consent on; before
 // it there is none.
@@ -832,6 +884,17 @@ func (s *AuthorizationsSuite) TestARotatedSecretIsWhatTheNextRefreshOfEveryConne
 	for _, id := range connections {
 		s.NoError(s.refresh(id))
 	}
+}
+
+// consentFailure is the status and the failure an app-owned connection to connector answers
+// its first consent with.
+func (s *AuthorizationsSuite) consentFailure(connector string) (int, ErrorDetail) {
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/connections/"+created.ID+"/authorizations", nil)
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
+	return status, answered.Error
 }
 
 // putClient is the app's backend putting the fake's preregistered client as its own for
