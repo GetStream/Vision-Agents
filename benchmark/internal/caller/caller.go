@@ -305,12 +305,6 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 			}
 		}
 	}
-	segmentDuration := func() time.Duration {
-		mu.Lock()
-		defer mu.Unlock()
-		return lastAgentSegment
-	}
-
 	// owesAnswer is whether a tool call is running, or returned during the agent's current reply
 	// without the agent being heard for answerHeard since: it has something left to say about it.
 	// An agent that answers in the same breath as its filler is heard past the result, so it
@@ -332,7 +326,7 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 	// settle keeps waiting through short filler phrases, but does not add the full resume grace
 	// after a substantive reply. This keeps long coherence scripts inside their call budget. A
 	// reply the agent still owes after a tool is waited for up to the whole budget, not the grace.
-	settle := func(total, wait time.Duration, responseObserved bool) {
+	settle := func(total, wait time.Duration, responseObserved bool, previousSegment time.Time) {
 		deadline := time.Now().Add(total)
 		drain(agentStarted)
 		drain(agentEnded)
@@ -342,7 +336,13 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 				responseObserved = true
 			}
 			owed := owesAnswer()
-			if responseObserved && segmentDuration() > substantiveReplyMin && !owed {
+			mu.Lock()
+			segmentStarted, segmentDuration, live := agentSegmentStartedAt, lastAgentSegment, agentLive
+			mu.Unlock()
+			// A segment already underway when the final caller spoke cannot end the call early.
+			newSubstantiveReply := !live && segmentDuration > substantiveReplyMin &&
+				(previousSegment.IsZero() || !segmentStarted.Equal(previousSegment))
+			if responseObserved && newSubstantiveReply && !owed {
 				return
 			}
 			remaining := time.Until(deadline)
@@ -495,6 +495,7 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 	}
 
 	var events []Event
+	var lastCallerPreviousSegment time.Time
 	finish := func() Result {
 		stop()
 		select {
@@ -538,7 +539,7 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 			} else {
 				responseObserved = waitAgentTurn(12*time.Second, false)
 			}
-			settle(turnSettle, turnSettleGrace, responseObserved)
+			settle(turnSettle, turnSettleGrace, responseObserved, time.Time{})
 			delay := time.Duration(turn.Trigger.DelayMS) * time.Millisecond
 			if delay == 0 {
 				delay = 400 * time.Millisecond
@@ -583,6 +584,13 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 			sound = "aside"
 		}
 		overlap := kind != scenario.TriggerBargeIn && sound == "" && isLive()
+		if turn.Text != "" && sound == "" {
+			mu.Lock()
+			lastCallerPreviousSegment = agentSegmentStartedAt
+			mu.Unlock()
+		} else {
+			lastCallerPreviousSegment = time.Time{}
+		}
 		recStart, recEnd, err := playClip(pcm)
 		if err != nil {
 			return finish(), err
@@ -601,7 +609,7 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 		})
 	}
 
-	settle(closingWait, grace, false)
+	settle(closingWait, grace, false, lastCallerPreviousSegment)
 	time.Sleep(400 * time.Millisecond)
 
 	stop()

@@ -179,11 +179,11 @@ func (*ConnectionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) 
 type ConnectionPage struct {
 	Items      []Connection `json:"items"`
 	HasMore    bool         `json:"has_more"`
-	NextCursor *string      `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app). Absent on the last one."`
+	NextCursor *string      `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app) and the same X-Stream-User-Id, or again none. Absent on the last one."`
 }
 
 type listConnectionsRequest struct {
-	OwnerType   optionalParam[ConnectionOwnerType] `query:"owner_type" doc:"app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. Omitted is app."`
+	OwnerType   optionalParam[ConnectionOwnerType] `query:"owner_type" doc:"app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id, or every user's when it names none. Omitted is app."`
 	ConnectorID string                             `query:"connector_id" doc:"Keeps one connector's."`
 	// 200 and 25 are store.ConnectionLimit's.
 	Limit  int    `query:"limit" minimum:"1" maximum:"200" doc:"Up to 200. Omitted is 25."`
@@ -237,8 +237,8 @@ func (s *Server) registerConnections(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/connections",
 		Summary:     "List connections",
-		Description: "One owner's connections, newest first: the app's own, or those of the " +
-			"user the backend acts for.\n\n" +
+		Description: "Connections, newest first: the app's own, those of the user the backend " +
+			"acts for, or every user's when it acts for none.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
 		Responses: map[string]*huma.Response{"200": {Description: "A page of connections"}},
@@ -389,7 +389,7 @@ func defaultScheme(m core.Manifest, schemes map[string]core.Scheme) (string, boo
 	return others[0], true
 }
 
-// listConnections lists one owner's connections, a page at a time.
+// listConnections lists one owner's connections, or every user's, a page at a time.
 func (s *Server) listConnections(ctx context.Context, request *listConnectionsRequest) (*listConnectionsResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
@@ -405,9 +405,14 @@ func (s *Server) listConnections(ctx context.Context, request *listConnectionsRe
 		ownerType = *named
 	}
 	ownerID := ""
+	everyUser := false
 	if ownerType == store.OwnerUser {
 		ownerID = actingUser(ctx)
-		if ownerID == "" {
+		// A backend acting for nobody is the app's admin view (AI-1342, decided 2026-10-15 in
+		// #video-ai 1792037851.271769): it sees every user's. Asked of ServerSideFrom again
+		// here, so a device, which actingUser also names nobody for, never does.
+		everyUser = ownerID == "" && ServerSideFrom(ctx)
+		if ownerID == "" && !everyUser {
 			return nil, invalidRequest("owner_type user lists the connections of the user this backend acts for: name them with " + auth.UserHeader)
 		}
 	}
@@ -418,6 +423,7 @@ func (s *Server) listConnections(ctx context.Context, request *listConnectionsRe
 	found, err := s.store.ConnectorConnectionsByOwner(ctx, customerID, store.ConnectionFilter{
 		OwnerType:   string(ownerType),
 		OwnerID:     ownerID,
+		EveryUser:   everyUser,
 		ConnectorID: request.ConnectorID,
 		Limit:       request.Limit,
 		After:       cursor,

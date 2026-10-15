@@ -348,6 +348,9 @@ type Agent struct {
 	// utterances counts syntheses that have not settled, so Finish knows when the agent
 	// has stopped talking.
 	utterances int
+	// interrupting holds off new replies until the voice, edge and old model stream have
+	// all finished the interruption cleanup.
+	interrupting bool
 	// generating is true while the voice model is still writing the current reply.
 	generating bool
 	// composing is true from asking for a line the agent chose to say (compose) until it
@@ -1299,8 +1302,8 @@ func (a *Agent) consumePresence(p *pipeline) {
 func (a *Agent) floor() floor {
 	a.mu.Lock()
 	state := floor{
-		Quiet:           a.utterances == 0 && !a.generating && a.pendingTools == 0,
-		Talking:         a.utterances > 0 || a.generating,
+		Quiet:           !a.interrupting && a.utterances == 0 && !a.generating && a.pendingTools == 0,
+		Talking:         a.interrupting || a.utterances > 0 || a.generating,
 		Owed:            a.toolReply,
 		Composing:       a.composing,
 		Speaking:        a.speakingTurn,
@@ -1554,7 +1557,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	}
 	// follow can take the result between queueToolReply letting go of the lock and this
 	// taking it, and a second turn on it is the caller answered twice.
-	if !a.toolReply || a.generating {
+	if !a.toolReply || a.generating || a.interrupting {
 		a.mu.Unlock()
 		return nil
 	}
@@ -2480,7 +2483,7 @@ func (a *Agent) follow() error {
 	}
 
 	a.mu.Lock()
-	if a.harness == nil || a.generating || a.utterances > 0 {
+	if a.harness == nil || a.generating || a.utterances > 0 || a.interrupting {
 		a.mu.Unlock()
 		return nil
 	}
@@ -2560,7 +2563,7 @@ func (a *Agent) Busy() bool {
 	a.mu.Lock()
 	// A transfer finishes the call from inside itself, so counting it would have it wait on
 	// its own end.
-	working := a.generating || a.utterances > 0 ||
+	working := a.interrupting || a.generating || a.utterances > 0 ||
 		slices.ContainsFunc(slices.Collect(maps.Values(a.toolsRunning)), func(name string) bool { return !telephonyTool(name) })
 	current := a.harness
 	a.mu.Unlock()
@@ -2684,6 +2687,7 @@ func (a *Agent) interrupt(participant stt.Participant) {
 		return
 	}
 	a.abandoned[turnID] = struct{}{}
+	a.interrupting = true
 	a.speakingTurn = ""
 	a.generating = false
 	a.saying = ""
@@ -2723,6 +2727,9 @@ func (a *Agent) interrupt(participant stt.Participant) {
 
 	a.turns.interrupt(turnID)
 	a.emitter.Send(Interrupted{TurnID: turnID, Participant: participant})
+	a.mu.Lock()
+	a.interrupting = false
+	a.mu.Unlock()
 	a.respondQueued()
 }
 

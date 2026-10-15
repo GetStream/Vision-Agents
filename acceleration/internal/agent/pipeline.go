@@ -276,7 +276,7 @@ func (a *Agent) quiesce(ctx context.Context) error {
 			a.mu.Unlock()
 			return stack.Wrap(errors.New("agent: closed"))
 		}
-		if !a.generating && a.utterances == 0 && a.pendingTools == 0 && !a.toolReply &&
+		if !a.interrupting && !a.generating && a.utterances == 0 && a.pendingTools == 0 && !a.toolReply &&
 			!a.nativeAwaiting && len(a.streams) == 0 && len(a.generatingCancel) == 0 {
 			a.switching.Store(true)
 			a.mu.Unlock()

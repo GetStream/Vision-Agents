@@ -727,7 +727,7 @@ export type paths = {
         };
         /**
          * List connections
-         * @description One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+         * @description Connections, newest first: the app's own, those of the user the backend acts for, or every user's when it acts for none.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -4918,7 +4918,7 @@ export type components = {
         readonly ConnectionPage: {
             readonly has_more: boolean;
             readonly items: readonly components["schemas"]["Connection"][] | null;
-            /** @description Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app). Absent on the last one. */
+            /** @description Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app) and the same X-Stream-User-Id, or again none. Absent on the last one. */
             readonly next_cursor?: string;
         };
         /** @description A connection to create, pending until an account is connected. An unknown field is refused rather than ignored. */
@@ -9905,7 +9905,7 @@ export interface operations {
                 readonly cursor?: string;
                 /** @description Up to 200. Omitted is 25. */
                 readonly limit?: number;
-                /** @description app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. Omitted is app. */
+                /** @description app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id, or every user's when it names none. Omitted is app. */
                 readonly owner_type?: components["schemas"]["ConnectionOwnerType"];
             };
             readonly header?: never;

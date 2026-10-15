@@ -622,11 +622,20 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### A backend lists every user's connections
+
+`GET /v1/agents/connections?owner_type=user` from a server-side caller that sends no
+`X-Stream-User-Id` lists the user-owned connections of every user of the app, newest first,
+paged by cursor and narrowed by `connector_id` as the other lists are. Each one names its user
+in `owner.user_id`. It was a 400 before. With `X-Stream-User-Id` it still lists that user's
+only, and an end user's device is still refused the operation. This is for an admin view,
+such as the Volt dashboard's.
+
 ### Listing connections without `owner_type` lists the app's own
 
 `GET /v1/agents/connections` takes `owner_type` as optional. Left out, it lists the app's own
-connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` still
-needs `X-Stream-User-Id`.
+connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` lists the
+user `X-Stream-User-Id` names, or every user's without it.
 
 ### Approve a connection's changed tools again
 
@@ -1988,7 +1997,9 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
-- A router stopping with a request still open when its 10 s shutdown grace runs out logs a warning and exits 0. It reported `context deadline exceeded` to Sentry and exited 1, so a rollout that outlasted one slow request paged as a failure (AI-1283).
+- New voice replies wait until interruption cleanup finishes, so barge-in no longer loses a queued follow-up.
+- Voicebench no longer treats speech already in progress when the final caller line starts as the agent's answer; it stays open for the next reply.
+- A router stopping with a request still open when its 10 s shutdown grace runs out logs a warning and exits 0. It reported `context deadline exceeded` to Sentry and exited 1, so a rollout that outlasted one slow request paged as a failure (#935).
 - The daily message and token limits count per user behind the proxy again. With `ROUTER_TRUSTED_PROXIES` unset, every request's address was the proxy's, so all end users shared one address allowance and the deployment as a whole was cut off after 200 responses a day. In `proxy` auth mode with no trusted ranges a named user is now counted only by user, and a guest still by address; set `ROUTER_TRUSTED_PROXIES` to count by the forwarded client address as well.
 - A request with a data policy can be answered by Gemini 3.8 Flash, the model `llm-fast` prefers. It declared no data policy, so any request that asked for no training passed it over.
 - The router starts on a database that already applied the migrations shipped before customer-hosted models. That migration was numbered earlier than one already applied, and goose refuses to start when it finds an unapplied migration below the database version. It now runs after that version. A database that already created `custom_models` under the old number keeps the table.
