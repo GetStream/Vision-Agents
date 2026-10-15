@@ -39,6 +39,15 @@ func (s *ProviderMessageSuite) TestNoErrorIsNoMessage() {
 	s.Empty(providerMessage(nil, nil))
 }
 
+// TestARedactedURLStillKeepsItsHost: the URLs are cut before redact runs, so a URL whose path
+// redact takes out still keeps its host, and redact takes the token out of the rest.
+func (s *ProviderMessageSuite) TestARedactedURLStillKeepsItsHost() {
+	redact := strings.NewReplacer("/primary/mcp", "[redacted]", queryToken, "[redacted]").Replace
+	err := errors.New(`Post "https://crm.example/primary/mcp": invalid token ` + queryToken)
+
+	s.Equal(`Post "https://crm.example": invalid token [redacted]`, providerMessage(err, redact))
+}
+
 func (s *ProviderMessageSuite) TestAURLErrorKeepsOnlyItsHost() {
 	sending := &url.Error{Op: "Post", URL: "https://user:pass@crm.example/mcp/v1?access_token=" + queryToken + "#frag", Err: io.EOF}
 	err := stack.Wrap(fmt.Errorf("mcp: crm__whoami: %w", sending))
