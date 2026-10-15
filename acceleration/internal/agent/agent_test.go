@@ -418,20 +418,36 @@ type stubTTS struct {
 	mu         sync.Mutex
 	said       []tts.Request
 	interrupts int
+	active     map[string]struct{}
+	// reconnecting holds interruption open while the test delivers work that would
+	// normally arrive during the provider's replacement connection.
+	interruptStarted chan struct{}
+	interruptRelease <-chan struct{}
+	unavailable      bool
 	// silent stops the stub producing audio, so a test can hold a turn open.
 	silent bool
 }
 
 func newStubTTS(streaming bool) *stubTTS {
-	return &stubTTS{emitter: tts.NewEmitter(64), streaming: streaming}
+	return &stubTTS{emitter: tts.NewEmitter(64), streaming: streaming, active: map[string]struct{}{}}
 }
 
 func (s *stubTTS) Start(context.Context) error { return nil }
 
 func (s *stubTTS) Synthesize(request tts.Request) error {
 	s.mu.Lock()
+	if s.unavailable {
+		s.mu.Unlock()
+		return errors.New("stub: not started")
+	}
 	s.said = append(s.said, request)
 	silent := s.silent
+	if request.Text != "" {
+		s.active[request.ID] = struct{}{}
+	}
+	if request.Final {
+		delete(s.active, request.ID)
+	}
 	s.mu.Unlock()
 
 	if silent {
@@ -456,8 +472,35 @@ func (s *stubTTS) Synthesize(request tts.Request) error {
 
 func (s *stubTTS) Interrupt() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.interrupts++
+	release := s.interruptRelease
+	started := s.interruptStarted
+	var active []string
+	if release != nil {
+		s.interruptRelease = nil
+		s.interruptStarted = nil
+		s.unavailable = true
+		for id := range s.active {
+			active = append(active, id)
+			delete(s.active, id)
+		}
+	}
+	s.mu.Unlock()
+	for _, id := range active {
+		s.emitter.Send(tts.SynthesisComplete{
+			SynthesisID: id,
+			Interrupted: true,
+		})
+	}
+	if release != nil {
+		if started != nil {
+			close(started)
+		}
+		<-release
+		s.mu.Lock()
+		s.unavailable = false
+		s.mu.Unlock()
+	}
 	return nil
 }
 
@@ -2379,6 +2422,127 @@ func (s *AgentSuite) TestTalkingOverTheAgentStopsItBeforeTheWordsSettle() {
 		"the settled words were never answered")
 	s.Equal(1, countOf[Interrupted](s.reported()),
 		"the settled words follow the stop, they do not interrupt again")
+}
+
+func (s *AgentSuite) TestAnInterruptionKeepsReturnedWorkUntilTheVoiceReconnects() {
+	s.delegates()
+	s.join(true)
+	s.model.reply = nil
+	s.model.then = []string{"The result is 12.63."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		requests := s.model.requests()
+		return len(requests) > 0 && s.model.script(requests[0].ID) != nil
+	}, "the model response stream never opened")
+	turnID := s.model.requests()[0].ID
+
+	s.model.writes(turnID, "One moment.")
+	s.eventually(func() bool { return s.spokenText("One moment.") }, "the reply never reached the voice")
+	s.model.writes(turnID, `<ask skill="think">15% of 84.20</ask>`)
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "the subagent response stream never opened")
+	s.Require().NotEmpty(s.subagent.requests())
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+	s.eventually(func() bool { return countOf[TaskSettled](s.reported()) == 1 }, "the task never settled")
+	s.True(s.agent.harness.Pending(), "the result is still owed while the first reply is open")
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	s.voice.mu.Lock()
+	s.voice.interruptStarted = started
+	s.voice.interruptRelease = release
+	s.voice.mu.Unlock()
+	var releaseOnce sync.Once
+	openVoice := func() { releaseOnce.Do(func() { close(release) }) }
+	defer openVoice()
+
+	s.says(participant, "actually wait")
+	s.eventually(func() bool {
+		select {
+		case <-started:
+			return true
+		default:
+			return false
+		}
+	}, "the voice interruption never reached the reconnect gate")
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.utterances == 0
+	}, "the interrupted utterance did not settle")
+	s.eventually(func() bool { return !s.agent.converse.Listening() },
+		"the settled caller turn still held the floor")
+	// Exercise the same admission path used when presence notices the returned result.
+	s.NoError(s.agent.follow())
+	s.never(func() bool {
+		return countOf[Error](s.reported()) > 0
+	}, "a reply tried to use the voice before reconnect completed")
+
+	openVoice()
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			if !strings.Contains(request.Instructions, "It is 12.63.") {
+				continue
+			}
+			if slices.ContainsFunc(request.Input, func(message llm.Message) bool {
+				return message.Content == "actually wait"
+			}) {
+				return true
+			}
+		}
+		return false
+	}, "the replacement model request did not receive the delegated result")
+	s.eventually(func() bool { return s.spokenText("12.63") }, "the returned result was not spoken")
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the replacement reply produced no audio")
+	s.eventually(func() bool { return !s.agent.Busy() }, "the replacement reply never settled")
+	s.Zero(countOf[Error](s.reported()), "the interruption left the agent with a voice error")
+}
+
+func (s *AgentSuite) TestAnInterruptionStillCountsAsBusyBeforeTheFirstSentence() {
+	s.join(true)
+	s.model.reply = nil
+	s.model.then = []string{"Understood."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool {
+		requests := s.model.requests()
+		return len(requests) > 0 && s.model.script(requests[0].ID) != nil
+	}, "the model response stream never opened")
+	s.Empty(s.voice.spoken(), "the reply has not written its first sentence")
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	s.voice.mu.Lock()
+	s.voice.interruptStarted = started
+	s.voice.interruptRelease = release
+	s.voice.mu.Unlock()
+	var releaseOnce sync.Once
+	openVoice := func() { releaseOnce.Do(func() { close(release) }) }
+	defer openVoice()
+
+	s.says(participant, "actually wait")
+	s.eventually(func() bool {
+		select {
+		case <-started:
+			return true
+		default:
+			return false
+		}
+	}, "the voice interruption never reached the reconnect gate")
+	s.True(s.agent.Busy(), "an interruption with no open utterance still has cleanup to finish")
+
+	openVoice()
+	s.eventually(func() bool { return s.spokenText("Understood.") }, "the caller's reply was not spoken")
+	s.eventually(func() bool { return !s.agent.Busy() }, "the caller's reply never settled")
+	s.Zero(countOf[Error](s.reported()), "the interruption left the agent with an error")
 }
 
 func (s *AgentSuite) TestAnAcknowledgementInProgressDoesNotStopTheAgent() {
