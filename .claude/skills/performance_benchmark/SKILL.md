@@ -83,6 +83,31 @@ decode. When a step reports `host CPU saturated`, that ceiling is the laptop's, 
 router's: the numbers above it are meaningless. Rerun that step from a bigger machine, or say
 in the report that the ceiling was the harness.
 
+## 3a. How we bench: callers in the benchmark cluster
+
+Past about 64 agents a laptop's uplink queues the callers' audio (1.7 s under load), and the
+report measures the uplink. A number to quote comes from callers in the benchmark cluster,
+beside the router, against `accelerate-benchmark`:
+
+```bash
+kubectl apply -f performance_benchmark/cluster/perfbench.yaml   # 16-core pod, its own e2 node
+performance_benchmark/cluster/setup.sh                          # build perfbench in it
+performance_benchmark/cluster/run.sh after-x 4 1024 60s         # report in out/after-x
+```
+
+- The router is pinned to 2 pods on 2 n4a-standard-4 nodes; keep the HPA at 2/2 so the
+  hardware, and the cost per voice minute, stays fixed between runs.
+- `run.sh` ends draining router generations and waits a minute first: after a fastdeploy the
+  old one still carries the last run's calls, and its CPU lands in the new run.
+- Joins go at 20 a second (`-join-rate 20`); all at once trips Stream's connect limit.
+- Profile a router pod during a step with pprof (`router.pprofAddr` serves it on the pods'
+  loopback): `kubectl port-forward pod/<router> 16060:6060`, then
+  `curl -o cpu.pb.gz "localhost:16060/debug/pprof/profile?seconds=30"`. At 512 a step's
+  joins take about 25 s, so start 20 s in, not 40.
+- Cost per voice minute is the two nodes ($0.154/h each, on demand) over agents held, over 60.
+- When done, `kubectl delete -f performance_benchmark/cluster/perfbench.yaml`: the pod holds
+  its node until it is gone.
+
 ## 4. Did a change help?
 
 Two runs, same target, same ramp, same machine, back to back, and the router rebuilt and
