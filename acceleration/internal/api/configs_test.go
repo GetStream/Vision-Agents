@@ -544,6 +544,19 @@ func (s *ConfigsSuite) TestAnMCPServerOnAPrivateAddressIsRefusedWithAPlainError(
 	}
 }
 
+func (s *ConfigsSuite) TestARefusalNamesThePrivateMCPServerAfterAPublicOne() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "concierge",
+		"mcp_servers": []map[string]any{
+			{"name": "docs", "url": "https://8.8.8.8/mcp"}, // public, Google DNS
+			{"name": "wwsd", "url": privateMCPURLs[1]},
+		}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "mcp_servers: wwsd: only public https URLs are reachable")
+	s.NotContains(failure, "docs")
+}
+
 func (s *ConfigsSuite) TestReplacingOrPatchingAConfigRefusesAPrivateMCPServer() {
 	created := s.createConfig(map[string]any{"name": "concierge"})
 	servers := []map[string]any{{"name": "wwsd", "url": privateMCPURLs[1]}}
