@@ -577,6 +577,122 @@ func (s *ConnectionToolsSuite) TestCheckingAToolTheConnectionDoesNotOfferIsRefus
 	s.Contains(string(body), `no tool named \"delete_workspace\"`)
 }
 
+// TestAConnectionWithNoChangedToolValidatesAsOnBase is the control for AI-1304: a connection
+// with no pins, and one whose pins match what the provider lists, answer and record what base
+// cefe01e0 does. The expected body is that base's (probe: validate of a bearer connection to
+// the fake, 2026-10-15), with its connection id and time taken out.
+func (s *ConnectionToolsSuite) TestAConnectionWithNoChangedToolValidatesAsOnBase() {
+	unpinned := s.connected(bearer.Name)
+	pinned := s.connected(bearer.Name)
+	s.validate(pinned)
+	s.pin(pinned, s.listedDigests(pinned))
+
+	for _, id := range []string{unpinned, pinned} {
+		status, body := s.serverClient.call(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil)
+		s.Require().Equal(http.StatusOK, status)
+		var answer map[string]any
+		s.Require().NoError(json.Unmarshal(body, &answer))
+		s.Equal(id, answer["connection_id"])
+		s.NotEmpty(answer["checked_at"])
+		delete(answer, "connection_id")
+		delete(answer, "checked_at")
+		delete(answer, "duration")
+
+		s.Equal(map[string]any{"status": "connected",
+			"tools_digest": "32500f3fae086f0dc7a845b2474495444f39ba84bb098425255d4702422c6a84"}, answer, id)
+		s.Equal(&ConnectionLastValidation{Status: validationConnected, CheckedAt: s.get(id).LastValidation.CheckedAt},
+			s.get(id).LastValidation, id)
+	}
+}
+
+func (s *ConnectionToolsSuite) TestAToolListedAtAnotherSchemaThanItsPinValidatesAsNeedsReapproval() {
+	id := s.connected(bearer.Name)
+	s.pin(id, map[string]string{"fail": "pinned-before-it-changed", "echo": "pinned-before-it-changed"})
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReapproval, string(validation.Status))
+	s.Equal(codeToolSchemaChanged, validation.Code)
+	s.Equal([]string{"echo", "fail"}, validation.ChangedTools)
+	s.Contains(validation.Error, "echo, fail")
+	s.NotEmpty(validation.ToolsDigest, "the tools are listed all the same")
+	recorded := s.get(id).LastValidation
+	s.Require().NotNil(recorded)
+	s.Equal(validationNeedsReapproval, string(recorded.Status))
+	s.Equal(codeToolSchemaChanged, recorded.Code)
+	s.Equal(validation.Error, recorded.Error)
+}
+
+func (s *ConnectionToolsSuite) TestAValidateNeverPinsAChangedToolAgain() {
+	id := s.connected(bearer.Name)
+	s.pin(id, map[string]string{"echo": "pinned-before-it-changed"})
+
+	s.validate(id)
+	again := s.validate(id)
+
+	pins, err := s.store.ConnectorToolPins(context.Background(), id, s.connectedAt(id))
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"echo": "pinned-before-it-changed"}, pins)
+	s.Equal(validationNeedsReapproval, string(again.Status))
+	s.Equal([]string{"echo"}, again.ChangedTools)
+}
+
+// TestAPinnedToolTheProviderNoLongerListsIsNotAChange: approving it again cannot bring it back,
+// so it is not reported, and the session leaves it out as on base.
+func (s *ConnectionToolsSuite) TestAPinnedToolTheProviderNoLongerListsIsNotAChange() {
+	id := s.connected(bearer.Name)
+	s.pin(id, map[string]string{"removed_by_the_provider": "pinned-when-it-was-listed"})
+
+	validation := s.validate(id)
+
+	s.Equal(validationConnected, string(validation.Status))
+	s.Empty(validation.Code)
+	s.Empty(validation.ChangedTools)
+}
+
+func (s *ConnectionToolsSuite) TestAPinOfAnEarlierGrantIsNotAChange() {
+	id := s.connected(bearer.Name)
+	earlier := s.connectedAt(id).Add(-time.Hour)
+	_, err := s.store.PinConnectorTools(context.Background(), id, &earlier, map[string]string{"echo": "pinned-for-the-old-grant"})
+	s.Require().NoError(err)
+
+	validation := s.validate(id)
+
+	s.Equal(validationConnected, string(validation.Status))
+	s.Empty(validation.ChangedTools)
+}
+
+// TestAGrantLackingAScopeIsReportedBeforeAChangedTool: the consent needs_scopes asks for begins
+// a new grant, which approves the changed tool too.
+func (s *ConnectionToolsSuite) TestAGrantLackingAScopeIsReportedBeforeAChangedTool() {
+	id := s.scoped("chat:write")
+	s.pin(id, map[string]string{"echo": "pinned-before-it-changed"})
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsScopes, string(validation.Status))
+	s.Equal(codeScopeRequired, validation.Code)
+	s.Empty(validation.ChangedTools)
+}
+
+// pin pins the connection's tools at digests for its current grant, as a session does.
+func (s *ConnectionToolsSuite) pin(id string, digests map[string]string) {
+	_, err := s.store.PinConnectorTools(context.Background(), id, s.connectedAt(id), digests)
+	s.Require().NoError(err)
+}
+
+// listedDigests is the schema digest of each tool the connection's last validate listed.
+func (s *ConnectionToolsSuite) listedDigests(id string) map[string]string {
+	var tools ConnectionTools
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, &tools))
+	digests := map[string]string{}
+	for _, tool := range tools.Tools {
+		digests[tool.Name] = tool.SchemaDigest
+	}
+	s.Require().Len(digests, 2)
+	return digests
+}
+
 // scoped is an oauth2_code connection whose grant was imported with scope, to a connector
 // whose echo needs chat:write and fail channels:read.
 func (s *ConnectionToolsSuite) scoped(scope string) string {
