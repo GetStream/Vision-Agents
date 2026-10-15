@@ -1,0 +1,76 @@
+# Linear through the customer's own Linear OAuth app (AI-1351). linear.yaml beside it signs in
+# with a client the MCP server registers (DCR), whose token is issued by and for
+# https://mcp.linear.app, so it takes no direct calls. A token from Linear's own OAuth goes to
+# both the GraphQL API and the MCP server, so this connector has both. Two built-ins for one
+# vendor, as slack and slack_bot are: one manifest cannot give a customer's client Linear's
+# endpoints and a DCR client the MCP server's (oauth2code's discover reads the manifest before
+# it picks a client, schemes/oauth2code/scheme.go Begin).
+# Linear's pages, opened October 15, 2026:
+#   [oauth] https://linear.app/developers/oauth-2-0-authentication
+#   [mcp]   https://linear.app/docs/mcp
+#   [rate]  https://linear.app/developers/rate-limiting
+# And Linear's authorization server metadata (RFC 8414), «[as]»:
+#   [as] GET https://api.linear.app/.well-known/oauth-authorization-server at
+#        2026-10-15T20:54:40Z: issuer https://api.linear.app, authorization_endpoint
+#        https://linear.app/oauth/authorize, token_endpoint https://api.linear.app/oauth/token,
+#        revocation_endpoint https://api.linear.app/oauth/revoke,
+#        token_endpoint_auth_methods_supported [client_secret_post, client_secret_basic,
+#        none], code_challenge_methods_supported [S256], no registration_endpoint.
+id: linear_app
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+name: Linear (own OAuth app)
+category: Project management
+description: Search issues and projects, read workspace context, update work, and call Linear's GraphQL API with your own Linear OAuth app.
+endpoints:
+  # [oauth], «Redirect user access requests to Linear» and «Exchange code for an access
+  # token»; the same in [as]. Pinned, so Begin fetches nothing (discovery.go, discover).
+  authorize: https://linear.app/oauth/authorize
+  token: https://api.linear.app/oauth/token
+  # [oauth], «Revoke an access token»: the token form field and token_type_hint, which is
+  # what oauth2_code sends (RFC 7009 section 2.1); the same in [as].
+  revoke: https://api.linear.app/oauth/revoke
+  # [oauth], «Make an API request»: «curl https://api.linear.app/graphql» with
+  # «Authorization: Bearer <ACCESS_TOKEN>», which is oauth2_code's header. A direct call's
+  # path follows it: POST /v1/agents/connections/{id}/proxy/graphql.
+  api_base: https://api.linear.app
+  # [mcp], «Can I authenticate with my own API keys or OAuth access tokens?»: «The MCP server
+  # supports passing OAuth token and API keys directly in the Authorization: Bearer
+  # <yourtoken> header ... or integrate with an existing Linear OAuth application without an
+  # extra authentication hop». That it takes a token from a customer's app is that FAQ only,
+  # not a live call. # unverified
+  mcp: https://mcp.linear.app/mcp
+# Authorization code with PKCE: [oauth] («Linear supports the PKCE flow», S256 among its
+# methods); [as] code_challenge_methods_supported [S256].
+schemes: [oauth2_code]
+client:
+  # The customer's own app: [oauth] «Create a new OAuth2 Application and configure the redirect
+  # callback URLs», at https://linear.app/settings/api/applications/new. No dcr: [as] has no
+  # registration_endpoint. No operator: a Stream-owned Linear app is out of scope (AI-1351).
+  registration: [customer]
+  # [oauth], «Exchange code for an access token»: client_id and client_secret are (required)
+  # parameters of the form body; a refresh takes them as parameters or as Basic.
+  auth_method: client_secret_post
+scopes:
+  # [oauth]: read is «(Default) Read access for the user's account. This scope will always be
+  # present», write is «Write access for the user's account», as linear.yaml asks.
+  list: [read, write]
+  # [oauth]: scope is a «Comma separated list of scopes» (example: scope=read,write). The token
+  # response answers it space-separated («"scope": "read write"»), which one separator cannot
+  # say, so a connection's granted_scopes reads ["read write"] (github.yaml has the reverse).
+  separator: ","
+# No identity: the account is GraphQL's viewer query ([oauth]), a profile request this schema
+# cannot make, as in linear.yaml.
+refresh:
+  # [oauth]: «The access token is valid for 24 hours» (expires_in 86399); a refresh answers «a
+  # new valid access token and a new refresh token»; a consumed refresh token has «a
+  # 30-minute grace period». No refresh_ttl: [oauth] gives the refresh token no lifetime.
+  rotating: true
+  grace: 30m
+  access_ttl: 24h
+rate_limit:
+  # [rate]: an OAuth App's requests are limited «per User (or App User)», 5,000 an hour.
+  per: user
+sources:
+  - kind: mcp
+    endpoint: mcp

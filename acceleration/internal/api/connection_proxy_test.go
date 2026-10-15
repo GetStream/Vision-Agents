@@ -29,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -53,6 +54,10 @@ const proxyPublicURL = "https://router.example"
 // gitHubAPI is the host of the built-in github's api_base (providers/github.yaml), which the
 // suite's transport dials at the echo.
 const gitHubAPI = "api.github.com:443"
+
+// linearAPI is the host of the built-in linear_app's api_base (providers/linear_app.yaml),
+// which the suite's transport dials at the echo as well.
+const linearAPI = "api.linear.app:443"
 
 // echoNotFoundPath is the provider path the echo answers with a 404, for a call that must
 // forward no header but plainHeaders and no query (the proxy forwards both).
@@ -108,19 +113,31 @@ func (s *ConnectionProxySuite) SetupSuite() {
 	s.T().Cleanup(s.echo.Close)
 	clientCredentials, err := oauth2cc.New(oauth2cc.Config{HTTP: s.provider.Client(), PublicEndpoint: loopbackOrPublic})
 	s.Require().NoError(err)
-	s.connectors = core.Registry{Schemes: map[string]core.Scheme{
+	// The app's own OAuth clients, as cmd/router looks them up. No test here reaches an
+	// authorization server: a grant is imported, not consented to or refreshed, so the
+	// endpoint check, which resolves names, passes every endpoint and the suite needs no DNS.
+	code, err := oauth2code.New(oauth2code.Config{
+		HTTP: s.provider.Client(),
+		Clients: func(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, registration core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
+			return ConnectorClients(s.store, s.sealer, func(string) string { return "" })(ctx, ref, m, registration)
+		},
+		PublicEndpoint: func(context.Context, string) error { return nil },
+	})
+	s.Require().NoError(err)
+	s.connectors = core.Registry{Schemes: map[string]core.Scheme{oauth2code.Name: code,
 		oauth2cc.Name: clientCredentials, bearer.Name: bearer.New(), apikey.Name: apikey.New()}}
 	// One transport that trusts both servers' certificates.
 	transport := s.provider.Client().Transport.(*http.Transport).Clone()
 	roots := transport.TLSClientConfig.RootCAs.Clone()
 	roots.AddCert(s.echo.Certificate())
 	transport.TLSClientConfig.RootCAs = roots
-	// GitHub's API host is the echo, so a built-in github connection's call stays on loopback.
+	// GitHub's and Linear's API hosts are the echo, so a built-in github or linear_app
+	// connection's call stays on loopback.
 	// The echo's certificate is net/http's test one, issued for example.com and the loopback
 	// addresses (net/http/internal/testcert), as the fake's is, so both are checked as that name.
 	dialer := &net.Dialer{}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		if address == gitHubAPI {
+		if address == gitHubAPI || address == linearAPI {
 			address = s.echo.Listener.Addr().String()
 		}
 		return dialer.DialContext(ctx, network, address)
@@ -576,6 +593,56 @@ func (s *ConnectionProxySuite) TestAGitHubPageLinkComesBackThroughTheProxy() {
 	s.Equal("/user/repos", got.Path)
 	s.Equal("per_page=1&page=2", got.Query)
 	s.Equal("Bearer "+token, got.Header.Get("Authorization"))
+}
+
+// TestALinearAppConnectionsGraphQLCallGoesToLinearsAPIWithItsBearerToken: the built-in
+// linear_app (AI-1351) has an api_base, so a backend's GraphQL call through a connection made
+// with the app's own Linear OAuth client reaches https://api.linear.app/graphql, body and all,
+// with the connection's access token as a bearer token, which is how Linear takes an OAuth
+// token (https://linear.app/developers/oauth-2-0-authentication, opened 2026-10-15).
+func (s *ConnectionProxySuite) TestALinearAppConnectionsGraphQLCallGoesToLinearsAPIWithItsBearerToken() {
+	status, payload := s.serverClient.call(http.MethodPut, "/v1/agents/connectors/linear_app/oauth-client",
+		ConnectorOAuthClientRequest{ClientID: "linear-client", ClientSecret: "linear-secret"})
+	s.Require().Contains([]int{http.StatusCreated, http.StatusOK}, status, string(payload))
+	id := s.pending("linear_app", oauth2code.Name)
+	token := "token-" + s.utils.uuid()
+	s.credentials(s.serverClient, id, map[string]string{oauth2code.SuppliedAccessToken: token,
+		oauth2code.SuppliedExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339), oauth2code.SuppliedScope: "read,write"})
+	query := `{"query":"{ viewer { id name } }"}`
+
+	status, answer := s.send(s.serverClient, http.MethodPost, proxy(id, "graphql"), query,
+		http.Header{"Content-Type": {"application/json"}})
+
+	s.Require().Equal(http.StatusOK, status, string(answer))
+	got := s.echoed(answer)
+	s.Equal(http.MethodPost, got.Method)
+	s.Equal("/graphql", got.Path)
+	host, _ := s.hosts.Load(got.Path)
+	s.Equal("api.linear.app", host)
+	s.Equal("Bearer "+token, got.Header.Get("Authorization"))
+	s.Equal(query, got.Body)
+}
+
+// TestALinearConnectionMadeByDCRStillTakesNoDirectCalls is the control for linear_app (AI-1351):
+// the built-in linear, whose token comes from a client the MCP server registers, keeps no
+// api_base, so a direct call answers as base 3690152b answered it (probe in the PR).
+func (s *ConnectionProxySuite) TestALinearConnectionMadeByDCRStillTakesNoDirectCalls() {
+	ctx := context.Background()
+	definition, err := s.store.LatestConnectorDefinition(ctx, s.customerID(), "linear")
+	s.Require().NoError(err)
+	connection := store.ConnectorConnection{CustomerID: s.customerID(), ConnectorID: "linear",
+		DefinitionRevision: definition.Revision, OwnerType: store.OwnerApp, AuthScheme: oauth2code.Name}
+	s.Require().NoError(s.store.CreateConnectorConnection(ctx, s.connectors, &connection))
+	connection.Status, connection.Revision = store.ConnectionConnected, 2
+	s.Require().NoError(s.store.SaveConnectorConnectionAtRevision(ctx, &connection, 1))
+	before := s.hits.Load()
+
+	status, message := s.serverClient.failure(http.MethodPost, proxy(connection.ID, "graphql"),
+		map[string]string{"query": "{ viewer { id } }"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(`connector "linear" has no api_base endpoint, so it takes no direct calls`, message)
+	s.Equal(before, s.hits.Load())
 }
 
 func (s *ConnectionProxySuite) TestAConnectorWithoutAnAPIBaseTakesNoDirectCalls() {

@@ -13,6 +13,8 @@ description: How Go tests are written in acceleration/ and sdks/go. Read before 
 - Name a test as the sentence it proves: `TestAnIdAnotherSessionHasIsRefused`.
 - Avoid table tests, common as they are in Go. Write one test per behaviour, each named for what it proves, and put what they share in the suite or a helper.
 - Anything that needs Postgres, Redis or a provider's API starts with `//go:build integration` and skips, rather than fails, when what it needs is not configured.
+- Outside a suite, check with `require`, never `testify/assert`: a failed check stops the test there.
+- Every skip says what keeps the test from running: the env var or tool that is missing, or what the provider cannot do. A skip with no such reason ("pending fixture") is a test to fix or delete.
 
 ## Which kind of test
 

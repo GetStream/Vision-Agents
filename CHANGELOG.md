@@ -665,6 +665,10 @@ reconnect of an OAuth connection, which begins a new grant. A pinned tool the pr
 is not reported. A grant lacking scopes is still `needs_scopes`, since the consent it asks for
 approves the changed tools too. A connection with no changed tool answers as before.
 
+### Linear with your own OAuth app, for direct GraphQL calls
+
+The connector catalog has `linear_app`, «Linear (own OAuth app)». A connection signs in with `oauth2_code` through the app's own Linear OAuth app (`PUT /v1/agents/connectors/linear_app/oauth-client`). Its token serves both Linear's MCP tools and Linear's GraphQL API: `POST /v1/agents/connections/{id}/proxy/graphql` reaches `https://api.linear.app/graphql`. The `linear` connector is unchanged and still MCP-only (AI-1351).
+
 ### A built-in Notion connector
 
 The connector catalog (`GET /v1/agents/connectors`) has `notion`: Notion's hosted MCP server at `https://mcp.notion.com/mcp`. A connection signs in with `oauth2_code`. The router registers its own client with Notion (`dcr`) and asks for the `default` scope, so no app registers anything first. The agent can search, read and update the pages and databases that the person who signed in can access (AI-1292).

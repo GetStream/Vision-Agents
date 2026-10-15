@@ -383,6 +383,69 @@ func (s *ConsentSuite) TestHubSpotWithoutAPreregisteredClientIsRefusedRatherThan
 	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
 }
 
+// linear_app is Linear's own OAuth with the customer's app (AI-1351): its endpoints are
+// pinned, so nothing is discovered or registered, its scopes are comma-separated, and its
+// secret goes in the token request body (linear_app.yaml, [oauth]).
+func (s *ConsentSuite) TestLinearAppConnectsWithTheCustomersClientAtItsPinnedEndpoints() {
+	srv := fakeprovider.New(s.T())
+	manifest := s.resolve("linear_app", nil)
+	s.Equal("https://linear.app/oauth/authorize", manifest.Endpoints["authorize"])
+	s.Equal("https://api.linear.app/oauth/token", manifest.Endpoints["token"])
+	s.Equal("https://api.linear.app", manifest.Endpoints["api_base"])
+	s.Equal("https://mcp.linear.app/mcp", manifest.Endpoints["mcp"])
+	s.Equal("https://api.linear.app/oauth/revoke", manifest.Endpoints["revoke"], "a disconnect revokes the token at Linear")
+	s.Equal([]core.SourceRule{{Kind: "mcp", Endpoint: "mcp"}}, manifest.Sources, "the MCP tools")
+	s.Equal(core.RateLimitPerUser, manifest.RateLimit.Per)
+	raw, err := fs.ReadFile(providers.FS, "linear_app.yaml")
+	s.Require().NoError(err)
+	parsed, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
+	s.Equal([]string{oauth2code.Name}, parsed.Schemes, "no bearer: a pasted key cannot serve both endpoints")
+	resolved := s.atFake(srv, manifest)
+	wire := &tokenWire{next: srv.Client().Transport}
+	scheme := s.schemeOver(&http.Client{Transport: wire}, s.preregistered(srv, core.ClientCustomer))
+
+	out := s.begin(scheme, resolved)
+	s.Equal(0, srv.Hits(fakeprovider.PathProtectedResource), "the endpoints are pinned")
+	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
+	query := s.query(out.AuthorizeURL)
+	s.True(strings.HasPrefix(out.AuthorizeURL, srv.URL+fakeprovider.PathAuthorize+"?"))
+	s.Equal(srv.ClientID, query.Get("client_id"))
+	s.Equal("read,write", query.Get("scope"))
+	s.Equal("S256", query.Get("code_challenge_method"))
+	s.NotContains(query, "resource")
+
+	stored, account, err := s.complete(srv, scheme, resolved, out)
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
+	s.Empty(account.AccountID, "no identity")
+	s.Require().Len(wire.sent, 1, "one code exchange")
+	s.Empty(wire.sent[0].authorization, "no HTTP Basic credentials")
+	s.Equal(srv.ClientSecret, wire.sent[0].form.Get("client_secret"))
+
+	s.Require().NoError(scheme.Revoke(s.ctx, stored, resolved))
+	s.Equal(1, srv.Hits(fakeprovider.PathRevoke), "the stored grant is revoked at the pinned revoke endpoint")
+}
+
+func (s *ConsentSuite) TestLinearAppWithoutTheCustomersClientIsRefusedRatherThanRegistered() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.atFake(srv, s.resolve("linear_app", nil))
+
+	_, err := s.scheme(srv, nil).Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
+	s.ErrorIs(err, oauth2code.ErrNoClient)
+	s.Equal(0, srv.Hits(fakeprovider.PathRegister))
+}
+
+// Linear's access token lasts 24 hours, each refresh rotates the refresh token, and a consumed
+// one still works for 30 minutes (linear_app.yaml, [oauth]).
+func (s *ConsentSuite) TestLinearAppRefreshPolicyRotatesWithAThirtyMinuteGraceAndADayLongAccessToken() {
+	refresh := s.resolve("linear_app", nil).Refresh
+	s.Require().NotNil(refresh.Rotating)
+	s.True(*refresh.Rotating)
+	s.Equal(core.Duration(30*time.Minute), refresh.Grace)
+	s.Equal(core.Duration(24*time.Hour), refresh.AccessTTL)
+}
+
 // The storefront answers without a credential (shopify.dev Policy and FAQs, opened
 // 2026-10-13), so connecting stores nothing and sends the browser nowhere.
 func (s *ConsentSuite) TestShopifyNeedsNoLogin() {
