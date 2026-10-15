@@ -407,6 +407,10 @@ type writer struct {
 	// met, and turns is the order they were first held in, oldest first.
 	recent map[string]*turnRecord
 	turns  []string
+	// quietUntil is when showing what is being written may be tried again, after a show
+	// Stream refused. Every tick would otherwise send it again, and Stream answers a 429
+	// by closing the connection, so a limited app spent a new connection on each.
+	quietUntil time.Time
 }
 
 func newWriter(l *Log) *writer {
@@ -501,6 +505,9 @@ func (w *writer) storeArtifacts(queued message) {
 // first revision is stored, so the channel has a message to update and to keep if it never
 // settles; the rest are ephemeral, which reach watchers without a write per token.
 func (w *writer) show() {
+	if time.Now().Before(w.quietUntil) {
+		return
+	}
 	for turnID, writing := range w.writing {
 		w.showOne(writing, SourceAgent, "turn", turnID)
 	}
@@ -510,7 +517,7 @@ func (w *writer) show() {
 }
 
 func (w *writer) showOne(writing *reply, source string, key, id string) {
-	if writing.text == writing.shown {
+	if writing.text == writing.shown || time.Now().Before(w.quietUntil) {
 		return
 	}
 
@@ -529,10 +536,28 @@ func (w *writer) showOne(writing *reply, source string, key, id string) {
 			})
 	}
 	if err != nil {
+		w.quietUntil = time.Now().Add(quietFor(err))
 		w.log.logger.Error("could not show a message being written", key, id, "error", err)
 		return
 	}
 	writing.shown = writing.text
+}
+
+// quietFor is how long to stop showing what is being written after Stream refused to: until
+// the limit it hit resets, or a moment for any other failure. What is finished is still
+// stored in the meantime, so only the live view goes quiet.
+func quietFor(err error) time.Duration {
+	var refused *getstream.StreamError
+	if !errors.As(err, &refused) || !errors.Is(err, getstream.ErrRateLimited) {
+		return time.Second
+	}
+	if refused.RetryAfter > 0 {
+		return refused.RetryAfter
+	}
+	if refused.RateLimit != nil && refused.RateLimit.Reset > 0 {
+		return time.Until(time.Unix(refused.RateLimit.Reset, 0))
+	}
+	return 10 * time.Second
 }
 
 // retract removes what a participant was heard saying before it settled, so words the

@@ -110,6 +110,8 @@ its uplink queued 1.7 s of audio under load and the caller-side numbers measured
 | 10 | TLS session resumption | 256 | 3.04 | 3480 ms | 0.0000201 |
 | 10b | conversations let go after release; tick copies only to send | 256 | 3.34 | 3240 ms | 0.0000201 |
 | 11 | no TURN relays, stats decoded once, Opus DTX, turns and call events in Redis | 512, 256† | 2.55, 3.03 | 2500, 2440 ms | 0.0000100-0.0000201 |
+| 12 | Cloud NAT 32768 ports a VM, 2048 connections a Stream host | 512 | 3.26 | 2767 ms | 0.0000100 |
+| 13 | Chat limits raised to 20k/min; a refused live update waits out Retry-After, not every tick | 512‡ | 2.76 | 1180 ms | 0.0000100 |
 
 \* Iterations 1 and 3 broke on Stream rate limits (a draining old router, then Chat
 GetOrCreateChannel 429s), not on the router; the next iteration removed each cause.
@@ -131,6 +133,13 @@ coordinator join, the SFU signalling and the chat posts alike. `max_ports_per_vm
 32768 and the router keeps 2048 connections a Stream host, which moved the wall. Below
 roughly 1,000 sends a minute, about 80 concurrent agents on one Stream app, nothing of this
 shows; above it the transcripts in Chat are mostly lost.
+
+‡ Iteration 13 held 512 with room: reply p95 1.18 s (was 2.77 s), session p95 2.6 s (was
+5.7 s), and at 1024 96% of turns were answered (was 37%). 258 of 1024 still never joined,
+almost all dialling the coordinator socket (`dial tcp 8.233.33.37:443: i/o timeout`), with
+no NAT drops and at most 2,300 NAT ports in use a node, so the wall is no longer NAT. The
+routers were at 6.8 of their 8 cores. The only Chat 429s left came at teardown: 1024
+conversations storing their last lines in the same 4 s lost 360 of them.
 
 A run whose callers die mid-step leaves its sessions running: a voice session does not end
 when the human leaves the call. One aborted run held 346 sessions (260 mCPU, 10,000
