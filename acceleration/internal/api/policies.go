@@ -73,8 +73,8 @@ func (*Quota) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema
 		"user and per address. Only an app's policy has one: an organization's that sets it " +
 		"is refused. A turn is counted on the day of the user who sent it, and a backend's " +
 		"own are never counted. A request over the limit is a 429 rate_limited with " +
-		"Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining " +
-		"and X-RateLimit-Reset."
+		"Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining " +
+		"and X-Quota-Reset."
 	return schema
 }
 

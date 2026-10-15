@@ -5111,7 +5111,7 @@ components:
           type: number
       type: object
     Quota:
-      description: 'What one end user of the app may spend in a UTC day, counted per user and per address. Only an app''s policy has one: an organization''s that sets it is refused. A turn is counted on the day of the user who sent it, and a backend''s own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset.'
+      description: 'What one end user of the app may spend in a UTC day, counted per user and per address. Only an app''s policy has one: an organization''s that sets it is refused. A turn is counted on the day of the user who sent it, and a backend''s own are never counted. A request over the limit is a 429 rate_limited with Retry-After, and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.'
       properties:
         messages_per_user_per_day:
           description: How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the router's default applies.

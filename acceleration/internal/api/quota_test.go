@@ -168,7 +168,7 @@ func (s *QuotaSuite) TestABackendsOwnTurnsInASessionItOpenedForAUserAreNeverCoun
 
 	response := s.client.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 	s.Require().Equal(http.StatusCreated, response.StatusCode)
-	s.Equal("2", response.Header.Get("X-RateLimit-Remaining"), "none of the backend's turns was the user's")
+	s.Equal("2", response.Header.Get("X-Quota-Remaining"), "none of the backend's turns was the user's")
 }
 
 func (s *QuotaSuite) TestAUsersOwnSessionIsCountedOnTheirDayWhoeverSendsItsTurns() {
@@ -207,12 +207,12 @@ func (s *QuotaSuite) TestAnAppsOwnLimitIsWhatItsUsersAreRefusedAt() {
 	s.Equal(http.StatusTooManyRequests, response.StatusCode)
 	retryAfter, err := strconv.Atoi(response.Header.Get("Retry-After"))
 	s.Require().NoError(err)
-	reset, err := strconv.ParseInt(response.Header.Get("X-RateLimit-Reset"), 10, 64)
+	reset, err := strconv.ParseInt(response.Header.Get("X-Quota-Reset"), 10, 64)
 	s.Require().NoError(err)
 	// Both headers name the same midnight: the wait is what is left of it, to the second.
 	s.InDelta(time.Until(time.Unix(reset, 0)).Seconds(), float64(retryAfter), 2)
-	s.Equal("3", response.Header.Get("X-RateLimit-Limit"))
-	s.Equal("0", response.Header.Get("X-RateLimit-Remaining"))
+	s.Equal("3", response.Header.Get("X-Quota-Limit"))
+	s.Equal("0", response.Header.Get("X-Quota-Remaining"))
 	var refused ErrorResponse
 	s.Require().NoError(json.NewDecoder(response.Body).Decode(&refused))
 	s.Equal("rate_limited", refused.Error.Code)
@@ -242,7 +242,7 @@ func (s *QuotaSuite) TestAnAppsLimitOfZeroRefusesNobody() {
 
 	response := s.client.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 	s.Equal(http.StatusCreated, response.StatusCode)
-	s.Empty(response.Header.Get("X-RateLimit-Limit"), "a caller with no cap is told nothing")
+	s.Empty(response.Header.Get("X-Quota-Limit"), "a caller with no cap is told nothing")
 }
 
 func (s *QuotaSuite) TestACountedAnswerSaysWhatIsLeftOfTheDay() {
@@ -254,18 +254,18 @@ func (s *QuotaSuite) TestACountedAnswerSaysWhatIsLeftOfTheDay() {
 	response := s.client.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 
 	s.Require().Equal(http.StatusCreated, response.StatusCode)
-	s.Equal("3", response.Header.Get("X-RateLimit-Limit"))
-	s.Equal("2", response.Header.Get("X-RateLimit-Remaining"))
+	s.Equal("3", response.Header.Get("X-Quota-Limit"))
+	s.Equal("2", response.Header.Get("X-Quota-Remaining"))
 	now := time.Now().UTC()
 	midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
-	s.Equal(strconv.FormatInt(midnight.Unix(), 10), response.Header.Get("X-RateLimit-Reset"))
+	s.Equal(strconv.FormatInt(midnight.Unix(), 10), response.Header.Get("X-Quota-Reset"))
 }
 
 func (s *QuotaSuite) TestABackendsAnswerCarriesNoRateLimit() {
 	response := s.backend.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 
 	s.Require().Equal(http.StatusCreated, response.StatusCode)
-	s.Empty(response.Header.Get("X-RateLimit-Limit"))
+	s.Empty(response.Header.Get("X-Quota-Limit"))
 }
 
 // putQuota sets, through the app's own policy, the messages one of its users may ask for in

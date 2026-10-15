@@ -11,21 +11,21 @@ import (
 )
 
 const (
-	rateLimitLimitHeader     = "X-RateLimit-Limit"
-	rateLimitRemainingHeader = "X-RateLimit-Remaining"
-	rateLimitResetHeader     = "X-RateLimit-Reset"
+	quotaLimitHeader     = "X-Quota-Limit"
+	quotaRemainingHeader = "X-Quota-Remaining"
+	quotaResetHeader     = "X-Quota-Reset"
 )
 
-// rateLimitHeaders tells a counted caller where they stand, the way Stream Chat does: the
+// quotaHeaders tells a counted caller where they stand, the way Stream Chat does: the
 // day's allowance, what is left of it and the unix time it resets at. A caller nothing was
 // counted for is told nothing.
-func rateLimitHeaders(header http.Header, status quota.Status) {
+func quotaHeaders(header http.Header, status quota.Status) {
 	if status.Limit == 0 {
 		return
 	}
-	header.Set(rateLimitLimitHeader, strconv.FormatInt(status.Limit, 10))
-	header.Set(rateLimitRemainingHeader, strconv.FormatInt(status.Remaining, 10))
-	header.Set(rateLimitResetHeader, strconv.FormatInt(status.Reset.Unix(), 10))
+	header.Set(quotaLimitHeader, strconv.FormatInt(status.Limit, 10))
+	header.Set(quotaRemainingHeader, strconv.FormatInt(status.Remaining, 10))
+	header.Set(quotaResetHeader, strconv.FormatInt(status.Reset.Unix(), 10))
 }
 
 // withQuota refuses a caller who has spent their day before any work is started.
@@ -65,7 +65,7 @@ func (s *Server) withQuota(next http.Handler) http.Handler {
 		caller := CallerFrom(r.Context())
 
 		status, err := s.quota.Allow(r.Context(), customerID, caller)
-		rateLimitHeaders(w.Header(), status)
+		quotaHeaders(w.Header(), status)
 		if err != nil {
 			if !errors.Is(err, quota.ErrExhausted) {
 				next.ServeHTTP(w, r)

@@ -63,7 +63,7 @@ func TestACustomersWebsiteMayCallTheAPIWithItsOwnCredential(t *testing.T) {
 	}
 }
 
-func TestACustomersWebsiteMayReadTheRateLimitOfAnAnswer(t *testing.T) {
+func TestACustomersWebsiteMayReadTheQuotaOfAnAnswer(t *testing.T) {
 	for _, mode := range []auth.Mode{auth.APIKey, auth.Proxy} {
 		handler := withCORS(mode, http.NotFoundHandler())
 		request := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
@@ -71,7 +71,7 @@ func TestACustomersWebsiteMayReadTheRateLimitOfAnAnswer(t *testing.T) {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
 
-		for _, header := range []string{"X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "Retry-After"} {
+		for _, header := range []string{"X-Quota-Limit", "X-Quota-Remaining", "X-Quota-Reset", "Retry-After"} {
 			require.Contains(t, response.Header().Get("Access-Control-Expose-Headers"), header, mode)
 		}
 	}

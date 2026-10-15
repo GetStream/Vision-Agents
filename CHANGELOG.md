@@ -618,8 +618,8 @@ An app sets what one of its end users may spend in a UTC day as `quota` in its p
 `PUT /v1/policies/app`: `messages_per_user_per_day` and `tokens_per_user_per_day`, each from
 `0` (no cap) to a bound that only catches a typo. Left out, the deployment's
 `ROUTER_RATE_LIMIT_*` default applies, as before. An organization has none: a `quota` sent to
-`PUT /v1/policies/organization` is a 400. A counted answer carries `X-RateLimit-Limit`,
-`X-RateLimit-Remaining` and `X-RateLimit-Reset`. Each answer is counted on whoever sent the
+`PUT /v1/policies/organization` is a 400. A counted answer carries `X-Quota-Limit`,
+`X-Quota-Remaining` and `X-Quota-Reset`. Each answer is counted on whoever sent the
 turn: in a session a backend opened in a user's name, the backend's turns are not counted and
 the user's own are. `mock/*` answers are not counted, and an address is counted per app.
 

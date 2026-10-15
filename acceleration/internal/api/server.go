@@ -1087,8 +1087,8 @@ const corsRequestHeaders = "Authorization, " + auth.AuthTypeHeader + ", " + auth
 const corsMethods = "GET, POST, PUT, DELETE, OPTIONS"
 
 // corsExposedHeaders are the response headers a page's script may read.
-const corsExposedHeaders = "Server-Timing, " + RequestIDHeader + ", " + rateLimitLimitHeader + ", " +
-	rateLimitRemainingHeader + ", " + rateLimitResetHeader + ", Retry-After"
+const corsExposedHeaders = "Server-Timing, " + RequestIDHeader + ", " + quotaLimitHeader + ", " +
+	quotaRemainingHeader + ", " + quotaResetHeader + ", Retry-After"
 
 // withCORS lets a browser at the API from the origins originAllowed accepts.
 //

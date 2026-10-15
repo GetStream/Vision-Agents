@@ -113,8 +113,8 @@ the other commands that read them there.
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
 | `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
-| `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an app's or organization's policy sets its own. See [Daily limits](#daily-limits) |
-| `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off. It is the default: an app's or organization's policy sets its own |
+| `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an app's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
+| `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `5000000`. `0` turns it off. It is the default: an app's policy sets its own (`quota`) |
 | `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
 | `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long its turn took, and the same figures as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
 | `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies are hedged, not the flow controller, the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off. `cmd/agent` takes it as `-reply-hedge` |
@@ -353,9 +353,9 @@ A user id is the honest answer to who is asking, and the address is the answer t
 still holds when a backend mints a fresh user id per request.
 
 What a backend asks for is never counted, even when it names the user it acts for, and
-neither is any answer in a session a backend opened. Answers from `mock/*` models are not
-counted either. A counted HTTP answer carries `X-RateLimit-Limit`, `X-RateLimit-Remaining`
-and `X-RateLimit-Reset` (the unix time of the next UTC midnight), for the limit nearest to
+neither are the backend's own turns in a session it opened. Answers from `mock/*` models are not
+counted either. A counted HTTP answer carries `X-Quota-Limit`, `X-Quota-Remaining`
+and `X-Quota-Reset` (the unix time of the next UTC midnight), for the limit nearest to
 refusing the caller.
 
 The limit is enforced where a response is created, not only where a request is
