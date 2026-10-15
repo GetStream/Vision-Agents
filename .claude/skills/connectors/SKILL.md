@@ -81,6 +81,7 @@ Only a connector whose manifest has an `api_base` takes direct calls.
 |---|---|---|
 | `github` (revision 4) | `https://api.github.com` | `repos/octo/hello/issues` |
 | `slack_bot` (revision 5) | `https://slack.com/api` | `chat.postMessage` |
+| `linear_app` (revision 1) | `https://api.linear.app` | `graphql` (POST a GraphQL body) |
 
 A provider's `Link` header (RFC 8288) that names a URL under `api_base`, such as GitHub's
 `rel="next"` page, comes back naming the same path and query under this connection's proxy
@@ -91,7 +92,19 @@ through the proxy. With `ROUTER_PUBLIC_URL` unset the router has no proxy URL to
 `Link` (fail closed): a connection then loses GitHub's pagination until the URL is set.
 
 Every other built-in, `linear` included, is MCP-only: a direct call answers 400 «connector
-"linear" has no api_base endpoint». Why Linear has none is in `linear.yaml`. A connection keeps
+"linear" has no api_base endpoint». Why Linear has none is in `linear.yaml`.
+
+For Linear's GraphQL API, connect `linear_app` («Linear (own OAuth app)») instead. It signs in
+with your own Linear OAuth app, and its token serves both the GraphQL API and Linear's MCP
+tools:
+
+1. Read the callback URL: `GET /v1/agents/connectors/linear_app`, field `redirect_uri`.
+2. In Linear, create an OAuth app at https://linear.app/settings/api/applications/new with
+   that callback URL.
+3. Give the router its client id and secret: `PUT /v1/agents/connectors/linear_app/oauth-client`.
+4. Create a `linear_app` connection and run its OAuth consent as for any connector.
+
+A `linear` connection stays as it is; it does not move to `linear_app`. A connection keeps
 the revision it was made on, so a `github` connection made before revision 4 takes direct calls
 only after its next consent or token save.
 
