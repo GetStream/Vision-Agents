@@ -894,15 +894,18 @@ func (s *ConnectionProxyOffSuite) SetupTest() {
 
 // TestTheConnectionEndpointsAnswerAsOnBase: the answers base ad3fffd0 gave with connectors off
 // (probe, <scratchpad>/pr-w3d-t44/probe-base.txt): a missing connection is connection_not_found
-// and a list without owner_type a validation failure.
+// and a list without owner_type a validation failure, which since AI-1293 lists the app's own
+// as owner_type=app does.
 func (s *ConnectionProxyOffSuite) TestTheConnectionEndpointsAnswerAsOnBase() {
 	status, body := s.serverClient.call(http.MethodGet, "/v1/agents/connections/x", nil)
 	s.Equal(http.StatusNotFound, status)
 	s.JSONEq(`{"error":{"message":"no such connection","type":"not_found","code":"connection_not_found","doc_url":"https://getstream.io/agents/docs/api/errors/#connection_not_found"}}`, withoutDuration(body))
 
 	status, body = s.serverClient.call(http.MethodGet, "/v1/agents/connections", nil)
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(string(body), `"code":"validation_failed"`)
+	appStatus, apps := s.serverClient.call(http.MethodGet, "/v1/agents/connections?owner_type=app", nil)
+	s.Equal(http.StatusOK, status)
+	s.Equal(http.StatusOK, appStatus)
+	s.JSONEq(withoutDuration(apps), withoutDuration(body))
 }
 
 // TestTheProxyIsNoRouteAsOnBase: base fd4b4405 with connectors off answered every method on

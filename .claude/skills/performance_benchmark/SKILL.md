@@ -60,8 +60,9 @@ works before asking for a long one.
 | Finer steps near the ceiling | `-start <last held> -factor 1` is refused; use `-start`/`-max` around it with `-factor 2` |
 
 A step breaks when more than 5% of conversations never get the agent onto the call, more than
-10% of turns go unanswered, a reply takes over three seconds at p95, or a router pod restarts.
-The step before it is the answer, printed as `Held N agents`.
+10% of turns go unanswered, a reply takes over three seconds at p95, more than 1% of the probe
+callers' audio is broken, or a router pod restarts. The step before it is the answer, printed
+as `Held N agents`.
 
 ## 3. Read it
 
@@ -78,10 +79,43 @@ The four timings say where a ceiling is:
 - **GapMs** appearing: the router is producing audio slower than real time. This is the one
   that users hear first.
 
+**Audio quality.** The first four callers of every step record each answer and score it
+against the 220 Hz tone the mock TTS sends (`internal/bench/quality.go`): `audio snr` is the
+tone's power over everything else, per 100 ms of speech, typical and worst answer; clean Opus
+reads 33 to 36 dB. `audio broken` counts glitches (100 ms windows under 20 dB: a click, a
+skipped 20 ms frame, distortion) and dropouts (frames that went quiet mid-sentence; pauses
+between sentences are not counted). A glitch now and then is a packet the network lost: the
+router's own `turns.audio_dropped_ms` says whether it was the router.
+
 **The caller can be the bottleneck.** Each conversation costs this machine an Opus encode and
 decode. When a step reports `host CPU saturated`, that ceiling is the laptop's, not the
 router's: the numbers above it are meaningless. Rerun that step from a bigger machine, or say
 in the report that the ceiling was the harness.
+
+## 3a. How we bench: callers in the benchmark cluster
+
+Past about 64 agents a laptop's uplink queues the callers' audio (1.7 s under load), and the
+report measures the uplink. A number to quote comes from callers in the benchmark cluster,
+beside the router, against `accelerate-benchmark`:
+
+```bash
+kubectl apply -f performance_benchmark/cluster/perfbench.yaml   # 16-core pod, its own e2 node
+performance_benchmark/cluster/setup.sh                          # build perfbench in it
+performance_benchmark/cluster/run.sh after-x 4 1024 60s         # report in out/after-x
+```
+
+- The router is pinned to 2 pods on 2 n4a-standard-4 nodes; keep the HPA at 2/2 so the
+  hardware, and the cost per voice minute, stays fixed between runs.
+- `run.sh` ends draining router generations and waits a minute first: after a fastdeploy the
+  old one still carries the last run's calls, and its CPU lands in the new run.
+- Joins go at 20 a second (`-join-rate 20`); all at once trips Stream's connect limit.
+- Profile a router pod during a step with pprof (`router.pprofAddr` serves it on the pods'
+  loopback): `kubectl port-forward pod/<router> 16060:6060`, then
+  `curl -o cpu.pb.gz "localhost:16060/debug/pprof/profile?seconds=30"`. At 512 a step's
+  joins take about 25 s, so start 20 s in, not 40.
+- Cost per voice minute is the two nodes ($0.154/h each, on demand) over agents held, over 60.
+- When done, `kubectl delete -f performance_benchmark/cluster/perfbench.yaml`: the pod holds
+  its node until it is gone.
 
 ## 4. Did a change help?
 

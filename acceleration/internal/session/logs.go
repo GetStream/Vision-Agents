@@ -111,13 +111,6 @@ func (s *Session) recordLog(event Event) {
 		row.Details["turn_id"] = e.TurnID
 		row.Details["probability"] = e.Probability
 		row.Details["held_ms"] = e.HeldMs
-	case agent.Decided:
-		row.EventType = "decision"
-		row.Message = e.Reason
-		row.UserID = e.Participant.UserID
-		row.Details["kind"] = e.Kind
-		row.Details["turn_id"] = e.TurnID
-		row.OccurredAt = e.At
 	case agent.ToolStarted:
 		row.EventType = "tool_started"
 		row.Source = "tool"

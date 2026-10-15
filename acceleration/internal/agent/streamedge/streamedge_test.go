@@ -168,6 +168,40 @@ func (s *StreamEdgeSuite) TestSilenceIsSentWhenThereIsNothingToSay() {
 	s.EqualValues(audioLevelSilent, talker.CurrentAudioLevel())
 }
 
+func (s *StreamEdgeSuite) TestALongSilenceIsMostlyNotSent() {
+	// An agent listens for most of a call, and a packet every 20 ms of that is work for the
+	// router and the SFU that nobody hears. Opus's DTX sends one every 400 ms instead.
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+
+	var sent []int
+	for frame := range 2 * silenceRefreshFrames {
+		sample, err := talker.NextSample(s.ctx)
+		s.Require().NoError(err)
+		s.Equal(opusFrameDuration, sample.Duration, "the timestamps move on through the silence")
+		if sample.Data != nil {
+			s.Equal(silenceFrame, sample.Data)
+			sent = append(sent, frame)
+		}
+	}
+
+	s.Equal([]int{0, 1, silenceRefreshFrames}, sent)
+}
+
+func (s *StreamEdgeSuite) TestSilenceAfterAReplyIsSentRightAway() {
+	// The last frame a caller's decoder got is what it conceals a missing one with, so what
+	// follows a reply has to be silence rather than nothing.
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+	for range 3 {
+		_, err := talker.NextSample(s.ctx)
+		s.Require().NoError(err)
+	}
+	s.Require().NoError(talker.Write(speech(opusSampleRate, 60)))
+
+	s.Len(s.drain(talker), 3, "60 ms of reply, then silence straight after it")
+}
+
 func (s *StreamEdgeSuite) TestTheAudioLevelSaysWhoIsTalking() {
 	talker := newSpeaker(slog.New(slog.DiscardHandler))
 	s.T().Cleanup(func() { _ = talker.Close() })

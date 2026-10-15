@@ -16,14 +16,6 @@ const defaultCallLimit = 50
 // maxCallLimit caps one a caller asked too much of.
 const maxCallLimit = 500
 
-// How much of a call's reasoning is handed back at once. A busy call makes a few
-// judgements a second, so an hour of one is thousands of rows and a page of them is what
-// anybody actually reads.
-const (
-	defaultCallEventLimit = 1000
-	maxCallEventLimit     = 10000
-)
-
 // StartCall records that a conversation began.
 //
 // It is written when the agent joins rather than when the call ends, so a call that is
@@ -193,30 +185,6 @@ func (s *Store) CustomerCalls(ctx context.Context, customerID string, filter Cal
 	return calls, nil
 }
 
-// CallTurns returns the timings of one call's exchanges, oldest first. They are keyed by
-// agent rather than by call, so a call is found by the agent that ran it within the window
-// it was on for.
-func (s *Store) CallTurns(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) ([]Turn, error) {
-	if customerID == "" || agentID == "" {
-		return nil, stack.Wrap(errors.New("store: a customer and an agent id are required"))
-	}
-
-	query := s.db.NewSelect().Model((*Turn)(nil)).
-		Where("customer_id = ?", customerID).
-		Where("agent_id = ?", agentID).
-		Where("started_at >= ?", from).
-		Order("started_at ASC")
-	if to != nil {
-		query = query.Where("started_at <= ?", *to)
-	}
-
-	var turns []Turn
-	if err := query.Scan(ctx, &turns); err != nil {
-		return nil, stack.Wrap(fmt.Errorf("store: call turns: %w", err))
-	}
-	return turns, nil
-}
-
 // CallModelCalls returns every model response in one call, including flow and delegated
 // requests, in the order they were sent. TurnID relates each request to its exchange.
 func (s *Store) CallModelCalls(ctx context.Context, customerID, agentID, callID string, from time.Time, to *time.Time) ([]Request, error) {
@@ -370,60 +338,6 @@ func (s *Store) CallTokens(ctx context.Context, customerID, agentID string, from
 		return nil, stack.Wrap(fmt.Errorf("store: call tokens: %w", err))
 	}
 	return used, nil
-}
-
-// RecordCallEvents writes a batch of judgements. They are written together because they
-// arrive together: a call makes several decisions a second, and one round trip each would
-// have the writer permanently behind.
-func (s *Store) RecordCallEvents(ctx context.Context, events []CallEvent) error {
-	if len(events) == 0 {
-		return nil
-	}
-	for i := range events {
-		if events[i].CustomerID == "" || events[i].CallID == "" {
-			return errors.New("store: a customer and a call id are required")
-		}
-		if events[i].At.IsZero() {
-			events[i].At = time.Now().UTC()
-		}
-	}
-
-	if _, err := s.db.NewInsert().Model(&events).Exec(ctx); err != nil {
-		return fmt.Errorf("store: record call events: %w", err)
-	}
-	return nil
-}
-
-// CallEvents returns the judgements made on one call, oldest first, which read in order
-// are how the call was handled and why. They are keyed by the call the agent joined rather
-// than by the row recording it, the way turns are, so a call is found by the window it was
-// on for.
-func (s *Store) CallEvents(ctx context.Context, customerID, callID string, from time.Time, to *time.Time, limit int) ([]CallEvent, error) {
-	if customerID == "" || callID == "" {
-		return nil, stack.Wrap(errors.New("store: a customer and a call id are required"))
-	}
-	if limit <= 0 {
-		limit = defaultCallEventLimit
-	}
-	if limit > maxCallEventLimit {
-		limit = maxCallEventLimit
-	}
-
-	query := s.db.NewSelect().Model((*CallEvent)(nil)).
-		Where("customer_id = ?", customerID).
-		Where("call_id = ?", callID).
-		Where("at >= ?", from).
-		Order("at ASC", "id ASC").
-		Limit(limit)
-	if to != nil {
-		query = query.Where("at <= ?", *to)
-	}
-
-	var events []CallEvent
-	if err := query.Scan(ctx, &events); err != nil {
-		return nil, stack.Wrap(fmt.Errorf("store: call events: %w", err))
-	}
-	return events, nil
 }
 
 func unknownCall(id string) error {

@@ -13,7 +13,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
-    owner_type: ConnectionOwnerType,
+    owner_type: ConnectionOwnerType | Unset = UNSET,
     connector_id: str | Unset = UNSET,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
@@ -21,7 +21,10 @@ def _get_kwargs(
 
     params: dict[str, Any] = {}
 
-    json_owner_type = owner_type.value
+    json_owner_type: str | Unset = UNSET
+    if not isinstance(owner_type, Unset):
+        json_owner_type = owner_type.value
+
     params["owner_type"] = json_owner_type
 
     params["connector_id"] = connector_id
@@ -89,7 +92,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    owner_type: ConnectionOwnerType,
+    owner_type: ConnectionOwnerType | Unset = UNSET,
     connector_id: str | Unset = UNSET,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
@@ -101,7 +104,7 @@ def sync_detailed(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        owner_type (ConnectionOwnerType): app is the app's own account, user one user's.
+        owner_type (ConnectionOwnerType | Unset): app is the app's own account, user one user's.
         connector_id (str | Unset): Keeps one connector's.
         limit (int | Unset): Up to 200. Omitted is 25.
         cursor (str | Unset): The next_cursor of the previous page. Omitted is the first page.
@@ -131,7 +134,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    owner_type: ConnectionOwnerType,
+    owner_type: ConnectionOwnerType | Unset = UNSET,
     connector_id: str | Unset = UNSET,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
@@ -143,7 +146,7 @@ def sync(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        owner_type (ConnectionOwnerType): app is the app's own account, user one user's.
+        owner_type (ConnectionOwnerType | Unset): app is the app's own account, user one user's.
         connector_id (str | Unset): Keeps one connector's.
         limit (int | Unset): Up to 200. Omitted is 25.
         cursor (str | Unset): The next_cursor of the previous page. Omitted is the first page.
@@ -168,7 +171,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    owner_type: ConnectionOwnerType,
+    owner_type: ConnectionOwnerType | Unset = UNSET,
     connector_id: str | Unset = UNSET,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
@@ -180,7 +183,7 @@ async def asyncio_detailed(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        owner_type (ConnectionOwnerType): app is the app's own account, user one user's.
+        owner_type (ConnectionOwnerType | Unset): app is the app's own account, user one user's.
         connector_id (str | Unset): Keeps one connector's.
         limit (int | Unset): Up to 200. Omitted is 25.
         cursor (str | Unset): The next_cursor of the previous page. Omitted is the first page.
@@ -208,7 +211,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    owner_type: ConnectionOwnerType,
+    owner_type: ConnectionOwnerType | Unset = UNSET,
     connector_id: str | Unset = UNSET,
     limit: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
@@ -220,7 +223,7 @@ async def asyncio(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        owner_type (ConnectionOwnerType): app is the app's own account, user one user's.
+        owner_type (ConnectionOwnerType | Unset): app is the app's own account, user one user's.
         connector_id (str | Unset): Keeps one connector's.
         limit (int | Unset): Up to 200. Omitted is 25.
         cursor (str | Unset): The next_cursor of the previous page. Omitted is the first page.

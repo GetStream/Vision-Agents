@@ -22,6 +22,9 @@ const (
 	opusSampleRate = 48_000
 	// opusFrameDuration is the frame size every Opus encoder and decoder handles.
 	opusFrameDuration = 20 * time.Millisecond
+	// opusComplexity is the encoder's effort. Below 5 CELT skips its pitch prefilter, which
+	// is about half of what encoding a voice costs, for a small loss on voiced speech.
+	opusComplexity = 4
 	// opusNegotiatedChannels is the channel count the published track has to declare. Opus
 	// is always offered as two-channel in SDP, and pion refuses to bind a track whose
 	// channel count does not match what was negotiated. What goes out is still mono: the
@@ -40,6 +43,13 @@ const (
 	// audibleSample is the level a sample has to reach, in either direction, for the frame
 	// holding it to count as speech: about -48 dBFS, above what a voice leaves in its pauses.
 	audibleSample = 128
+	// dtxFrameBytes is the most an Opus DTX frame takes: the encoder's way of saying there is
+	// nothing to hear, which is not sent.
+	dtxFrameBytes = 2
+	// silenceRefreshFrames is how often silence still goes out while the agent says nothing.
+	silenceRefreshFrames = 20
+	// silenceLeadFrames is how much silence goes out before the track stops sending.
+	silenceLeadFrames = 2
 )
 
 // silenceFrame is the canonical Opus silence packet. The track is published for the whole
@@ -91,8 +101,10 @@ type speaker struct {
 	// unflushed is set while the encoder may still be holding the tail of an utterance,
 	// so it is only pushed out once rather than on every quiet frame.
 	unflushed bool
-	speaking  bool
-	closed    bool
+	// quiet counts the frames handed out since the queue last had one.
+	quiet    int
+	speaking bool
+	closed   bool
 }
 
 // armedMark is a reply waiting on the track, with where in the queue its frame is and the
@@ -254,7 +266,10 @@ func (s *speaker) WriteMarked(ctx context.Context, pcm audio.PcmData, marks agen
 			return err
 		}
 		if s.encoder == nil {
-			encoder, err := opus.NewEncoder(opus.Config{SampleRate: opusSampleRate, FrameDuration: opusFrameDuration})
+			encoder, err := opus.NewEncoder(opus.Config{
+				SampleRate: encoderRate(pcm.SampleRate), FrameDuration: opusFrameDuration,
+				Application: opus.ApplicationLowDelay, Complexity: opusComplexity, DTX: true,
+			})
 			if err != nil {
 				s.mu.Unlock()
 				return fmt.Errorf("streamedge: build opus encoder: %w", err)
@@ -347,6 +362,17 @@ func audible(samples []int16) bool {
 		}
 	}
 	return false
+}
+
+// encoderRate returns a sample rate Opus can encode natively. Providers may change rates
+// when routing fails over mid-call; unsupported rates are resampled to 48 kHz.
+func encoderRate(sampleRate int) int {
+	switch sampleRate {
+	case 8_000, 12_000, 16_000, 24_000, 48_000:
+		return sampleRate
+	default:
+		return opusSampleRate
+	}
 }
 
 // waitForRoomLocked returns with s.mu held. DropSpeech and Close wake waiting writers;
@@ -450,18 +476,37 @@ func (s *speaker) next() (webrtcmedia.Sample, agent.PlayoutMarks, time.Time) {
 	}
 	if len(s.frames) == 0 {
 		s.speaking = false
-		return webrtcmedia.Sample{Data: silenceFrame, Duration: opusFrameDuration}, nil, time.Time{}
+		sample := webrtcmedia.Sample{Duration: opusFrameDuration}
+		if s.quiet < silenceLeadFrames || s.quiet%silenceRefreshFrames == 0 {
+			sample.Data = silenceFrame
+		}
+		s.quiet++
+		return sample, nil, time.Time{}
 	}
+	s.quiet = 0
 
 	frame := s.frames[0]
+	if len(frame) <= dtxFrameBytes {
+		frame = nil
+	}
 	s.frames = s.frames[1:]
 	seq := s.head
 	s.head++
-	s.speaking = true
+	s.speaking = frame != nil
 	s.drained.Signal()
 
 	sample := webrtcmedia.Sample{Data: frame, Duration: opusFrameDuration}
+	for len(s.armed) > 0 && s.armed[0].seq < seq {
+		s.armed[0] = armedMark{}
+		s.armed = s.armed[1:]
+	}
 	if len(s.armed) == 0 || s.armed[0].seq != seq {
+		return sample, nil, time.Time{}
+	}
+	if frame == nil {
+		// An encoded DTX packet carries no audible speech. Keep the report attached to the
+		// next frame so the reply is measured when sound reaches the track.
+		s.armed[0].seq = seq + 1
 		return sample, nil, time.Time{}
 	}
 	marked := s.armed[0]

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -320,6 +321,39 @@ func (s *ConsentSuite) TestSentryRegistersAClientThroughTheMCPEndpointsMetadata(
 	stored, _, err := s.complete(srv, scheme, resolved, out)
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
+}
+
+// Notion's server challenges with scope="default" (notion.yaml, [401]), so the consent asks
+// for it, and registers a client of its own through the MCP endpoint's metadata.
+func (s *ConsentSuite) TestNotionRegistersAClientThroughTheMCPEndpointsMetadataAndAsksForDefault() {
+	srv := fakeprovider.New(s.T())
+	resolved := s.atFake(srv, s.resolve("notion", nil))
+	scheme := s.scheme(srv, s.preregistered(srv, core.ClientCustomer))
+
+	out := s.begin(scheme, resolved)
+	s.Equal(1, srv.Hits(fakeprovider.PathProtectedResource))
+	s.Equal(1, srv.Hits(fakeprovider.PathRegister), "registered, though a customer client exists: the manifest takes dcr only")
+	query := s.query(out.AuthorizeURL)
+	s.NotEqual(srv.ClientID, query.Get("client_id"))
+	s.Equal("default", query.Get("scope"))
+	s.Equal(srv.URL+fakeprovider.PathMCP, query.Get("resource"))
+
+	stored, account, err := s.complete(srv, scheme, resolved, out)
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, s.call(srv, s.accessToken(stored)))
+	s.Equal([]string{"default"}, account.Scopes)
+	s.Empty(account.AccountID, "no identity")
+}
+
+// Notion rotates the refresh token on every refresh, an access token lasts about eight hours
+// when the response has no expires_in, and a refresh token dies after 30 days of inactivity
+// (notion.yaml, [client]). The API reads the last two as the fallback expiry and refresh_expires_at.
+func (s *ConsentSuite) TestNotionRefreshPolicyRotatesWithEightHourAccessAndThirtyDayRefreshLifetimes() {
+	refresh := s.resolve("notion", nil).Refresh
+	s.Require().NotNil(refresh.Rotating)
+	s.True(*refresh.Rotating)
+	s.Equal(core.Duration(8*time.Hour), refresh.AccessTTL)
+	s.Equal(core.Duration(720*time.Hour), refresh.RefreshTTL)
 }
 
 func (s *ConsentSuite) TestHubSpotConnectsWithTheCustomersClientAndRegistersNone() {

@@ -69,7 +69,7 @@ func (s *StoreSuite) SetupTest() {
 	_, err := s.store.DB().ExecContext(
 		s.ctx,
 		"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily,"+
-			" turns, turn_stats_hourly, turn_stats_daily, calls, call_events, phone_numbers, sip_trunks,"+
+			" turn_stats_hourly, turn_latency_hourly, calls, phone_numbers, sip_trunks,"+
 			" voices, agent_sessions, agent_responses, agent_response_items, users,"+
 			" policies, app_organizations, call_resources, organizations, agent_configs,"+
 			" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, connector_definitions, connector_broken_revisions,"+
@@ -386,87 +386,48 @@ func (s *StoreSuite) TestFilteringByLabelReadsTheRequestsTheRollupHasForgotten()
 	s.EqualValues(1000, buckets[0].AudioMsTotal, "only the support request counts")
 }
 
-func (s *StoreSuite) TestATurnIsRecordedOnceEvenIfTheWriteIsRetried() {
-	turn := s.turn("turn-1", s.base.Add(time.Minute), 120)
-
-	s.Require().NoError(s.store.RecordTurn(s.ctx, turn))
-	s.Require().NoError(s.store.RecordTurn(s.ctx, s.turn("turn-1", s.base.Add(time.Minute), 999)))
-
-	_, err := s.store.Rollup(s.ctx, Hourly, s.base, s.base.Add(time.Hour))
-	s.Require().NoError(err)
-
-	buckets, err := s.store.CustomerTurnStats(s.ctx, "acme", "", Hourly, s.base, s.base.Add(time.Hour))
-	s.Require().NoError(err)
-	s.Require().Len(buckets, 1)
-	s.EqualValues(1, buckets[0].TurnCount)
-}
-
 func (s *StoreSuite) TestTurnStatsReportThePercentilesOfWhatCallersWaited() {
 	for i, roundtrip := range []float64{100, 200, 300, 400} {
-		turn := s.turn("turn-"+string(rune('a'+i)), s.base.Add(time.Duration(i)*time.Minute), roundtrip)
-		s.Require().NoError(s.store.RecordTurn(s.ctx, turn))
+		s.Require().NoError(s.store.RecordTurnStats(s.ctx, s.turn(s.base.Add(time.Duration(i)*time.Minute), roundtrip)))
 	}
-
-	_, err := s.store.Rollup(s.ctx, Hourly, s.base, s.base.Add(time.Hour))
-	s.Require().NoError(err)
 
 	buckets, err := s.store.CustomerTurnStats(s.ctx, "acme", "agent-1", Hourly, s.base, s.base.Add(time.Hour))
 	s.Require().NoError(err)
 	s.Require().Len(buckets, 1)
 	s.EqualValues(4, buckets[0].TurnCount)
+	s.InDelta(8000, buckets[0].AudioOutMsTotal, 0.001)
 	s.Require().NotNil(buckets[0].RoundtripP50Ms)
-	s.InDelta(250, *buckets[0].RoundtripP50Ms, 0.001, "the median of 100,200,300,400")
+	s.InEpsilon(200, *buckets[0].RoundtripP50Ms, 0.05, "the median of 100,200,300,400, to the nearest rank")
+	s.InEpsilon(400, *buckets[0].RoundtripP95Ms, 0.05)
+	s.InEpsilon(120, *buckets[0].LLMTTFTP50Ms, 0.05)
 }
 
-func (s *StoreSuite) TestWhenAReplyWasQueuedAndHeardIsReadBackWithItsTurn() {
-	queuedMs, audibleMs, speechEndMs := 880.0, 940.0, 1060.0
-	turn := s.turn("turn-1", s.base.Add(time.Minute), 1400)
-	turn.FirstFrameQueuedMs = &queuedMs
-	turn.FirstAudibleFrameMs = &audibleMs
-	turn.SpeechEndToAudibleMs = &speechEndMs
-	unreported := s.turn("turn-2", s.base.Add(2*time.Minute), 900)
-	s.Require().NoError(s.store.RecordTurn(s.ctx, turn))
-	s.Require().NoError(s.store.RecordTurn(s.ctx, unreported))
+func (s *StoreSuite) TestADayIsItsHoursAddedUp() {
+	s.Require().NoError(s.store.RecordTurnStats(s.ctx, s.turn(s.base.Add(time.Minute), 100)))
+	s.Require().NoError(s.store.RecordTurnStats(s.ctx, s.turn(s.base.Add(5*time.Hour), 100)))
+	interrupted := s.turn(s.base.Add(9*time.Hour), 900)
+	interrupted.Interrupted = true
+	s.Require().NoError(s.store.RecordTurnStats(s.ctx, interrupted))
 
-	turns, err := s.store.CallTurns(s.ctx, "acme", "agent-1", s.base, nil)
-
+	hours, err := s.store.CustomerTurnStats(s.ctx, "acme", "", Hourly, s.base, s.base.Add(24*time.Hour))
 	s.Require().NoError(err)
-	s.Require().Len(turns, 2)
-	s.Require().NotNil(turns[0].FirstAudibleFrameMs)
-	s.InDelta(880, *turns[0].FirstFrameQueuedMs, 0.001)
-	s.InDelta(940, *turns[0].FirstAudibleFrameMs, 0.001)
-	s.InDelta(1060, *turns[0].SpeechEndToAudibleMs, 0.001)
-	s.InDelta(1400, *turns[0].RoundtripMs, 0.001, "the figure taken at the return is kept")
-	s.Nil(turns[1].FirstFrameQueuedMs, "an edge that does not report them leaves them out")
-	s.Nil(turns[1].FirstAudibleFrameMs)
-}
-
-func (s *StoreSuite) TestHowLongAReplyWasHeldIsReadBackWithItsTurn() {
-	heldMs := 620.0
-	turn := s.turn("turn-1", s.base.Add(time.Minute), 1400)
-	turn.ReplyHoldMs = &heldMs
-	unheld := s.turn("turn-2", s.base.Add(2*time.Minute), 900)
-	s.Require().NoError(s.store.RecordTurn(s.ctx, turn))
-	s.Require().NoError(s.store.RecordTurn(s.ctx, unheld))
-
-	turns, err := s.store.CallTurns(s.ctx, "acme", "agent-1", s.base, nil)
-
+	days, err := s.store.CustomerTurnStats(s.ctx, "acme", "", Daily, s.base, s.base.Add(24*time.Hour))
 	s.Require().NoError(err)
-	s.Require().Len(turns, 2)
-	s.Require().NotNil(turns[0].ReplyHoldMs)
-	s.InDelta(620, *turns[0].ReplyHoldMs, 0.001)
-	s.Nil(turns[1].ReplyHoldMs, "a reply that was not held leaves it out")
+
+	s.Len(hours, 3)
+	s.Require().Len(days, 1)
+	s.EqualValues(3, days[0].TurnCount)
+	s.EqualValues(1, days[0].InterruptedCount)
+	s.InEpsilon(100, *days[0].RoundtripP50Ms, 0.05)
+	s.InEpsilon(900, *days[0].RoundtripP99Ms, 0.05, "the slow turn is the day's tail")
 }
 
 func (s *StoreSuite) TestALegThatNeverHappenedIsNotCountedAsInstant() {
 	// A realtime model that hears and speaks for itself has no transcription leg, and
 	// counting that as zero would flatter the percentiles.
-	turn := s.turn("turn-1", s.base.Add(time.Minute), 300)
+	turn := s.turn(s.base.Add(time.Minute), 300)
 	turn.STTLatencyMs = nil
-	s.Require().NoError(s.store.RecordTurn(s.ctx, turn))
-
-	_, err := s.store.Rollup(s.ctx, Hourly, s.base, s.base.Add(time.Hour))
-	s.Require().NoError(err)
+	s.Require().NoError(s.store.RecordTurnStats(s.ctx, turn))
 
 	buckets, err := s.store.CustomerTurnStats(s.ctx, "acme", "", Hourly, s.base, s.base.Add(time.Hour))
 	s.Require().NoError(err)
@@ -475,50 +436,17 @@ func (s *StoreSuite) TestALegThatNeverHappenedIsNotCountedAsInstant() {
 	s.NotNil(buckets[0].RoundtripP50Ms)
 }
 
-func (s *StoreSuite) TestWhatTheConversationDecidedIsReadBackInTheOrderItHappened() {
-	// The trail only explains a call if it is in order: a wait followed by an answer is
-	// an agent giving somebody time to finish, and the same two the other way round is
-	// an agent talking over them.
-	decisions := []CallEvent{
-		s.decision("wait", "the caller has not finished the thought", s.base.Add(2*time.Second)),
-		s.decision("answer", "a complete thought addressed to the agent", s.base.Add(3*time.Second)),
-	}
-	s.Require().NoError(s.store.RecordCallEvents(s.ctx, decisions))
+func (s *StoreSuite) TestOneAgentsTurnsAreNotAnothers() {
+	s.Require().NoError(s.store.RecordTurnStats(s.ctx, s.turn(s.base.Add(time.Minute), 100)))
+	theirs := s.turn(s.base.Add(time.Minute), 900)
+	theirs.AgentID = "agent-2"
+	s.Require().NoError(s.store.RecordTurnStats(s.ctx, theirs))
 
-	read, err := s.store.CallEvents(s.ctx, "acme", "call-1", s.base, nil, 0)
+	buckets, err := s.store.CustomerTurnStats(s.ctx, "acme", "agent-1", Hourly, s.base, s.base.Add(time.Hour))
 	s.Require().NoError(err)
-	s.Require().Len(read, 2)
-	s.Equal("wait", read[0].Kind)
-	s.Equal("the caller has not finished the thought", read[0].Reason)
-	s.Equal("answer", read[1].Kind)
-	s.Equal("caller", read[1].Participant)
-	s.Require().NotNil(read[1].LatencyMs)
-	s.InDelta(30, *read[1].LatencyMs, 0.001)
-}
-
-func (s *StoreSuite) TestOneCallsReasoningIsNotAnothers() {
-	mine := s.decision("answer", "mine", s.base)
-	theirs := s.decision("answer", "theirs", s.base)
-	theirs.CallID = "call-2"
-	s.Require().NoError(s.store.RecordCallEvents(s.ctx, []CallEvent{mine, theirs}))
-
-	read, err := s.store.CallEvents(s.ctx, "acme", "call-1", s.base, nil, 0)
-	s.Require().NoError(err)
-	s.Require().Len(read, 1)
-	s.Equal("mine", read[0].Reason)
-}
-
-func (s *StoreSuite) TestAnEarlierCallOnTheSameIdIsNotThisOnes() {
-	// A call id is the room, not the conversation: dialling the same room again is a
-	// second call, and the reasoning behind the first one does not explain it.
-	earlier := s.decision("answer", "the call before", s.base.Add(-time.Hour))
-	now := s.decision("answer", "this call", s.base.Add(time.Second))
-	s.Require().NoError(s.store.RecordCallEvents(s.ctx, []CallEvent{earlier, now}))
-
-	read, err := s.store.CallEvents(s.ctx, "acme", "call-1", s.base, nil, 0)
-	s.Require().NoError(err)
-	s.Require().Len(read, 1)
-	s.Equal("this call", read[0].Reason)
+	s.Require().Len(buckets, 1)
+	s.EqualValues(1, buckets[0].TurnCount)
+	s.InEpsilon(100, *buckets[0].RoundtripP99Ms, 0.05)
 }
 
 func (s *StoreSuite) TestACallReportsTheModelsThatServedIt() {
@@ -626,27 +554,6 @@ func (s *StoreSuite) TestACallRemembersWhoTheAgentSpokeTo() {
 
 	s.Require().NoError(err)
 	s.Equal("ada", found.UserID)
-}
-
-func (s *StoreSuite) TestRecordingNoDecisionsIsNotAnError() {
-	s.Require().NoError(s.store.RecordCallEvents(s.ctx, nil))
-}
-
-// decision builds one judgement, defaulting what a test does not care about.
-func (s *StoreSuite) decision(kind, reason string, at time.Time) CallEvent {
-	latency := 30.0
-	return CallEvent{
-		CustomerID:  "acme",
-		CallID:      "call-1",
-		AgentID:     "agent-1",
-		At:          at,
-		Kind:        kind,
-		Reason:      reason,
-		TurnID:      "turn-1",
-		Participant: "caller",
-		Said:        "book a table for four",
-		LatencyMs:   &latency,
-	}
 }
 
 func (s *StoreSuite) TestANumberIsHeldUntilItIsReleased() {
@@ -865,19 +772,17 @@ func (s *StoreSuite) tagged(customerID string, at time.Time, audioMs int64, tags
 }
 
 // turn builds one conversational turn with every leg measured.
-func (s *StoreSuite) turn(turnID string, at time.Time, roundtripMs float64) *Turn {
-	sttMs, ttftMs, ttfbMs, audioMs := 30.0, 120.0, 90.0, 2000.0
-	return &Turn{
-		CustomerID:         "acme",
-		AgentID:            "agent-1",
-		TurnID:             turnID,
-		StartedAt:          at,
-		STTLatencyMs:       &sttMs,
-		LLMTTFTMs:          &ttftMs,
-		TTSTTFBMs:          &ttfbMs,
-		RoundtripMs:        &roundtripMs,
-		SpeechEndToAudioMs: &roundtripMs,
-		AudioOutMs:         &audioMs,
+func (s *StoreSuite) turn(at time.Time, roundtripMs float64) TurnSample {
+	sttMs, ttftMs, ttfbMs := 30.0, 120.0, 90.0
+	return TurnSample{
+		CustomerID:   "acme",
+		AgentID:      "agent-1",
+		StartedAt:    at,
+		AudioOutMs:   2000,
+		STTLatencyMs: &sttMs,
+		LLMTTFTMs:    &ttftMs,
+		TTSTTFBMs:    &ttfbMs,
+		RoundtripMs:  &roundtripMs,
 	}
 }
 

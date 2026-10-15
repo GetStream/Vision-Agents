@@ -125,6 +125,10 @@ change, read the `performance_benchmark` skill (`.claude/skills/performance_benc
 the ramp in `performance_benchmark/` talks to real agents over WebRTC with the router's `mock/*`
 providers, so it bills nothing and measures only the router.
 
+To make the router hold more agents for less, read the `loop_performance_bench` skill
+(`.claude/skills/loop_performance_bench/SKILL.md`): ten rounds of profiling, cutting API, SQL and
+Redis round trips, deploying to the benchmark cluster and recording agents held and $/voice-minute.
+
 ## Connectors
 
 To give an agent a provider's tools (GitHub, Linear, the Slack bot), read the `connectors`

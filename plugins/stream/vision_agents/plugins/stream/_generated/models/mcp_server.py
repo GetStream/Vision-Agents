@@ -26,7 +26,8 @@ class McpServer:
         Attributes:
             name (str): What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog
                 plugin's id.
-            url (str): Its Streamable HTTP endpoint, over https.
+            url (str): Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local
+                address, or one that does not resolve, is refused: the router reaches only public addresses.
             branding (McpServerBranding | Unset): The serverInfo an MCP server answers initialize with. Every field is
                 optional, and a server that sends only its name and version is titled by its name.
             needs_login (bool | Unset): Whether the server requires an OAuth login, as it said when the config was saved:

@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // How the decision writer behaves under load. A call makes several judgements a second,
@@ -21,30 +21,31 @@ const (
 	decisionWriteTimout = 5 * time.Second
 )
 
-// decisionRecorder writes the conversation's reasoning to Postgres off the call's path.
+// decisionRecorder keeps the conversation's reasoning in Redis for the hour somebody may
+// read the call back in, off the call's path.
 //
 // It batches, because a judgement is small and frequent and a round trip each would leave
 // the writer permanently behind. It drops rather than blocks, because an account of a call
-// is worth less than the call: a database having a bad minute must cost somebody some
-// detail in a dashboard and nobody a conversation.
+// is worth less than the call: Redis having a bad minute must cost somebody some detail in
+// a dashboard and nobody a conversation.
 type decisionRecorder struct {
-	store  *store.Store
+	live   *live.Client
 	owner  routing.Owner
 	logger *slog.Logger
 
-	queue chan store.CallEvent
+	queue chan live.CallEvent
 	done  chan struct{}
 
 	closeOnce sync.Once
 	dropped   atomic.Int64
 }
 
-func newDecisionRecorder(pgStore *store.Store, owner routing.Owner, logger *slog.Logger) *decisionRecorder {
+func newDecisionRecorder(liveClient *live.Client, owner routing.Owner, logger *slog.Logger) *decisionRecorder {
 	r := &decisionRecorder{
-		store:  pgStore,
+		live:   liveClient,
 		owner:  owner,
 		logger: logger,
-		queue:  make(chan store.CallEvent, decisionQueueSize),
+		queue:  make(chan live.CallEvent, decisionQueueSize),
 		done:   make(chan struct{}),
 	}
 	go r.run()
@@ -58,7 +59,7 @@ func (r *decisionRecorder) Record(decided Decided) {
 		at = time.Now()
 	}
 
-	row := store.CallEvent{
+	row := live.CallEvent{
 		CustomerID:  r.owner.CustomerID,
 		CallID:      r.owner.CallID,
 		AgentID:     r.owner.AgentID,
@@ -97,7 +98,7 @@ func (r *decisionRecorder) run() {
 	ticker := time.NewTicker(decisionFlushEvery)
 	defer ticker.Stop()
 
-	batch := make([]store.CallEvent, 0, decisionBatchSize)
+	batch := make([]live.CallEvent, 0, decisionBatchSize)
 	for {
 		select {
 		case row, open := <-r.queue:
@@ -120,14 +121,14 @@ func (r *decisionRecorder) run() {
 	}
 }
 
-func (r *decisionRecorder) write(batch []store.CallEvent) {
+func (r *decisionRecorder) write(batch []live.CallEvent) {
 	if len(batch) == 0 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), decisionWriteTimout)
 	defer cancel()
 
-	if err := r.store.RecordCallEvents(ctx, batch); err != nil {
+	if err := r.live.RecordCallEvents(ctx, batch); err != nil {
 		r.logger.Error("could not record what the conversation decided", "error", err)
 	}
 }

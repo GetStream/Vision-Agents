@@ -4,6 +4,7 @@ from enum import StrEnum
 class ConnectionValidationStatus(StrEnum):
     CONNECTED = "connected"
     FAILED = "failed"
+    NEEDS_REAPPROVAL = "needs_reapproval"
     NEEDS_REAUTHORIZATION = "needs_reauthorization"
     NEEDS_SCOPES = "needs_scopes"
     PENDING = "pending"

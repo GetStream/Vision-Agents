@@ -340,8 +340,8 @@ type Agent struct {
 	// turns measures each exchange end to end and, when a store is configured, records it.
 	turns     *turnTracker
 	turnStore *turnRecorder
-	// decisionStore keeps what the conversation decided, so a call can be read back after
-	// the process that held it is gone.
+	// decisionStore keeps what the conversation decided for an hour, so a call can be read
+	// back after the process that held it is gone.
 	decisionStore *decisionRecorder
 	// memory carries what earlier conversations established into this one.
 	memory *memoryWriter
@@ -691,13 +691,14 @@ func New(options Options) (*Agent, error) {
 
 	// Turns are keyed by agent id and decisions by call id, so an agent missing either is
 	// still measured and still reports itself, it is just not kept. Neither is kept for an
-	// incognito session: a decision holds what was heard, and a turn names the agent.
-	if options.Store != nil && options.AgentID != "" && !options.Incognito {
-		agent.turnStore = newTurnRecorder(options.Store, owner, logger)
+	// incognito session: a decision holds what was heard, and a turn names the agent. Both
+	// are kept in Redis; a turn's counts also go to Postgres for the stats.
+	if (options.Store != nil || options.Live != nil) && options.AgentID != "" && !options.Incognito {
+		agent.turnStore = newTurnRecorder(options.Store, options.Live, owner, logger)
 	}
 	var record func(Decided)
-	if options.Store != nil && options.CallID != "" && !options.Incognito {
-		agent.decisionStore = newDecisionRecorder(options.Store, owner, logger)
+	if options.Live != nil && options.CallID != "" && !options.Incognito {
+		agent.decisionStore = newDecisionRecorder(options.Live, owner, logger)
 		record = agent.decisionStore.Record
 	}
 	agent.converse = newConverse(settling, listening, emitter, record, 0, logger)

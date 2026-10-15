@@ -1277,8 +1277,8 @@ a lookup on the answering path has to be fast.
 answers what is happening now and nothing at all about last Tuesday. A `calls` row is
 written when the agent joins and again when it leaves, both off the conversation's path.
 What was said is not copied into Postgres: the transcript is already in Stream Chat, keyed
-by agent, and the timings are already in `turns`. The timeline endpoint is those two
-joined. When the call ends, a short model pass over the conversation writes a summary and
+by agent, and the timings are kept in Redis for an hour. The timeline endpoint is those two
+joined, so it shows a call's turns only while they are that recent. When the call ends, a short model pass over the conversation writes a summary and
 a score from one to five onto the row, billed through the LLM router like anything else.
 
 **Campaigns are the outbound half.** A campaign is one agent, one of the customer's
@@ -1327,8 +1327,8 @@ offered custom voices and the router routes around it for calls that want one.
 | `requests`                               | Unit of work: a turn, a synthesis, a completion, a memory call, a number bought |
 | `stats_hourly`, `stats_daily`            | Bucket, modality, customer, provider and model      |
 | `stats_tags_hourly`, `stats_tags_daily`  | Bucket, modality, customer and one cost label       |
-| `turns`                                  | Exchange in a conversation, measured leg by leg     |
-| `turn_stats_hourly`, `turn_stats_daily`  | Bucket, customer and agent, with per-leg percentiles |
+| `turn_stats_hourly`                      | Hour, customer and agent: turns, interruptions, audio |
+| `turn_latency_hourly`                    | Hour, customer, agent, leg and latency bin           |
 | `phone_numbers`                          | Number held, kept after release because it was billed |
 | `agent_configs`, `skills`                | Named agent, and a kind of work worth delegating    |
 | `calls`                                  | Conversation that happened, with its summary and score |
@@ -1350,8 +1350,11 @@ the caller felt: the gap between finishing a sentence and hearing the answer sta
 spans three providers and the agent's own handling. Every leg is nullable, because a
 realtime model that hears and speaks for itself fills only `roundtrip_ms`, and an interrupted
 turn never reaches the legs that come after the interruption. A leg that never happened is
-left out of the percentiles rather than counted as instant. `GET /v1/turns/stats` reports
-them.
+left out of the percentiles rather than counted as instant. A turn itself, and every decision
+the conversation made, is kept in Redis for an hour and then let go; what lasts is each hour's
+counts and a histogram of each leg in bins 5% apart, added to as each turn finishes, so
+`GET /v1/turns/stats` reports percentiles within 5% of the true ones and a day is its hours
+added up.
 
 For a single call, `GET /v1/agents/calls/{id}/timeline` shows cadence settling, the
 decision before the reply model, first reply text, TTS submission and first audio at the

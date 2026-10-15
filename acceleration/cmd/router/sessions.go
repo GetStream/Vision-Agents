@@ -67,6 +67,7 @@ func transcriptFor(timings bool) session.TranscriptFactory {
 			AgentID: spec.AgentID,
 			// The same reading the session's episode card names (Spec.TranscriptChannel).
 			Channel:      spec.ConversationChannel(),
+			Opened:       spec.PersistConversation,
 			CustomerID:   spec.CustomerID,
 			Agent:        chatlog.User{ID: spec.UserID, Name: spec.UserName},
 			VisibleTools: spec.VisibleTools,
