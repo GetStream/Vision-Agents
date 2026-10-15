@@ -71,3 +71,19 @@ func (s *ProxyTargetSuite) TestSlackBotTakesDirectCallsToTheWebAPI() {
 	s.Require().NoError(err)
 	s.Equal("https://slack.com/api/chat.postMessage", target.String())
 }
+
+// TestGitHubTakesDirectCallsToTheRESTAPI: revision 4 of the built-in github has an api_base
+// (AI-1308), so a call to repos/octo/hello/issues goes to GitHub's REST API.
+func (s *ProxyTargetSuite) TestGitHubTakesDirectCallsToTheRESTAPI() {
+	raw, err := fs.ReadFile(providers.FS, "github.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
+
+	base, found := manifest.Endpoints[proxyBase]
+
+	s.Require().True(found, "github has no %s", proxyBase)
+	target, err := proxyTarget(base, "repos/octo/hello/issues", "")
+	s.Require().NoError(err)
+	s.Equal("https://api.github.com/repos/octo/hello/issues", target.String())
+}

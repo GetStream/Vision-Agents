@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -24,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
@@ -42,6 +44,10 @@ const (
 	// with stalledEnd.
 	echoStallHeader = "X-Echo-Stall"
 )
+
+// gitHubAPI is the host of the built-in github's api_base (providers/github.yaml), which the
+// suite's transport dials at the echo.
+const gitHubAPI = "api.github.com:443"
 
 // echoNotFoundPath is the provider path the echo answers with a 404, for a call that must
 // forward no header but plainHeaders and no query (the proxy forwards both).
@@ -83,6 +89,8 @@ type ConnectionProxySuite struct {
 	logged *lockedLog
 	// stalls are the channels a stalled answer waits on, by its echoStallHeader.
 	stalls sync.Map
+	// hosts is the Host each path reached the echo with, by its escaped path.
+	hosts sync.Map
 }
 
 func TestConnectionProxySuite(t *testing.T) {
@@ -102,6 +110,17 @@ func (s *ConnectionProxySuite) SetupSuite() {
 	roots := transport.TLSClientConfig.RootCAs.Clone()
 	roots.AddCert(s.echo.Certificate())
 	transport.TLSClientConfig.RootCAs = roots
+	// GitHub's API host is the echo, so a built-in github connection's call stays on loopback.
+	// The echo's certificate is net/http's test one, issued for example.com and the loopback
+	// addresses (net/http/internal/testcert), as the fake's is, so both are checked as that name.
+	dialer := &net.Dialer{}
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address == gitHubAPI {
+			address = s.echo.Listener.Addr().String()
+		}
+		return dialer.DialContext(ctx, network, address)
+	}
+	transport.TLSClientConfig.ServerName = "example.com"
 	s.connectorHTTP = &http.Client{Transport: transport}
 	// The router's default cap, as a deployment that sets none runs (AI-958). Every test but
 	// the cap's own stays under it, so each asserts what base answered.
@@ -109,6 +128,7 @@ func (s *ConnectionProxySuite) SetupSuite() {
 	s.logged = &lockedLog{}
 	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
 
 // TestCallsUpToTheDefaultCapAllReachTheProvider: the default cap's worth of calls on one
@@ -489,6 +509,27 @@ func (s *ConnectionProxySuite) TestAPathCannotNameAnotherHost() {
 	}
 }
 
+// TestAGitHubConnectionsDirectCallGoesToGitHubsRESTAPI: the built-in github has an api_base
+// (revision 4, AI-1308), so a backend's call through a github connection reaches
+// api.github.com under the path it named, with the connection's token. A caller that sends no
+// User-Agent still sends one to GitHub, which refuses a request without it.
+func (s *ConnectionProxySuite) TestAGitHubConnectionsDirectCallGoesToGitHubsRESTAPI() {
+	token := "token-" + s.utils.uuid()
+	id := s.connectedWithToken("github", token)
+
+	// An empty User-Agent makes Go's client send none to the router.
+	status, answer := s.send(s.serverClient, http.MethodGet, proxy(id, "repos/octo/hello/issues"), "",
+		http.Header{"User-Agent": {""}})
+
+	s.Require().Equal(http.StatusOK, status, string(answer))
+	got := s.echoed(answer)
+	s.Equal("/repos/octo/hello/issues", got.Path)
+	host, _ := s.hosts.Load(got.Path)
+	s.Equal("api.github.com", host)
+	s.True(got.Header.Get("Authorization") == "Bearer "+token, "GitHub got the connection's token")
+	s.NotEmpty(got.Header.Get("User-Agent"))
+}
+
 func (s *ConnectionProxySuite) TestAConnectorWithoutAnAPIBaseTakesNoDirectCalls() {
 	id := s.connected(s.connectorWithout(), bearer.Name)
 
@@ -627,6 +668,7 @@ func (s *ConnectionProxySuite) proxyCalls(id string) []ConnectorAuditEvent {
 // Retry-After the test asked for, or with rawAnswer when asked.
 func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	s.hits.Add(1)
+	s.hosts.Store(r.URL.EscapedPath(), r.Host)
 	if key := r.Header.Get(echoStallHeader); key != "" {
 		release, _ := s.stalls.Load(key)
 		w.WriteHeader(http.StatusBadGateway)
