@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
@@ -54,6 +55,9 @@ type dispatcher struct {
 	stepUps *stepUps
 	// limiter holds calls after a provider's 429 (Connectors.Limiter); nil limits nothing.
 	limiter *core.Limiter
+	// logger is the session's (Manager.logger): a call that failed or was refused says so on
+	// it (record).
+	logger *slog.Logger
 }
 
 // route is what one offered name was opened for.
@@ -94,19 +98,37 @@ func (d *dispatcher) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 	}
 	started := time.Now()
 	if err := d.recheck(ctx, found); err != nil {
-		d.record(found, call, started, store.InvocationDenied)
+		d.record(found, call, started, failure{kind: store.InvocationDenied}, err)
 		return nil, err
 	}
-	parts, failure, err := d.call(ctx, found, call)
-	d.record(found, call, started, failure)
+	parts, how, err := d.call(ctx, found, call)
+	d.record(found, call, started, how, err)
 	return parts, err
 }
 
-// record queues the row of one call that started at started and ended now, as failure says.
+// failure is how a call failed, for its row and its log line (record).
+type failure struct {
+	// kind is one of the store.Invocation* values, empty when the call answered.
+	kind string
+	// status is the provider's HTTP status for the call's last answered request
+	// (core.Exchange.Status), 0 when none was answered.
+	status int
+}
+
+// record queues the row of one call that started at started and ended now, as how says.
 // The row names the binding, the connection and the tool, and the shape of call's arguments
 // (argumentShape), never what the call was asked or answered. An incognito session's names no
 // session and keeps no shape: the lengths come from the conversation.
-func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, failure string) {
+//
+// A call that failed or was refused also leaves one Warn line, "connector call failed", on the
+// session's logger: the row's names and id, the provider's HTTP status, and what the provider
+// or the refusal said (providerMessage of err, the error the call returned). A call the model
+// reads connector_rate_limited, outcome_unknown or a step-up of returned no error, so its line
+// has no message. An incognito session's line carries the message like any other's, by the
+// owner's decision (AI-1242, 2026-10-14), but names no session, as its row does (Spec.Incognito).
+// A call that answered logs nothing. The id is given here rather than by the store, so the line
+// names the row it wrote.
+func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how failure, err error) {
 	sessionID := d.spec.ID
 	var arguments []store.ArgumentShape
 	if d.spec.Incognito {
@@ -114,12 +136,21 @@ func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, failu
 	} else {
 		arguments = argumentShape(call.Arguments, r.declared)
 	}
-	d.invocations.Record(store.ConnectorInvocation{
+	row := store.ConnectorInvocation{
+		ID:         store.NewID(),
 		CustomerID: r.connection.CustomerID, ConnectionID: r.connection.ID, ConnectorID: r.binding.ConnectorID,
 		ConfigID: d.spec.ConfigID, Binding: r.binding.Name, Tool: r.tool, SessionID: sessionID,
-		StartedAt: started, LatencyMs: time.Since(started).Milliseconds(), ErrorType: failure,
+		StartedAt: started, LatencyMs: time.Since(started).Milliseconds(), ErrorType: how.kind,
 		Arguments: arguments,
-	})
+	}
+	d.invocations.Record(row)
+	if how.kind == "" {
+		return
+	}
+	d.logger.Warn("connector call failed", "customer", row.CustomerID, "connection", row.ConnectionID,
+		"connector", row.ConnectorID, "binding", row.Binding, "tool", row.Tool, "session", row.SessionID,
+		"invocation", row.ID, "error_type", row.ErrorType, "latency_ms", row.LatencyMs,
+		"provider_status", how.status, "provider_message", providerMessage(err))
 }
 
 // argumentShape is each top-level argument of a call's arguments with its JSON type and, for a
@@ -236,9 +267,9 @@ func (d *dispatcher) Close() {
 // holds: the Retry-After, at most core.MaxBlock. The router never sends the call again by
 // itself (Kanat, 2026-10-07, D8).
 //
-// It also says how the call failed, for its row: empty when it answered, else one of the
-// store.Invocation* values.
-func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, string, error) {
+// It also says how the call failed, for its row and its log line: no kind when it answered,
+// else one of the store.Invocation* values.
+func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, failure, error) {
 	policy := r.binding.Policy
 	switch {
 	case policy == nil || policy.OnInterrupt != store.InterruptWait && (policy.Cancellable == nil || *policy.Cancellable):
@@ -247,30 +278,30 @@ func (d *dispatcher) call(ctx context.Context, r route, call llm.ToolCall) ([]ll
 		return d.send(context.WithoutCancel(ctx), r, call)
 	}
 	type answer struct {
-		parts   []llm.ContentPart
-		failure string
-		err     error
+		parts []llm.ContentPart
+		how   failure
+		err   error
 	}
 	answered := make(chan answer, 1)
 	go func() {
-		parts, failure, err := d.send(context.WithoutCancel(ctx), r, call)
-		answered <- answer{parts, failure, err}
+		parts, how, err := d.send(context.WithoutCancel(ctx), r, call)
+		answered <- answer{parts, how, err}
 	}()
 	select {
 	case got := <-answered:
-		return got.parts, got.failure, got.err
+		return got.parts, got.how, got.err
 	case <-ctx.Done():
 		// The call goes on, so whether the provider does what was asked is unknown here.
-		return nil, store.InvocationOutcomeUnknown, stack.Wrap(fmt.Errorf(
+		return nil, failure{kind: store.InvocationOutcomeUnknown}, stack.Wrap(fmt.Errorf(
 			"session: %s was left running at the provider: %w", call.Name, ctx.Err()))
 	}
 }
 
 // send runs one tool inside the provider's rate limit, the binding's timeout and the result
 // cap, cancelled with ctx.
-func (d *dispatcher) send(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, string, error) {
+func (d *dispatcher) send(ctx context.Context, r route, call llm.ToolCall) ([]llm.ContentPart, failure, error) {
 	if wait := d.limiter.Wait(ctx, r.limit); wait > 0 {
-		return llm.TextParts(rateLimited(call.Name, wait)), store.InvocationDenied, nil
+		return llm.TextParts(rateLimited(call.Name, wait)), failure{kind: store.InvocationDenied}, nil
 	}
 	bounded, cancel := context.WithTimeout(d.correlated(ctx), r.timeout)
 	defer cancel()
@@ -278,7 +309,7 @@ func (d *dispatcher) send(ctx context.Context, r route, call llm.ToolCall) ([]ll
 	result, err := r.toolset.Call(observed, call)
 	if err != nil {
 		if ctx.Err() == nil && errors.Is(bounded.Err(), context.DeadlineExceeded) {
-			return llm.TextParts(outcomeUnknown(call.Name)), store.InvocationOutcomeUnknown, nil
+			return llm.TextParts(outcomeUnknown(call.Name)), failure{kind: store.InvocationOutcomeUnknown, status: exchange.Status()}, nil
 		}
 		if held := d.limiter.Block(ctx, r.limit, exchange.RetryAfter()); held > 0 {
 			return llm.TextParts(rateLimited(call.Name, held)), failed(ctx, exchange), nil
@@ -292,14 +323,15 @@ func (d *dispatcher) send(ctx context.Context, r route, call llm.ToolCall) ([]ll
 	}
 	// A source cuts its own results; the cap holds whichever source answered.
 	if text := llm.TextOf(result.Parts); len(text) > core.MaxResultBytes {
-		return llm.TextParts(core.CutResult(text)), "", nil
+		return llm.TextParts(core.CutResult(text)), failure{}, nil
 	}
-	return result.Parts, "", nil
+	return result.Parts, failure{}, nil
 }
 
 // failed is how a call that failed before the binding's deadline failed, from what its
 // requests saw (core.Exchange): a tool source's error does not say whether anything was sent,
-// and the MCP client reports a 401 only as the words of its status.
+// and the MCP client reports a 401 only as the words of its status. The status goes with it,
+// for the call's log line.
 //
 //	the connection has no credential to give (resolver.ErrNotConnected), or
 //	  the provider answered 401 or 403                      customer_auth
@@ -313,8 +345,14 @@ func (d *dispatcher) send(ctx context.Context, r route, call llm.ToolCall) ([]ll
 //
 // Example: an MCP tool that answers isError, or a 502, is external_server; a connection whose
 // refresh token the provider revoked is customer_auth.
-func failed(turn context.Context, seen *core.Exchange) string {
-	credential, status := seen.CredentialError(), seen.Status()
+func failed(turn context.Context, seen *core.Exchange) failure {
+	status := seen.Status()
+	return failure{kind: failedAs(turn, seen, status), status: status}
+}
+
+// failedAs is the kind of failed.
+func failedAs(turn context.Context, seen *core.Exchange, status int) string {
+	credential := seen.CredentialError()
 	switch {
 	case errors.Is(credential, resolver.ErrNotConnected) || status == http.StatusUnauthorized || status == http.StatusForbidden:
 		return store.InvocationCustomerAuth
