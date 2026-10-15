@@ -612,6 +612,12 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### Listing connections without `owner_type` lists the app's own
+
+`GET /v1/agents/connections` takes `owner_type` as optional. Left out, it lists the app's own
+connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` still
+needs `X-Stream-User-Id`. In Go, `ListConnectionsParams.OwnerType` is now a pointer.
+
 ### Each app sets its own daily limit per end user
 
 An app sets what one of its end users may spend in a UTC day as `quota` in its policy,
