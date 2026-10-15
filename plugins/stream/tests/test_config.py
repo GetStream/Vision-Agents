@@ -605,7 +605,28 @@ class TestSyncAgent:
             "cpu": 0,
             "memory_gb": 4,
             "disk_gb": 0,
+            "network": False,
+            "allowed_domains": [],
+            "network_allow_list": [],
         }
+
+    async def test_a_declaration_says_what_its_sandbox_may_reach(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nsandbox: daytona\nsandbox_options:\n"
+            "  network: true\n  allowed_domains: [api.example.com]\n"
+            "  network_allow_list: [10.0.0.0/8]\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        options = router.configs[result.config.id]["sandbox_options"]
+        assert options["network"] is True
+        assert options["allowed_domains"] == ["api.example.com"]
+        assert options["network_allow_list"] == ["10.0.0.0/8"]
 
     async def test_the_mcp_servers_named_by_url_are_sent(
         self, router: Router, support_dir
