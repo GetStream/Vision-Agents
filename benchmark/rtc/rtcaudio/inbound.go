@@ -14,6 +14,10 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/rtc/transport"
 )
 
+// soxrCreate serialises building a resampler: soxr_create is not safe to call from two
+// threads at once, and dozens of callers joining together segfault in it.
+var soxrCreate sync.Mutex
+
 // Inbound decodes remote opus tracks into 20 ms PCM frames the caller can read. Both the
 // Stream and the LiveKit transport share it; only how they discover tracks differs.
 type Inbound struct {
@@ -35,10 +39,12 @@ func NewInbound() *Inbound {
 
 // Track decodes one remote audio track, replacing any earlier decoder for the same track.
 func (i *Inbound) Track(track *webrtc.TrackRemote) error {
+	soxrCreate.Lock()
 	decoder, err := lkmedia.NewPCMRemoteTrack(track, &listener{inbound: i},
 		lkmedia.WithTargetSampleRate(audio.Rate),
 		lkmedia.WithTargetChannels(1),
 	)
+	soxrCreate.Unlock()
 	if err != nil {
 		return fmt.Errorf("rtcaudio: decode remote audio: %w", err)
 	}
