@@ -510,6 +510,36 @@ async fn what_a_directory_leaves_to_dispatch_is_synced_as_written() {
 }
 
 #[tokio::test]
+async fn how_the_sandbox_is_built_and_what_it_may_reach_is_synced_as_written() {
+    let server = Server::start().await;
+    synced(&server);
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "agent.yaml",
+        "name: jean\nsandbox: daytona\nsandbox_options:\n  setup: [pip install bpy==5.2.2]\n  timeout: 5m\n  memory_gb: 4\n  network: true\n  allowed_domains: [api.example.com]\n  network_allow_list: [10.0.0.0/8]\n",
+    );
+    let agent = Agent::from_folder(root.path())
+        .unwrap()
+        .client(server.client());
+
+    agent.sync().await.unwrap();
+
+    let body = server.request(Method::POST, "/v1/agents/sync").body;
+    assert_eq!(
+        body["sandbox_options"],
+        json!({
+            "setup": ["pip install bpy==5.2.2"],
+            "timeout_ms": 300000,
+            "memory_gb": 4,
+            "network": true,
+            "allowed_domains": ["api.example.com"],
+            "network_allow_list": ["10.0.0.0/8"],
+        })
+    );
+}
+
+#[tokio::test]
 async fn a_directorys_simulations_and_page_schedules_are_synced_as_declared() {
     let server = Server::start().await;
     synced(&server);
