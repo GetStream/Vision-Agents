@@ -628,6 +628,20 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` still
 needs `X-Stream-User-Id`.
 
+### Approve a connection's changed tools again
+
+`POST /v1/agents/connections/{id}/tools/approve` (`approveConnectionTools`) takes
+`{"tools": [{"name", "schema_digest"}]}` and pins each tool at that digest for the connection's
+current grant, so the next session offers it again and the next validate answers `connected`
+when no other tool changed (AI-1305). It is the way out of `needs_reapproval` for a bearer or
+`api_key` connection, which no consent moves to a new grant. Each `schema_digest` must be the
+one `GET .../tools` lists now, which a validate refreshes: a tool it does not list is a 400, one
+listed at another digest a 409. A pin or grant that changed since it was read is a 409 too, and
+a refused approve writes nothing. Each approve is one audit row, the new `ConnectorAuditAction`
+`tool_reapproved`, whose new `tools` field names each tool with the digest approved and the one
+it was pinned at. Server-side only; who may approve is who may read the connection. Migration
+`20261101130000` widens the CHECK on `connector_audit.action` and adds `connector_audit.tools`.
+
 ### Validate says when a provider changed a tool sessions pinned
 
 `POST /v1/agents/connections/{id}/validate` now compares the tools the provider lists with the
@@ -637,7 +651,8 @@ first time it offers a tool granted by name or by pattern. A tool listed at anot
 `code: connector_tool_schema_changed` and the tools in `changed_tools`, sorted; the connection's
 `last_validation` keeps the status, the code and an error naming them. It used to answer
 `connected` while sessions left the tool out. Sessions still leave it out, and a validate never
-pins it again: a new grant (a consent) approves it. A pinned tool the provider no longer lists
+pins it again: `POST /v1/agents/connections/{id}/tools/approve` approves it, as does a
+reconnect of an OAuth connection, which begins a new grant. A pinned tool the provider no longer lists
 is not reported. A grant lacking scopes is still `needs_scopes`, since the consent it asks for
 approves the changed tools too. A connection with no changed tool answers as before.
 
