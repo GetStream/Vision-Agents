@@ -16,4 +16,7 @@ jobs:
       marker: 'integration'
       pytest-params: "--json-report --json-report-file=.report.json"
       notify-on-failure: true
+      # A schedule only fires on the default branch, so it tests accelerate, where the
+      # work happens; Run workflow on any other branch tests that branch.
+      ref: ${{ github.ref_name == github.event.repository.default_branch && 'accelerate' || '' }}
     secrets: inherit

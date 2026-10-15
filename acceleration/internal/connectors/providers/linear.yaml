@@ -33,6 +33,8 @@ endpoints:
   # not [oauth]'s (https://api.linear.app/oauth/token). [mcp], opened 2026-10-15, says that a
   # client that requests read gets a token that «can't reach write APIs», and names no other
   # API the token reaches. Add api_base once a Linear page says the GraphQL API accepts it.
+  # For direct calls, use linear_app (AI-1351): the customer's own Linear OAuth app, whose
+  # token Linear documents for both the GraphQL API and the MCP server.
 # Authorization code with PKCE: row 1 («Auth code + PKCE (Slack, Linear)»); [proto]:72.
 schemes: [oauth2_code]
 client:
