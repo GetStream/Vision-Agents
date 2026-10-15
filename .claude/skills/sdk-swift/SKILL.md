@@ -32,7 +32,7 @@ That is the price of one artifact; do not split it back up without being asked.
   (4.x's `ChatClient` is not `Sendable`, and 5.0 to 5.2 fail inside `stream-core-swift`).
 - Core builds with Xcode 26 and 27. `StreamChatAI` needs Xcode 27 to add with SPM, and
   `stream-video-swift` is required from 1.54.0, since 1.51.0's `StreamVideoSwiftUI` does not
-  compile under Xcode 27. `flower_spotter` uses both and builds.
+  compile under Xcode 27. `swift_demo` uses `StreamChatAI` and builds.
 - Declare `platforms:`. An unspecified platform makes consumers discover availability
   failures inside generated code.
 
@@ -244,8 +244,8 @@ server-side only and not here.
 ## Views
 
 Core has none. An app shows a conversation with Stream Chat's AI components (`StreamChatAI`),
-and the demos (`examples/voice_agents/swift_demo`, `examples/video_agents/flower_spotter`) are
-where that composition lives and is kept working. What the router writes is what they render:
+and the demo (`examples/voice_agents/swift_demo`) is where that composition lives and is kept
+working. What the router writes is what it renders:
 
 - A text session's reply is a message marked `ai_generated`, with `generating` true until done:
   `StreamingMessageView(content:isGenerating:)`.
@@ -292,11 +292,10 @@ vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 18 Pro'`, wi
 and `_SECRET` for the keyed posture checks.
 
 CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on the `xcode-27` runner,
-on any change under `sdks/swift`, the two demos' apps or the spec. It builds
+on any change under `sdks/swift`, the demo's app or the spec. It builds
 `swift-openapi-generator` (cached), runs `generate.py` again and fails if the generated client
 differs from what is committed, runs the core tests on the first iPhone simulator the runner
-has, and builds
-`swift_demo` and `flower_spotter`.
+has, and builds `swift_demo`.
 
 Wait on a condition with a deadline, never `Task.sleep` for a fixed guess:
 

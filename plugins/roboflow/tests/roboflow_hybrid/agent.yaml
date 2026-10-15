@@ -1,4 +1,4 @@
-name: flower_spotter
+name: roboflow_hybrid
 description: A voice agent that looks through the caller's camera.
 llm: llm-fast
 subagent: vlm
