@@ -25,7 +25,7 @@ func (s *AgentSuite) providerTimeoutSettlesTheReply() {
 
 	s.eventually(func() bool { return s.spokenText(lostReply) }, "the timeout left the caller in silence")
 	s.eventually(func() bool { return !s.agent.Busy() }, "the timed-out reply still owns the floor")
-	s.Equal(1, countOf[Error](s.reported()))
+	s.eventually(func() bool { return countOf[Error](s.reported()) == 1 }, "the timeout was never reported")
 
 	s.model.mu.Lock()
 	s.model.refuses = nil
