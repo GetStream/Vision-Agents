@@ -2493,7 +2493,7 @@ pub struct ConnectionInvocationPage {
 pub struct ConnectionLastValidation {
     ///When the validate ran.
     pub checked_at: ::std::string::String,
-    ///The validate's code (connector_credential_rejected, connector_scope_required) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
+    ///The validate's code (connector_credential_rejected, connector_scope_required, connector_tool_schema_changed) when it had one. Otherwise, when the provider's last answer was an HTTP error, its status, such as 400 or 503. Absent when neither applies.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub code: ::std::option::Option<::std::string::String>,
     ///Why the status is not connected, for a person to read: the validate's error with every value the credential is sent as cut out, and cut at 1 KiB. A provider's own error text in it can still hold anything else the provider wrote.
@@ -2701,10 +2701,13 @@ pub struct ConnectionUse {
 ///Whether a connection's credential works, found by asking the provider for its tools.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ConnectionValidation {
+    ///With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub changed_tools: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     ///When the tools were listed. Absent until a validate listed them.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub checked_at: ::std::option::Option<::std::string::String>,
-    ///What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added.
+    ///What a program branches on when the status is not connected: connector_scope_required with needs_scopes; connector_tool_schema_changed with needs_reapproval; connector_credential_rejected with needs_reauthorization, for a bearer or api_key connection whose token or key the provider rejected, or that reads a connector revision marked broken, which only saving credentials (PUT .../credentials) fixes. More may be added.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub code: ::std::option::Option<::std::string::String>,
     pub connection_id: ::std::string::String,
@@ -2727,7 +2730,7 @@ pub struct ConnectionValidationRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tools: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
 }
-///connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. failed: the provider could not be reached or listed nothing usable; error says why.
+///connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and a new grant (a consent) approves them. failed: the provider could not be reached or listed nothing usable; error says why.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2749,6 +2752,8 @@ pub enum ConnectionValidationStatus {
     NeedsReauthorization,
     #[serde(rename = "needs_scopes")]
     NeedsScopes,
+    #[serde(rename = "needs_reapproval")]
+    NeedsReapproval,
     #[serde(rename = "failed")]
     Failed,
 }
@@ -2759,6 +2764,7 @@ impl ::std::fmt::Display for ConnectionValidationStatus {
             Self::Pending => f.write_str("pending"),
             Self::NeedsReauthorization => f.write_str("needs_reauthorization"),
             Self::NeedsScopes => f.write_str("needs_scopes"),
+            Self::NeedsReapproval => f.write_str("needs_reapproval"),
             Self::Failed => f.write_str("failed"),
         }
     }
@@ -2771,6 +2777,7 @@ impl ::std::str::FromStr for ConnectionValidationStatus {
             "pending" => Ok(Self::Pending),
             "needs_reauthorization" => Ok(Self::NeedsReauthorization),
             "needs_scopes" => Ok(Self::NeedsScopes),
+            "needs_reapproval" => Ok(Self::NeedsReapproval),
             "failed" => Ok(Self::Failed),
             _ => Err("invalid value".into()),
         }

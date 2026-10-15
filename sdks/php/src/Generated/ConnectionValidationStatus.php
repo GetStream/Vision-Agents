@@ -11,8 +11,11 @@ namespace GetStream\VisionAgents\Generated;
  * needs_reauthorization: the provider no longer takes the credential, so only a reconnect
  * helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes:
  * the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and
- * a consent that asks for them helps. failed: the provider could not be reached or listed
- * nothing usable; error says why.
+ * a consent that asks for them helps. needs_reapproval: the tools were listed, and the
+ * provider changed the schema of a tool sessions pinned for the connection's current grant, so
+ * sessions leave it out until it is approved again; changed_tools names them, and a new grant
+ * (a consent) approves them. failed: the provider could not be reached or listed nothing
+ * usable; error says why.
  */
 enum ConnectionValidationStatus: string
 {
@@ -20,5 +23,6 @@ enum ConnectionValidationStatus: string
     case Pending = 'pending';
     case NeedsReauthorization = 'needs_reauthorization';
     case NeedsScopes = 'needs_scopes';
+    case NeedsReapproval = 'needs_reapproval';
     case Failed = 'failed';
 }
