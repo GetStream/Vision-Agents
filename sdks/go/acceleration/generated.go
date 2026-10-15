@@ -2513,10 +2513,10 @@ type AgentConfig struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
-	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 	Skills         *[]string       `json:"skills,omitempty"`
@@ -2579,10 +2579,10 @@ type AgentConfigPatch struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
-	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 	Skills         *[]string       `json:"skills,omitempty"`
@@ -2653,10 +2653,10 @@ type AgentConfigRequest struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
-	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 
 	// Search What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
@@ -5920,11 +5920,14 @@ type RouterConfigRequest struct {
 	Tts *TtsOptions `json:"tts,omitempty"`
 }
 
-// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 type Sandbox string
 
-// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 type SandboxOptions struct {
+	// AllowedDomains Domains code in the sandbox may reach, such as api.example.com. Set, nothing else is reachable, even with network on. Not with network_allow_list.
+	AllowedDomains *[]string `json:"allowed_domains,omitempty"`
+
 	// Cpu CPUs for the sandbox. Zero is the provider's default.
 	Cpu *int64 `json:"cpu,omitempty"`
 
@@ -5936,6 +5939,12 @@ type SandboxOptions struct {
 
 	// MemoryGb Memory for the sandbox, in GiB. Zero is the provider's default.
 	MemoryGb *int64 `json:"memory_gb,omitempty"`
+
+	// Network Whether code in the sandbox may reach the internet. Off by default, and then every outbound connection is blocked unless allowed_domains or network_allow_list names where it may go.
+	Network *bool `json:"network,omitempty"`
+
+	// NetworkAllowList CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set, nothing else is reachable, even with network on. Not with allowed_domains.
+	NetworkAllowList *[]string `json:"network_allow_list,omitempty"`
 
 	// Setup Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it.
 	Setup *[]string `json:"setup,omitempty"`
@@ -6938,10 +6947,10 @@ type SyncAgentRequest struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
-	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+	// SandboxOptions How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run.
 	SandboxOptions *SandboxOptions `json:"sandbox_options,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 

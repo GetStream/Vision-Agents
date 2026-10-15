@@ -847,12 +847,15 @@ tool instead.
 Subagent completions go through `llmrouter` like anything else, so what the thinking costs
 lands in `requests` with the same failover and cost tags as the talking.
 
-An agent whose config names a sandbox gives the subagent one tool, `run_code`, and the model
-holding the conversation none: running code takes seconds that a conversation does not
-have, and the subagent has already left the live path. Code the subagent writes runs in
-Daytona, its output comes back as a tool result, and the same task is put again, up to four
-rounds and always inside the skill's own deadline. One sandbox is created the first time
-code actually runs and released when the session ends.
+An agent whose config names a sandbox gives the subagent `run_code`, and on a call the model
+holding the conversation none: running code takes seconds that a call does not have, and the
+subagent has already left the live path. A text session has no subagent, so the model holding
+it is offered `run_code` itself (see [Conversations held in writing](#conversations-held-in-writing)). Code the subagent
+writes runs in Daytona, its output comes back as a tool result, and the same task is put
+again, up to four rounds and always inside the skill's own deadline. The subagent may also
+`lookup` and `search` when the agent has a knowledge base and a search target, knowledge base
+first. One sandbox is created the first time code actually runs and released when the session
+ends.
 
 `sandbox_options` on the config, or in `agent.yaml`, says how that sandbox is built and how
 long code may run in it: an `image` with Python to start from, `setup` commands run on top of
@@ -860,6 +863,12 @@ it once, `timeout_ms` for one run (30 seconds by default, at most 30 minutes), a
 `memory_gb` and `disk_gb`. Any of them builds an image, which Daytona keeps, so only the
 first sandbox from a given setup waits for the build. A run is still bounded by its skill's
 deadline, so a skill that renders for minutes says so in its own.
+
+Code in the sandbox reaches nothing outside it by default. `network: true` opens the
+internet, and `allowed_domains` or `network_allow_list` (CIDR ranges), one or the other,
+names the only places it may go, with or without `network`. These need no image of their own.
+Daytona organizations on tiers 1 and 2 cannot set either list per sandbox and refuse to create
+one that does; blocking everything, the default, works on every tier.
 
 `run_code` takes `files` as well as `code`: paths the program writes that the person should
 get, at most four of up to 20 MiB each. On a persistent text conversation each file is
@@ -990,8 +999,9 @@ and a documentation agent or a support chat is the voice agent with the voice le
 one difference is who runs a skill: nobody is waiting on a voice, so the model holding the
 conversation loads the skills its config names itself, with `load_skill`, and keeps every
 tool while it follows one. It takes answers from a matching skill first, then the knowledge
-base (`lookup`), then the web (`search`). A text agent with a sandbox still hands its skills
-to a subagent, since only a subagent runs code.
+base (`lookup`), then the web (`search`). A text agent with a sandbox runs code itself with
+`run_code`, a loaded skill's scripts written under `skills/<name>/` before it runs, and the
+files it hands back ride on `tool_ran` and the reply.
 
 It is driven over the session's own socket: `respond` goes in, `response_delta` and
 `responded` come back, along with `looked_up`, `tool_ran`, `delegated` and `task_settled` as

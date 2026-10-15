@@ -74,6 +74,10 @@ type Options struct {
 	// Publish puts the files the subagent's code hands back where the caller can see them.
 	// Nil means there is nowhere to, and the subagent is told so.
 	Publish sandbox.Publisher
+	// Lookup answers the subagent's question out of the knowledge base, and Search out of
+	// the web, each in words the model can read. Nil means the subagent is not offered it.
+	Lookup func(ctx context.Context, turnID, query string) (string, error)
+	Search func(ctx context.Context, turnID, query string) (string, error)
 	// Tasks caps how much delegated work may run at once.
 	Tasks int
 	// MaxTokens caps each reply. Zero leaves the model's own default in place.
@@ -219,6 +223,8 @@ func New(options Options) (*Harness, error) {
 		h.tasks.capture = options.Capture
 		h.tasks.load = options.Skills.Load
 		h.tasks.publish = options.Publish
+		h.tasks.lookup = options.Lookup
+		h.tasks.search = options.Search
 		if options.Subagent == nil {
 			h.tasks.open(options.OpenSubagent)
 		}

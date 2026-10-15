@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
 // The tools the agent knows how to run. A tool the model asks for by any other name is
@@ -218,7 +219,17 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	a.emitter.Send(started)
 	requested.Call.TurnID = requested.TurnID
 	hold := a.holdOnInterrupt(ctx, requested.Call)
-	parts, left, err := a.callTool(ctx, requested.Call)
+	var parts []llm.ContentPart
+	var files []sandbox.Attachment
+	var left bool
+	var err error
+	if requested.Call.Name == sandbox.ToolName && a.runsCode() {
+		var said string
+		said, files, err = a.runCode(ctx, requested.Call)
+		parts = llm.TextParts(said)
+	} else {
+		parts, left, err = a.callTool(ctx, requested.Call)
+	}
 	a.mu.Lock()
 	delete(a.toolsRunning, requested.Call.ID)
 	a.mu.Unlock()
@@ -241,6 +252,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		Tool:      requested.Call.Name,
 		Arguments: requested.Call.Arguments,
 		Result:    result,
+		Files:     files,
 		Err:       err,
 	})
 	// A native model is answered on its own session and carries on by itself; there is no
@@ -393,6 +405,9 @@ func (a *Agent) availableTools() harness.Tools {
 	if a.loadsSkills() {
 		available.Tools = append(available.Tools, a.options.Skills.LoadTool())
 	}
+	if a.runsCode() {
+		available.Tools = append(available.Tools, harness.SandboxTool())
+	}
 	return available
 }
 
@@ -432,10 +447,80 @@ func (a *Agent) loadSkill(ctx context.Context, call llm.ToolCall) (string, error
 	}
 	instructions := loaded.Instructions
 	if len(loaded.Files) > 0 {
-		instructions += "\n\n" + harness.Listing(name, slices.Sorted(maps.Keys(loaded.Files)), false)
+		instructions += "\n\n" + harness.Listing(name, slices.Sorted(maps.Keys(loaded.Files)), a.runsCode())
+		a.mu.Lock()
+		if a.skillFiles == nil {
+			a.skillFiles = map[string]map[string]string{}
+		}
+		a.skillFiles[name] = loaded.Files
+		a.mu.Unlock()
 	}
 	result, err := json.Marshal(map[string]string{"name": name, "instructions": instructions})
 	return string(result), err
+}
+
+// runsCode reports whether the model holding a written conversation runs code itself: it
+// has a sandbox and no subagent to hand code to. A tool of the caller's own by the same
+// name keeps the name.
+func (a *Agent) runsCode() bool {
+	if !a.options.Text || a.options.SubagentTarget != "" || a.options.Sandbox == nil {
+		return false
+	}
+	_, declared := a.options.Tools.Lookup(sandbox.ToolName)
+	return !declared
+}
+
+// runCode runs what the model wrote in the sandbox, with the scripts of every skill it has
+// loaded put there first, and says what happened. The files the code handed back are
+// published and returned for the reply to carry.
+//
+// Code that ran and failed is described rather than returned as an error: the model can
+// only do something sensible about it if it is told how it failed.
+func (a *Agent) runCode(ctx context.Context, call llm.ToolCall) (string, []sandbox.Attachment, error) {
+	var arguments struct {
+		Code  string   `json:"code"`
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
+		return "", nil, fmt.Errorf("agent: could not read the run_code arguments: %w", err)
+	}
+	if err := a.writeSkillFiles(ctx); err != nil {
+		return "", nil, fmt.Errorf("agent: could not put the skills' files in the sandbox: %w", err)
+	}
+	result, err := a.options.Sandbox.Run(ctx, arguments.Code, arguments.Files)
+	if err != nil {
+		return "", nil, fmt.Errorf("agent: could not run the code: %w", err)
+	}
+	said, files := harness.HandBack(ctx, a.options.Publish, result, a.logger)
+	return said, files, nil
+}
+
+// writeSkillFiles puts the files of each skill loaded so far that brought scripts into the
+// sandbox under skills/<name>/, unless they are already there as they now are.
+func (a *Agent) writeSkillFiles(ctx context.Context) error {
+	a.mu.Lock()
+	stale := map[string]map[string]string{}
+	for name, files := range a.skillFiles {
+		if len(harness.Scripts(slices.Collect(maps.Keys(files)))) > 0 && !maps.Equal(a.writtenFiles[name], files) {
+			stale[name] = files
+		}
+	}
+	a.mu.Unlock()
+	for _, name := range slices.Sorted(maps.Keys(stale)) {
+		files := stale[name]
+		for _, file := range slices.Sorted(maps.Keys(files)) {
+			if err := a.options.Sandbox.Write(ctx, harness.BundlePath(name, file), []byte(files[file])); err != nil {
+				return err
+			}
+		}
+		a.mu.Lock()
+		if a.writtenFiles == nil {
+			a.writtenFiles = map[string]map[string]string{}
+		}
+		a.writtenFiles[name] = files
+		a.mu.Unlock()
+	}
+	return nil
 }
 
 // Tools names what the agent may do rather than say on this call.

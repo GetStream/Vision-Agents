@@ -400,6 +400,10 @@ fn a_declaration_key_nobody_knows_is_refused() {
         "sandbox: docker\n",
         "dispatch:\n  sms: enabled\n",
         "dispatch:\n  text: on\n",
+        "sandbox_options:\n  memory: 4\n",
+        "sandbox_options:\n  timeout: 2h\n",
+        "sandbox_options:\n  cpu: two\n",
+        "sandbox_options:\n  network: maybe\n",
     ] {
         let (_temporary, root) = directory("jean");
         write(&root, "agent.yaml", declaration);

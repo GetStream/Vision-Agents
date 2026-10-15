@@ -12,6 +12,8 @@ from vision_agents.plugins import roboflow
 from vision_agents.plugins import stream as acceleration
 from vision_agents.plugins.roboflow.roboflow_streaming_processor import ManualSource
 
+AGENT_DIR = Path(__file__).parent / "roboflow_hybrid"
+
 
 def _cat_video(assets_dir: Path, dest: Path) -> Path:
     subprocess.run(
@@ -48,10 +50,10 @@ def _cat_video(assets_dir: Path, dest: Path) -> Path:
 @pytest.mark.skipif(not os.getenv("STREAM_API_KEY"), reason="STREAM_API_KEY not set")
 class TestHybridVideoWorkerLive:
     async def test_get_video_state_round_trip(self, assets_dir, tmp_path):
-        await acceleration.sync_agent("flower_spotter")
+        await acceleration.sync_agent(AGENT_DIR.name, path=str(AGENT_DIR))
         processor = roboflow.RoboflowStreamingProcessor(model_id="rfdetr-nano", fps=1)
         agent = Agent(
-            config="flower_spotter",
+            config=AGENT_DIR.name,
             processors=[processor],
             agent_user=User(name="hybrid-worker", id="hybrid-worker"),
         )
@@ -108,10 +110,10 @@ class TestHybridVideoWorkerLive:
         )
 
     async def test_delegated_vision_round_trip(self, assets_dir, tmp_path):
-        await acceleration.sync_agent("flower_spotter")
+        await acceleration.sync_agent(AGENT_DIR.name, path=str(AGENT_DIR))
         processor = roboflow.RoboflowStreamingProcessor(model_id="rfdetr-nano", fps=1)
         agent = Agent(
-            config="flower_spotter",
+            config=AGENT_DIR.name,
             processors=[processor],
             agent_user=User(name="hybrid-frame", id="hybrid-frame"),
         )

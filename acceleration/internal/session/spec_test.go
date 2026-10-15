@@ -357,13 +357,23 @@ func (s *SpecSuite) TestATextSessionHasNoSubagent() {
 	s.Equal("llm-fast", spec.reviewTarget(), "it is still reviewed on the model that held it")
 }
 
-func (s *SpecSuite) TestATextSessionWithASandboxThinksOnItsOwnModel() {
-	// Only a subagent is given the sandbox, so its skills are still handed over.
+func (s *SpecSuite) TestATextSessionWithASandboxStillHasNoSubagent() {
+	// Its model runs the code itself, keeping lookup and search beside run_code.
 	spec := Spec{CustomerID: "acme", Text: true, LLMTarget: "llm-fast", SubagentTarget: "llm-thinking", Sandbox: "daytona"}
 
 	s.Require().NoError(spec.Normalize())
 
-	s.Equal("llm-fast", spec.SubagentTarget)
+	s.Empty(spec.SubagentTarget)
+}
+
+func (s *SpecSuite) TestStoppingVoiceWithASandboxLeavesNoSubagent() {
+	spec := Spec{CustomerID: "acme", CallID: "call", LLMTarget: "llm-fast", SubagentTarget: "llm-thinking", Sandbox: "daytona"}
+	s.Require().NoError(spec.Normalize())
+
+	written := spec.Written()
+
+	s.Empty(written.SubagentTarget)
+	s.Equal("llm-thinking", written.Voiced().SubagentTarget)
 }
 
 func (s *SpecSuite) TestStoppingVoiceLeavesNoSubagentAndStartingItAgainRestoresIt() {

@@ -605,6 +605,7 @@ func frameOf(event session.Event) (frame, bool) {
 			"tool":         typed.Tool,
 			"arguments":    typed.Arguments,
 			"result":       typed.Result,
+			"files":        typed.Files,
 			"error":        errorText(typed.Err),
 		}, true
 

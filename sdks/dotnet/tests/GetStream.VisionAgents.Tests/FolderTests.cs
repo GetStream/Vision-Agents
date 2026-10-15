@@ -225,6 +225,10 @@ public sealed class FolderTests : IDisposable
     [InlineData("video:\n  max_frames: 9\n")]
     [InlineData("dispatch:\n  sms: enabled\n")]
     [InlineData("keyterms: Vision Agents\n")]
+    [InlineData("sandbox_options:\n  memory: 4\n")]
+    [InlineData("sandbox_options:\n  timeout: 2h\n")]
+    [InlineData("sandbox_options:\n  cpu: two\n")]
+    [InlineData("sandbox_options:\n  network: maybe\n")]
     public void ADeclarationKeyNobodyKnowsIsRefused(string declaration)
     {
         Write("agent.yaml", declaration);

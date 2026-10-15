@@ -121,13 +121,8 @@ processor = roboflow.RoboflowStreamingProcessor(model_id="rfdetr-nano")
 See the [Serverless Video Streaming docs](https://docs.roboflow.com/deploy/serverless/serverless-video-streaming).
 
 Streaming needs the WebRTC extra (`inference-sdk[webrtc]>=1.3.5`), which depends
-on NumPy 2. The workspace pins NumPy 1, so install the extra in its own venv, as
-the Flower Spotter example does:
-
-```bash
-cd examples/video_agents/flower_spotter
-uv sync
-```
+on NumPy 2. The workspace pins NumPy 1, so install the extra in a project of its own,
+outside the workspace, that depends on `vision-agents-plugins-roboflow[webrtc]`.
 
 ## Testing
 
