@@ -193,10 +193,10 @@ func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how f
 		"provider_status", how.status, "provider_message", message,
 		"provider_host", how.host, "provider_body", body}
 	if how.challenge != "" {
-		fields = append(fields, "www_authenticate", cutAtRune(how.challenge, providerMessageBytes))
+		fields = append(fields, "www_authenticate", core.CutAtRune(how.challenge, providerMessageBytes))
 	}
 	if how.retryAfter != "" {
-		fields = append(fields, "retry_after", cutAtRune(how.retryAfter, providerMessageBytes))
+		fields = append(fields, "retry_after", core.CutAtRune(how.retryAfter, providerMessageBytes))
 	}
 	d.logger.Warn("connector call failed", fields...)
 }

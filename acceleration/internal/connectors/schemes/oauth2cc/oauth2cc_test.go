@@ -2,6 +2,7 @@ package oauth2cc_test
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"io"
@@ -430,6 +431,18 @@ func (s *OAuth2CCSuite) TestEachAnswerThatRefusesTheClientIsInvalidGrant() {
 	}
 }
 
+// TestARefusalKeepsTheProvidersCodeAndDescriptionWithoutTheSecret: the code and the
+// description are for the resolver's log line (AI-1245), the client secret the description
+// echoes redacted and its URL kept to the host.
+func (s *OAuth2CCSuite) TestARefusalKeepsTheProvidersCodeAndDescriptionWithoutTheSecret() {
+	outcome := s.described(answer{status: 400, body: `{"error":"invalid_client_id",` +
+		`"error_description":"client secret sec-ret-9 is not valid, see https://idp.example/clients?client_secret=sec-ret-9"}`,
+		secret: "sec-ret-9"})
+
+	s.Equal(core.Outcome{Kind: core.OutcomeInvalidGrant, Code: "invalid_client_id",
+		Description: "client secret [redacted] is not valid, see https://idp.example"}, outcome)
+}
+
 // A refresh that may have taken effect is Uncertain, since it may have spent a rotating
 // refresh token. A client credentials request spends nothing, so the same answers, and any
 // other refusal, are Transient: a later request may get a token.
@@ -610,10 +623,20 @@ type answer struct {
 	status int
 	header http.Header
 	body   string
+	// secret is the client secret Complete sends; "" is "secret".
+	secret string
 }
 
-// refusedWith is the outcome Complete fails with when the token endpoint answers a.
+// refusedWith is how Complete's outcome classifies the token endpoint's answer a: the outcome
+// without the provider's code and description, which only a log line reads (described).
 func (s *OAuth2CCSuite) refusedWith(a answer) core.Outcome {
+	outcome := s.described(a)
+	outcome.Code, outcome.Description = "", ""
+	return outcome
+}
+
+// described is the outcome Complete fails with when the token endpoint answers a.
+func (s *OAuth2CCSuite) described(a answer) core.Outcome {
 	provider := s.answering(func(w http.ResponseWriter, _ *http.Request) {
 		for k, v := range a.header {
 			w.Header()[k] = v
@@ -623,7 +646,7 @@ func (s *OAuth2CCSuite) refusedWith(a answer) core.Outcome {
 		_, _ = w.Write([]byte(a.body))
 	})
 	_, _, err := s.scheme(provider.Client()).Complete(s.ctx, core.CompleteInput{Manifest: at(provider.URL), Supplied: map[string]string{
-		oauth2cc.SuppliedClientID: "client", oauth2cc.SuppliedClientSecret: "secret",
+		oauth2cc.SuppliedClientID: "client", oauth2cc.SuppliedClientSecret: cmp.Or(a.secret, "secret"),
 	}})
 	return s.outcome(err)
 }
