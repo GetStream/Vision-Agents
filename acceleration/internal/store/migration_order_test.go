@@ -322,3 +322,42 @@ func stripSQLComments(statement string) string {
 	}
 	return b.String()
 }
+
+// The versions around the audit action tool_reapproved (AI-1305): the newest migration of its
+// base 9a74ce52, and its own.
+const (
+	beforeToolReapproved  int64 = 20261101120000
+	toolReapprovedVersion int64 = 20261101130000
+)
+
+// TestTheAuditCheckKeepsEveryRowAndTakesToolReapproved: a database holding a row of every
+// action the CHECK allowed migrates, keeps them all, and takes tool_reapproved and nothing
+// else new. Its Down keeps the tool_reapproved rows.
+func (s *MigrationOrderSuite) TestTheAuditCheckKeepsEveryRowAndTakesToolReapproved() {
+	db := s.open()
+	s.upTo(db, beforeToolReapproved)
+	audit := func(action string) error {
+		_, err := db.DB().ExecContext(s.ctx, "INSERT INTO connector_audit (id, customer_id, connection_id, connector_id, "+
+			"owner_type, action, created_at) VALUES (?, 'app', 'connection', 'acme', 'app', ?, now())", newID(), action)
+		return err
+	}
+	for _, action := range []string{"grant_created", "grant_refreshed", "grant_revoked", "proxy_call", "token_export"} {
+		s.Require().NoError(audit(action), action)
+	}
+
+	s.upTo(db, toolReapprovedVersion)
+
+	s.Equal(5, s.auditRows(db))
+	s.Require().NoError(audit(AuditToolReapproved))
+	s.Require().ErrorContains(audit("tool_approved"), "connector_audit_action_check")
+	s.goose()
+	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", beforeToolReapproved))
+	s.Equal(6, s.auditRows(db))
+	s.Require().ErrorContains(audit(AuditToolReapproved), "connector_audit_action_check")
+}
+
+func (s *MigrationOrderSuite) auditRows(db *Store) int {
+	var rows int
+	s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM connector_audit").Scan(&rows))
+	return rows
+}
