@@ -57,6 +57,12 @@ type ConnectorInvocation struct {
 	LatencyMs int64     `bun:"latency_ms,notnull"`
 	// ErrorType is one of the Invocation* values, empty for a call that answered.
 	ErrorType string `bun:"error_type,notnull"`
+	// ProviderStatus is the provider's HTTP status for the call's last answered request, nil
+	// when none was answered (20261031130000_connector_invocation_failures.sql).
+	ProviderStatus *int `bun:"provider_status"`
+	// ErrorMessage is why the call failed, as its log line says it, redacted and at most 1 KiB
+	// (session.dispatcher.record); empty for a call that answered.
+	ErrorMessage string `bun:"error_message,notnull"`
 	// Arguments is the shape of what the call was asked, never a value (AI-990 F40), nil when
 	// its arguments were not a JSON object. Kept in connector_invocation_arguments
 	// (20261011210000_connector_clients_and_argument_shapes.sql).
