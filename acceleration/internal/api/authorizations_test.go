@@ -27,6 +27,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/resolver"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -78,6 +79,10 @@ func (s *AuthorizationsSuite) SetupSuite() {
 	})
 	s.Require().NoError(err)
 	s.scheme = scheme
+	// The deployment serves PUT provider-app, which a missing client's answer names only then. No
+	// request reaches Slack: a consent that cannot start never creates an app.
+	s.slackApps, err = slackapps.New(slackapps.Config{HTTP: s.provider.Client()})
+	s.Require().NoError(err)
 	s.connectors = core.Registry{
 		Schemes: map[string]core.Scheme{oauth2code.Name: scheme},
 		Hooks: map[string]core.Hook{refusingHook: func(context.Context, *core.HookContext) error {
@@ -799,8 +804,8 @@ func (s *AuthorizationsSuite) TestAConsentWithoutAClientNamesEveryWayToGiveSlack
 		"put the app's own OAuth client with PUT /v1/agents/connectors/slack_bot/oauth-client, giving its client_id and "+
 		"client_secret, and the app's provider_app_id and signing_secret, which its events are verified with; "+
 		"the client must list the redirect URI "+consentPublicURL+ConnectorCallbackPath+"; "+
-		"or have the router create the app with PUT /v1/agents/connectors/slack_bot/provider-app, giving the refresh "+
-		"token of an app configuration token a workspace admin generates in Slack's app settings", failure.Message)
+		"or have the router create the app with PUT /v1/agents/connectors/slack_bot/provider-app, giving the app's name "+
+		"and the refresh token of an app configuration token a workspace admin generates in Slack's app settings", failure.Message)
 	s.Equal(codeNoOAuthClient, failure.Code)
 	s.Equal(ErrorType(ErrorTypeInvalidRequest), failure.Type)
 	s.Equal(errorDocs+codeNoOAuthClient, failure.DocURL)
@@ -820,6 +825,71 @@ func (s *AuthorizationsSuite) TestAConsentWithoutAClientNamesOnlyTheWaysItsConne
 		"/oauth-client, giving its client_id and client_secret; the client must list the redirect URI "+
 		consentPublicURL+ConnectorCallbackPath, failure.Message)
 	s.Equal(codeNoOAuthClient, failure.Code)
+}
+
+// TestAConsentWithoutAClientNamesNoAppTheRouterCannotCreate (AI-1357): a connector may list
+// managed without authorizing at Slack, and PUT provider-app refuses it (managedConnector), so
+// the answer names the oauth-client PUT alone.
+func (s *AuthorizationsSuite) TestAConsentWithoutAClientNamesNoAppTheRouterCannotCreate() {
+	connector := s.connectorRegistering("customer, managed", "")
+
+	status, failure := s.consentFailure(connector)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "PUT /v1/agents/connectors/"+connector+"/oauth-client")
+	s.NotContains(failure.Message, "provider-app")
+	s.Equal(codeNoOAuthClient, failure.Code)
+}
+
+// TestAConsentWithoutAClientNamesNoProviderAppWhereTheDeploymentCannotServeIt (AI-1357): PUT
+// provider-app answers not_configured without a Slack apps client or an https
+// ROUTER_PUBLIC_URL (setConnectorProviderApp), so neither is told to use it.
+func (s *AuthorizationsSuite) TestAConsentWithoutAClientNamesNoProviderAppWhereTheDeploymentCannotServeIt() {
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
+	apps, public := s.router.slackApps, s.router.publicURL
+	s.T().Cleanup(func() { s.router.slackApps, s.router.publicURL = apps, public })
+
+	s.router.slackApps = nil
+	_, failure := s.consentFailure("slack_bot")
+	s.NotContains(failure.Message, "provider-app", "no Slack apps client")
+	s.Contains(failure.Message, "oauth-client")
+
+	s.router.slackApps, s.router.publicURL = apps, "http://router.example"
+	_, failure = s.consentFailure("slack_bot")
+	s.NotContains(failure.Message, "provider-app", "a public URL that is not https")
+	s.Contains(failure.Message, "oauth-client")
+}
+
+// TestAConsentWithoutAClientForAPublicClientAsksForNoSecret (AI-1357): PUT oauth-client
+// refuses a client_secret for auth_method none, so the answer asks for the client_id alone.
+func (s *AuthorizationsSuite) TestAConsentWithoutAClientForAPublicClientAsksForNoSecret() {
+	connector := s.connectorWith("customer", "none", "")
+
+	_, failure := s.consentFailure(connector)
+
+	s.Contains(failure.Message, "giving its client_id; the client must list")
+	s.NotContains(failure.Message, "client_secret")
+}
+
+// TestAConsentThatFailsForAnotherReasonKeepsTheGenericMessage (AI-1357): only a missing client
+// is answered with the ways to give one; a provider the router cannot reach is not.
+func (s *AuthorizationsSuite) TestAConsentThatFailsForAnotherReasonKeepsTheGenericMessage() {
+	id := "custom_fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	// 10.0.0.1 is a private address, which the scheme's public-endpoint check refuses
+	// (loopbackOrPublic); the client is there, so what fails is not a missing one.
+	yaml := strings.Replace(s.fakeManifest(id, 1, "customer", ""), s.provider.URL+fakeprovider.PathAuthorize, "https://10.0.0.1/authorize", 1)
+	manifest, err := core.ParseManifest([]byte(yaml))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	s.putClient(id, s.provider.ClientSecret)
+
+	status, failure := s.consentFailure(id)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.True(strings.HasPrefix(failure.Message, "the provider's consent could not be started: "), failure.Message)
+	s.NotContains(failure.Message, "oauth-client")
+	s.Equal("invalid_request", failure.Code)
 }
 
 // TestAConsentWithoutAClientTheAppCannotGiveAnswersAsBefore (AI-1357), the control: a
@@ -951,8 +1021,13 @@ func (s *AuthorizationsSuite) connector(extra string) string {
 
 // connectorRegistering is connector with client.registration [registration].
 func (s *AuthorizationsSuite) connectorRegistering(registration, extra string) string {
+	return s.connectorWith(registration, "client_secret_post", extra)
+}
+
+// connectorWith is connectorRegistering with client.auth_method authMethod.
+func (s *AuthorizationsSuite) connectorWith(registration, authMethod, extra string) string {
 	id := "custom_fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
-	manifest, err := core.ParseManifest([]byte(s.fakeManifest(id, 1, registration, extra)))
+	manifest, err := core.ParseManifest([]byte(s.fakeManifestWith(id, 1, registration, authMethod, extra)))
 	s.Require().NoError(err)
 	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
 	s.Require().NoError(err)
@@ -961,6 +1036,10 @@ func (s *AuthorizationsSuite) connectorRegistering(registration, extra string) s
 
 // fakeManifest is the YAML of connector's manifest at revision.
 func (s *AuthorizationsSuite) fakeManifest(id string, revision int, registration, extra string) string {
+	return s.fakeManifestWith(id, revision, registration, "client_secret_post", extra)
+}
+
+func (s *AuthorizationsSuite) fakeManifestWith(id string, revision int, registration, authMethod, extra string) string {
 	return `
 id: ` + id + `
 revision: ` + strconv.Itoa(revision) + `
@@ -972,7 +1051,7 @@ endpoints:
 schemes: [oauth2_code]
 client:
   registration: [` + registration + `]
-  auth_method: client_secret_post
+  auth_method: ` + authMethod + `
   env: FAKE
 scopes:
   list: [channels:history, chat:write]

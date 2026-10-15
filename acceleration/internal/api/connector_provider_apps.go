@@ -242,7 +242,7 @@ func (s *Server) setConnectorProviderApp(ctx context.Context, request *providerA
 		return nil, notConfigured("provider apps cannot be created: connectors are not enabled on this deployment")
 	}
 	public := strings.TrimRight(s.publicURL, "/")
-	if !strings.HasPrefix(public, "https://") {
+	if !providerAppsURL(public) {
 		return nil, notConfigured("provider apps cannot be created: ROUTER_PUBLIC_URL is not an https URL, and Slack sends consents and events only to one")
 	}
 	manifest, err := s.managedConnector(ctx, customerID, request.ID)
@@ -539,23 +539,31 @@ func (s *Server) managedConnector(ctx context.Context, customerID, id string) (c
 		return core.Manifest{}, err
 	}
 	manifest := definition.Manifest
+	if err := managedBy(manifest); err != nil {
+		return core.Manifest{}, err
+	}
+	return manifest, nil
+}
+
+// managedBy is why the router cannot create a Slack app for the connector, or nil.
+func managedBy(manifest core.Manifest) error {
 	if !slackapps.Serves(manifest) {
-		return core.Manifest{}, invalidRequest(fmt.Sprintf("%s does not authorize at Slack, so the router creates no app for it", manifest.ID))
+		return invalidRequest(fmt.Sprintf("%s does not authorize at Slack, so the router creates no app for it", manifest.ID))
 	}
 	// The store refuses such a record too (store.PutConnectorOAuthClient); checked here so no
 	// app is created at Slack that could never be recorded.
 	if !slices.Contains(manifest.Client.Registration, core.ClientManaged) {
-		return core.Manifest{}, invalidRequest(fmt.Sprintf("%s takes no app the router creates: its client.registration is %v, which does not list managed",
+		return invalidRequest(fmt.Sprintf("%s takes no app the router creates: its client.registration is %v, which does not list managed",
 			manifest.ID, manifest.Client.Registration))
 	}
 	// The app's events reach the provider app's own route (receiveProviderAppEvent), which
 	// verifies them with the app's signing secret only for a channel whose secret is
 	// provider_app. Any other channel's events would never be read there.
 	if manifest.Channel != nil && manifest.Channel.Verifier.Secret != core.SecretProviderApp {
-		return core.Manifest{}, invalidRequest(fmt.Sprintf("%s verifies its events with the %s secret, not the app's own (provider_app), so an app the router creates could not deliver them",
+		return invalidRequest(fmt.Sprintf("%s verifies its events with the %s secret, not the app's own (provider_app), so an app the router creates could not deliver them",
 			manifest.ID, manifest.Channel.Verifier.Secret))
 	}
-	return manifest, nil
+	return nil
 }
 
 // managedRecord is the record of an app Slack just created for the customer, its secrets
@@ -735,4 +743,9 @@ func providerAppOf(record store.ConnectorOAuthClient) ConnectorProviderApp {
 		CreatedAt:     record.CreatedAt,
 		UpdatedAt:     record.UpdatedAt,
 	}
+}
+
+// providerAppsURL is whether publicURL is one Slack sends consents and events to: an https URL.
+func providerAppsURL(publicURL string) bool {
+	return strings.HasPrefix(strings.TrimRight(publicURL, "/"), "https://")
 }

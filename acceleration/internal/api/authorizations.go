@@ -202,10 +202,14 @@ type consents struct {
 	registry  core.Registry
 	secrets   *auth.Sealer
 	publicURL string
+	// providerApps is whether PUT provider-app can answer on this deployment, which a missing
+	// client's answer names only then.
+	providerApps bool
 }
 
 func (s *Server) consents() consents {
-	return consents{store: s.store, registry: s.connectors, secrets: s.connectorSecrets, publicURL: s.publicURL}
+	return consents{store: s.store, registry: s.connectors, secrets: s.connectorSecrets, publicURL: s.publicURL,
+		providerApps: s.connectorSecrets != nil && s.slackApps != nil && providerAppsURL(s.publicURL)}
 }
 
 // ConnectorConsents is how a session begins a consent for its caller's own connection, when
@@ -218,7 +222,9 @@ func ConnectorConsents(records *store.Store, registry core.Registry, secrets *au
 	if records == nil || secrets == nil || len(registry.Schemes) == 0 || strings.TrimRight(publicURL, "/") == "" {
 		return nil
 	}
-	c := consents{store: records, registry: registry, secrets: secrets, publicURL: publicURL}
+	// cmd/router builds the Slack apps client wherever connector secrets exist (main.go), and
+	// secrets are not nil here.
+	c := consents{store: records, registry: registry, secrets: secrets, publicURL: publicURL, providerApps: providerAppsURL(publicURL)}
 	return func(ctx context.Context, request session.ConsentRequest) (session.Consent, error) {
 		connection, err := c.connectionFor(ctx, request)
 		if err != nil {
@@ -357,7 +363,8 @@ func (c consents) begin(ctx context.Context, connection store.ConnectorConnectio
 	// (ConnectorClients), so a connector that takes a client the app can give and finds none
 	// says how to give it one.
 	if errors.Is(err, oauth2code.ErrNoClient) {
-		if failure, ok := missingOAuthClient(err, manifest, connection.ConnectorID, connectorCallbackURL(c.publicURL)); ok {
+		if failure, ok := missingOAuthClient(err, manifest, connection.ConnectorID, connectorCallbackURL(c.publicURL),
+			c.providerApps && managedBy(latest.Manifest) == nil); ok {
 			return Authorization{}, failure
 		}
 	}
@@ -842,22 +849,29 @@ func (s *Server) attemptCookie(id, value string, expires time.Time) *http.Cookie
 // setConnectorProviderApp). ok is false when it lists neither, since the app can then give
 // none. WWSD platform feedback #4: the answer used to name only the first, and finding the
 // second took reading every connector operation.
-func missingOAuthClient(err error, manifest core.ResolvedManifest, connectorID, redirectURI string) (APIError, bool) {
+func missingOAuthClient(err error, manifest core.ResolvedManifest, connectorID, redirectURI string, providerApp bool) (APIError, bool) {
 	var ways []string
 	if slices.Contains(manifest.Client.Registration, core.ClientCustomer) {
 		// What checkOAuthClient asks of a client for this connector: a signing secret and
 		// the app it signs for only where the channel is verified with the app's own secret.
 		takes := "its client_id and client_secret"
+		if manifest.Client.AuthMethod == core.AuthNone {
+			// A public client has no secret, and PUT oauth-client refuses one (checkOAuthClient).
+			takes = "its client_id"
+		}
 		if manifest.Channel != nil && manifest.Channel.Verifier.Secret == core.SecretProviderApp {
 			takes += ", and the app's provider_app_id and signing_secret, which its events are verified with"
 		}
 		ways = append(ways, fmt.Sprintf("put the app's own OAuth client with PUT /v1/agents/connectors/%s/oauth-client, "+
 			"giving %s; the client must list the redirect URI %s", connectorID, takes, redirectURI))
 	}
-	if slices.Contains(manifest.Client.Registration, core.ClientManaged) {
-		// What setConnectorProviderApp needs the first time (ConnectorProviderAppRequest).
+	// providerApp is whether PUT provider-app would take the connector (managedBy) on a
+	// deployment that serves it (setConnectorProviderApp).
+	if providerApp && slices.Contains(manifest.Client.Registration, core.ClientManaged) {
+		// What setConnectorProviderApp needs the first time (ConnectorProviderAppRequest): the
+		// name is required.
 		ways = append(ways, fmt.Sprintf("have the router create the app with PUT /v1/agents/connectors/%s/provider-app, "+
-			"giving the refresh token of an app configuration token a workspace admin generates in Slack's app settings", connectorID))
+			"giving the app's name and the refresh token of an app configuration token a workspace admin generates in Slack's app settings", connectorID))
 	}
 	if len(ways) == 0 {
 		return APIError{}, false
