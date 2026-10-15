@@ -175,6 +175,9 @@ fresh `http.Client` on a caller's URL.
   routes). Sockets bound frame size and close idle connections.
 - List endpoints cap `limit` (see the `pagination` skill).
 - Outbound calls carry a context with a timeout.
+- A long-lived stream (an STT or TTS websocket, a realtime session) bounds its handshake,
+  not the whole call: `websocket.Dialer{HandshakeTimeout: ...}`, as in
+  `internal/stt/cartesia/cartesia.go`. A fixed deadline would end the call mid-conversation.
 
 ### 10. Browser surface
 

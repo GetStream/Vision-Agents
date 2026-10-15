@@ -144,6 +144,7 @@ skill (`.claude/skills/security/SKILL.md`).
 
 For Go tests, read the `go-testing` skill (`.claude/skills/go-testing/SKILL.md`) first: testify
 suites, the shared `RouterSuite` for integration tests, and how to wait for async writes.
+Before you write Go, read the `go` skill (`.claude/skills/go/SKILL.md`): errors, logging, spans and comments.
 
 Before you run more than one coding agent at once (parallel PRs, reviewers, fixers), read the
 `parallel-agents` skill (`.claude/skills/parallel-agents/SKILL.md`): test databases, migration
@@ -170,12 +171,6 @@ slots, merge order and how not to burn tokens.
 - Avoid `# type: ignore` comments.
 - Avoid using `Any` type.
 - When adding code to an existing file, follow the patterns already established in that file (e.g. error handling style, import guards, naming).
-
-## Go rules
-
-`.claude/rules/` holds the Go rules (conventions, errors, logging, timeouts, batching, tests) and
-`do-not.md` for every file. Claude Code loads a rule when it opens a matching file; other agents
-should read them before writing Go.
 
 ## Code style
 

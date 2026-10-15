@@ -87,7 +87,12 @@ one voice turn. Then, for each, ask:
 
 - **Repeated reads.** The same row read twice in one request, or on every turn when it
   changes once a session: read it once and pass it down, or cache it in the session.
-- **N+1.** A query per item in a loop: one query with `= ANY($1)` or a join.
+- **N+1.** A query per item in a loop: one query with `= ANY($1)` or a join. A batch split
+  into chunks takes its chunk size from evidence: the engine's limit (PostgreSQL takes at
+  most 65,535 bind parameters in one statement: the Bind message counts them in an Int16,
+  https://www.postgresql.org/docs/current/protocol-message-formats.html) and the input range
+  the request validation allows. Not from gut feel or another constant. State the reasoning
+  in the constant's doc comment and in the PR.
 - **Transactions that need not be.** A single insert wrapped in its own transaction, or an
   advisory lock taken per row: batch the rows, or take the lock once.
 - **Writes on the hot path.** A log or usage row written synchronously on every turn: buffer
