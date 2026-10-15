@@ -1994,20 +1994,3 @@ type TelephonySuspension struct {
 	SuspendedBy string    `bun:"suspended_by,notnull"`
 	SuspendedAt time.Time `bun:"suspended_at,notnull"`
 }
-
-// AppQuotaChange is one change Stream staff made to an app's daily limit per end user. A nil
-// number is one left unset, which is the router's default.
-type AppQuotaChange struct {
-	bun.BaseModel `bun:"table:app_quota_changes,alias:aqc"`
-
-	ID         string `bun:"id,pk"`
-	CustomerID string `bun:"customer_id,notnull"`
-	ChangedBy  string `bun:"changed_by,notnull"`
-	// Reason is why, for the staff who read it later. It may be empty.
-	Reason                        string    `bun:"reason,notnull"`
-	PreviousMessagesPerUserPerDay *int64    `bun:"previous_messages_per_user_per_day"`
-	PreviousTokensPerUserPerDay   *int64    `bun:"previous_tokens_per_user_per_day"`
-	NewMessagesPerUserPerDay      *int64    `bun:"new_messages_per_user_per_day"`
-	NewTokensPerUserPerDay        *int64    `bun:"new_tokens_per_user_per_day"`
-	ChangedAt                     time.Time `bun:"changed_at,notnull"`
-}

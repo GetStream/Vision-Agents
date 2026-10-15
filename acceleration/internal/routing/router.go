@@ -185,6 +185,20 @@ type Caller struct {
 	ServerSide bool
 }
 
+type callerKey struct{}
+
+// WithCaller says who sent what ctx carries: the request, or the turn of a session it asks
+// a model to answer.
+func WithCaller(ctx context.Context, caller Caller) context.Context {
+	return context.WithValue(ctx, callerKey{}, caller)
+}
+
+// CallerFrom returns who WithCaller said sent what ctx carries, and false when nobody said.
+func CallerFrom(ctx context.Context) (Caller, bool) {
+	caller, ok := ctx.Value(callerKey{}).(Caller)
+	return caller, ok
+}
+
 // Request is what a caller wants served.
 type Request struct {
 	// CustomerID owns the request. It is what every statistic is keyed by.

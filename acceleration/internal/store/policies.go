@@ -75,8 +75,8 @@ type Budget struct {
 // says nothing about training inherits whatever its organization said.
 type PolicyDocument struct {
 	Budget *Budget `json:"budget,omitempty"`
-	// Quota is what one end user of the app may spend in a UTC day. Stream staff set it,
-	// on an app's document only.
+	// Quota is what one end user of the app may spend in a UTC day, on an app's document
+	// only.
 	Quota *Quota `json:"quota,omitempty"`
 	// DataPolicy is the floor every routed request is held to, on top of whatever the
 	// request itself asked for.

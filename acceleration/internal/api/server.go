@@ -87,10 +87,6 @@ type organizationContextKey struct{}
 // serverSideContextKey holds whether the caller is a process the customer runs.
 type serverSideContextKey struct{}
 
-// callerContextKey holds the end user the request is for and where they made it from, which
-// is what a daily limit is counted against.
-type callerContextKey struct{}
-
 // kindContextKey holds what sort of caller it is, which is what qualifies the end user's
 // name when one person's sessions are kept from another's.
 type kindContextKey struct{}
@@ -1008,7 +1004,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
 			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
-			ctx = context.WithValue(ctx, callerContextKey{}, routing.Caller{
+			ctx = routing.WithCaller(ctx, routing.Caller{
 				UserID:     principal.UserID,
 				IP:         s.callerIP(r, principal.UserID),
 				ServerSide: principal.ServerSide,
@@ -1148,7 +1144,7 @@ func ServerSideFrom(ctx context.Context) bool {
 // still counted nothing, which withQuota decides by asking whether the caller is
 // server-side rather than by asking whether there is one.
 func CallerFrom(ctx context.Context) routing.Caller {
-	caller, _ := ctx.Value(callerContextKey{}).(routing.Caller)
+	caller, _ := routing.CallerFrom(ctx)
 	return caller
 }
 

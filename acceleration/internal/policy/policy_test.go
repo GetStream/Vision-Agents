@@ -366,8 +366,8 @@ func (s *PolicySuite) TestADailyLimitIsTheAppsNumberElseTheDeployments() {
 			want: quota.Limits{},
 		},
 		{
-			// Only Stream staff set a limit, and only on an app, so an organization's is
-			// never read, whatever its document holds.
+			// A limit is set only on an app, so an organization's is never read, whatever
+			// its document holds.
 			name:         "an organization's limit is not one",
 			organization: quotaOf(new(int64(5)), new(int64(5))),
 			app:          quotaOf(new(int64(20_000)), nil),

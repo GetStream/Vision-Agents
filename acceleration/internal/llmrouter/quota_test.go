@@ -190,3 +190,44 @@ func (s *LLMQuotaSuite) TestAMockAnswerIsNeitherCheckedNorCounted() {
 	s.Require().NoError(err, "a mock answer is not refused once the day is spent")
 	s.answer(mocker, stream, 3, 1_000, 1_000)
 }
+
+func (s *LLMQuotaSuite) TestAUsersOwnTurnInASessionABackendOpenedForThemIsCountedOnTheirDay() {
+	backend := s.caller
+	backend.ServerSide = true
+	session, provider := s.session(1, 0, backend)
+	sentByUser := routing.WithCaller(s.ctx, s.caller)
+
+	stream, err := session.Create(sentByUser, llm.ResponseParams{ID: "user", Input: prompt()})
+	s.Require().NoError(err)
+	s.answer(provider, stream, 0, 10, 5)
+
+	_, err = session.Create(sentByUser, llm.ResponseParams{ID: "over", Input: prompt()})
+	s.Require().ErrorIs(err, quota.ErrExhausted, "the user's next turn is refused")
+	stream, err = session.Create(routing.WithCaller(s.ctx, backend), llm.ResponseParams{ID: "backend", Input: prompt()})
+	s.Require().NoError(err, "the backend's own turn is not counted")
+	s.answer(provider, stream, 1, 10, 5)
+}
+
+func (s *LLMQuotaSuite) TestAUserOpenedSessionIsCountedOnWhoeverOpenedIt() {
+	// A turn in it is the user's whoever sends it, and from wherever: the backend passing on
+	// what the user wrote, or the user from another address, spends the day of the address
+	// the session was opened from, as it always has.
+	opener := routing.Caller{IP: fmt.Sprintf("opener-%d", time.Now().UnixNano())}
+	user := s.caller
+	user.IP = opener.IP
+	session, provider := s.session(2, 0, user)
+	elsewhere := user
+	elsewhere.IP = "elsewhere-" + opener.IP
+
+	for turn, sender := range []routing.Caller{{UserID: user.UserID, ServerSide: true}, elsewhere} {
+		stream, err := session.Create(routing.WithCaller(s.ctx, sender), llm.ResponseParams{
+			ID: fmt.Sprintf("c%d", turn), Input: prompt(),
+		})
+		s.Require().NoError(err)
+		s.answer(provider, stream, turn, 10, 5)
+	}
+
+	sameAddress, _ := s.session(2, 0, opener)
+	_, err := sameAddress.Create(s.ctx, llm.ResponseParams{ID: "address", Input: prompt()})
+	s.ErrorIs(err, quota.ErrExhausted, "both turns were counted on the address the session was opened from")
+}

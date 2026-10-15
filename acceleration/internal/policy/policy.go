@@ -7,7 +7,7 @@
 // turns it on, only a model both allow may be routed to, and the organization's tags win
 // over the app's. That is the only reading under which an organization's setting means
 // anything, since an app that could switch it off would make it a suggestion. A daily limit
-// is the app's alone, set by Stream staff, so it has no organization's to meet.
+// per end user is the app's alone, so it has no organization's to meet.
 //
 // Decisions are cached per customer for a few seconds, because Admit is asked before every
 // routed session and every LLM response, and a budget is a sum over the request rows. The
@@ -167,17 +167,6 @@ func (e *Enforcer) Save(ctx context.Context, scope store.PolicyScope, id string,
 	clear(e.decisions)
 	e.mu.Unlock()
 	return nil
-}
-
-// ChangeAppQuota replaces an app's daily limit per end user, records who changed it, and
-// drops the decisions it may have changed.
-func (e *Enforcer) ChangeAppQuota(ctx context.Context, customerID, changedBy, reason string, quota *store.Quota) (store.AppQuotaChange, error) {
-	change, err := e.config.ChangeAppQuota(ctx, customerID, changedBy, reason, quota)
-	if err != nil {
-		return store.AppQuotaChange{}, err
-	}
-	e.forget(customerID)
-	return change, nil
 }
 
 // Spent returns what a scope has spent in the budget's current interval, and when that

@@ -27,7 +27,7 @@ var (
 // injection, which models may be used and how usage is labelled.
 type Policy struct {
 	Budget              *Budget           `json:"budget,omitempty"`
-	Quota               *Quota            `json:"quota,omitempty" readOnly:"true"`
+	Quota               *Quota            `json:"quota,omitempty"`
 	DataPolicy          *DataPolicy       `json:"data_policy,omitempty"`
 	PromptInjection     *bool             `json:"prompt_injection,omitempty" doc:"Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on."`
 	AllowedModels       *[]string         `json:"allowed_models,omitempty" example:"[\"deepseek/DeepSeek-V4-Flash-0731\"]" doc:"The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one."`
@@ -58,8 +58,8 @@ func (*Budget) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schem
 	return schema
 }
 
-// Quota is what one end user of the app may spend in a UTC day. Stream staff set it with
-// the ops key, and an app only reads it.
+// Quota is what one end user of the app may spend in a UTC day. The app sets it, and an
+// organization has none.
 type Quota struct {
 	// The maximums only catch a typo: a person who asked for a response every ten seconds
 	// round the clock would still be under 10,000 a day, so 10,000,000 is a thousand of
@@ -70,9 +70,9 @@ type Quota struct {
 
 func (*Quota) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "What one end user of the app may spend in a UTC day, counted per " +
-		"user and per address. Stream staff set it: in an app's policy it is read-only, so " +
-		"sending back what was read is fine and changing it is refused. A backend's own " +
-		"requests are never counted. A request over the limit is a 429 rate_limited with " +
+		"user and per address. Only an app's policy has one: an organization's that sets it " +
+		"is refused. A turn is counted on the day of the user who sent it, and a backend's " +
+		"own are never counted. A request over the limit is a 429 rate_limited with " +
 		"Retry-After, and a counted request carries X-RateLimit-Limit, X-RateLimit-Remaining " +
 		"and X-RateLimit-Reset."
 	return schema
@@ -227,11 +227,16 @@ func (s *Server) updateOrganizationPolicy(ctx context.Context, request *policyRe
 // savePolicy validates and stores a policy, and returns it as it now reads.
 func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id string, sent Policy) (Policy, error) {
 	document := store.PolicyDocument{
+		Quota:               quotaOf(sent.Quota),
 		DataPolicy:          dataPolicyOf(sent.DataPolicy),
 		PromptInjection:     sent.PromptInjection,
 		AllowedModels:       sent.AllowedModels,
 		Tags:                sent.Tags,
 		RequireOwnStreamApp: sent.RequireOwnStreamApp,
+	}
+	// A daily limit is what one end user of an app may spend, so it is set on each app.
+	if scope == store.ScopeOrganization && sent.Quota != nil {
+		return Policy{}, errors.New("an organization has no daily limit per end user: set quota on each app")
 	}
 	// Any app's backend can write its organization's policy, so the one setting that keeps
 	// every app of an organization out of the shared Stream app is the operator's alone. It
@@ -249,16 +254,6 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 		}
 		document.RequireOwnStreamApp = nil
 	}
-	// A daily limit per end user is Stream staff's to set, since an app could otherwise give
-	// its users any number. It is guarded the same way, and the stored one is kept.
-	existing, err := s.store.Policy(ctx, scope, id)
-	if err != nil {
-		return Policy{}, err
-	}
-	if sent.Quota != nil && !sameQuota(*sent.Quota, quotaFor(existing.Quota)) {
-		return Policy{}, errors.New("quota is set by Stream: send back what was read, or leave it out")
-	}
-	document.Quota = existing.Quota
 	if !document.DataPolicy.Valid() {
 		return Policy{}, stack.Wrap(fmt.Errorf("retention is none or a duration such as 30d, not %q",
 			document.DataPolicy.Retention))
@@ -336,20 +331,6 @@ func quotaOf(sent *Quota) *store.Quota {
 		MessagesPerUserPerDay: sent.MessagesPerUserPerDay,
 		TokensPerUserPerDay:   sent.TokensPerUserPerDay,
 	}
-}
-
-// sameQuota reports whether a sent quota says what the stored one does. A quota with no
-// number is the same as none.
-func sameQuota(sent Quota, stored *Quota) bool {
-	if stored == nil {
-		stored = &Quota{}
-	}
-	return equalLimit(sent.MessagesPerUserPerDay, stored.MessagesPerUserPerDay) &&
-		equalLimit(sent.TokensPerUserPerDay, stored.TokensPerUserPerDay)
-}
-
-func equalLimit(a, b *int64) bool {
-	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
 // quotaFor is a stored quota as it reads out.
