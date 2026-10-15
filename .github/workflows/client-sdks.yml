@@ -131,6 +131,15 @@ jobs:
         with:
           xcode-version: '27.0'
 
+      # Booting takes this runner minutes, and tests started while the simulator is still
+      # settling are starved until the ones behind a local server time out. Booting now
+      # overlaps it with everything up to the tests.
+      - name: Boot a simulator
+        run: |
+          device=$(xcrun simctl list devices available -j | python3 -c "import json, sys; devices = json.load(sys.stdin)['devices']; print(next(d['udid'] for runtime, found in devices.items() if 'iOS' in runtime for d in found if d['name'].startswith('iPhone')))")
+          echo "SIMULATOR=$device" >> "$GITHUB_ENV"
+          xcrun simctl boot "$device"
+
       - uses: astral-sh/setup-uv@v6
 
       - uses: actions/cache@v4
@@ -170,13 +179,18 @@ jobs:
           restore-keys: spm-${{ runner.os }}-xcode27-
 
       # The package is iOS only, so it is tested on a simulator rather than with `swift test`.
+      # Parallel testing clones the simulator, and a clone left behind keeps xcodebuild
+      # waiting after the tests have finished. A failure's diagnostics take the simulator
+      # ten minutes to give up on and add nothing the test log lacks.
       - name: Test core
         working-directory: sdks/swift/core
         timeout-minutes: 20
         run: |
-          device=$(xcrun simctl list devices available -j | python3 -c "import json, sys; devices = json.load(sys.stdin)['devices']; print(next(d['udid'] for runtime, found in devices.items() if 'iOS' in runtime for d in found if d['name'].startswith('iPhone')))")
-          xcodebuild test -scheme vision-agents-core -destination "platform=iOS Simulator,id=$device" \
-            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" -derivedDataPath "$RUNNER_TEMP/DerivedData"
+          trap 'xcrun simctl shutdown "$SIMULATOR" >/dev/null 2>&1 || true' EXIT
+          xcrun simctl bootstatus "$SIMULATOR" -b
+          xcodebuild test -scheme vision-agents-core -destination "platform=iOS Simulator,id=$SIMULATOR" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -parallel-testing-enabled NO -disable-concurrent-destination-testing -collect-test-diagnostics never
 
       - name: Build swift_demo
         working-directory: examples/voice_agents/swift_demo/app
