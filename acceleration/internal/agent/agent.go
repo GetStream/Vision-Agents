@@ -1838,7 +1838,7 @@ func (a *Agent) startReply(
 	a.turns.modelStarted(turn.ID, time.Now())
 	stream, err := current.Respond(ctx, turn)
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if ctx.Err() != nil {
 			return
 		}
 		// Ended the way a reply failing mid-stream ends, so the turn is over: left

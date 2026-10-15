@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"time"
 
@@ -106,7 +105,7 @@ func (a *Agent) runSpeculation(spec *speculation) {
 	turnID := spec.ready.ID
 	defer a.finishGenerate(turnID)
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if spec.ctx.Err() != nil {
 			return
 		}
 		a.mu.Lock()
