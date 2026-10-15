@@ -424,6 +424,7 @@ var ErrNoSealer = errors.New("phone: no key to seal a number's trunk password: s
 
 // Attach creates the Stream trunk and routing rule for a number and tells the vendor to
 // send calls there. This is what turns a bought number into one that reaches an agent.
+// Attaching a number already attached in this app changes nothing and answers what it has.
 func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, error) {
 	if s.store == nil {
 		return Attached{}, stack.Wrap(errors.New("phone: attaching a number needs a database to know who holds it"))
