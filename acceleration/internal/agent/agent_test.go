@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -590,6 +591,10 @@ type AgentSuite struct {
 	subagent *stubLLM
 	// skills are what the model may hand over, when a test gives the agent a subagent.
 	skills harness.Skills
+	// box is where the agent runs code, and shelf where what the code hands back is
+	// published, when a test gives it them.
+	box   *codeBox
+	shelf *codeShelf
 	// line is what the agent may do to the call, present only when a test gives it
 	// telephony.
 	line *stubTelephony
@@ -648,6 +653,8 @@ func (s *AgentSuite) SetupTest() {
 	s.guards = nil
 	s.subagent = nil
 	s.skills = harness.Skills{}
+	s.box = nil
+	s.shelf = nil
 	s.line = nil
 	s.tools = harness.Tools{}
 	s.runner = nil
@@ -714,9 +721,19 @@ func (s *AgentSuite) joinText() {
 	if s.runner != nil {
 		running = s.runner
 	}
+	var box sandbox.Sandbox
+	if s.box != nil {
+		box = s.box
+	}
+	var publish sandbox.Publisher
+	if s.shelf != nil {
+		publish = s.shelf.publish
+	}
 
 	agent, err := New(Options{
 		Text:               true,
+		Sandbox:            box,
+		Publish:            publish,
 		Instructions:       "be brief",
 		CustomerID:         "acme",
 		AgentID:            s.agentID,

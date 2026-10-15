@@ -847,12 +847,15 @@ tool instead.
 Subagent completions go through `llmrouter` like anything else, so what the thinking costs
 lands in `requests` with the same failover and cost tags as the talking.
 
-An agent whose config names a sandbox gives the subagent one tool, `run_code`, and the model
-holding the conversation none: running code takes seconds that a conversation does not
-have, and the subagent has already left the live path. Code the subagent writes runs in
-Daytona, its output comes back as a tool result, and the same task is put again, up to four
-rounds and always inside the skill's own deadline. One sandbox is created the first time
-code actually runs and released when the session ends.
+An agent whose config names a sandbox gives the subagent `run_code`, and on a call the model
+holding the conversation none: running code takes seconds that a call does not have, and the
+subagent has already left the live path. A text session has no subagent, so the model holding
+it is offered `run_code` itself (see [Conversations held in writing](#conversations-held-in-writing)). Code the subagent
+writes runs in Daytona, its output comes back as a tool result, and the same task is put
+again, up to four rounds and always inside the skill's own deadline. The subagent may also
+`lookup` and `search` when the agent has a knowledge base and a search target, knowledge base
+first. One sandbox is created the first time code actually runs and released when the session
+ends.
 
 `sandbox_options` on the config, or in `agent.yaml`, says how that sandbox is built and how
 long code may run in it: an `image` with Python to start from, `setup` commands run on top of
@@ -990,8 +993,9 @@ and a documentation agent or a support chat is the voice agent with the voice le
 one difference is who runs a skill: nobody is waiting on a voice, so the model holding the
 conversation loads the skills its config names itself, with `load_skill`, and keeps every
 tool while it follows one. It takes answers from a matching skill first, then the knowledge
-base (`lookup`), then the web (`search`). A text agent with a sandbox still hands its skills
-to a subagent, since only a subagent runs code.
+base (`lookup`), then the web (`search`). A text agent with a sandbox runs code itself with
+`run_code`, a loaded skill's scripts written under `skills/<name>/` before it runs, and the
+files it hands back ride on `tool_ran` and the reply.
 
 It is driven over the session's own socket: `respond` goes in, `response_delta` and
 `responded` come back, along with `looked_up`, `tool_ran`, `delegated` and `task_settled` as

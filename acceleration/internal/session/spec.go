@@ -442,7 +442,7 @@ func (s *Spec) Normalize() error {
 		s.LLMTarget = defaultLLMTarget
 	}
 	if s.Text {
-		s.heldSubagent, s.SubagentTarget = s.SubagentTarget, s.writtenSubagent()
+		s.heldSubagent, s.SubagentTarget = s.SubagentTarget, ""
 	}
 	if s.ControllerTarget == "" && !s.Native() {
 		s.ControllerTarget = s.internalTarget(defaultControllerTarget)
@@ -562,7 +562,7 @@ func (s Spec) Written() Spec {
 	if s.LLMTarget == "" {
 		s.LLMTarget = defaultLLMTarget
 	}
-	s.heldSubagent, s.SubagentTarget = s.SubagentTarget, s.writtenSubagent()
+	s.heldSubagent, s.SubagentTarget = s.SubagentTarget, ""
 	return s
 }
 
@@ -584,17 +584,6 @@ func (s Spec) internalTarget(asked string) string {
 // mocked reports whether a target names one of the load-test models.
 func mocked(target string) bool {
 	return strings.HasPrefix(target, mock.ProviderName+"/")
-}
-
-// writtenSubagent is the subagent a session held in writing runs its skills on: none, since
-// the model holding the conversation loads them itself (load_skill) and keeps every tool a
-// subagent would lack. A sandbox is only given to a subagent, so with one the
-// conversation's model still runs as it.
-func (s Spec) writtenSubagent() string {
-	if s.Sandbox != "" {
-		return s.LLMTarget
-	}
-	return ""
 }
 
 // reviewTarget is the model a finished conversation is reviewed on: the subagent's, or for

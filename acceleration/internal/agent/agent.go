@@ -138,12 +138,12 @@ type Options struct {
 	// something on this call can run it: the telephony pair needs Telephony, and every
 	// other tool needs a ToolRunner.
 	Tools harness.Tools
-	// Sandbox is where the subagent runs code it writes. It is never offered to the model
-	// holding the conversation: running code takes seconds, and a conversation cannot
-	// spare them.
+	// Sandbox is where code the agent writes is run. A voice model is never offered it,
+	// since running code takes seconds a call cannot spare, so there the subagent runs it.
+	// A written conversation with no subagent runs it itself, with run_code.
 	Sandbox sandbox.Sandbox
-	// Publish puts the files the subagent's code hands back where the caller can see them,
-	// which is the conversation's channel when there is one. Nil means nowhere.
+	// Publish puts the files code hands back where the caller can see them, which is the
+	// conversation's channel when there is one. Nil means nowhere.
 	Publish sandbox.Publisher
 	// Tasks caps how much delegated work may run at once. Zero leaves the harness's own
 	// default in place.
@@ -256,6 +256,11 @@ type Agent struct {
 	// toolHolds are the calls still running that an interruption answers with
 	// stillRunning rather than cancels, by call.
 	toolHolds map[string]*toolHold
+	// skillFiles are the files of each skill a written conversation loaded, by skill, and
+	// writtenFiles the ones already put in the sandbox, so run_code writes a skill's
+	// scripts once and again only when the skill has changed.
+	skillFiles   map[string]map[string]string
+	writtenFiles map[string]map[string]string
 	// speculations are replies started before the flow controller ruled on their words,
 	// held until it does, by candidate.
 	speculations map[string]*speculation

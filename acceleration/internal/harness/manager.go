@@ -768,22 +768,16 @@ func (m *manager) ran(running *task, call llm.ToolCall) string {
 		return "The code could not be run: " + err.Error()
 	}
 	m.setBroken(running, "")
-	var said string
-	switch {
-	case result.ExitCode != 0:
+	if result.ExitCode != 0 {
 		m.setBroken(running, fmt.Sprintf("the code exited with %d", result.ExitCode))
-		said = fmt.Sprintf("The code exited with %d and printed:\n%s", result.ExitCode, result.Output)
-	case strings.TrimSpace(result.Output) == "":
-		said = "The code ran and printed nothing."
-	default:
-		said = result.Output
 	}
-	if files := m.handBack(running, result.Files); files != "" {
-		said += "\n\n" + files
+	said, files := HandBack(running.ctx, m.publish, result, m.logger)
+	m.mu.Lock()
+	for _, attachment := range files {
+		running.files = slices.DeleteFunc(running.files, func(kept sandbox.Attachment) bool { return kept.Name == attachment.Name })
+		running.files = append(running.files, attachment)
 	}
-	if len(result.Missing) > 0 {
-		said += "\n\nThese files were not written, or were too large to return: " + strings.Join(result.Missing, ", ")
-	}
+	m.mu.Unlock()
 	return said
 }
 
@@ -828,38 +822,50 @@ func (m *manager) setBroken(running *task, broken string) {
 	m.mu.Unlock()
 }
 
-// handBack publishes the files a run returned and says what became of them.
-func (m *manager) handBack(running *task, files []sandbox.File) string {
-	if len(files) == 0 {
-		return ""
+// HandBack says what a run of code did in words the model can read, and publishes the files
+// it returned where the person can see them, returning the ones that were. A nil publish
+// means the conversation has nowhere to show a file.
+func HandBack(ctx context.Context, publish sandbox.Publisher, result sandbox.Result, logger *slog.Logger) (string, []sandbox.Attachment) {
+	var said string
+	switch {
+	case result.ExitCode != 0:
+		said = fmt.Sprintf("The code exited with %d and printed:\n%s", result.ExitCode, result.Output)
+	case strings.TrimSpace(result.Output) == "":
+		said = "The code ran and printed nothing."
+	default:
+		said = result.Output
 	}
-	var names []string
-	for _, file := range files {
+	var names, shown, failed []string
+	var published []sandbox.Attachment
+	for _, file := range result.Files {
 		names = append(names, file.Name)
-	}
-	if m.publish == nil {
-		return "These files were written, but this conversation has nowhere to show them: " + strings.Join(names, ", ")
-	}
-	var shown, failed []string
-	for _, file := range files {
-		attachment, err := m.publish(running.ctx, file)
+		if publish == nil {
+			continue
+		}
+		attachment, err := publish(ctx, file)
 		if err != nil {
-			m.logger.Error("could not publish a file", "file", file.Name, "error", err)
+			logger.Error("could not publish a file", "file", file.Name, "error", err)
 			failed = append(failed, file.Name)
 			continue
 		}
-		m.mu.Lock()
-		running.files = slices.DeleteFunc(running.files, func(kept sandbox.Attachment) bool { return kept.Name == attachment.Name })
-		running.files = append(running.files, attachment)
-		m.mu.Unlock()
+		published = append(published, attachment)
 		shown = append(shown, file.Name)
 	}
-	var said []string
+	var handed []string
+	if publish == nil && len(names) > 0 {
+		handed = append(handed, "These files were written, but this conversation has nowhere to show them: "+strings.Join(names, ", "))
+	}
 	if len(shown) > 0 {
-		said = append(said, "These files will be attached to the reply the person sees: "+strings.Join(shown, ", "))
+		handed = append(handed, "These files will be attached to the reply the person sees: "+strings.Join(shown, ", "))
 	}
 	if len(failed) > 0 {
-		said = append(said, "These files could not be attached: "+strings.Join(failed, ", "))
+		handed = append(handed, "These files could not be attached: "+strings.Join(failed, ", "))
 	}
-	return strings.Join(said, "\n")
+	if len(handed) > 0 {
+		said += "\n\n" + strings.Join(handed, "\n")
+	}
+	if len(result.Missing) > 0 {
+		said += "\n\nThese files were not written, or were too large to return: " + strings.Join(result.Missing, ", ")
+	}
+	return said, published
 }
