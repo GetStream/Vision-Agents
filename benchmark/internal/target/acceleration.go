@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/agents"
 	"github.com/gorilla/websocket"
 	"gopkg.in/yaml.v3"
 )
@@ -46,9 +48,12 @@ type accelSessionRequest struct {
 }
 
 type accelSyncRequest struct {
-	Name         string `json:"name"`
-	Hash         string `json:"hash"`
-	Instructions string `json:"instructions"`
+	Name         string                      `json:"name"`
+	Hash         string                      `json:"hash"`
+	Instructions string                      `json:"instructions"`
+	Skills       []acceleration.SkillRequest `json:"skills"`
+	Keyterms     []string                    `json:"keyterms"`
+	Subagent     string                      `json:"subagent"`
 }
 
 type accelGreeting struct {
@@ -118,11 +123,33 @@ func (a *Acceleration) Prepare(ctx context.Context) (func(), error) {
 	return stop, nil
 }
 
-// sync stores the pack's instructions as the agent config every session starts from, since
-// a session takes none of its own.
+// sync stores the contract and the same skills and vocabulary the Python target uses.
+// Sessions start from this config rather than carrying instructions of their own.
 func (a *Acceleration) sync(ctx context.Context) error {
-	sum := sha256.Sum256([]byte(a.Instructions))
-	body, err := json.Marshal(accelSyncRequest{Name: a.agentName(), Hash: hex.EncodeToString(sum[:]), Instructions: a.Instructions})
+	folder, err := agents.Load(filepath.Join(a.Root, "agents", "accelerated", a.Pack))
+	if err != nil {
+		return fmt.Errorf("run: load accel agent: %w", err)
+	}
+	request := accelSyncRequest{
+		Name: a.agentName(), Instructions: a.Instructions,
+		Skills:   make([]acceleration.SkillRequest, 0, len(folder.Skills)),
+		Keyterms: folder.Settings.Keyterms,
+		Subagent: envOr("VOICEBENCH_SUBAGENT", folder.Settings.Subagent),
+	}
+	for _, skill := range folder.Skills {
+		deadline := skill.Deadline.Milliseconds()
+		request.Skills = append(request.Skills, acceleration.SkillRequest{
+			Name: skill.Name, Description: skill.Description, Instructions: skill.Instructions,
+			DeadlineMs: &deadline, CaptureVideo: &skill.CaptureVideo, Files: &skill.Files,
+		})
+	}
+	body, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(body)
+	request.Hash = hex.EncodeToString(sum[:])
+	body, err = json.Marshal(request)
 	if err != nil {
 		return err
 	}

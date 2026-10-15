@@ -15,25 +15,8 @@ DEFAULT_CUSTOMER_ID = "voicebench"
 # STT, LLM and TTS above.
 DEFAULT_STS = "openai/gpt-live-1"
 
+# Each pack also declares the names, IDs and addresses its transcriber should recognise.
 ACCELERATED_AGENTS = Path(__file__).resolve().parent.parent / "accelerated"
-
-# Names, IDs and addresses the frozen scenarios use. Without them a transcriber hears
-# Alvarez as Arborists and last-four 9821 as 9822.
-PACK_KEYTERMS: dict[str, list[str]] = {
-    "restaurant": ["Alvarez", "Patel", "512-555-0142"],
-    "healthcare": [
-        "Maya Chen",
-        "Leo Chen",
-        "Priyanka Radhakrishnan",
-        "Radhakrishnan",
-        "ABC123456",
-        "ABC000111",
-        "QW4T9-8821",
-        "Oak Street Pharmacy",
-        "Westlake Compounding",
-    ],
-    "telecom": ["4471", "9821", "Cedar", "14 Cedar Lane", "840"],
-}
 
 
 def _env(name: str, default: str) -> str:
@@ -91,7 +74,7 @@ def build_llm(kind: str, pack: str):
             tts=_env("VOICEBENCH_TTS", DEFAULT_ACCELERATED_TTS),
             voice=os.environ.get("VOICEBENCH_VOICE", "").strip(),
             customer_id=_customer_id(),
-            keyterms=PACK_KEYTERMS.get(pack, []),
+            keyterms=stream.load(ACCELERATED_AGENTS / pack).settings.keyterms,
         )
     if kind == "sts":
         return stream.STS(

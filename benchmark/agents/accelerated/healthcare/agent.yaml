@@ -1,3 +1,13 @@
 name: healthcare
 description: The skills the healthcare pack's subagent may run.
 subagent: openai/gpt-6.1-sol
+keyterms:
+  - "Maya Chen"
+  - "Leo Chen"
+  - "Priyanka Radhakrishnan"
+  - "Radhakrishnan"
+  - "ABC123456"
+  - "ABC000111"
+  - "QW4T9-8821"
+  - "Oak Street Pharmacy"
+  - "Westlake Compounding"

@@ -122,7 +122,8 @@ func TestAccelerationHoldsTheCallBySessionOnThePacksAgent(t *testing.T) {
 	}))
 	defer router.Close()
 
-	accel := &Acceleration{URL: router.URL, Pack: "restaurant", Instructions: "be brief", Tools: []AccelTool{{Name: "book"}}}
+	t.Setenv("VOICEBENCH_SUBAGENT", "")
+	accel := &Acceleration{Root: findTestRoot(t), URL: router.URL, Pack: "restaurant", Instructions: "be brief", Tools: []AccelTool{{Name: "book"}}}
 	stop, err := accel.Prepare(context.Background())
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
@@ -139,6 +140,17 @@ func TestAccelerationHoldsTheCallBySessionOnThePacksAgent(t *testing.T) {
 	synced := got["POST /v1/agents/sync"]
 	if synced["name"] != "voicebench-restaurant" || synced["instructions"] != "be brief" {
 		t.Fatalf("synced %v", synced)
+	}
+	skills := synced["skills"].([]any)
+	if len(skills) != 1 || skills[0].(map[string]any)["name"] != "confirm" {
+		t.Fatalf("pack skills replaced by defaults: %v", skills)
+	}
+	confirm := skills[0].(map[string]any)
+	if confirm["deadline_ms"] != float64(15000) || !strings.Contains(confirm["instructions"].(string), "check_availability") {
+		t.Fatalf("incomplete confirmation skill: %v", confirm)
+	}
+	if synced["subagent"] != DefaultAcceleratedSubagent || fmt.Sprint(synced["keyterms"]) != "[Alvarez Patel 512-555-0142]" {
+		t.Fatalf("pack pipeline settings missing: %v", synced)
 	}
 	created := got["POST /v1/agents/sessions"]
 	if created["id"] != "vb-restaurant-1-abc" || created["agent"] != "voicebench-restaurant" || created["start_voice"] != true {
