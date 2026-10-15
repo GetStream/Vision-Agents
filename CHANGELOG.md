@@ -1984,6 +1984,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- New voice replies wait until interruption cleanup finishes, so barge-in no longer loses a queued follow-up.
 - Voicebench no longer treats speech already in progress when the final caller line starts as the agent's answer; it stays open for the next reply.
 - A router stopping with a request still open when its 10 s shutdown grace runs out logs a warning and exits 0. It reported `context deadline exceeded` to Sentry and exited 1, so a rollout that outlasted one slow request paged as a failure (#935).
 - The daily message and token limits count per user behind the proxy again. With `ROUTER_TRUSTED_PROXIES` unset, every request's address was the proxy's, so all end users shared one address allowance and the deployment as a whole was cut off after 200 responses a day. In `proxy` auth mode with no trusted ranges a named user is now counted only by user, and a guest still by address; set `ROUTER_TRUSTED_PROXIES` to count by the forwarded client address as well.
