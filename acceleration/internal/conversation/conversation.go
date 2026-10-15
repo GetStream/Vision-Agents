@@ -483,7 +483,6 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	if len(scopes) > 0 {
 		scope = scopes[0]
 	}
-	id := strings.TrimPrefix(cid, "agent:")
 	if !Openable(cid) {
 		return nil, nil, false, stack.Wrap(errors.New("invalid conversation channel"))
 	}
@@ -553,6 +552,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	if err != nil {
 		return nil, nil, false, err
 	}
+	var data *getstream.ChannelInput
 	if fresh {
 		userID := caller
 		if userID == "" {
@@ -564,12 +564,9 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 		}
 		stamped := channelCustom(custom)
 		maps.Copy(stamped, map[string]any{CustomerField: customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller, TriggerField: SessionCommandTrigger})
-		_, err = client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: stamped}})
-		if err != nil {
-			return nil, nil, false, stack.Wrap(err)
-		}
+		data = &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: stamped}
 	}
-	page, err := s.historyIn(ctx, client, customer, agentID, cid, "", caller, nil, voiceAgent)
+	page, err := s.readPage(ctx, client, customer, agentID, cid, "", caller, nil, data, voiceAgent)
 	if err != nil {
 		return nil, nil, false, stack.Wrap(err)
 	}
@@ -849,6 +846,12 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 }
 
 func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, customer, agentID, cid, before, caller string, pending []operation, voiceAgent ...string) (Page, error) {
+	return s.readPage(ctx, client, customer, agentID, cid, before, caller, pending, nil, voiceAgent...)
+}
+
+// readPage reads a page of a conversation's channel. With data it is also the request that
+// creates the channel, so a new conversation is made and read back in one.
+func (s *Service) readPage(ctx context.Context, client *getstream.Stream, customer, agentID, cid, before, caller string, pending []operation, data *getstream.ChannelInput, voiceAgent ...string) (Page, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	id := strings.TrimPrefix(cid, "agent:")
@@ -861,8 +864,9 @@ func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, custo
 	if before != "" {
 		params.IDLt = &before
 	}
-	// Query without Data: a resume must never create or overwrite a channel's ownership.
-	r, err := client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{State: &state, Messages: params})
+	// Only a new conversation sends Data: a resume must never create or overwrite a
+	// channel's ownership.
+	r, err := client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: data, State: &state, Messages: params})
 	if err != nil {
 		return Page{}, stack.Wrap(err)
 	}
