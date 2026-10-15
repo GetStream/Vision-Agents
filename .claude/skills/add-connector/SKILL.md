@@ -50,6 +50,9 @@ Start from the closest existing file:
    `revision: 1`. Fill `name`, `category`, `description`, `endpoints`, `schemes`, `client`
    (`registration`: `operator`, `customer`, `managed`, `dcr`, `cimd`), `scopes`, `refresh`,
    `rate_limit` and `sources`. Add a `channel` block only if the provider sends messages.
+   A source's `headers` are fixed request headers sent on every request, such as GitHub's
+   `X-MCP-Toolsets` (`github.yaml`); a header the credential, the connection or MCP writes
+   is refused.
 2. **Cite every vendor fact.** Put a comment beside each value with the vendor page and the
    date you opened it. A value with no source gets `# unverified`, and the PR lists it.
 3. **Stream's own OAuth client** (only if `client.registration` lists `operator`): set

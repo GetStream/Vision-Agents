@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io/fs"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -41,7 +42,9 @@ func (s *CatalogSuite) TestEveryCatalogPluginHasABuiltInConnectorOfTheSameID() {
 		} else {
 			s.Contains(manifest.Schemes, oauth2code.Name, plugin.ID)
 		}
-		s.Contains(manifest.Sources, core.SourceRule{Kind: "mcp", Endpoint: "mcp"}, plugin.ID)
+		s.True(slices.ContainsFunc(manifest.Sources, func(rule core.SourceRule) bool {
+			return rule.Kind == "mcp" && rule.Endpoint == "mcp"
+		}), plugin.ID)
 	}
 }
 

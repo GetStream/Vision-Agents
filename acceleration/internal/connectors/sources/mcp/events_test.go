@@ -96,6 +96,21 @@ func (s *EventsSuite) TestSubscribingAgainRefreshesTheSameSubscription() {
 	s.Equal(2, held[0].Subscribes)
 }
 
+func (s *EventsSuite) TestEveryEventsRequestCarriesTheSourcesHeaders() {
+	binding := s.binding()
+	binding.Manifest.Sources[0].Headers = map[string]string{"X-MCP-Toolsets": "default,actions"}
+
+	_, err := s.source.Subscribe(s.ctx, binding, s.subscription())
+	s.Require().NoError(err)
+	s.Require().NoError(s.source.Unsubscribe(s.ctx, binding, s.subscription()))
+
+	sent := s.fake.MCPHeader("X-MCP-Toolsets")
+	s.Len(sent, 4, "server/discover and events/subscribe, then server/discover and events/unsubscribe")
+	for _, value := range sent {
+		s.Equal("default,actions", value)
+	}
+}
+
 func (s *EventsSuite) TestAServerThatOffersNoEventsIsNotAskedToSubscribe() {
 	s.fake.Use(fakeprovider.ClientCredentials)
 
