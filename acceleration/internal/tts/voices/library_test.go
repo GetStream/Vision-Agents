@@ -301,6 +301,9 @@ func (s *CatalogueSuite) TestALookupThatTakesTooLongLetsTheVoiceThrough() {
 	s.catalogue.lookup = 10 * time.Millisecond
 
 	s.NoError(s.catalogue.Check(s.ctx, "elevenlabs", "Sara"))
+	asked := finder.lookups
+	s.NoError(s.catalogue.Check(s.ctx, "elevenlabs", "Sara"))
+	s.Equal(asked, finder.lookups, "a vendor that hangs is remembered, not asked again")
 }
 
 func (s *CatalogueSuite) TestACallerWhoGaveUpIsNotRememberedAsAVendorFailure() {
