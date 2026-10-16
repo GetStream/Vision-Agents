@@ -149,9 +149,10 @@ For a session your backend creates, pass the end user's connection in
 `connector_bindings: [{"name": "linear", "connection_id": "…"}]`. Leave it out and the
 router uses the user's only connected connection to that connector, if there is exactly one.
 
-`agent.yaml`: the sync API accepts `connectors`, but the SDK folder readers do not read a
-`connectors:` block yet (`git grep connectors sdks/go/agents sdks/js/src` finds none). Use the
-dashboard or the API for now.
+`agent.yaml`: the sync API accepts `connectors`, and the Go SDK folder reader reads the block
+(`sdks/go/agents/config.go`, `connectorBindings`). An entry whose `connection:` the app does not have
+is left out with a warning, and the rest of the agent syncs; `required: true` makes it an error.
+Other SDKs: unverified, check `git grep connectors sdks/js/src plugins/stream` before relying on it.
 
 ## 4. A channel: the Slack bot
 

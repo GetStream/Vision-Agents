@@ -1069,7 +1069,7 @@ func TestSyncOfConnectionsThatAllResolveSendsTheBodyItSentBefore(t *testing.T) {
 
 func TestSyncLeavesOutAConnectorWhoseConnectionIsMissing(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: issues\n    connection: missing\n")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: issues\n    connection: missing\n    required: false\n")
 	router := newBackend(t)
 	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
 		return connectionPage("", listedConnection("other", "work"))
@@ -1095,6 +1095,46 @@ func TestSyncLeavesOutAConnectorWhoseConnectionIsMissing(t *testing.T) {
 	}
 	sent := router.syncs[0].Connectors
 	if sent == nil || len(*sent) != 1 || (*sent)[0].Name != "linear" {
+		t.Errorf("connectors went as %+v", sent)
+	}
+}
+
+// Two entries left out: each is warned about, and the hash covers both, so finding one of the
+// connections later still changes it.
+func TestSyncOfTwoMissingConnectionsWarnsOfBothAndAddsOneOnceItExists(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connection: company\n  - name: chat\n    connection: team\n")
+	router := newBackend(t)
+	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
+		return connectionPage("", listedConnection("other", "work"))
+	})
+	var logged bytes.Buffer
+	if _, err := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"connector=issues connection=company", "connector=chat connection=team"} {
+		if !strings.Contains(logged.String(), want) {
+			t.Errorf("no warning with %q in %q", want, logged.String())
+		}
+	}
+
+	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
+		return connectionPage("", listedConnection("conn-1", "company"))
+	})
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.syncs) != 2 {
+		t.Fatalf("%d syncs were sent", len(router.syncs))
+	}
+	if router.syncs[0].Hash == router.syncs[1].Hash {
+		t.Errorf("both syncs sent hash %q, so the router keeps the first", router.syncs[0].Hash)
+	}
+	sent := router.syncs[1].Connectors
+	if sent == nil || len(*sent) != 1 || (*sent)[0].Name != "issues" {
 		t.Errorf("connectors went as %+v", sent)
 	}
 }
