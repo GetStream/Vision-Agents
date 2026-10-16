@@ -290,6 +290,24 @@ func (s *Server) Trunks() []string {
 	return slices.Sorted(maps.Keys(s.db.trunks))
 }
 
+// TrunkAuth is what the trunk with the id was created with to let a caller in: its
+// password and the addresses it takes calls from.
+func (s *Server) TrunkAuth(id string) (string, []string) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	body := s.db.trunks[id]
+	password, _ := body["password"].(string)
+	var allowed []string
+	if listed, ok := body["allowed_ips"].([]any); ok {
+		for _, address := range listed {
+			if text, ok := address.(string); ok {
+				allowed = append(allowed, text)
+			}
+		}
+	}
+	return password, allowed
+}
+
 // OneTrunkPerNumber has the app refuse a trunk that names a number one of its trunks already
 // has, as Stream does. It is off unless asked for, since not every test models the rule.
 func (s *Server) OneTrunkPerNumber() {
@@ -605,7 +623,10 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		// trunk from another's.
 		id := "trunk-" + unique()
 		db.trunks[id] = body
-		result["sip_trunk"] = map[string]any{"id": id, "uri": "sip:" + id + "@sip.example.test", "username": id, "password": "secret"}
+		// Stream stores the password it was sent and makes none of its own, so a trunk
+		// created without one has none.
+		password, _ := body["password"].(string)
+		result["sip_trunk"] = map[string]any{"id": id, "uri": "sip:" + id + "@sip.example.test", "username": id, "password": password}
 	case strings.HasSuffix(r.URL.Path, "/sip/inbound_routing_rules") && r.Method == http.MethodPost:
 		id := "rule-" + unique()
 		db.rules[id] = body

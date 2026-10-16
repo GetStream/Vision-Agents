@@ -31,8 +31,9 @@ import (
 // decision is read on its own.
 //
 // The answer is that an allowlisted address is accepted unchallenged, which is what makes
-// the four password-less vendors usable. It also turns out that a trunk with no allowlist
-// accepts every address unchallenged, which is why Trunk.AllowedIPs is not optional here.
+// the four password-less vendors usable. A trunk with neither an allowlist nor a password
+// lets every address in, which is why CreateTrunk gives a trunk without addresses a
+// password.
 
 type SIPAuthIntegrationSuite struct {
 	suite.Suite
@@ -89,9 +90,8 @@ func (s *SIPAuthIntegrationSuite) TestATrunkThatKnowsTheAddressLetsTheCallInUnch
 }
 
 func (s *SIPAuthIntegrationSuite) TestATrunkTurnsAwayAnAddressItDoesNotKnow() {
-	// An allowlist replaces the password rather than adding to it: an address that is not
-	// on it is refused outright rather than being asked to authenticate. Getting a
-	// vendor's signalling ranges wrong therefore fails the call, not just the shortcut.
+	// Stream refuses an unlisted address before it gets to the password, so getting a
+	// vendor's signalling ranges wrong fails the call, not just the shortcut.
 	s.trunk("sipauth-other", []string{s.allowed + "/32"})
 
 	status, decision := s.resolve("198.51.100.9")
@@ -101,15 +101,60 @@ func (s *SIPAuthIntegrationSuite) TestATrunkTurnsAwayAnAddressItDoesNotKnow() {
 }
 
 func (s *SIPAuthIntegrationSuite) TestATrunkWithNoAllowlistLetsAnybodyIn() {
-	// This is why every trunk made here names the addresses it expects. An empty
-	// allowlist does not mean "password only", it means no check at all: anyone who
-	// learns the trunk's uri is in the customer's calls.
-	s.trunk("sipauth-none", nil)
+	// This is why CreateTrunk gives a trunk without addresses a password: Stream makes none
+	// of its own, so made without one the trunk checks nothing and lets every caller
+	// in. It is made with the SDK because CreateTrunk will not.
+	s.rawTrunk("sipauth-open", nil, nil)
 
 	status, decision := s.resolve(s.allowed)
 
 	s.Equal(http.StatusCreated, status)
 	s.Equal("accept", decision.AuthResult)
+}
+
+func (s *SIPAuthIntegrationSuite) TestATrunkWithAnAddressAndAPasswordStillChallengesThatAddress() {
+	// This is why a trunk with addresses gets no password.
+	password := "sipauth-password"
+	s.rawTrunk("sipauth-both", []string{s.allowed + "/32"}, &password)
+
+	status, decision := s.resolve(s.allowed)
+
+	s.Equal(http.StatusCreated, status)
+	s.Equal("password", decision.AuthResult)
+}
+
+func (s *SIPAuthIntegrationSuite) TestATrunkMadeWithoutAnAllowlistChallengesTheCaller() {
+	// Stream lets anybody into a trunk with neither an allowlist nor a password, so a trunk
+	// made here without addresses always has a password.
+	s.trunk("sipauth-none", nil)
+
+	status, decision := s.resolve(s.allowed)
+
+	s.Equal(http.StatusCreated, status)
+	s.Equal("password", decision.AuthResult)
+}
+
+// rawTrunk makes a trunk straight through the SDK, so it can have a shape CreateTrunk would
+// not give it, and removes it afterwards.
+func (s *SIPAuthIntegrationSuite) rawTrunk(name string, allowedIPs []string, password *string) string {
+	response, err := s.stream.Client().Video().CreateSIPTrunk(s.ctx, &getstream.CreateSIPTrunkRequest{
+		Name:       name + "-" + s.number,
+		Numbers:    []string{s.number},
+		AllowedIps: allowedIPs,
+		Password:   password,
+	})
+	s.Require().NoError(err)
+	trunkID := response.Data.SipTrunk.ID
+	s.deleteAfterwards(trunkID)
+	return trunkID
+}
+
+func (s *SIPAuthIntegrationSuite) deleteAfterwards(trunkID string) {
+	s.T().Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, _ = s.stream.Client().Video().DeleteSIPTrunk(ctx, trunkID, &getstream.DeleteSIPTrunkRequest{})
+	})
 }
 
 // trunk makes a trunk that expects calls from allowedIPs, and removes it afterwards.
@@ -120,11 +165,7 @@ func (s *SIPAuthIntegrationSuite) trunk(name string, allowedIPs []string) Bridge
 		AllowedIPs: allowedIPs,
 	})
 	s.Require().NoError(err)
-	s.T().Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_, _ = s.stream.Client().Video().DeleteSIPTrunk(ctx, trunkID, &getstream.DeleteSIPTrunkRequest{})
-	})
+	s.deleteAfterwards(trunkID)
 	return bridge
 }
 

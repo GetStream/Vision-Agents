@@ -12,8 +12,8 @@
 # trunk_auth is how a vendor gets past the Stream trunk it bridges into. Twilio, Telnyx and
 # Plivo can name SIP digest credentials in their call plans, so the trunk's own password is
 # enough. The other four have no field for one anywhere, so their trunk has to recognise them
-# by the address they call from, and signalling is that address. A trunk with neither is open
-# to anyone who learns its uri, so a vendor that authenticates by address will not place a
+# by the address they call from, and signalling is that address. A trunk with neither checks
+# nothing and lets every caller in, so a vendor that authenticates by address will not place a
 # call until its signalling addresses are declared.
 vendors:
   - vendor: twilio
