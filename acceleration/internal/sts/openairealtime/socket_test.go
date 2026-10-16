@@ -145,7 +145,7 @@ func (s *RealtimeSocketSuite) TestTheSessionIsConfiguredBeforeItIsReportedReady(
 	provider, _ := s.connect(fake, Options{Vendor: OpenAI, Voice: "marin", Instructions: "Be brief."})
 	defer func() { _ = provider.Close() }()
 
-	s.Contains(<-fake.url, "model=gpt-realtime-2")
+	s.Contains(<-fake.url, "model=gpt-realtime-2.1")
 	s.Equal("Bearer test-key", (<-fake.header).Get("Authorization"))
 
 	opened := <-fake.setups

@@ -84,7 +84,8 @@ superseded 3.1 and makes tools non-blocking by default, and `gemini-3.8-live-ext
 is a separate id, not a setting: it refuses a setup without a `thinkingLevel` and sends
 `turnComplete` with `interactionStatus: IN_PROGRESS` after a filler, which is not the end of
 the reply. The table's Gemini column describes 3.1. `gpt-realtime-2` is the
-family; dated snapshots share its capabilities. Check the Artificial Analysis
+family; dated snapshots and `gpt-realtime-2.1` share its capabilities, and 2.1 is the
+default and the `sts-vision` pin. Check the Artificial Analysis
 speech-to-speech board before adding a model: quality and time-to-first-audio move
 between releases, and the `sts-fast` pin follows them.
 

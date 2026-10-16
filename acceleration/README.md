@@ -488,7 +488,7 @@ the answer.
 
 Speech to speech has three shortcuts of its own. `sts-fast` is the model quickest to answer,
 pinned to `gemini/gemini-3.8-live`; `sts-vision` is a conversation the model can watch as
-well as hear, pinned to `openai/gpt-realtime-2`; and `sts-duplex` requires a model that can
+well as hear, pinned to `openai/gpt-realtime-2.1`; and `sts-duplex` requires a model that can
 listen while producing audio. Realtime transport, barge-in or asynchronous tools alone do
 not establish full duplex. A native speech model owns transcription, turn-taking and speech,
 so it takes the place of the separate STT, conversation LLM and TTS pipeline. A session asks
@@ -541,6 +541,7 @@ target. The agent's `llm` field and its optional `subagent` do not select that b
 | `gemini/gemini-3.8-live-extended-thinking` | high-quality | tokens: $3.00 in, $12.00 out per million    |
 | `xai/grok-voice-think-fast-2.0`           | low-latency  | the caller's audio: $3.00 an hour            |
 | `qwen/qwen3.5-omni-plus-realtime`         | low-latency  | the caller's audio: $0.03 an hour            |
+| `openai/gpt-realtime-2.1`                 | high-quality | tokens: $32.00 in, $0.40 cached, $64.00 out  |
 | `openai/gpt-realtime-2`                   | high-quality | tokens: $32.00 in, $0.40 cached, $64.00 out  |
 
 These are estimates, and `router.yaml` says why: the vendors price audio in, audio out and

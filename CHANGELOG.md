@@ -622,6 +622,10 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### GPT-Realtime-2.1 for speech to speech
+
+`openai/gpt-realtime-2.1` is a speech-to-speech target at the same price as `gpt-realtime-2`, and now the OpenAI realtime default and what `sts-vision` prefers. `openai/gpt-realtime-2` still routes.
+
 ### A backend can give one session instructions of its own
 
 `POST /v1/agents/sessions` and the session socket's start frame take `instructions`: what the

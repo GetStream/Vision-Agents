@@ -126,7 +126,7 @@ func (s *RealtimeSuite) TestQwenAudioIsSpelledItsOwnWay() {
 
 func (s *RealtimeSuite) TestTheEndpointCarriesTheModel() {
 	provider := s.newProvider(OpenAI)
-	s.Equal(OpenAI.URL+"?model=gpt-realtime-2", provider.endpoint())
+	s.Equal(OpenAI.URL+"?model=gpt-realtime-2.1", provider.endpoint())
 	s.Equal(24_000, provider.SampleRate())
 }
 

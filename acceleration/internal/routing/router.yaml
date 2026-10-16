@@ -2000,12 +2000,35 @@ sts:
         per_million_input_tokens: 3.0
         per_million_output_tokens: 12.0
 
-    # GPT-Realtime-2. The only model here with a semantic turn detector. Audio in at
-    # $32/1M tokens, $0.40/1M cached, out at $64/1M. OpenAI do not train on API traffic
-    # and keep it thirty days for abuse monitoring; zero retention is an enterprise setting.
+    # GPT-Realtime-2.1, OpenAI's semantic turn detector on the same socket and the same
+    # rates as GPT-Realtime-2: audio in at $32/1M tokens, $0.40/1M cached, out at $64/1M.
+    # It hears letters and digits better, holds up in silence and noise and handles being
+    # talked over better. 75.2 on the Artificial Analysis speech-to-speech index against
+    # 73.6 for 2, both at high reasoning, with about 1.2s to first audio. The mini, at
+    # $10/$20, is left out: Gemini 3.8 Live is cheaper and leads the fast tier. OpenAI do
+    # not train on API traffic and keep it thirty days for abuse monitoring; zero retention
+    # is an enterprise setting.
+    - provider: openai
+      model: gpt-realtime-2.1
+      description: "OpenAI's realtime voice, with semantic turn detection. Sees images. Among the dearest."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      supports: [semantic_turns, endpointing, tools, text, input_transcript, output_transcript]
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+      price:
+        per_million_input_tokens: 32.0
+        per_million_cached_input_tokens: 0.40
+        per_million_output_tokens: 64.0
+
+    # GPT-Realtime-2, which 2.1 improves on at the same price. Kept so a config that names
+    # it does not start failing while OpenAI still serve it. Same rates and data terms.
     - provider: openai
       model: gpt-realtime-2
-      description: "The only model here with semantic turn detection. Sees images. Among the dearest."
+      description: "The previous OpenAI realtime voice, with semantic turn detection. Sees images. Among the dearest."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -2118,13 +2141,13 @@ sts:
       require_terms: [full_duplex]
       require_realtime: true
 
-    # A conversation the model can watch as well as hear. Pinned to GPT-Realtime-2, which
-    # is what vlm pins for the same reason.
+    # A conversation the model can watch as well as hear. Pinned to GPT-Realtime-2.1, as
+    # vlm is pinned to an OpenAI model for the same reason.
     sts-vision:
       title: Vision
-      description: "A conversation the model can watch as well as hear. Prefers GPT-Realtime-2."
+      description: "A conversation the model can watch as well as hear. Prefers GPT-Realtime-2.1."
       require_input_modalities: [image]
-      prefer: openai/gpt-realtime-2
+      prefer: openai/gpt-realtime-2.1
 
     multilingual-high-accuracy:
       title: High quality
