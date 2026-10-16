@@ -2,8 +2,10 @@ package ttsrouter
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/breeze"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
@@ -38,6 +40,7 @@ func DefaultRegistry() *Registry {
 			Speed:      number(spec.TTS.Speed),
 			Stability:  spec.TTS.Stability,
 			Similarity: spec.TTS.Similarity,
+			Style:      settings.VoiceSettings.Style,
 			Logger:     spec.Logger,
 		}
 		// The v3 models are served on a different socket, so which endpoint to open is
@@ -48,13 +51,8 @@ func DefaultRegistry() *Registry {
 		} else {
 			provider, err = elevenlabs.New(options)
 		}
-		// A value the model will not take is the caller's mistake, which the router
-		// neither counts against the model nor routes around.
-		if errors.Is(err, elevenlabs.ErrRefused) {
-			return nil, routing.Refused(err)
-		}
 		if err != nil {
-			return nil, err
+			return nil, elevenlabsRefusal(spec.Model, err)
 		}
 		return provider, nil
 	})
@@ -126,7 +124,30 @@ func RegisterMock(registry *Registry) {
 // config that routes between vendors and wants a named voice at each says so once per
 // vendor, and the one the router picks is the one that is read.
 type elevenlabsSettings struct {
-	VoiceID string `json:"voice_id"`
+	VoiceID       string                  `json:"voice_id"`
+	VoiceSettings elevenlabsVoiceSettings `json:"voice_settings"`
+}
+
+// elevenlabsVoiceSettings is the part of voice_settings the shared vocabulary has no word
+// for. Style is a number from 0 to 1 at ElevenLabs, where the shared style is a word to
+// sound like, so the two are not one setting. Stability and similarity are shared options,
+// and speed too, so they are not here and an overwrite naming one is refused.
+type elevenlabsVoiceSettings struct {
+	Style *float64 `json:"style"`
+}
+
+// elevenlabsRefusal marks a value ElevenLabs will not take as the caller's mistake, which
+// the router neither counts against the model nor routes around. A refused style is the
+// overwrite block's, so it is refused as one: the router then tries only ElevenLabs' other
+// models, where a vendor that never reads the block would drop the style in silence.
+func elevenlabsRefusal(model string, err error) error {
+	if errors.Is(err, elevenlabs.ErrStyle) {
+		return routing.Refused(stack.Wrap(fmt.Errorf("%w for %s: %w", routing.ErrOverwrite, model, err)))
+	}
+	if errors.Is(err, elevenlabs.ErrRefused) {
+		return routing.Refused(err)
+	}
+	return err
 }
 
 // inworldSettings is what a caller can reach at Inworld through overwrites. DeliveryMode

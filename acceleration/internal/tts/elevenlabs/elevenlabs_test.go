@@ -204,6 +204,7 @@ func (s *ElevenLabsSuite) TestNewRejectsASampleRateTheOutputFormatCannotCarry() 
 
 func (s *ElevenLabsSuite) TestASpeedOutsideTheVendorsRangeIsRefused() {
 	_, err := New(Options{APIKey: "k", Speed: 1.5})
+	s.ErrorIs(err, ErrRefused, "the caller's mistake, not the provider's fault")
 	s.ErrorContains(err, "speed 1.5 is outside 0.7 to 1.2")
 
 	_, err = New(Options{APIKey: "k", Speed: 0.5})
@@ -287,6 +288,35 @@ func (s *ElevenLabsSuite) TestAVoiceSettingOutsideZeroToOneIsRefused() {
 
 	_, err = New(Options{APIKey: "k", Similarity: &below})
 	s.ErrorContains(err, "similarity -0.2 is outside 0 to 1")
+}
+
+func (s *ElevenLabsSuite) TestEveryContextIsOpenedWithTheStyleAskedFor() {
+	style := 0.4
+
+	s.JSONEq(`{"stability":0.5,"similarity_boost":0.8,"style":0.4}`,
+		s.openedVoiceSettings(Options{VoiceID: "v1", Style: &style}))
+}
+
+func (s *ElevenLabsSuite) TestAStyleOfZeroIsSentRatherThanTakenForNone() {
+	// Zero is ElevenLabs' own default and a style a caller can ask for by name.
+	style := 0.0
+
+	s.JSONEq(`{"stability":0.5,"similarity_boost":0.8,"style":0}`,
+		s.openedVoiceSettings(Options{VoiceID: "v1", Style: &style}))
+}
+
+func (s *ElevenLabsSuite) TestAStyleOutsideZeroToOneIsRefused() {
+	// Live on 2026-10-16 ElevenLabs refused 1.5 and -0.2 on Flash v2.5, "expected to be
+	// greater or equal to 0.0 and less or equal to 1.0".
+	above, below := 1.5, -0.2
+
+	_, err := New(Options{APIKey: "k", Style: &above})
+	s.ErrorIs(err, ErrStyle, "a refused style is told apart from the other refusals")
+	s.ErrorIs(err, ErrRefused, "the caller's mistake, not the provider's fault")
+	s.ErrorContains(err, "style 1.5 is outside 0 to 1")
+
+	_, err = New(Options{APIKey: "k", Style: &below})
+	s.ErrorContains(err, "style -0.2 is outside 0 to 1")
 }
 
 func (s *ElevenLabsSuite) TestTheEndpointCarriesTheVoiceModelAndFormat() {

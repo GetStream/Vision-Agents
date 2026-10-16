@@ -41,6 +41,8 @@ type RecorderOptions struct {
 	APIKey  string
 	VoiceID string
 	Model   string
+	// Style is voice_settings.style, nil for none. Only the models before v3 take it.
+	Style *float64
 	// BaseURL overrides the endpoint, for a proxy or a test server.
 	BaseURL string
 	Logger  *slog.Logger
@@ -73,6 +75,9 @@ func NewRecorder(options RecorderOptions) (*Recorder, error) {
 	if options.Model == "" {
 		options.Model = RecorderModel
 	}
+	if err := styleFor(options.Model, options.Style); err != nil {
+		return nil, err
+	}
 	if options.BaseURL == "" {
 		options.BaseURL = recorderURL
 	}
@@ -99,6 +104,9 @@ func (r *Recorder) Provider() string { return ProviderName }
 
 // Model is the model identifier used in stats.
 func (r *Recorder) Model() string { return r.options.Model }
+
+// Voice is the speaker of a recording that names none.
+func (r *Recorder) Voice() string { return r.options.VoiceID }
 
 // Record speaks the text and returns the file.
 func (r *Recorder) Record(ctx context.Context, recording tts.Recording) (tts.Recorded, error) {
@@ -199,6 +207,10 @@ func (r *Recorder) payload(recording tts.Recording) recorderRequest {
 	}
 	if recording.Speed > 0 {
 		settings.Speed = &recording.Speed
+		named = true
+	}
+	if r.options.Style != nil {
+		settings.Style = r.options.Style
 		named = true
 	}
 	if named {

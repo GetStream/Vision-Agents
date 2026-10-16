@@ -353,7 +353,40 @@ func (s *TTSRouterSuite) TestRegistryRefusesASpeedOutsideTheVendorsRange() {
 		Model: "eleven_flash_v2_5",
 		TTS:   options.TTS{Speed: &speed},
 	})
+	s.ErrorIs(err, routing.ErrRequest, "a request error is not counted against the model's health")
 	s.ErrorContains(err, "outside 0.7 to 1.2")
+}
+
+func (s *TTSRouterSuite) TestASpeedElevenLabsWillNotTakeIsRefusedAsTheCallersMistake() {
+	var built []string
+	router := s.newRouterOverRealElevenLabs(&built)
+	// ElevenLabs takes 0.7 to 1.2
+	// (https://elevenlabs.io/docs/api-reference/text-to-speech/v-1-text-to-speech-voice-id-stream-input,
+	// opened 2026-10-16).
+	outside := 1.5
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "en-low-latency",
+		Options:    options.TTS{Speed: &outside},
+	})
+
+	s.Require().ErrorIs(err, routing.ErrRequest, "a request error is not counted against the model's health")
+	s.ErrorContains(err, "speed 1.5 is outside 0.7 to 1.2")
+	s.NotContains(err.Error(), "every candidate", "the caller's mistake is not an outage")
+	s.Equal([]string{"elevenlabs/eleven_flash_v2_5"}, built, "v4 Turbo takes no speed, so only Flash is built")
+}
+
+func (s *TTSRouterSuite) TestASpeedADialogueModelIsHandedIsRefusedAsTheCallersMistake() {
+	s.T().Setenv("ELEVENLABS_API_KEY", "test-key")
+	speed := 0.9
+
+	// Routing never hands a dialogue model a speed, since none declares one; the factory
+	// refuses it all the same rather than let the socket drop it.
+	_, err := DefaultRegistry().Build("elevenlabs", routing.Spec{Model: "eleven_v4", TTS: options.TTS{Speed: &speed}})
+
+	s.ErrorIs(err, routing.ErrRequest, "a request error is not counted against the model's health")
+	s.ErrorContains(err, "eleven_v4 takes no speed")
 }
 
 func (s *TTSRouterSuite) TestAnOverwriteReachesTheVendorItNames() {
@@ -428,7 +461,9 @@ func (s *TTSRouterSuite) TestAnOverwriteElevenLabsHasNoFieldForIsRefusedRatherTh
 
 	s.Require().ErrorIs(err, routing.ErrOverwrite)
 	s.ErrorContains(err, "elevenlabs/eleven_v4")
-	s.ErrorContains(err, "voice_settings")
+	// voice_settings has a style and nothing else: a speed is a shared option, so naming one
+	// here is a field ElevenLabs' block does not have.
+	s.ErrorContains(err, `unknown field "speed"`)
 	s.Equal([]string{"elevenlabs/eleven_v4", "elevenlabs/eleven_v4_turbo"}, built,
 		"cartesia never reads the elevenlabs block, so serving with it would drop the overwrite in silence")
 }
@@ -530,6 +565,57 @@ func (s *TTSRouterSuite) TestRegistryHandsTheStabilityAndSimilarityToElevenLabs(
 	s.ErrorContains(err, "stability 1.5 is outside 0 to 1")
 	_, err = DefaultRegistry().Build("elevenlabs", routing.Spec{Model: "eleven_flash_v2_5", TTS: options.TTS{Similarity: &outside}})
 	s.ErrorContains(err, "similarity 1.5 is outside 0 to 1")
+}
+
+func (s *TTSRouterSuite) TestRegistryHandsTheStyleOverwriteToElevenLabs() {
+	s.T().Setenv("ELEVENLABS_API_KEY", "test-key")
+
+	// Out of range is the one answer the provider gives that shows it was handed the value.
+	_, err := DefaultRegistry().Build("elevenlabs", routing.Spec{
+		Model:      "eleven_flash_v2_5",
+		Overwrites: json.RawMessage(`{"voice_settings":{"style":1.5}}`),
+	})
+
+	s.ErrorIs(err, routing.ErrOverwrite, "the style came in the overwrite block, so the block is what was refused")
+	s.ErrorIs(err, routing.ErrRequest, "a request error is not counted against the model's health")
+	s.ErrorContains(err, "style 1.5 is outside 0 to 1")
+}
+
+func (s *TTSRouterSuite) TestAStyleOverwriteIsSpokenByAModelThatTakesOne() {
+	var built []string
+	router := s.newRouterOverRealElevenLabs(&built)
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "en-low-latency",
+		Options: options.TTS{Overwrites: map[string]json.RawMessage{
+			"elevenlabs": json.RawMessage(`{"voice_settings":{"style":0.4}}`),
+		}},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("eleven_flash_v2_5", session.Model())
+	s.Equal([]string{"elevenlabs/eleven_v4_turbo", "elevenlabs/eleven_flash_v2_5"}, built,
+		"v4 Turbo has no style, so the request stays with ElevenLabs and Flash speaks it")
+}
+
+func (s *TTSRouterSuite) TestAStyleOverwriteOnTheQualityShortcutIsRefusedRatherThanSpokenByAnotherVoice() {
+	var built []string
+	router := s.newRouterOverRealElevenLabs(&built)
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "tts-quality",
+		Options: options.TTS{Overwrites: map[string]json.RawMessage{
+			"elevenlabs": json.RawMessage(`{"voice_settings":{"style":0.4}}`),
+		}},
+	})
+
+	s.Require().ErrorIs(err, routing.ErrOverwrite)
+	s.ErrorContains(err, "style is not taken by eleven_v4")
+	s.Equal([]string{"elevenlabs/eleven_v4", "elevenlabs/eleven_v4_turbo"}, built,
+		"cartesia never reads the elevenlabs block, so serving with it would drop the style in silence")
 }
 
 func (s *TTSRouterSuite) TestStartRequiresACustomer() {
