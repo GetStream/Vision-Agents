@@ -215,7 +215,7 @@ func (c *Catalogue) Check(ctx context.Context, provider, id string) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, c.lookup)
+	ctx, cancel := context.WithTimeoutCause(ctx, c.lookup, errLookupTimeout)
 	defer cancel()
 	// An unreadable listing only costs the suggestion: the lookup still answers.
 	library, _ := c.listOne(ctx, provider, lister)
@@ -236,8 +236,8 @@ func (c *Catalogue) Check(ctx context.Context, provider, id string) error {
 
 	exists, err := finder.Exists(ctx, id)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.Canceled) {
-			// The caller gave up; the vendor did not fail.
+		if callerGaveUp(ctx) {
+			// The caller gave up (canceled, or its own deadline passed); the vendor did not fail.
 			return nil
 		}
 		// The voice goes through unchecked, and nothing else shows that the check is off.
@@ -267,6 +267,15 @@ func (c *Catalogue) Check(ctx context.Context, provider, id string) error {
 	return refusal.err
 }
 
+// errLookupTimeout is the cause of the open path's own lookup deadline, so a vendor that
+// hangs can be told from a caller whose context ended.
+var errLookupTimeout = errors.New("voices: lookup timed out")
+
+// callerGaveUp reports that ctx is done for any reason but the lookup's own timeout.
+func callerGaveUp(ctx context.Context) bool {
+	return ctx.Err() != nil && !errors.Is(context.Cause(ctx), errLookupTimeout)
+}
+
 func (c *Catalogue) listOne(ctx context.Context, provider string, lister Lister) ([]Library, error) {
 	c.mu.Lock()
 	held, ok := c.cached[provider]
@@ -285,7 +294,7 @@ func (c *Catalogue) listOne(ctx context.Context, provider string, lister Lister)
 
 	voices, err := lister.List(ctx)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.Canceled) {
+		if callerGaveUp(ctx) {
 			// The caller gave up; the vendor did not fail, so nothing is remembered.
 			return nil, stack.Wrap(fmt.Errorf("voices: list %s: %w", provider, err))
 		}

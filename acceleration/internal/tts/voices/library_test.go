@@ -319,6 +319,22 @@ func (s *CatalogueSuite) TestACallerWhoGaveUpIsNotRememberedAsAVendorFailure() {
 	s.Contains(err.Error(), "(EXAVITQu4vr4xnSDxMaL)", "and the listing is read")
 }
 
+func (s *CatalogueSuite) TestACallerWhoseDeadlinePassedIsNotRememberedAsAVendorFailure() {
+	finder := s.library()
+	finder.slow = true
+	late, cancel := context.WithDeadline(s.ctx, time.Now().Add(-time.Second))
+	defer cancel()
+
+	s.NoError(s.catalogue.Check(late, "elevenlabs", "Sara"))
+	_, err := s.catalogue.List(late, "elevenlabs")
+	s.Require().Error(err)
+
+	finder.slow = false
+	err = s.catalogue.Check(s.ctx, "elevenlabs", "Sara")
+	s.Require().Error(err, "the check is still on for everyone else")
+	s.Contains(err.Error(), "(EXAVITQu4vr4xnSDxMaL)", "and the listing is read")
+}
+
 func (s *CatalogueSuite) TestAnUnreadableLibraryStillRefusesButSuggestsNothing() {
 	finder := s.library()
 	finder.countingLister.err = errors.New("gateway")
