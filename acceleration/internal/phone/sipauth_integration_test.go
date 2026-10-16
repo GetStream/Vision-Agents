@@ -102,8 +102,8 @@ func (s *SIPAuthIntegrationSuite) TestATrunkTurnsAwayAnAddressItDoesNotKnow() {
 
 func (s *SIPAuthIntegrationSuite) TestATrunkWithNoAllowlistLetsAnybodyIn() {
 	// This is why CreateTrunk gives a trunk without addresses a password: Stream makes none
-	// of its own, so made without one the trunk checks nothing and anyone who learns its uri
-	// is in the customer's calls. It is made with the SDK because CreateTrunk will not.
+	// of its own, so made without one the trunk checks nothing and lets every caller
+	// in. It is made with the SDK because CreateTrunk will not.
 	s.rawTrunk("sipauth-open", nil, nil)
 
 	status, decision := s.resolve(s.allowed)

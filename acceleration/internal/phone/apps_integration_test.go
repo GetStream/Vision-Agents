@@ -699,6 +699,6 @@ func (s *AppsSuite) TestATransferOnAVendorWithNoAddressesAndNoPasswordIsRefusedB
 	_, err := s.service.Transfer(s.ctx, TransferRequest{
 		Owner: routing.Owner{CustomerID: s.customer}, From: sinch, To: "+15550002222", CallID: "call-1",
 	})
-	s.Require().Error(err)
+	s.Require().ErrorContains(err, "signalling addresses")
 	s.Empty(s.deployment.Trunks())
 }
