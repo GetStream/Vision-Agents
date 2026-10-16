@@ -149,6 +149,15 @@ func TestAReplyIsHeldUntilTheCallerHasBeenQuietForTheWindow(t *testing.T) {
 	a.mu.Unlock()
 }
 
+func TestAnAbandonedFirstFrameCannotBypassAClearedHold(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	a := new(Agent)
+	hold, publish := a.holdFirstFrame(&pipeline{ctx: context.Background()}, ctx, "withdrawn", time.Now())
+	require.Nil(t, hold)
+	require.False(t, publish, "clearing the hold must not release an already canceled frame")
+}
+
 func TestTheLongestHoldReleasesAReplyWhateverTheLineSounds(t *testing.T) {
 	v := newVoiceActivity()
 	start := time.Now()

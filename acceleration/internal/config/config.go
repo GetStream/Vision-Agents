@@ -426,11 +426,15 @@ func Defaults() Config {
 		Sandbox:  Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
 		// Slack's rate limits page (https://docs.slack.dev/apis/web-api/rate-limits, opened
 		// 2026-10-09): «we do recommend you design your apps with a limit of 1 request per
-		// second for any given API call». slack_bot is the only built-in with an api_base, so
-		// the only one the proxy reaches, and that page names no limit per IP address. One a
-		// second is the rate Slack tells an app to design for. Whether Slack keeps a limit per
-		// egress address, and so whether 60 keeps one customer from spending it for the others,
-		// is not on that page. # unverified
+		// second for any given API call». slack_bot and github are the built-ins with an
+		// api_base, so the ones the proxy reaches, and that page names no limit per IP address.
+		// One a second is the rate Slack tells an app to design for. Whether Slack keeps a limit
+		// per egress address, and so whether 60 keeps one customer from spending it for the
+		// others, is not on that page. # unverified
+		// GitHub (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api,
+		// opened 2026-10-15) counts an authenticated call against the user, not the address,
+		// and 60 a minute is under its «5,000 requests per hour» and «80 content-generating
+		// requests per minute».
 		Connectors: Connectors{ProxyCallsPerMinute: 60},
 	}
 }

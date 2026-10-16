@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -98,6 +99,7 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	pack := fs.String("pack", "restaurant", "scenario pack")
 	id := fs.String("scenario", "", "run a single scenario id")
 	k := fs.Int("k", 3, "trials per scenario")
+	seedText := fs.String("seed", os.Getenv("VOICEBENCH_SEED"), "shuffle scenarios reproducibly; with --short, sample equally by category (optional)")
 	callID := fs.String("call-id", "", "call id / room name. Empty generates one per trial")
 	callType := fs.String("call-type", "default", "Stream call type")
 	transport := fs.String("transport", "stream", "media transport (stream, livekit)")
@@ -128,12 +130,21 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	if *target == "livekit" && *liveKitAgent == "" && !*spawn {
 		*liveKitAgent = os.Getenv("LIVEKIT_AGENT_NAME")
 	}
+	var seed *uint64
+	if *seedText != "" {
+		value, err := strconv.ParseUint(*seedText, 10, 64)
+		if err != nil {
+			return fmt.Errorf("run: invalid --seed: %w", err)
+		}
+		seed = &value
+	}
 	sum, err := run.Run(ctx, run.Config{
 		Root:              root,
 		OutDir:            *out,
 		Pack:              *pack,
 		ScenarioID:        *id,
 		K:                 *k,
+		Seed:              seed,
 		WorldAddr:         *worldAddr,
 		WorldURL:          *worldURL,
 		CallID:            *callID,

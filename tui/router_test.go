@@ -188,6 +188,24 @@ func containsInOrder(kinds, want []string) bool {
 // session opens a real session on the stand-in router.
 func (r *router) session(t *testing.T, sessionID string) Session {
 	t.Helper()
+	session, err := r.open(t.Context(), t, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session
+}
+
+// opener opens a session on the stand-in router, for a conversation to be built around.
+// It runs on the conversation's own goroutine, which can outlive the test, so it hands a
+// failure back rather than ending the test.
+func (r *router) opener(t *testing.T) Opener {
+	return func(ctx context.Context, sessionID string) (Session, error) {
+		return r.open(ctx, t, sessionID)
+	}
+}
+
+// open starts a session, or resumes one when given its id, closed when the test ends.
+func (r *router) open(ctx context.Context, t *testing.T, sessionID string) (Session, error) {
 	quiet := slog.New(slog.DiscardHandler)
 	agent, err := agents.New(agents.Options{
 		Name:   "jean",
@@ -198,26 +216,19 @@ func (r *router) session(t *testing.T, sessionID string) Session {
 		}),
 	})
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	var session *agents.Session
 	if sessionID == "" {
-		session, err = agent.Chat(t.Context())
+		session, err = agent.Chat(ctx)
 	} else {
-		session, err = agent.Sessions.Resume(t.Context(), sessionID)
+		session, err = agent.Sessions.Resume(ctx, sessionID)
 	}
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	t.Cleanup(func() { _ = session.Close(context.Background()) })
-	return Agent(session)
-}
-
-// opener opens a session on the stand-in router, for a conversation to be built around.
-func (r *router) opener(t *testing.T) Opener {
-	return func(_ context.Context, sessionID string) (Session, error) {
-		return r.session(t, sessionID), nil
-	}
+	return Agent(session), nil
 }
 
 // update is the message a conversation_updated frame carries.
@@ -282,10 +293,14 @@ func ask(m *Model, text string) tea.Cmd {
 	return send(m, "enter")
 }
 
+// silence is how long a command may run before it counts as waiting on something that may
+// never come.
+const silence = 300 * time.Millisecond
+
 // step runs a command off the event loop the way the program does, and returns what it
-// produced. A command still waiting — the heartbeat, or the next thing a silent session
-// will say — is abandoned rather than waited out.
-func step(cmd tea.Cmd) []tea.Msg {
+// produced. A command still waiting after patience — the heartbeat, or the next thing a
+// silent session will say — is abandoned rather than waited out.
+func step(cmd tea.Cmd, patience time.Duration) []tea.Msg {
 	if cmd == nil {
 		return nil
 	}
@@ -296,12 +311,12 @@ func step(cmd tea.Cmd) []tea.Msg {
 		if batch, ok := message.(tea.BatchMsg); ok {
 			var all []tea.Msg
 			for _, one := range batch {
-				all = append(all, step(one)...)
+				all = append(all, step(one, patience)...)
 			}
 			return all
 		}
 		return []tea.Msg{message}
-	case <-time.After(300 * time.Millisecond):
+	case <-time.After(patience):
 		return nil
 	}
 }
@@ -309,13 +324,25 @@ func step(cmd tea.Cmd) []tea.Msg {
 // settle runs a command and feeds everything it produced back in, until the conversation
 // has nothing left to do. Heartbeats are dropped, since a test that waits for the clock is
 // slow for no reason.
+//
+// A command that opens a session closes the last one and opens the next over the network,
+// which a loaded machine can take well past the wait for a silent session, so it is waited
+// out. Only that command is: what it leads to re-arms itself, like the cursor's blink.
 func settle(m *Model, cmd tea.Cmd) {
-	for _, message := range step(cmd) {
+	patience := silence
+	if m.connecting {
+		patience = 10 * time.Second
+	}
+	feed(m, step(cmd, patience))
+}
+
+func feed(m *Model, messages []tea.Msg) {
+	for _, message := range messages {
 		if _, beat := message.(tick); beat {
 			continue
 		}
 		_, next := m.Update(message)
-		settle(m, next)
+		feed(m, step(next, silence))
 	}
 }
 

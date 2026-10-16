@@ -50,6 +50,8 @@ type store struct {
 	// a request is served, so a held request leaves every other one to be answered.
 	holdMu sync.Mutex
 	held   *held
+	// limited are the path suffixes RateLimit answers 429 to.
+	limited map[string]bool
 }
 
 // held is one request Hold keeps waiting: the path it ends in, a channel closed once it
@@ -313,6 +315,25 @@ func (s *Server) Hold(suffix string) (waiting <-chan struct{}, release func()) {
 	return h.waiting, release
 }
 
+// RateLimit answers every request whose path ends in suffix with a 429 and a minute's
+// Retry-After, as Chat does for an endpoint the app has spent its limit on, until
+// LiftRateLimit.
+func (s *Server) RateLimit(suffix string) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	if s.db.limited == nil {
+		s.db.limited = map[string]bool{}
+	}
+	s.db.limited[suffix] = true
+}
+
+// LiftRateLimit answers requests ending in suffix again.
+func (s *Server) LiftRateLimit(suffix string) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	delete(s.db.limited, suffix)
+}
+
 // wait keeps the request Hold asked for waiting until it is let go.
 func (db *store) wait(path string) {
 	db.holdMu.Lock()
@@ -451,6 +472,14 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	defer db.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	db.asked = append(db.asked, Request{Method: r.Method, Path: r.URL.Path, APIKey: r.URL.Query().Get("api_key")})
+	for suffix := range db.limited {
+		if strings.HasSuffix(r.URL.Path, suffix) {
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 9, "message": "Too many requests", "StatusCode": http.StatusTooManyRequests})
+			return
+		}
+	}
 	var raw []byte
 	if r.Body != nil {
 		raw, _ = io.ReadAll(r.Body)

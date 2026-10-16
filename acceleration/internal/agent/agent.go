@@ -326,6 +326,9 @@ type Agent struct {
 	pumps sync.WaitGroup
 
 	tts *ttsrouter.Session
+	// recoveringVoice holds off new replies while a lost voice is replaced. It is
+	// protected by mu and remains set until the old session is closed.
+	recoveringVoice *ttsrouter.Session
 	// lostVoices are the voices this call has lost, as "provider/model", so the one that
 	// replaces a lost voice is a different one.
 	lostVoices []string
@@ -1566,10 +1569,11 @@ func (a *Agent) consumePresence(p *pipeline) {
 func (a *Agent) floor() floor {
 	pending := a.speechPending()
 	a.mu.Lock()
-	active := a.utterances > 0 || a.generating || a.pendingTools > 0 || pending || a.interruptDone != nil
+	active := a.utterances > 0 || a.generating || a.pendingTools > 0 || pending || a.interruptDone != nil || a.recoveringVoice != nil
 	state := floor{
 		Quiet:           !active,
-		Talking:         a.utterances > 0 || a.generating || pending || a.interruptDone != nil,
+		Talking:         a.utterances > 0 || a.generating || pending || a.interruptDone != nil || a.recoveringVoice != nil,
+		Recovering:      a.recoveringVoice != nil,
 		Owed:            a.toolReply,
 		Composing:       a.composing,
 		Speaking:        a.speakingTurn,
@@ -2364,20 +2368,6 @@ func (a *Agent) noteToolDone(hold *toolHold) {
 	a.mu.Unlock()
 }
 
-// owesToolReply records that the caller is owed what a tool came back with, unless the tool
-// was cancelled, which is settled under the lock that cancelling it takes.
-//
-// It comes before noteToolDone. The turn that answers the last tool starts once none is
-// pending, so a result noted as owed after its own tool stopped counting would be noted
-// after that turn had taken the others, and be answered again.
-func (a *Agent) owesToolReply(ctx context.Context) {
-	a.mu.Lock()
-	if ctx.Err() == nil {
-		a.toolReply = true
-	}
-	a.mu.Unlock()
-}
-
 // queueToolReply starts a turn that says what the tools came back with, or leaves it owed
 // if a generate is already in flight or more tools from this turn are still running.
 // Two tools in one reply used to each start a generate, and the second stole speakingTurn
@@ -2410,7 +2400,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	}
 	// follow can take the result between queueToolReply letting go of the lock and this
 	// taking it, and a second turn on it is the caller answered twice.
-	if !a.toolReply || a.generating {
+	if !a.toolReply || a.generating || a.interruptDone != nil || a.recoveringVoice != nil {
 		a.mu.Unlock()
 		return nil
 	}
@@ -2474,6 +2464,7 @@ func (a *Agent) respondTurn(
 	a.speakingTurn = turnID
 	a.generating = true
 	a.toolRounds = 0
+	a.toolReply = false
 	a.asked = asked
 	a.sender = sender
 	a.lastParticipant = participant
@@ -2788,7 +2779,7 @@ func (a *Agent) startReply(
 		stream, err = current.Respond(ctx, turn)
 	}
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if ctx.Err() != nil {
 			return
 		}
 		// Ended the way a reply failing mid-stream ends, so the turn is over: left
@@ -3495,17 +3486,16 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			}
 
 		case tts.Error:
-			active := a.finishSynthesis(typed.SynthesisID)
-			// A failure naming an utterance still settles it, since the router turns that
-			// utterance's completion into the failed row.
-			if typed.SynthesisID == "" {
-				a.settle()
-			}
-			a.fail(typed.Err, "tts")
 			if typed.Fatal && !lost {
 				lost = true
 				a.loseVoice(p, voice)
-			} else if active {
+			}
+			active := a.finishSynthesis(typed.SynthesisID)
+			if !typed.Fatal && typed.SynthesisID == "" {
+				a.settleVoice(voice)
+			}
+			a.fail(typed.Err, "tts")
+			if !typed.Fatal && active {
 				a.respondQueued()
 				a.followUp()
 			}
@@ -3737,7 +3727,7 @@ func (a *Agent) follow() error {
 	}
 
 	a.mu.Lock()
-	if a.harness == nil || a.generating || a.utterances > 0 {
+	if a.harness == nil || a.generating || a.utterances > 0 || a.interruptDone != nil || a.recoveringVoice != nil {
 		a.mu.Unlock()
 		return nil
 	}
@@ -3754,8 +3744,10 @@ func (a *Agent) follow() error {
 		a.mu.Unlock()
 		return nil
 	}
-	afterTool := a.toolReply
-	a.toolReply = false
+	if a.toolReply {
+		a.mu.Unlock()
+		return a.respondAfterTool(toolPrefix + turnStamp())
+	}
 	history := a.replayLocked()
 	turnID := replyPrefix + turnStamp()
 	a.speakingTurn = turnID
@@ -3775,7 +3767,6 @@ func (a *Agent) follow() error {
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
-		AfterTool:    afterTool,
 		Asked:        asked,
 	}, "")
 }
@@ -3816,7 +3807,7 @@ func (a *Agent) Busy() bool {
 	a.mu.Lock()
 	// A transfer finishes the call from inside itself, so counting it would have it wait on
 	// its own end.
-	working := a.generating || a.utterances > 0 ||
+	working := a.interruptDone != nil || a.recoveringVoice != nil || a.generating || a.utterances > 0 ||
 		slices.ContainsFunc(slices.Collect(maps.Values(a.toolsRunning)), func(name string) bool { return !telephonyTool(name) })
 	current := a.harness
 	a.mu.Unlock()
@@ -4340,6 +4331,16 @@ func (a *Agent) settle() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.utterances > 0 {
+		a.utterances--
+	}
+}
+
+// settleVoice counts a synthesis only while the session that emitted it still owns the
+// voice. Events already buffered by a retired session must not settle its replacement.
+func (a *Agent) settleVoice(voice *ttsrouter.Session) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.tts == voice && a.utterances > 0 {
 		a.utterances--
 	}
 }

@@ -125,6 +125,8 @@ type Action struct {
 type floor struct {
 	// Quiet reports whether the agent has stopped talking.
 	Quiet bool
+	// Recovering reports that a lost voice is still being replaced.
+	Recovering bool
 	// Speaking is the reply currently allowed to make audio, empty when there is none.
 	Speaking string
 	// Reply is what the caller has heard the agent say on its current or draining turn. It is
@@ -610,6 +612,18 @@ func (c *converse) ruled(ruling harness.Decided, state floor, primary bool) []Ac
 		clarified = "the caller went quiet on an unfinished thought, so what was heard may not be what was said"
 	}
 
+	// A reply none of which has been heard answers words the caller has since added to, so
+	// finishing it, or finishing a part of it, would tell them what they have already moved on
+	// from and put the answer to what they said after it. Words that are more than a murmur
+	// replace it, whatever the controller made of the floor.
+	if state.Unheard && (ruling.Floor == harness.Shorten ||
+		ruling.Floor == harness.Continue && substantiveBargeIn(ready.Text, state.Reply)) {
+		ruling.Floor = harness.Stop
+	}
+
+
+	queue := !state.Quiet && !overlapNoise(ready.Text) && ruling.Disposition != harness.Ignore &&
+		(state.Recovering || ruling.Floor != harness.Stop)
 	if !c.cadence.Resolve(ruling.CandidateID, false) {
 		c.logger.Debug("not acting on a ruling, the words changed while it was being made",
 			"candidate", ruling.CandidateID)
@@ -677,14 +691,6 @@ func (c *converse) ruled(ruling harness.Decided, state floor, primary bool) []Ac
 		return []Action{c.decide(answer)}
 	}
 
-	// A reply none of which has been heard answers words the caller has since added to, so
-	// finishing it, or finishing a part of it, would tell them what they have already moved on
-	// from and put the answer to what they said after it. Words that are more than a murmur
-	// replace it, whatever the controller made of the floor.
-	if state.Unheard && (ruling.Floor == harness.Shorten ||
-		ruling.Floor == harness.Continue && substantiveBargeIn(ready.Text, state.Reply)) {
-		ruling.Floor = harness.Stop
-	}
 
 	// Somebody spoke over the agent, so who keeps the floor has to be settled before the
 	// turn can be dealt with at all.
@@ -700,6 +706,12 @@ func (c *converse) ruled(ruling harness.Decided, state floor, primary bool) []Ac
 
 	switch ruling.Floor {
 	case harness.Stop:
+		answering := answer
+		if queue {
+			answering.Kind = ActQueue
+			answering.Reason = "the voice is being replaced, so the caller's answer waits until it is ready"
+			c.hold(ready, clarify, true)
+		}
 		return []Action{
 			c.decide(Action{
 				Kind:        ActInterrupt,
@@ -708,7 +720,7 @@ func (c *converse) ruled(ruling harness.Decided, state floor, primary bool) []Ac
 				TurnID:      state.Speaking,
 				LatencyMs:   ruling.TookMs,
 			}),
-			c.decide(answer),
+			c.decide(answering),
 		}
 
 	case harness.Shorten:

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -24,9 +25,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -35,6 +38,8 @@ import (
 const (
 	echoStatusHeader     = "X-Echo-Status"
 	echoRetryAfterHeader = "X-Echo-Retry-After"
+	// echoLinkHeader has the echo answer with its value as its Link header.
+	echoLinkHeader = "X-Echo-Answer-Link"
 	// echoRawHeader has the echo answer rawAnswer with rawServerTiming instead.
 	echoRawHeader = "X-Echo-Raw"
 	// echoStallHeader has the echo answer a 502 with stalledStart, then wait until the test
@@ -42,6 +47,17 @@ const (
 	// with stalledEnd.
 	echoStallHeader = "X-Echo-Stall"
 )
+
+// proxyPublicURL is the suite router's ROUTER_PUBLIC_URL.
+const proxyPublicURL = "https://router.example"
+
+// gitHubAPI is the host of the built-in github's api_base (providers/github.yaml), which the
+// suite's transport dials at the echo.
+const gitHubAPI = "api.github.com:443"
+
+// linearAPI is the host of the built-in linear_app's api_base (providers/linear_app.yaml),
+// which the suite's transport dials at the echo as well.
+const linearAPI = "api.linear.app:443"
 
 // echoNotFoundPath is the provider path the echo answers with a 404, for a call that must
 // forward no header but plainHeaders and no query (the proxy forwards both).
@@ -83,6 +99,8 @@ type ConnectionProxySuite struct {
 	logged *lockedLog
 	// stalls are the channels a stalled answer waits on, by its echoStallHeader.
 	stalls sync.Map
+	// hosts is the Host each path reached the echo with, by its escaped path.
+	hosts sync.Map
 }
 
 func TestConnectionProxySuite(t *testing.T) {
@@ -95,20 +113,46 @@ func (s *ConnectionProxySuite) SetupSuite() {
 	s.T().Cleanup(s.echo.Close)
 	clientCredentials, err := oauth2cc.New(oauth2cc.Config{HTTP: s.provider.Client(), PublicEndpoint: loopbackOrPublic})
 	s.Require().NoError(err)
-	s.connectors = core.Registry{Schemes: map[string]core.Scheme{
+	// The app's own OAuth clients, as cmd/router looks them up. No test here reaches an
+	// authorization server: a grant is imported, not consented to or refreshed, so the
+	// endpoint check, which resolves names, passes every endpoint and the suite needs no DNS.
+	code, err := oauth2code.New(oauth2code.Config{
+		HTTP: s.provider.Client(),
+		Clients: func(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, registration core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
+			return ConnectorClients(s.store, s.sealer, func(string) string { return "" })(ctx, ref, m, registration)
+		},
+		PublicEndpoint: func(context.Context, string) error { return nil },
+	})
+	s.Require().NoError(err)
+	s.connectors = core.Registry{Schemes: map[string]core.Scheme{oauth2code.Name: code,
 		oauth2cc.Name: clientCredentials, bearer.Name: bearer.New(), apikey.Name: apikey.New()}}
 	// One transport that trusts both servers' certificates.
 	transport := s.provider.Client().Transport.(*http.Transport).Clone()
 	roots := transport.TLSClientConfig.RootCAs.Clone()
 	roots.AddCert(s.echo.Certificate())
 	transport.TLSClientConfig.RootCAs = roots
+	// GitHub's and Linear's API hosts are the echo, so a built-in github or linear_app
+	// connection's call stays on loopback.
+	// The echo's certificate is net/http's test one, issued for example.com and the loopback
+	// addresses (net/http/internal/testcert), as the fake's is, so both are checked as that name.
+	dialer := &net.Dialer{}
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address == gitHubAPI || address == linearAPI {
+			address = s.echo.Listener.Addr().String()
+		}
+		return dialer.DialContext(ctx, network, address)
+	}
+	transport.TLSClientConfig.ServerName = "example.com"
 	s.connectorHTTP = &http.Client{Transport: transport}
 	// The router's default cap, as a deployment that sets none runs (AI-958). Every test but
 	// the cap's own stays under it, so each asserts what base answered.
 	s.proxyCallsPerMinute = config.Defaults().Connectors.ProxyCallsPerMinute
 	s.logged = &lockedLog{}
 	s.logs = s.logged
+	// A Link's target under api_base is rewritten to the proxy under this URL.
+	s.publicURL = proxyPublicURL
 	s.RouterSuite.SetupSuite()
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
 
 // TestCallsUpToTheDefaultCapAllReachTheProvider: the default cap's worth of calls on one
@@ -489,6 +533,118 @@ func (s *ConnectionProxySuite) TestAPathCannotNameAnotherHost() {
 	}
 }
 
+// TestAGitHubConnectionsDirectCallGoesToGitHubsRESTAPI: the built-in github has an api_base
+// (revision 4, AI-1308), so a backend's call through a github connection reaches
+// api.github.com under the path it named, with the connection's token. A caller that sends no
+// User-Agent still sends one to GitHub, which refuses a request without it.
+func (s *ConnectionProxySuite) TestAGitHubConnectionsDirectCallGoesToGitHubsRESTAPI() {
+	token := "token-" + s.utils.uuid()
+	id := s.connectedWithToken("github", token)
+
+	// An empty User-Agent makes Go's client send none to the router.
+	status, answer := s.send(s.serverClient, http.MethodGet, proxy(id, "repos/octo/hello/issues"), "",
+		http.Header{"User-Agent": {""}})
+
+	s.Require().Equal(http.StatusOK, status, string(answer))
+	got := s.echoed(answer)
+	s.Equal("/repos/octo/hello/issues", got.Path)
+	host, _ := s.hosts.Load(got.Path)
+	s.Equal("api.github.com", host)
+	s.True(got.Header.Get("Authorization") == "Bearer "+token, "GitHub got the connection's token")
+	s.NotEmpty(got.Header.Get("User-Agent"))
+}
+
+// TestAProviderLinkIsDroppedWhenTheRouterHasNoPublicURL: with no ROUTER_PUBLIC_URL there is no
+// proxy URL to rewrite a Link to, and passing it as it came would send a client to
+// api.github.com with the router's token, so the answer carries no Link (fail closed).
+func (s *ConnectionProxySuite) TestAProviderLinkIsDroppedWhenTheRouterHasNoPublicURL() {
+	id := s.connectedWithToken("github", "token-"+s.utils.uuid())
+	public := s.router.publicURL
+	s.router.publicURL = ""
+	s.T().Cleanup(func() { s.router.publicURL = public })
+
+	response, _ := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "user/repos?per_page=1"), "",
+		http.Header{echoLinkHeader: {`<https://api.github.com/user/repos?per_page=1&page=2>; rel="next"`}})
+
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	s.Empty(response.Header.Values("Link"))
+}
+
+// TestAGitHubPageLinkComesBackThroughTheProxy: GitHub REST pages with a Link naming
+// api.github.com, which a client such as Octokit follows as it is with its token, the
+// router's. So the answer's Link names this connection's proxy instead, under the router's
+// public URL (RFC 8288 section 3), and following it reaches the next page with the
+// connection's token. A link elsewhere comes back as it came.
+func (s *ConnectionProxySuite) TestAGitHubPageLinkComesBackThroughTheProxy() {
+	token := "token-" + s.utils.uuid()
+	id := s.connectedWithToken("github", token)
+	page := `<https://api.github.com/user/repos?per_page=1&page=2>; rel="next"`
+	elsewhere := `<https://api.github.com.evil.example/user/repos?page=2>; rel="next"`
+
+	response, _ := s.sendRaw(s.serverClient, http.MethodGet, proxy(id, "user/repos?per_page=1"), "",
+		http.Header{echoLinkHeader: {page + ", " + elsewhere}})
+
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	next := proxyPublicURL + proxy(id, "user/repos?per_page=1&page=2")
+	s.Equal(`<`+next+`>; rel="next", `+elsewhere, response.Header.Get("Link"))
+	status, answer := s.send(s.serverClient, http.MethodGet, strings.TrimPrefix(next, proxyPublicURL), "", nil)
+	s.Require().Equal(http.StatusOK, status, string(answer))
+	got := s.echoed(answer)
+	s.Equal("/user/repos", got.Path)
+	s.Equal("per_page=1&page=2", got.Query)
+	s.Equal("Bearer "+token, got.Header.Get("Authorization"))
+}
+
+// TestALinearAppConnectionsGraphQLCallGoesToLinearsAPIWithItsBearerToken: the built-in
+// linear_app (AI-1351) has an api_base, so a backend's GraphQL call through a connection made
+// with the app's own Linear OAuth client reaches https://api.linear.app/graphql, body and all,
+// with the connection's access token as a bearer token, which is how Linear takes an OAuth
+// token (https://linear.app/developers/oauth-2-0-authentication, opened 2026-10-15).
+func (s *ConnectionProxySuite) TestALinearAppConnectionsGraphQLCallGoesToLinearsAPIWithItsBearerToken() {
+	status, payload := s.serverClient.call(http.MethodPut, "/v1/agents/connectors/linear_app/oauth-client",
+		ConnectorOAuthClientRequest{ClientID: "linear-client", ClientSecret: "linear-secret"})
+	s.Require().Contains([]int{http.StatusCreated, http.StatusOK}, status, string(payload))
+	id := s.pending("linear_app", oauth2code.Name)
+	token := "token-" + s.utils.uuid()
+	s.credentials(s.serverClient, id, map[string]string{oauth2code.SuppliedAccessToken: token,
+		oauth2code.SuppliedExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339), oauth2code.SuppliedScope: "read,write"})
+	query := `{"query":"{ viewer { id name } }"}`
+
+	status, answer := s.send(s.serverClient, http.MethodPost, proxy(id, "graphql"), query,
+		http.Header{"Content-Type": {"application/json"}})
+
+	s.Require().Equal(http.StatusOK, status, string(answer))
+	got := s.echoed(answer)
+	s.Equal(http.MethodPost, got.Method)
+	s.Equal("/graphql", got.Path)
+	host, _ := s.hosts.Load(got.Path)
+	s.Equal("api.linear.app", host)
+	s.Equal("Bearer "+token, got.Header.Get("Authorization"))
+	s.Equal(query, got.Body)
+}
+
+// TestALinearConnectionMadeByDCRStillTakesNoDirectCalls is the control for linear_app (AI-1351):
+// the built-in linear, whose token comes from a client the MCP server registers, keeps no
+// api_base, so a direct call answers as base 3690152b answered it (probe in the PR).
+func (s *ConnectionProxySuite) TestALinearConnectionMadeByDCRStillTakesNoDirectCalls() {
+	ctx := context.Background()
+	definition, err := s.store.LatestConnectorDefinition(ctx, s.customerID(), "linear")
+	s.Require().NoError(err)
+	connection := store.ConnectorConnection{CustomerID: s.customerID(), ConnectorID: "linear",
+		DefinitionRevision: definition.Revision, OwnerType: store.OwnerApp, AuthScheme: oauth2code.Name}
+	s.Require().NoError(s.store.CreateConnectorConnection(ctx, s.connectors, &connection))
+	connection.Status, connection.Revision = store.ConnectionConnected, 2
+	s.Require().NoError(s.store.SaveConnectorConnectionAtRevision(ctx, &connection, 1))
+	before := s.hits.Load()
+
+	status, message := s.serverClient.failure(http.MethodPost, proxy(connection.ID, "graphql"),
+		map[string]string{"query": "{ viewer { id } }"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(`connector "linear" has no api_base endpoint, so it takes no direct calls`, message)
+	s.Equal(before, s.hits.Load())
+}
+
 func (s *ConnectionProxySuite) TestAConnectorWithoutAnAPIBaseTakesNoDirectCalls() {
 	id := s.connected(s.connectorWithout(), bearer.Name)
 
@@ -627,6 +783,7 @@ func (s *ConnectionProxySuite) proxyCalls(id string) []ConnectorAuditEvent {
 // Retry-After the test asked for, or with rawAnswer when asked.
 func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	s.hits.Add(1)
+	s.hosts.Store(r.URL.EscapedPath(), r.Host)
 	if key := r.Header.Get(echoStallHeader); key != "" {
 		release, _ := s.stalls.Load(key)
 		w.WriteHeader(http.StatusBadGateway)
@@ -655,6 +812,9 @@ func (s *ConnectionProxySuite) answer(w http.ResponseWriter, r *http.Request) {
 	}
 	if wait := r.Header.Get(echoRetryAfterHeader); wait != "" {
 		w.Header().Set("Retry-After", wait)
+	}
+	if link := r.Header.Get(echoLinkHeader); link != "" {
+		w.Header().Set("Link", link)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Echo-Seen", "yes")

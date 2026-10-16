@@ -112,6 +112,8 @@ type noted struct {
 	quiet bool
 	// turn is the reply handed this note, empty while no reply has been.
 	turn string
+	// origin is the turn that requested the work, even before any reply takes its result.
+	origin string
 }
 
 // Turn is what the harness is asked to answer.
@@ -161,6 +163,9 @@ type Harness struct {
 	// notes are what has come back from the subagent since the fast model last spoke.
 	// They are folded into the next prompt, and forgotten once that reply has finished.
 	notes []noted
+	// cancelledTurns also excludes results that finished before cancellation but have yet
+	// to be consumed. Notes and their originating turns are retired under the same lock.
+	cancelledTurns map[string]string
 	// reporting is the skills whose answers the reply being written was handed, so it can
 	// be stopped from handing the same work back.
 	reporting []string
@@ -565,6 +570,13 @@ func (h *Harness) CancelDecision(candidateID string) error {
 
 // CancelTurn abandons delegated work whose conversational premise changed.
 func (h *Harness) CancelTurn(turnID, reason string) {
+	h.mu.Lock()
+	if h.cancelledTurns == nil {
+		h.cancelledTurns = make(map[string]string)
+	}
+	h.cancelledTurns[turnID] = reason
+	h.notes = slices.DeleteFunc(h.notes, func(written noted) bool { return written.origin == turnID })
+	h.mu.Unlock()
 	if h.tasks != nil {
 		h.tasks.CancelTurn(turnID, reason)
 	}
@@ -769,13 +781,17 @@ func (h *Harness) actUnknown(found directive) {
 		if strings.TrimSpace(found.body) == "" {
 			return
 		}
+		arguments, ok := h.proseArguments(tool, found.body)
+		if !ok {
+			return
+		}
 		h.logger.Debug("the model asked for a tool as if it were a skill", "tool", tool.Name)
 		h.mu.Lock()
 		h.askN++
 		h.asked = append(h.asked, llm.ToolCall{
 			ID:        fmt.Sprintf("ask-%d", h.askN),
 			Name:      tool.Name,
-			Arguments: argumentsFor(tool, found.body),
+			Arguments: arguments,
 		})
 		h.mu.Unlock()
 		return
@@ -811,7 +827,11 @@ func (h *Harness) actCall(found directive) {
 		}
 		arguments = string(raw)
 	} else if strings.TrimSpace(found.body) != "" {
-		arguments = argumentsFor(tool, found.body)
+		var ok bool
+		arguments, ok = h.proseArguments(tool, found.body)
+		if !ok {
+			return
+		}
 	}
 	h.logger.Debug("the model wrote a tool call as a tag", "tool", tool.Name)
 	h.mu.Lock()
@@ -824,13 +844,28 @@ func (h *Harness) actCall(found directive) {
 	h.mu.Unlock()
 }
 
-// argumentsFor turns the body of a skill tag into the JSON object the tool expects. The
-// tag is prose, so it is filed under query when the tool has one, otherwise under the
-// first required argument. A body that is already an object is left alone.
-func argumentsFor(tool Tool, body string) string {
+// proseArguments turns a tool tag's prose body into arguments when that leaves no required
+// fields missing. A body that cannot supply all required fields becomes corrective feedback
+// instead of an external call with a fabricated argument.
+func (h *Harness) proseArguments(tool Tool, body string) (string, bool) {
+	arguments, required := argumentsFor(tool, body)
+	if len(required) == 0 {
+		return arguments, true
+	}
+	h.mu.Lock()
+	h.correct(fmt.Sprintf("The prose body for %s was not run; this tool requires named arguments: %s. "+
+		"Use details already in the caller's request, and ask only for values that are missing.",
+		tool.Name, strings.Join(required, ", ")))
+	h.mu.Unlock()
+	return "", false
+}
+
+// argumentsFor turns a prose body into the legacy scalar argument for a tool. A body that
+// is already a JSON object is already structured and is left alone.
+func argumentsFor(tool Tool, body string) (string, []string) {
 	body = strings.TrimSpace(body)
 	if json.Valid([]byte(body)) && strings.HasPrefix(body, "{") {
-		return body
+		return body, nil
 	}
 
 	name := "query"
@@ -842,12 +877,33 @@ func argumentsFor(tool Tool, body string) string {
 			}
 		}
 	}
+	required := requiredNames(tool.Parameters["required"])
+	for _, field := range required {
+		if field != name {
+			return "", required
+		}
+	}
 
 	raw, err := json.Marshal(map[string]string{name: body})
 	if err != nil {
-		return "{}"
+		return "{}", nil
 	}
-	return string(raw)
+	return string(raw), nil
+}
+
+func requiredNames(required any) []string {
+	var names []string
+	switch fields := required.(type) {
+	case []any:
+		for _, field := range fields {
+			if name, ok := field.(string); ok {
+				names = append(names, name)
+			}
+		}
+	case []string:
+		names = append(names, fields...)
+	}
+	return names
 }
 
 func firstRequired(required any) string {
@@ -875,15 +931,21 @@ func (h *Harness) consumeTasks() {
 			h.finishCompaction(result)
 			continue
 		}
+		h.mu.Lock()
+		if reason, cancelled := h.cancelledTurns[result.TurnID]; cancelled {
+			result.State, result.Reason = Cancelled, reason
+			result.Text, result.Question = "", ""
+			result.Err, result.Files = nil, nil
+		}
 		if written := note(result); written != "" {
-			h.mu.Lock()
 			h.notes = append(h.notes, noted{
 				skill:  result.Skill,
 				text:   written,
 				asking: result.Question != "",
+				origin: result.TurnID,
 			})
-			h.mu.Unlock()
 		}
+		h.mu.Unlock()
 		h.emitter.Send(Settled{Result: result})
 	}
 }

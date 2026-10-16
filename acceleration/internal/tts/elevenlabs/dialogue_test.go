@@ -137,6 +137,7 @@ func (s *DialogueSuite) TestASpeedIsRefusedRatherThanDropped() {
 	// The dialogue socket takes stability and nothing else, so a voice asked to slow down
 	// would speak at its own pace and nobody would hear why.
 	_, err := NewDialogue(Options{APIKey: "k", Speed: 0.9})
+	s.ErrorIs(err, ErrRefused, "the caller's mistake, not the provider's fault")
 	s.ErrorContains(err, "takes no speed")
 }
 
@@ -170,6 +171,62 @@ func (s *DialogueSuite) TestTheSessionRegistersItsVoiceBeforeSayingAnything() {
 	s.Equal([]string{"v1"}, opening.Voices)
 	s.Require().NotNil(opening.VoiceSettings)
 	s.Empty(opening.Inputs, "the first frame is registration, not a line")
+}
+
+// openingVoiceSettings is the voice_settings of the registration frame, as it went on the
+// wire.
+func (s *DialogueSuite) openingVoiceSettings(options Options) string {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, conn := s.connect(fake, options)
+	defer provider.Close()
+
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	_, raw, err := conn.ReadMessage()
+	s.Require().NoError(err)
+	var opening struct {
+		VoiceSettings json.RawMessage `json:"voice_settings"`
+	}
+	s.Require().NoError(json.Unmarshal(raw, &opening))
+	return string(opening.VoiceSettings)
+}
+
+func (s *DialogueSuite) TestASessionOpenedWithNothingAskedSendsWhatItAlwaysHas() {
+	// The frame this provider sent before stability could be asked for, captured on the
+	// commit before it could.
+	s.JSONEq(`{"stability":0.5}`, s.openingVoiceSettings(Options{VoiceID: "v1"}))
+}
+
+func (s *DialogueSuite) TestTheSessionOpensWithTheStabilityAskedFor() {
+	// ElevenLabs documents 0 to 1, continuous
+	// (https://elevenlabs.io/docs/api-reference/text-to-dialogue/ttd-websocket, opened
+	// 2026-10-15), and a live session at 0.3 spoke on v3 conversational, v4 and v4 Turbo.
+	stability := 0.3
+
+	s.JSONEq(`{"stability":0.3}`, s.openingVoiceSettings(Options{VoiceID: "v1", Stability: &stability}))
+}
+
+func (s *DialogueSuite) TestASimilarityIsRefusedRatherThanDropped() {
+	similarity := 0.7
+
+	_, err := NewDialogue(Options{APIKey: "k", Similarity: &similarity})
+	s.ErrorIs(err, ErrRefused, "the caller's mistake, not the provider's fault")
+	s.ErrorContains(err, "takes no similarity")
+}
+
+func (s *DialogueSuite) TestAStyleIsRefusedRatherThanDropped() {
+	// The dialogue socket documents stability alone
+	// (https://elevenlabs.io/docs/api-reference/text-to-dialogue/ttd-websocket, opened
+	// 2026-10-16), and v4 has no style slider
+	// (https://elevenlabs.io/docs/overview/capabilities/text-to-speech/eleven-v4, opened
+	// 2026-10-16).
+	style := 0.4
+
+	for _, model := range []string{"eleven_v3_conversational", "eleven_v4", "eleven_v4_turbo"} {
+		_, err := NewDialogue(Options{APIKey: "k", Model: model, Style: &style})
+		s.ErrorIs(err, ErrStyle, model)
+		s.ErrorContains(err, "style is not taken by "+model)
+	}
 }
 
 func (s *DialogueSuite) TestOnlyASecondUtteranceEndsTheTurnBeforeIt() {

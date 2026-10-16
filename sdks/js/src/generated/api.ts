@@ -727,7 +727,7 @@ export type paths = {
         };
         /**
          * List connections
-         * @description One owner's connections, newest first: the app's own, or those of the user the backend acts for.
+         * @description Connections, newest first: the app's own, those of the user the backend acts for, or every user's when it acts for none.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -932,6 +932,30 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/connections/{id}/tools/approve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Approve a connection's tools again
+         * @description Pins tools of the connection at the schema the provider lists now, for the connection's current grant. A session pins a tool granted by name or by pattern the first time it offers it, and leaves it out while the provider lists it at another schema, which validate reports as needs_reapproval with the changed_tools. This is how a bearer or api_key connection gets them back; an OAuth one may reconnect instead, which begins a new grant.
+         *
+         *     Each tool named must be one GET .../tools lists, which a validate refreshes, at the schema_digest sent: a tool it does not list is a 400, and one it lists at another digest a 409. The pins move together, and only while each is still what it was when read and the grant has not changed since; otherwise a 409. A refused approve writes nothing. The next session offers the tools, and the next validate answers connected when no other tool changed; last_validation keeps what the last validate found until then. One audit row, tool_reapproved, names the tools and their digests. A schema_digest an agent config grants is not a pin: change the config instead. Who may approve them is who may read the connection.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["approveConnectionTools"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/connections/{id}/validate": {
         readonly parameters: {
             readonly query?: never;
@@ -943,7 +967,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Validate a connection
-         * @description Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
+         * @description Gets the connection's credential, renewing it when it must, and asks the provider for its tools, which GET .../tools then shows. A connection that needs a reconnect says so without the provider being asked. The granted scopes are then checked against what the tools need (all of them, or those the body names): a grant that lacks some is needs_scopes with code connector_scope_required and the missing scopes. The tools sessions pinned for the connection's current grant are then compared with the list: one listed at another schema is needs_reapproval with code connector_tool_schema_changed and the changed tools, and sessions keep leaving it out; a validate never pins a tool again, POST .../tools/approve does. needs_scopes comes first, since the consent it asks for begins a new grant, which approves the changed tools too. Who may validate it is who may read it.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -3819,6 +3843,8 @@ export type components = {
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
+            /** @description The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none. */
+            readonly left_out_connectors?: readonly components["schemas"]["LeftOutConnector"][];
             readonly llm?: string;
             readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode: components["schemas"]["AgentMode"];
@@ -4119,6 +4145,18 @@ export type components = {
              * @description Only calls that started before this, exclusive.
              */
             readonly to: string;
+        };
+        readonly ApprovedConnectionTool: {
+            readonly name: string;
+            /** @description The digest it was pinned at before. Absent when it was not pinned for the connection's grant. */
+            readonly previous_schema_digest?: string;
+            /** @description The digest the tool is pinned at now. */
+            readonly schema_digest: string;
+        };
+        readonly ApprovedConnectionTools: {
+            readonly connection_id: string;
+            /** @description The tools approved, by name, sorted. */
+            readonly tools: readonly components["schemas"]["ApprovedConnectionTool"][] | null;
         };
         /** @description What the router does for the calling app. It never carries a secret. */
         readonly AppSettings: {
@@ -4882,7 +4920,7 @@ export type components = {
         readonly ConnectionPage: {
             readonly has_more: boolean;
             readonly items: readonly components["schemas"]["Connection"][] | null;
-            /** @description Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app). Absent on the last one. */
+            /** @description Pass as cursor for the next page, with the same owner_type and connector_id (an omitted owner_type is app) and the same X-Stream-User-Id, or again none. Absent on the last one. */
             readonly next_cursor?: string;
         };
         /** @description A connection to create, pending until an account is connected. An unknown field is refused rather than ignored. */
@@ -4930,6 +4968,12 @@ export type components = {
             /** @description The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again. */
             readonly schema_digest: string;
         };
+        readonly ConnectionToolApproval: {
+            /** @description The tool's name at the provider, as GET .../tools lists it. */
+            readonly name: string;
+            /** @description Its schema_digest as GET .../tools lists it now: what the caller approves. */
+            readonly schema_digest: string;
+        };
         /** @description The tools a connection offered when it was last validated, in one piece: the provider's own list, not a page of one. */
         readonly ConnectionTools: {
             /**
@@ -4942,6 +4986,11 @@ export type components = {
             readonly digest?: string;
             readonly tools: readonly components["schemas"]["ConnectionTool"][] | null;
         };
+        /** @description The tools of a connection to approve at the schema the provider lists now. An unknown field is refused rather than ignored. */
+        readonly ConnectionToolsApproval: {
+            /** @description The tools to approve, each named once. Up to 128. */
+            readonly tools: readonly components["schemas"]["ConnectionToolApproval"][] | null;
+        };
         readonly ConnectionUse: {
             /** @description The alias the config binds the connection under. */
             readonly binding: string;
@@ -4950,7 +4999,7 @@ export type components = {
         };
         /** @description Whether a connection's credential works, found by asking the provider for its tools. */
         readonly ConnectionValidation: {
-            /** @description With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back. */
+            /** @description With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again with POST .../tools/approve, or an OAuth connection reconnects. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back. */
             readonly changed_tools?: readonly string[] | null;
             /**
              * Format: date-time
@@ -4974,7 +5023,7 @@ export type components = {
             readonly tools?: readonly string[] | null;
         };
         /**
-         * @description connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and a new grant (a consent) approves them. failed: the provider could not be reached or listed nothing usable; error says why.
+         * @description connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable; error says why.
          * @enum {string}
          */
         readonly ConnectionValidationStatus: "connected" | "pending" | "needs_reauthorization" | "needs_scopes" | "needs_reapproval" | "failed";
@@ -5015,10 +5064,10 @@ export type components = {
             readonly setup?: components["schemas"]["ConnectorSetup"];
         };
         /**
-         * @description grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection.
+         * @description grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
          * @enum {string}
          */
-        readonly ConnectorAuditAction: "grant_created" | "grant_refreshed" | "grant_revoked" | "token_export" | "proxy_call";
+        readonly ConnectorAuditAction: "grant_created" | "grant_refreshed" | "grant_revoked" | "token_export" | "proxy_call" | "tool_reapproved";
         /** @description The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown. */
         readonly ConnectorAuditCredential: {
             /**
@@ -5079,6 +5128,8 @@ export type components = {
             readonly status_code?: number;
             /** @description The host a proxy_call reached. Absent for a grant. */
             readonly target?: string;
+            /** @description A tool_reapproved row's tools, by name, sorted, each with the digest approved and the one it was pinned at before. Absent for every other action. */
+            readonly tools?: readonly components["schemas"]["ApprovedConnectionTool"][] | null;
         };
         readonly ConnectorAuditPage: {
             readonly has_more: boolean;
@@ -5699,7 +5750,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, knowledge_document, knowledge_url, plugin, router_config, session, simulation, simulation_run, skill and voice. More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -6112,6 +6163,15 @@ export type components = {
          * @enum {string}
          */
         readonly KnowledgeUrlState: "pending" | "indexed" | "failed";
+        /** @description A connector agent.yaml names that a sync left out, because the app has no connection by the id or label it names. */
+        readonly LeftOutConnector: {
+            /** @description The connection id or label agent.yaml named, which no connection of the app has. */
+            readonly connection: string;
+            /** @description The connector agent.yaml named, or the alias when it named none. */
+            readonly connector_id: string;
+            /** @description The alias agent.yaml gave the connector. */
+            readonly name: string;
+        };
         /** @description One voice a provider offers. Everything past the name is what that vendor chose to say about it, in its own words, so a field being absent means the vendor did not label it rather than that the voice lacks it. */
         readonly LibraryVoice: {
             readonly accent?: string;
@@ -7725,6 +7785,8 @@ export type components = {
             readonly knowledge?: readonly components["schemas"]["KnowledgeDocument"][];
             /** @description The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both. */
             readonly knowledge_urls?: readonly components["schemas"]["KnowledgeUrlDeclaration"][];
+            /** @description The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. A non-empty list is refused without connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that sends neither leaves them alone. At most 64, as connectors. */
+            readonly left_out_connectors?: readonly components["schemas"]["LeftOutConnector"][];
             readonly llm?: string;
             /** @description MCP servers outside the plugin catalog, opened by their URL with no login. */
             readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
@@ -9861,7 +9923,7 @@ export interface operations {
                 readonly cursor?: string;
                 /** @description Up to 200. Omitted is 25. */
                 readonly limit?: number;
-                /** @description app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id. Omitted is app. */
+                /** @description app lists the app's own; user lists those of the user the backend acts for, named by X-Stream-User-Id, or every user's when it names none. Omitted is app. */
                 readonly owner_type?: components["schemas"]["ConnectionOwnerType"];
             };
             readonly header?: never;
@@ -10488,6 +10550,47 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly approveConnectionTools: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The connection, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectionToolsApproval"];
+            };
+        };
+        readonly responses: {
+            /** @description The tools approved */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ApprovedConnectionTools"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
         };
     };

@@ -638,11 +638,52 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### An agent config says which agent.yaml connectors its last sync left out
+
+A sync (`POST /v1/agents/sync`) takes `left_out_connectors`: the agent.yaml connectors the
+client left out of `connectors` because the app has no connection by the id or label they
+name, each as `{name, connector_id, connection}`. The router stores them as sent and serves
+them, read-only, as `left_out_connectors` on the agent config (GET, list and the sync's
+answer), so the dashboard can say what the agent is missing. They go only alongside
+`connectors`, else the sync is refused with a 400: a sync that sends `connectors` replaces
+them, and one that sends neither leaves them alone. A save or a patch of the config keeps them. The Go SDK's `Agent.Sync`
+sends them, beside the warning it already logs, and leaves out of the list an entry longer
+than the router takes (the warning still names it). A sync that left a connector out sends a
+hash of its own, so an agent an earlier SDK synced with the same missing connection stores the list. A config with none left out answers as it
+did (AI-1371).
+
+### ElevenLabs style exaggeration through the `elevenlabs` overwrite
+
+A voice's options take ElevenLabs' style exaggeration as `{"elevenlabs": {"voice_settings": {"style": 0.4}}}` in `overwrites`, on `/v1/tts/stream` and on `/v1/tts/recordings`. It is a number from 0 to 1, and not the shared `style`, which is a word to sound like. Flash v2.5 and Multilingual v2 send it when each context opens. The v3 and v4 models have no style, so they refuse it with the overwrite error, and the router then tries only ElevenLabs' other models: `en-low-latency` is spoken by Flash, and `tts-quality` and the recording voice (`eleven_v3`) refuse the request. A value outside 0 to 1 is refused too. A request with no style sends what it did before (AI-1367).
+
+### A backend lists every user's connections
+
+`GET /v1/agents/connections?owner_type=user` from a server-side caller that sends no
+`X-Stream-User-Id` lists the user-owned connections of every user of the app, newest first,
+paged by cursor and narrowed by `connector_id` as the other lists are. Each one names its user
+in `owner.user_id`. It was a 400 before. With `X-Stream-User-Id` it still lists that user's
+only, and an end user's device is still refused the operation. This is for an admin view,
+such as the Volt dashboard's.
+
 ### Listing connections without `owner_type` lists the app's own
 
 `GET /v1/agents/connections` takes `owner_type` as optional. Left out, it lists the app's own
-connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` still
-needs `X-Stream-User-Id`.
+connections, as `owner_type=app` does, where it was a 400 before. `owner_type=user` lists the
+user `X-Stream-User-Id` names, or every user's without it.
+
+### Approve a connection's changed tools again
+
+`POST /v1/agents/connections/{id}/tools/approve` (`approveConnectionTools`) takes
+`{"tools": [{"name", "schema_digest"}]}` and pins each tool at that digest for the connection's
+current grant, so the next session offers it again and the next validate answers `connected`
+when no other tool changed (AI-1305). It is the way out of `needs_reapproval` for a bearer or
+`api_key` connection, which no consent moves to a new grant. Each `schema_digest` must be the
+one `GET .../tools` lists now, which a validate refreshes: a tool it does not list is a 400, one
+listed at another digest a 409. A pin or grant that changed since it was read is a 409 too, and
+a refused approve writes nothing. Each approve is one audit row, the new `ConnectorAuditAction`
+`tool_reapproved`, whose new `tools` field names each tool with the digest approved and the one
+it was pinned at. Server-side only; who may approve is who may read the connection. Migration
+`20261101130000` widens the CHECK on `connector_audit.action` and adds `connector_audit.tools`.
 
 ### Validate says when a provider changed a tool sessions pinned
 
@@ -653,9 +694,14 @@ first time it offers a tool granted by name or by pattern. A tool listed at anot
 `code: connector_tool_schema_changed` and the tools in `changed_tools`, sorted; the connection's
 `last_validation` keeps the status, the code and an error naming them. It used to answer
 `connected` while sessions left the tool out. Sessions still leave it out, and a validate never
-pins it again: a new grant (a consent) approves it. A pinned tool the provider no longer lists
+pins it again: `POST /v1/agents/connections/{id}/tools/approve` approves it, as does a
+reconnect of an OAuth connection, which begins a new grant. A pinned tool the provider no longer lists
 is not reported. A grant lacking scopes is still `needs_scopes`, since the consent it asks for
 approves the changed tools too. A connection with no changed tool answers as before.
+
+### Linear with your own OAuth app, for direct GraphQL calls
+
+The connector catalog has `linear_app`, «Linear (own OAuth app)». A connection signs in with `oauth2_code` through the app's own Linear OAuth app (`PUT /v1/agents/connectors/linear_app/oauth-client`). Its token serves both Linear's MCP tools and Linear's GraphQL API: `POST /v1/agents/connections/{id}/proxy/graphql` reaches `https://api.linear.app/graphql`. The `linear` connector is unchanged and still MCP-only (AI-1351).
 
 ### A built-in Notion connector
 
@@ -2012,7 +2058,19 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
-- A router stopping with a request still open when its 10 s shutdown grace runs out logs a warning and exits 0. It reported `context deadline exceeded` to Sentry and exited 1, so a rollout that outlasted one slow request paged as a failure (AI-1283).
+- An agent.yaml connector whose `connection:` the app does not have no longer stops the Go SDK's folder sync (`Agent.Sync`). The agent syncs without that connector's tools, and a warning names the agent, the connector and the connection; the next sync adds the connector once the connection exists. A label shared by several connections still fails, and so does a missing connection on an entry with `required: true`, whose error says to add the connection or drop `required` (AI-1368).
+- A Gong connection can start its consent without the app's own OAuth client. The router registers its client with the scopes the consent asks for (`scope`, RFC 7591), which Gong requires; it sent none, and Gong answered `HTTP 400`. A provider that refuses a registration now has its `error` and `error_description` in the answer, and a connector that also takes the app's own client answers `no_oauth_client`, naming `PUT /v1/agents/connectors/{id}/oauth-client` and the redirect URI its client must list (AI-1363).
+- A consent that cannot start because the connector has no OAuth client now names every way to give it one that the connector lists, with a code of its own, `no_oauth_client` (AI-1357). For `slack_bot` that is `PUT /v1/agents/connectors/slack_bot/oauth-client` with the Slack app's `client_id`, `client_secret`, `provider_app_id` and `signing_secret`, whose client lists the redirect URI the message gives, or `PUT /v1/agents/connectors/slack_bot/provider-app` with the app's name and a workspace admin's app configuration refresh token, named only where that PUT is served. It named only the first, without what it takes, and its code was `invalid_request`.
+- `stability` and `similarity` on a voice's options reach ElevenLabs. `tts-quality` with a `stability` was refused with `no provider can express stability`, and the live ElevenLabs voices always sent stability 0.5 and similarity 0.8 whatever was asked. Flash v2.5 and Multilingual v2 now send both; v3 conversational, v4 and v4 Turbo send `stability` and do not declare `similarity`, which their socket does not take, so a `similarity` routes past them. A value outside 0 to 1 is refused, and is not counted against the model's health. A request that names neither sends what it did before (AI-1360).
+- A TTS, STT or speech-to-speech overwrite the chosen provider cannot read (an unknown field such as `{"elevenlabs": {"voice_settings": {"speed": 1.2}}}`, or a value of the wrong type) fails the request with an error naming the provider and the field. It used to fail over to the next candidate, which never reads another vendor's block, so `tts-quality` was served by Cartesia with the overwrite dropped. The same vendor's other models are still tried, since OpenAI's realtime and Live models read different fields of one block (AI-1360).
+- A speed ElevenLabs will not take (outside 0.7 to 1.2, or any speed on a dialogue model) is refused as the caller's mistake and no longer counted against the model's health. It wrote a `build_failed` row, so one caller's bad speed could mark Flash v2.5 unavailable for everyone, and the request was answered `every candidate ... failed` as if it were an outage (AI-1365).
+- `/v1/tts/recordings` reads the `elevenlabs` overwrite. A `voice_id` there names the voice the recording is spoken in, and an overwrite the recorder cannot read fails the request with the overwrite error, as on the live path; both were dropped and the recording spoken anyway. A recording that names a voice of the customer's own is spoken in the id ElevenLabs knows it by, where the name was sent as asked (AI-1366).
+- `/v1/tts/recordings` refuses a `speed`, and a `stability` or `similarity` outside 0 to 1, as the caller's mistake. The recording voice (`eleven_v3`) ignores speed, so one was dropped in silence; a bad stability or similarity was answered by ElevenLabs with a 422 that counted against the model's health (AI-1366).
+- New voice replies wait until interruption cleanup finishes, so barge-in no longer loses a queued follow-up.
+- A failed voice replacement keeps queued caller and delegated replies until the new voice is ready; a late completion from the lost voice no longer marks replacement speech finished.
+- Voicebench no longer treats speech already in progress when the final caller line starts as the agent's answer; it stays open for the next reply.
+- Prose tool tags no longer invent incomplete multi-field arguments, and brace-form single-quoted tool calls preserve their decoded values.
+- A router stopping with a request still open when its 10 s shutdown grace runs out logs a warning and exits 0. It reported `context deadline exceeded` to Sentry and exited 1, so a rollout that outlasted one slow request paged as a failure (#935).
 - The daily message and token limits count per user behind the proxy again. With `ROUTER_TRUSTED_PROXIES` unset, every request's address was the proxy's, so all end users shared one address allowance and the deployment as a whole was cut off after 200 responses a day. In `proxy` auth mode with no trusted ranges a named user is now counted only by user, and a guest still by address; set `ROUTER_TRUSTED_PROXIES` to count by the forwarded client address as well.
 - A request with a data policy can be answered by Gemini 3.8 Flash, the model `llm-fast` prefers. It declared no data policy, so any request that asked for no training passed it over.
 - The router starts on a database that already applied the migrations shipped before customer-hosted models. That migration was numbered earlier than one already applied, and goose refuses to start when it finds an unapplied migration below the database version. It now runs after that version. A database that already created `custom_models` under the old number keeps the table.

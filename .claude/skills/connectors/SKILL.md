@@ -71,6 +71,43 @@ The same with the API (operations in `acceleration/api/openapi.yaml`):
 | A token or key | `PUT /v1/agents/connections/{id}/credentials` |
 | Check it | `POST /v1/agents/connections/{id}/validate`, then `GET /v1/agents/connections/{id}/tools` |
 
+### Direct calls from your backend
+
+Your backend can call the provider's own API with a connection's credential:
+`/v1/agents/connections/{id}/proxy/<path>` sends `<path>` under the connector's `api_base`.
+Only a connector whose manifest has an `api_base` takes direct calls.
+
+| Built-in | `api_base` | Example path |
+|---|---|---|
+| `github` (revision 4) | `https://api.github.com` | `repos/octo/hello/issues` |
+| `slack_bot` (revision 5) | `https://slack.com/api` | `chat.postMessage` |
+| `linear_app` (revision 1) | `https://api.linear.app` | `graphql` (POST a GraphQL body) |
+
+A provider's `Link` header (RFC 8288) that names a URL under `api_base`, such as GitHub's
+`rel="next"` page, comes back naming the same path and query under this connection's proxy
+URL (`ROUTER_PUBLIC_URL` + `/v1/agents/connections/{id}/proxy`), so a client that follows it,
+Octokit's paginate included, stays on the proxy. URLs in a body (`url`, `comments_url`) still
+name `https://api.github.com`: never send the router's credential there; call their path
+through the proxy. With `ROUTER_PUBLIC_URL` unset the router has no proxy URL to name, so it drops every
+`Link` (fail closed): a connection then loses GitHub's pagination until the URL is set.
+
+Every other built-in, `linear` included, is MCP-only: a direct call answers 400 «connector
+"linear" has no api_base endpoint». Why Linear has none is in `linear.yaml`.
+
+For Linear's GraphQL API, connect `linear_app` («Linear (own OAuth app)») instead. It signs in
+with your own Linear OAuth app, and its token serves both the GraphQL API and Linear's MCP
+tools:
+
+1. Read the callback URL: `GET /v1/agents/connectors/linear_app`, field `redirect_uri`.
+2. In Linear, create an OAuth app at https://linear.app/settings/api/applications/new with
+   that callback URL.
+3. Give the router its client id and secret: `PUT /v1/agents/connectors/linear_app/oauth-client`.
+4. Create a `linear_app` connection and run its OAuth consent as for any connector.
+
+A `linear` connection stays as it is; it does not move to `linear_app`. A connection keeps
+the revision it was made on, so a `github` connection made before revision 4 takes direct calls
+only after its next consent or token save.
+
 ## 3. Give an agent the tools
 
 Dashboard: open the agent › **Tools** › **Connectors** › **Add connector**.
@@ -82,6 +119,12 @@ Dashboard: open the agent › **Tools** › **Connectors** › **Add connector**
 4. Save.
 
 The agent sees each tool as `<binding name>__<tool>`, for example `github__get_me`.
+
+`github` (revision 5) offers GitHub's Actions tools beside its default ones: `actions_list`,
+`actions_get`, `actions_run_trigger` and `get_job_logs`. The manifest asks for them with the
+`X-MCP-Toolsets: default,actions` header. A binding's `tools` still narrows them: a tool that is
+not granted is never offered. A connection made before revision 5 lists them after its next
+consent or token save.
 
 With the API, the binding goes in `connectors[]` of the agent config
 (`AgentConnectorBinding`):
@@ -106,9 +149,11 @@ For a session your backend creates, pass the end user's connection in
 `connector_bindings: [{"name": "linear", "connection_id": "…"}]`. Leave it out and the
 router uses the user's only connected connection to that connector, if there is exactly one.
 
-`agent.yaml`: the sync API accepts `connectors`, but the SDK folder readers do not read a
-`connectors:` block yet (`git grep connectors sdks/go/agents sdks/js/src` finds none). Use the
-dashboard or the API for now.
+`agent.yaml`: the sync API accepts `connectors`, and the Go SDK folder reader reads the block
+(`sdks/go/agents/config.go`, `connectorBindings`). An entry whose `connection:` the app does not have
+is left out with a warning, and the rest of the agent syncs; `required: true` makes it an error.
+The left-out entries go to the router as `left_out_connectors` and are served on the agent config.
+Other SDKs: unverified, check `git grep connectors sdks/js/src plugins/stream` before relying on it.
 
 ## 4. A channel: the Slack bot
 
@@ -153,7 +198,7 @@ Check the router log first (`docker compose logs -f router` locally).
 
 | What you see | Cause | Fix |
 |---|---|---|
-| `GET /v1/agents/connections?owner_type=user` answers 400, or the browser console says a header is not allowed | The router got no `X-Stream-User-Id`. A proxy or gateway in front dropped it | Forward the header for a server-side caller |
+| `GET /v1/agents/connections?owner_type=user` lists every user's connections instead of one user's, or the browser console says a header is not allowed | The router got no `X-Stream-User-Id`, which lists every user's. A proxy or gateway in front dropped it | Forward the header for a server-side caller |
 | The consent popup finishes, the dashboard keeps waiting | `DASHBOARD_BASE_URL` is unset or another origin | Set it to the dashboard origin |
 | «no OAuth client available» on consent | No Stream client (`<ENV>_MCP_CLIENT_ID`) and no app client | Set one of them |
 | 409 «Another customer's record already names this provider app» | That Slack app is registered to another customer on this router | Use another Slack app, or remove the old record |

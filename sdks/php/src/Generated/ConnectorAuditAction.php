@@ -11,7 +11,8 @@ namespace GetStream\VisionAgents\Generated;
  * a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended,
  * because the provider refused or revoked it or the connection was deleted. token_export: the
  * app's backend exported its access credential. proxy_call: a direct call went to the provider
- * through the connection.
+ * through the connection. tool_reapproved: the app's backend approved tools at the schema the
+ * provider lists now (POST .../tools/approve); tools names them.
  */
 enum ConnectorAuditAction: string
 {
@@ -20,4 +21,5 @@ enum ConnectorAuditAction: string
     case GrantRevoked = 'grant_revoked';
     case TokenExport = 'token_export';
     case ProxyCall = 'proxy_call';
+    case ToolReapproved = 'tool_reapproved';
 }

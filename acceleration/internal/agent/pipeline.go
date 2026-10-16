@@ -281,7 +281,7 @@ func (a *Agent) quiesce(ctx context.Context) error {
 			a.mu.Unlock()
 			return stack.Wrap(errors.New("agent: closed"))
 		}
-		if !a.generating && a.utterances == 0 && a.pendingTools == 0 && !a.toolReply &&
+		if a.interruptDone == nil && a.recoveringVoice == nil && !a.generating && a.utterances == 0 && a.pendingTools == 0 && !a.toolReply &&
 			!a.nativeAwaiting && len(a.streams) == 0 && len(a.generatingCancel) == 0 {
 			a.switching.Store(true)
 			a.mu.Unlock()
@@ -691,16 +691,20 @@ const maxLostVoices = 3
 // of the call, with the one that went tried last.
 func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 	a.mu.Lock()
+	if a.pipe != p || a.tts != lost {
+		a.mu.Unlock()
+		return
+	}
+	a.cancelPlayoutAndForgetLocked()
 	a.utterances = 0
-	replace := !a.closed && a.pipe == p && a.tts == lost && !a.switching.Load() &&
+	replace := !a.closed && !a.switching.Load() &&
 		len(a.lostVoices) < maxLostVoices
 	if replace {
+		a.recoveringVoice = lost
 		a.lostVoices = append(a.lostVoices, lost.Provider()+"/"+lost.Model())
 	}
 	settings, failed := a.settingsLocked(), slices.Clone(a.lostVoices)
 	a.mu.Unlock()
-	a.respondQueued()
-	a.followUp()
 	if !replace {
 		return
 	}
@@ -711,15 +715,23 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 	go func() {
 		next, err := a.startVoice(settings, failed)
 		if err != nil {
+			a.mu.Lock()
+			if a.recoveringVoice == lost {
+				a.recoveringVoice = nil
+			}
+			a.mu.Unlock()
 			p.running.Done()
 			a.fail(fmt.Errorf("agent: replace the lost voice: %w", err), "tts")
 			return
 		}
 		a.mu.Lock()
 		if a.closed || a.pipe != p || a.tts != lost {
+			if a.recoveringVoice == lost {
+				a.recoveringVoice = nil
+			}
 			a.mu.Unlock()
-			p.running.Done()
 			_ = next.Close()
+			p.running.Done()
 			return
 		}
 		a.tts = next
@@ -731,7 +743,18 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 		if err := lost.Close(); err != nil {
 			a.logger.Debug("closing the lost voice", "error", err)
 		}
-		a.consumeTTS(p, next)
+		// Start draining before releasing the recovery barrier. The queued answer may
+		// synthesize as soon as it is admitted, and a new voice can fail immediately.
+		go a.consumeTTS(p, next)
+		a.mu.Lock()
+		recovered := a.recoveringVoice == lost && a.pipe == p && a.tts == next
+		if recovered {
+			a.recoveringVoice = nil
+		}
+		a.mu.Unlock()
+		if recovered {
+			a.respondQueued()
+		}
 	}()
 }
 

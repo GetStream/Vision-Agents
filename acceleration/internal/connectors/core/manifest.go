@@ -187,6 +187,10 @@ type RateLimitRule struct {
 type SourceRule struct {
 	Kind     string `yaml:"kind" json:"kind"`
 	Endpoint string `yaml:"endpoint" json:"endpoint"`
+	// Headers are request headers the source sends, as written, on every request to the
+	// endpoint, such as the toolsets GitHub's MCP server is to offer. None is a header the
+	// credential, the HTTP connection or the MCP transport writes (sourceHeaderOwned).
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 	// Tools is what the manifest says about some of the source's tools, by the name the
 	// source lists each under. A tool it does not name is offered all the same.
 	Tools []ToolRule `yaml:"tools,omitempty" json:"tools,omitempty"`
@@ -285,6 +289,11 @@ const (
 	RateLimitPerUser   RateLimitScope = "user"
 )
 
+// sourceHeaderMCPPrefix starts every header the MCP transport defines: Mcp-Session-Id,
+// Mcp-Protocol-Version, Mcp-Method, Mcp-Name and Mcp-Param-* (go-sdk v1.8.0
+// mcp/streamable_headers.go:24-29), lowercase.
+const sourceHeaderMCPPrefix = "mcp-"
+
 var (
 	valueSources        = []ValueSource{FromTokenResponse, FromIDToken, FromCallbackQuery}
 	clientRegistrations = []ClientRegistrationMethod{ClientOperator, ClientCustomer, ClientManaged, ClientDCR, ClientCIMD}
@@ -295,6 +304,21 @@ var (
 	// may use: PS256 is what Microsoft requires for certificate credentials (architecture
 	// doc, stress-test row 8), RS256 the common default for the rest.
 	assertionAlgs = []string{"RS256", "PS256"}
+	// sourceHeaderOwned are the request headers, lowercase, that sources[].headers may not
+	// set, because something else writes them: the credential (Authorization and
+	// Proxy-Authorization, RFC 9110 sections 11.6.2 and 11.7.2; Cookie, RFC 6265 section
+	// 5.4), the HTTP connection (Host, Content-Length, and the hop-by-hop headers of RFC 9110
+	// section 7.6.1: Connection, Proxy-Connection, Keep-Alive, TE, Trailer,
+	// Transfer-Encoding, Upgrade) and the MCP transport (Accept, Content-Type and Last-Event-ID,
+	// go-sdk v1.8.0 mcp/streamable.go:2297-2298,2754). Every Mcp- header is the transport's
+	// too (sourceHeaderMCPPrefix).
+	sourceHeaderOwned = []string{"authorization", "proxy-authorization", "cookie", "host", "content-length",
+		"connection", "proxy-connection", "keep-alive", "te", "trailer", "transfer-encoding", "upgrade",
+		"accept", "content-type", "last-event-id"}
+	// sourceHeaderValue is a field value of visible ASCII words separated by single spaces:
+	// RFC 9110 section 5.5's field-vchar and SP, without obs-text, tabs or the leading and
+	// trailing whitespace it forbids, so a value cannot hold a line break.
+	sourceHeaderValue = regexp.MustCompile(`^[!-~]+( [!-~]+)*$`)
 	// scopeSeparators: a space is RFC 6749 section 3.3; a comma is what Slack and Shopify
 	// take (architecture doc, stress-test rows 4 and 5).
 	scopeSeparators = []string{" ", ","}
@@ -573,6 +597,22 @@ func (m Manifest) Validate() error {
 		}
 		if _, ok := m.Endpoints[source.Endpoint]; !ok {
 			fail(field+".endpoint", "%q is not a declared endpoint", source.Endpoint)
+		}
+		headers := map[string]bool{}
+		for _, name := range slices.Sorted(maps.Keys(source.Headers)) {
+			field := field + ".headers." + name
+			lower := strings.ToLower(name)
+			switch {
+			case !headerName.MatchString(name):
+				fail(field, "%q is not a header name", name)
+			case slices.Contains(sourceHeaderOwned, lower) || strings.HasPrefix(lower, sourceHeaderMCPPrefix):
+				fail(field, "is written by the credential, the HTTP connection or the MCP transport")
+			case headers[lower]:
+				fail(field, "is named twice, in another case")
+			case !sourceHeaderValue.MatchString(source.Headers[name]):
+				fail(field, "is not visible ASCII words separated by single spaces")
+			}
+			headers[lower] = true
 		}
 		named := map[string]bool{}
 		for j, tool := range source.Tools {

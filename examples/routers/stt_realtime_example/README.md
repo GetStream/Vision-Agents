@@ -88,7 +88,7 @@ parses its own. A field it does not have is an error rather than a setting that 
 and never sent, so a misspelling refuses the session instead of quietly changing nothing:
 
 ```
-routing: overwrites for muse-voice-transcribe-1.0: json: unknown field "moed"
+muse/muse-voice-transcribe-1.0: routing: overwrites refused for muse-voice-transcribe-1.0: json: unknown field "moed"
 ```
 
 ## Nothing kept, nothing trained on

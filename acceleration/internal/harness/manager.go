@@ -660,6 +660,7 @@ func (m *manager) report(finished *task, result Result) {
 	}
 	result.Evidence = finished.evidence
 	result.TaskID = finished.id
+	result.TurnID = finished.turnID
 	result.Skill = finished.skill
 	result.ElapsedMs = float64(time.Since(finished.startedAt).Microseconds()) / 1000
 	m.results.Send(result)

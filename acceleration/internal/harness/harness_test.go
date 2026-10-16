@@ -767,7 +767,7 @@ func (s *HarnessSuite) TestTheModelAskingAgainDoesNotReplaceTheCallersImages() {
 	for _, settled := range settledIn(s.events.seen()) {
 		s.NotEqual(ReasonSuperseded, settled.Result.Reason, "the picture's task was replaced")
 	}
-	s.Len(delegatedIn(s.events.seen()), 1)
+	s.awaitDelegated(1)
 }
 
 func (s *HarnessSuite) TestATurnsImagesAreHandedToTheModelBesideTheWordsTheyCameWith() {
@@ -1248,6 +1248,93 @@ func (s *HarnessSuite) TestARevisedConversationCancelsWorkFromItsOldTurn() {
 	s.False(settled.Actionable())
 }
 
+func (s *HarnessSuite) TestARevisedConversationDiscardsACompletedClarificationFromItsOldTurn() {
+	s.build(true)
+	s.respond("turn-1", "work out the discount")
+	s.reply("turn-1", `<ask skill="think">work out the discount</ask>`)
+	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the task never started")
+	s.slow.settle(s.slow.requests()[0].ID, "NEED: What percentage should I use?")
+	s.awaitSettled(1)
+	s.Require().True(s.harness.Pending(), "the completed question must be waiting for delivery")
+
+	s.harness.CancelTurn("turn-1", ReasonSuperseded)
+
+	s.False(s.harness.Pending(), "a completed question is stale when its originating turn is cancelled")
+	s.respond("turn-2", "use twenty percent")
+	s.NotContains(s.fast.requests()[1].Instructions, "What percentage should I use?")
+}
+
+func (s *HarnessSuite) TestCancellingOneTurnPreservesAnotherTurnsCompletedWork() {
+	s.build(true)
+	first, err := s.harness.Delegate("think", "work out the discount", "turn-1", nil, nil)
+	s.Require().NoError(err)
+	second, err := s.harness.Delegate("recall", "remember the delivery address", "turn-2", nil, nil)
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.slow.requests()) == 2 }, "both tasks must start")
+	s.slow.settle(first, "NEED: What percentage should I use?")
+	s.slow.settle(second, "The delivery address is Oak Street.")
+	s.awaitSettled(2)
+
+	s.harness.CancelTurn("turn-1", ReasonSuperseded)
+
+	s.True(s.harness.Pending(), "the unrelated completed work is still owed")
+	s.respond("turn-3", "use twenty percent")
+	instructions := s.fast.requests()[0].Instructions
+	s.NotContains(instructions, "What percentage should I use?")
+	s.Contains(instructions, "The delivery address is Oak Street.")
+}
+
+func (s *HarnessSuite) TestACompletedResultQueuedBeforeCancellationIsDiscarded() {
+	s.fast, s.slow = newStubLLM(), newStubLLM()
+	tools := testTools()
+	h, err := New(Options{
+		Model: s.session(s.fast), Subagent: s.session(s.slow), Skills: s.skills, Tools: tools,
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.harness = h
+	var events *collector
+	s.T().Cleanup(func() {
+		if events == nil {
+			events = collect(h)
+		}
+		s.NoError(h.Close())
+		<-events.done
+	})
+	first, err := h.Delegate("recall", "remember the delivery address", "turn-1", nil, nil)
+	s.Require().NoError(err)
+	second, err := h.Delegate("think", "work out the discount", "turn-2", nil, nil)
+	s.Require().NoError(err)
+	<-h.Events()
+	<-h.Events()
+	s.eventually(func() bool { return len(s.slow.requests()) == 2 }, "both tasks must start")
+
+	// A slow event reader holds the first result's delivery, so the second finishes in
+	// the manager but cannot be consumed by the harness until after cancellation.
+	for range eventBuffer {
+		h.Requested("event-backlog", []llm.ToolCall{{Name: tools.Tools[0].Name}})
+	}
+	s.slow.settle(first, "The delivery address is Oak Street.")
+	s.eventually(h.Pending, "the first result never reached the harness")
+	s.slow.settle(second, "NEED: What percentage should I use?")
+	s.eventually(func() bool { return h.tasks.Running() == 0 }, "both tasks must finish before cancellation")
+	h.CancelTurn("turn-2", ReasonSuperseded)
+
+	events = collect(h)
+	s.eventually(func() bool { return len(settledIn(events.seen())) == 2 }, "the queued results were not delivered")
+	for _, settled := range settledIn(events.seen()) {
+		if settled.TaskID == second {
+			s.Equal(Cancelled, settled.State)
+			s.Equal(ReasonSuperseded, settled.Reason)
+			s.False(settled.Actionable())
+		}
+	}
+	s.respond("turn-3", "use twenty percent")
+	instructions := s.fast.requests()[0].Instructions
+	s.NotContains(instructions, "What percentage should I use?")
+	s.Contains(instructions, "The delivery address is Oak Street.")
+}
+
 func (s *HarnessSuite) TestTheModelCanDropWorkTheCallerHasMovedPast() {
 	s.build(true)
 	s.respond("turn-1", "what is 15% of 84.20")
@@ -1391,6 +1478,68 @@ func (s *HarnessSuite) TestASkillThatNamesAToolIsAskedAsOne() {
 	requested := s.awaitToolRequests(1)
 	s.Equal("press", requested[0].Call.Name)
 	s.JSONEq(`{"digits":"1"}`, requested[0].Call.Arguments)
+}
+
+func rescheduleAppointmentTool(required any) Tool {
+	return Tool{
+		Name:        "reschedule_appointment",
+		Description: "move an appointment",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"appointment_id": map[string]any{"type": "string"},
+				"new_date":       map[string]any{"type": "string"},
+				"new_time":       map[string]any{"type": "string"},
+			},
+			"required": required,
+		},
+	}
+}
+
+func (s *HarnessSuite) TestProseQueryAndStructuredJSONKeepTheirToolArguments() {
+	s.tools = Tools{Tools: []Tool{
+		{
+			Name:        "search_appointments",
+			Description: "search appointments",
+			Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"query": map[string]any{"type": "string"}},
+				"required":   []any{"query"},
+			},
+		},
+		rescheduleAppointmentTool([]any{"appointment_id", "new_date", "new_time"}),
+	}}
+	s.build(false)
+	s.respond("turn-1", "Find appointment a2 and move it")
+
+	s.reply("turn-1", `<ask skill="search_appointments">appointment a2</ask>`+
+		`<ask skill="reschedule_appointment">{"appointment_id":"a2","new_date":"Tuesday","new_time":"morning"}</ask>`)
+
+	asked := s.harness.TakeAsked()
+	s.Require().Len(asked, 2)
+	s.JSONEq(`{"query":"appointment a2"}`, asked[0].Arguments)
+	s.Equal(`{"appointment_id":"a2","new_date":"Tuesday","new_time":"morning"}`, asked[1].Arguments)
+	s.False(s.harness.Pending(), "valid prose and structured arguments need no correction")
+}
+
+func (s *HarnessSuite) TestRepeatingAnIncompleteMultiFieldToolRequestDoesNotLoop() {
+	s.tools = Tools{Tools: []Tool{rescheduleAppointmentTool([]string{"appointment_id", "new_date", "new_time"})}}
+	s.build(false)
+	s.respond("turn-1", "Move appointment a2 from Friday to Tuesday morning")
+	s.reply("turn-1", `<ask skill="reschedule_appointment">Move it to Tuesday morning.</ask>`)
+	s.True(s.harness.Pending(), "the malformed request needs one corrective response")
+	s.Empty(s.harness.TakeAsked(), "the prose body cannot fill the tool's required fields")
+
+	s.respond("turn-2", "")
+	s.reply("turn-2", `<ask skill="reschedule_appointment">Move it to Tuesday morning.</ask>`)
+	s.False(s.harness.Pending(), "repeating the malformed request cannot earn another turn")
+	s.Empty(s.harness.TakeAsked(), "a repeated incomplete request still cannot run")
+
+	s.respond("turn-3", "are you there")
+	requests := s.fast.requests()
+	s.Require().Len(requests, 3)
+	s.Contains(requests[2].Instructions, "reschedule_appointment was not run",
+		"the caller still receives the correction on the next ordinary turn")
 }
 
 func (s *HarnessSuite) TestAToolCallWrittenAsATagIsRun() {

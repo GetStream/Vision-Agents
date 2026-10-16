@@ -209,6 +209,7 @@ func (s *ElevenLabsSuite) TestNewRejectsASampleRateTheOutputFormatCannotCarry() 
 
 func (s *ElevenLabsSuite) TestASpeedOutsideTheVendorsRangeIsRefused() {
 	_, err := New(Options{APIKey: "k", Speed: 1.5})
+	s.ErrorIs(err, ErrRefused, "the caller's mistake, not the provider's fault")
 	s.ErrorContains(err, "speed 1.5 is outside 0.7 to 1.2")
 
 	_, err = New(Options{APIKey: "k", Speed: 0.5})
@@ -240,6 +241,95 @@ func (s *ElevenLabsSuite) TestNoSpeedIsSentWhenNoneWasAskedFor() {
 	_, raw, err := conn.ReadMessage()
 	s.Require().NoError(err)
 	s.NotContains(string(raw), `"speed"`, "the voice keeps its own pace unless told otherwise")
+}
+
+// openedVoiceSettings is the voice_settings of the first frame the provider sent, as it
+// went on the wire.
+func (s *ElevenLabsSuite) openedVoiceSettings(options Options) string {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, conn := s.connect(fake, options)
+	defer provider.Close()
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "hello", Final: true}))
+
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	_, raw, err := conn.ReadMessage()
+	s.Require().NoError(err)
+	var opened struct {
+		VoiceSettings json.RawMessage `json:"voice_settings"`
+	}
+	s.Require().NoError(json.Unmarshal(raw, &opened))
+	return string(opened.VoiceSettings)
+}
+
+func (s *ElevenLabsSuite) TestAContextOpenedWithNothingAskedSendsWhatItAlwaysHas() {
+	// The frame this provider sent before stability and similarity could be asked for,
+	// captured on the commit before they could.
+	s.JSONEq(`{"stability":0.5,"similarity_boost":0.8}`, s.openedVoiceSettings(Options{VoiceID: "v1"}))
+}
+
+func (s *ElevenLabsSuite) TestEveryContextIsOpenedWithTheStabilityAndSimilarityAskedFor() {
+	stability, similarity := 0.3, 0.6
+
+	s.JSONEq(`{"stability":0.3,"similarity_boost":0.6}`,
+		s.openedVoiceSettings(Options{VoiceID: "v1", Stability: &stability, Similarity: &similarity}))
+}
+
+func (s *ElevenLabsSuite) TestAStabilityOfZeroIsSentRatherThanTakenForNone() {
+	// Zero is the most variable the voice can be, not an absent setting.
+	stability := 0.0
+
+	s.JSONEq(`{"stability":0,"similarity_boost":0.8}`,
+		s.openedVoiceSettings(Options{VoiceID: "v1", Stability: &stability}))
+}
+
+func (s *ElevenLabsSuite) TestAVoiceSettingOutsideZeroToOneIsRefused() {
+	above, below := 1.5, -0.2
+
+	_, err := New(Options{APIKey: "k", Stability: &above})
+	s.ErrorIs(err, ErrRefused, "the caller's mistake, not the provider's fault")
+	s.ErrorContains(err, "stability 1.5 is outside 0 to 1")
+
+	_, err = New(Options{APIKey: "k", Similarity: &below})
+	s.ErrorContains(err, "similarity -0.2 is outside 0 to 1")
+}
+
+func (s *ElevenLabsSuite) TestEveryContextIsOpenedWithTheStyleAskedFor() {
+	style := 0.4
+
+	s.JSONEq(`{"stability":0.5,"similarity_boost":0.8,"style":0.4}`,
+		s.openedVoiceSettings(Options{VoiceID: "v1", Style: &style}))
+}
+
+func (s *ElevenLabsSuite) TestAStyleOfZeroIsSentRatherThanTakenForNone() {
+	// Zero is ElevenLabs' own default and a style a caller can ask for by name.
+	style := 0.0
+
+	s.JSONEq(`{"stability":0.5,"similarity_boost":0.8,"style":0}`,
+		s.openedVoiceSettings(Options{VoiceID: "v1", Style: &style}))
+}
+
+func (s *ElevenLabsSuite) TestAStyleOfOneIsSentRatherThanRefused() {
+	// One is the top of the documented 0 to 1 range, so it is a style a caller can ask for.
+	style := 1.0
+
+	s.JSONEq(`{"stability":0.5,"similarity_boost":0.8,"style":1}`,
+		s.openedVoiceSettings(Options{VoiceID: "v1", Style: &style}))
+}
+
+func (s *ElevenLabsSuite) TestAStyleOutsideZeroToOneIsRefused() {
+	// Live on 2026-10-16 ElevenLabs refused 1.5 and -0.2 on Flash v2.5, "expected to be
+	// greater or equal to 0.0 and less or equal to 1.0".
+	above, below := 1.5, -0.2
+
+	_, err := New(Options{APIKey: "k", Style: &above})
+	s.ErrorIs(err, ErrStyle, "a refused style is told apart from the other refusals")
+	s.ErrorIs(err, ErrRefused, "the caller's mistake, not the provider's fault")
+	s.ErrorContains(err, "style 1.5 is outside 0 to 1")
+
+	_, err = New(Options{APIKey: "k", Style: &below})
+	s.ErrorContains(err, "style -0.2 is outside 0 to 1")
 }
 
 func (s *ElevenLabsSuite) TestTheEndpointCarriesTheVoiceModelAndFormat() {

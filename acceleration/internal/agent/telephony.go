@@ -244,7 +244,12 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(fmt.Sprintf("That did not work: %s. Tell the caller, in your own words.", err))
 	}
 	result := llm.TextOf(parts)
-	a.resolveTool(requested.Call, parts, hold, ctx.Err() != nil)
+	a.mu.Lock()
+	a.resolveToolLocked(requested.Call, parts, hold, ctx.Err() != nil)
+	if !left && !a.native() && ctx.Err() == nil && a.followsTool(requested) {
+		a.toolReply = true
+	}
+	a.mu.Unlock()
 
 	a.emitter.Send(ToolRan{
 		ID:        requested.Call.ID,
@@ -285,9 +290,6 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 			}()
 		}
 		return
-	}
-	if !left && a.followsTool(requested) {
-		a.owesToolReply(ctx)
 	}
 	a.noteToolDone(hold)
 	if ctx.Err() != nil {
@@ -611,7 +613,8 @@ func (a *Agent) press(ctx context.Context, call llm.ToolCall) (string, bool, err
 		digits), false, nil
 }
 
-// resolveTool records what a tool returned, so the next turn carries the outcome.
+// resolveToolLocked records what a tool returned, so the next turn carries the outcome.
+// The caller holds the lock while recording both the result and whether it earns a reply.
 //
 // The result is a message rather than a note because the model asked for it by name: a
 // provider matches every call against a result, and a conversation that replays the call
@@ -624,8 +627,7 @@ func (a *Agent) press(ctx context.Context, call llm.ToolCall) (string, bool, err
 //
 // A call answered with stillRunning and then cancelled was dropped, and what it returned
 // is nothing anybody is waiting for.
-func (a *Agent) resolveTool(call llm.ToolCall, parts []llm.ContentPart, hold *toolHold, cancelled bool) {
-	a.mu.Lock()
+func (a *Agent) resolveToolLocked(call llm.ToolCall, parts []llm.ContentPart, hold *toolHold, cancelled bool) {
 	message := llm.Message{
 		Role:       llm.ToolResult,
 		ToolCallID: call.ID,
@@ -634,7 +636,6 @@ func (a *Agent) resolveTool(call llm.ToolCall, parts []llm.ContentPart, hold *to
 	if hold != nil {
 		hold.resolved = true
 		if hold.answered && cancelled {
-			a.mu.Unlock()
 			return
 		}
 		if hold.answered {
@@ -657,7 +658,6 @@ func (a *Agent) resolveTool(call llm.ToolCall, parts []llm.ContentPart, hold *to
 		a.history = append(a.history, a.lateResults...)
 		a.lateResults = nil
 	}
-	a.mu.Unlock()
 }
 
 // callsOpen reports whether history ends in an assistant message with a tool call that no

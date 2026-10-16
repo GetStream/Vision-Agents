@@ -1079,6 +1079,60 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ApprovedConnectionTool
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string Name { get; set; } = default!;
+
+        /// <summary>
+        /// The digest it was pinned at before. Absent when it was not pinned for the connection's grant.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("previous_schema_digest")]
+        public string? PreviousSchemaDigest { get; set; } = default!;
+
+        /// <summary>
+        /// The digest the tool is pinned at now.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("schema_digest")]
+        public string SchemaDigest { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ApprovedConnectionTools
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("connection_id")]
+        public string ConnectionId { get; set; } = default!;
+
+        /// <summary>
+        /// The tools approved, by name, sorted.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tools")]
+        public System.Collections.Generic.List<ApprovedConnectionTool>? Tools { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AttachNumberRequest
     {
 
@@ -3235,6 +3289,33 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ConnectionToolApproval
+    {
+
+        /// <summary>
+        /// The tool's name at the provider, as GET .../tools lists it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string Name { get; set; } = default!;
+
+        /// <summary>
+        /// Its schema_digest as GET .../tools lists it now: what the caller approves.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("schema_digest")]
+        public string SchemaDigest { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     /// <summary>
     /// The tools a connection offered when it was last validated, in one piece: the provider's own list, not a page of one.
     /// </summary>
@@ -3268,6 +3349,21 @@ namespace GetStream.VisionAgents.Models
             get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
             set { _additionalProperties = value; }
         }
+
+    }
+
+    /// <summary>
+    /// The tools of a connection to approve at the schema the provider lists now. An unknown field is refused rather than ignored.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ConnectionToolsApproval
+    {
+
+        /// <summary>
+        /// The tools to approve, each named once. Up to 128.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tools")]
+        public System.Collections.Generic.List<ConnectionToolApproval>? Tools { get; set; } = default!;
 
     }
 
@@ -3306,7 +3402,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back.
+        /// With needs_reapproval: the tools the provider now lists at a schema other than the one the connection's current grant pinned them at, by name, sorted. Sessions leave them out until they are approved again with POST .../tools/approve, or an OAuth connection reconnects. A pinned tool the provider no longer lists is not one: approving it again cannot bring it back.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("changed_tools")]
         public System.Collections.Generic.List<string>? ChangedTools { get; set; } = default!;
@@ -3604,6 +3700,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("target")]
         public string? Target { get; set; } = default!;
+
+        /// <summary>
+        /// A tool_reapproved row's tools, by name, sorted, each with the digest approved and the one it was pinned at before. Absent for every other action.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tools")]
+        public System.Collections.Generic.List<ApprovedConnectionTool>? Tools { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

@@ -202,10 +202,14 @@ type consents struct {
 	registry  core.Registry
 	secrets   *auth.Sealer
 	publicURL string
+	// providerApps is whether PUT provider-app can answer on this deployment, which a missing
+	// client's answer names only then.
+	providerApps bool
 }
 
 func (s *Server) consents() consents {
-	return consents{store: s.store, registry: s.connectors, secrets: s.connectorSecrets, publicURL: s.publicURL}
+	return consents{store: s.store, registry: s.connectors, secrets: s.connectorSecrets, publicURL: s.publicURL,
+		providerApps: s.connectorSecrets != nil && s.slackApps != nil && providerAppsURL(s.publicURL)}
 }
 
 // ConnectorConsents is how a session begins a consent for its caller's own connection, when
@@ -218,7 +222,9 @@ func ConnectorConsents(records *store.Store, registry core.Registry, secrets *au
 	if records == nil || secrets == nil || len(registry.Schemes) == 0 || strings.TrimRight(publicURL, "/") == "" {
 		return nil
 	}
-	c := consents{store: records, registry: registry, secrets: secrets, publicURL: publicURL}
+	// cmd/router builds the Slack apps client wherever connector secrets exist (main.go), and
+	// secrets are not nil here.
+	c := consents{store: records, registry: registry, secrets: secrets, publicURL: publicURL, providerApps: providerAppsURL(publicURL)}
 	return func(ctx context.Context, request session.ConsentRequest) (session.Consent, error) {
 		connection, err := c.connectionFor(ctx, request)
 		if err != nil {
@@ -354,11 +360,14 @@ func (c consents) begin(ctx context.Context, connection store.ConnectorConnectio
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
 	begun, err := scheme.Begin(ctx, core.BeginInput{Ref: ref, Manifest: manifest, RedirectURI: connectorCallbackURL(c.publicURL)})
 	// The client comes from the app's own record or the operator's environment
-	// (ConnectorClients), so a connector that takes the app's own and finds none says where
-	// to put it.
-	if errors.Is(err, oauth2code.ErrNoClient) && slices.Contains(manifest.Client.Registration, core.ClientCustomer) {
-		return Authorization{}, invalidRequest(fmt.Sprintf("the provider's consent could not be started: %v; "+
-			"put the app's own OAuth client with PUT /v1/agents/connectors/%s/oauth-client", err, connection.ConnectorID))
+	// (ConnectorClients), so a connector that takes a client the app can give and finds none,
+	// or whose provider refused to register one (WWSD feedback #31, Gong), says how to give it
+	// one.
+	if errors.Is(err, oauth2code.ErrNoClient) || errors.Is(err, oauth2code.ErrRegistration) {
+		if failure, ok := missingOAuthClient(err, manifest, connection.ConnectorID, connectorCallbackURL(c.publicURL),
+			c.providerApps && whyNotManaged(latest.Manifest) == nil); ok {
+			return Authorization{}, failure
+		}
 	}
 	if err != nil {
 		// A scheme's error carries no secret (core AGENTS.md, «Secrets never print»), and it
@@ -833,6 +842,44 @@ func (s *Server) attemptCookie(id, value string, expires time.Time) *http.Cookie
 		cookie.MaxAge = max(int(time.Until(expires).Seconds()), 1)
 	}
 	return cookie
+}
+
+// missingOAuthClient answers a consent that found no OAuth client (oauth2code.ErrNoClient), or
+// whose dynamic registration gave none (oauth2code.ErrRegistration), with every way to give the
+// connector one that its client.registration lists: the app's own client (customer,
+// setConnectorOAuthClient) and the app the router creates (managed, setConnectorProviderApp).
+// ok is false when it lists neither, since the app can then give none. WWSD platform feedback
+// #4: the answer used to name only the first, and finding the second took reading every
+// connector operation.
+func missingOAuthClient(err error, manifest core.ResolvedManifest, connectorID, redirectURI string, providerApp bool) (APIError, bool) {
+	var ways []string
+	if slices.Contains(manifest.Client.Registration, core.ClientCustomer) {
+		// What checkOAuthClient asks of a client for this connector: a signing secret and
+		// the app it signs for only where the channel is verified with the app's own secret.
+		takes := "its client_id and client_secret"
+		if manifest.Client.AuthMethod == core.AuthNone {
+			// A public client has no secret, and PUT oauth-client refuses one (checkOAuthClient).
+			takes = "its client_id"
+		}
+		if manifest.Channel != nil && manifest.Channel.Verifier.Secret == core.SecretProviderApp {
+			takes += ", and the app's provider_app_id and signing_secret, which its events are verified with"
+		}
+		ways = append(ways, fmt.Sprintf("put the app's own OAuth client with PUT /v1/agents/connectors/%s/oauth-client, "+
+			"giving %s; the client must list the redirect URI %s", connectorID, takes, redirectURI))
+	}
+	// providerApp is whether PUT provider-app would take the connector (whyNotManaged) on a
+	// deployment that serves it (setConnectorProviderApp).
+	if providerApp && slices.Contains(manifest.Client.Registration, core.ClientManaged) {
+		// What setConnectorProviderApp needs the first time (ConnectorProviderAppRequest): the
+		// name is required.
+		ways = append(ways, fmt.Sprintf("have the router create the app with PUT /v1/agents/connectors/%s/provider-app, "+
+			"giving the app's name and the refresh token of an app configuration token a workspace admin generates in Slack's app settings", connectorID))
+	}
+	if len(ways) == 0 {
+		return APIError{}, false
+	}
+	return APIError{Type: ErrorTypeInvalidRequest, Code: codeNoOAuthClient, Message: fmt.Sprintf(
+		"the provider's consent could not be started: %v; %s", err, strings.Join(ways, "; or "))}, true
 }
 
 // connectionManifest is the connection's definition at revision, resolved for its inputs

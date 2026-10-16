@@ -203,6 +203,8 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if request.Body.EpisodeCards == nil {
 		config.EpisodeCards = existing.EpisodeCards
 	}
+	// Only a sync writes them, so a save from the dashboard keeps them.
+	config.LeftOutConnectors = existing.LeftOutConnectors
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
@@ -1556,6 +1558,15 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		bindings := bindingsOf(config.Connectors)
 		rendered.Connectors = &bindings
 	}
+	if len(config.LeftOutConnectors) > 0 {
+		leftOut := make([]LeftOutConnector, 0, len(config.LeftOutConnectors))
+		for _, connector := range config.LeftOutConnectors {
+			leftOut = append(leftOut, LeftOutConnector{
+				Name: connector.Name, ConnectorId: connector.ConnectorID, Connection: connector.Connection,
+			})
+		}
+		rendered.LeftOutConnectors = &leftOut
+	}
 	rendered.PluginEvents = renderedPluginEvents(config.PluginEvents)
 	rendered.McpServers = renderedMCPServers(config.MCPServers)
 	rendered.Channels = renderedChannels(config.Channels)
@@ -1839,6 +1850,7 @@ type AgentConfig struct {
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
 	McpServers         *[]McpServer             `json:"mcp_servers,omitempty"`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The bindings exactly as they were written. Absent when there are none."`
+	LeftOutConnectors  *[]LeftOutConnector      `json:"left_out_connectors,omitempty" readOnly:"true" doc:"The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
 	Sandbox            *Sandbox                 `json:"sandbox,omitempty"`
 	SandboxOptions     *SandboxOptions          `json:"sandbox_options,omitempty"`

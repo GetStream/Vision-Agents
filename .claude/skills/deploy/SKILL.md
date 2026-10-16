@@ -18,37 +18,52 @@ pointer and restarting. Not an image build, not a chart deploy.
 ## Build
 
 The router is cgo (opus, opusfile, soxr), so each architecture builds on its own
-architecture, and both must be published or the deploy rejects the version. A workflow in
-the private repo builds them from the tag `accelerate-vX.Y.Z` here, so tag and push first.
+architecture, and both must be published or the deploy rejects the version. Tag the commit
+`accelerate-vX.Y.Z` here and push the tag. The private repo's build workflow builds from that
+tag, but it publishes to an S3 release bucket, not to the bucket pods fetch from; a
+release reaches pods by building it by hand, then `rocky launch upload` once per architecture
+and `rocky launch deploy`, which moves the pointer and restarts the pods (runbook step 8).
 
 By hand, one container per architecture, from the repo root:
 
 ```bash
+VERSION=vX.Y.Z
 mkdir -p /tmp/router-release
 docker run --rm --platform linux/arm64 \
   -v "$PWD":/src:ro -v "$(go env GOMODCACHE)":/go/pkg/mod -v /tmp/router-release:/out \
-  -e GOWORK=off -e GOPROXY=off -e GOTOOLCHAIN=local \
+  -e GOWORK=off -e GOPROXY=off -e GOTOOLCHAIN=local -e VERSION="$VERSION" \
   -w /src/acceleration golang:1.27-bookworm bash -c '
     apt-get -qq update && apt-get -qq install -y --no-install-recommends \
       pkg-config libopus-dev libopusfile-dev libsoxr-dev >/dev/null
-    CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/router-linux-arm64 ./cmd/router'
+    CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.release=$VERSION" \
+      -o /out/router-linux-arm64 ./cmd/router'
 ```
 
 `GOWORK=off` because `go.work` otherwise puts the module in workspace mode, which the build
 refuses; `GOPROXY=off` builds from the host module cache, so the container uses exactly the
-modules the host resolved. Repeat with
+modules the host resolved. `main.release` is the version Sentry files events under, as the
+workflow sets it. Repeat with
 `--platform linux/amd64`, which works under emulation.
 
 Versions are `vX.Y.Z` or `vX.Y.Z-<prerelease>`, an unreleased build is named after its
 commit (`v0.6.9-dev-<short sha>`), and a published one is immutable. The build is
 reproducible, so the checksum a pod reports traces back to a commit.
 
-## Overlap deploys (the benchmark release)
+## Overlap deploys (staging and the benchmark release)
 
-The benchmark release (`perfbench -target benchmark`, nobody else's traffic) ships a router
-without dropping a call. The runbook is `infra/docs/accelerate_overlap_deploy.md` in the
-private repo; `rocky fastdeploy --service accelerate-benchmark` builds this checkout and swaps
-it in, in 11-20 s warm. Staging and prod still deploy as above.
+Staging and the benchmark release (`perfbench -target benchmark`, nobody else's traffic) ship
+a router without dropping a call. The runbook is `infra/docs/accelerate_overlap_deploy.md` in
+the private repo; `rocky fastdeploy --service accelerate-staging` (or `accelerate-benchmark`)
+builds this checkout and swaps it in, in 11-20 s warm. There is no prod release yet.
+
+- It needs `source ~/.config/rocky/gcp.env`, Docker, Go and gcloud, and an arm64 machine:
+  the build runs natively and these releases' pods run arm64 only. It builds the working tree,
+  uncommitted changes included, so the clean-tree rule below is for tagged releases.
+- `--status` prints what each pod runs. The fetch initContainer's log only says what a pod
+  started on, which a swap has since replaced.
+- On staging a fastdeploy and a tagged release move the same pointer, and a restarted pod
+  comes back on whichever was last. Pull before a fastdeploy, or it rolls back a teammate's
+  release. Load-test on benchmark, not staging.
 
 - A supervisor (devrun) owns the public socket and hands it to each router as fd 3
   (`listen_fd`), with a peer port of its own (`node.listen`). A swap starts the new router on
@@ -72,6 +87,6 @@ it in, in 11-20 s warm. Staging and prod still deploy as above.
 - Commit and push first, and build from a clean tree: the version has to name a commit somebody else can check out.
 - Values and router are one deployment. Rolling the auth work also meant moving `ROUTER_AUTH_MODE` to `proxy`, because `noauth` had changed meaning underneath it. Render the chart, diff it against the live release, explain every line.
 - Migrations run on start. Additive is fine; anything else wants a plan first.
-- The fetch initContainer's log is the only place a pod says which binary it has — the version is deliberately not in the pod spec.
+- The version is deliberately not in the pod spec. The fetch initContainer's log says which binary a pod started on; after a fastdeploy, ask `--status` instead.
 - A model with no key in that environment drops to the next candidate, and when a strict term like `diarize` leaves none the STT socket just closes on the caller. Check the key before reading that as a bug.
 - Verify from outside: `examples/routers/stt_realtime_example -staging` streams a file through the hosted router and prints which model answered.

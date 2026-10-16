@@ -55,6 +55,33 @@ const DefaultSampleRate = 24_000
 // defaultBaseURL is the production endpoint.
 const defaultBaseURL = "wss://api.elevenlabs.io"
 
+// defaultStability and defaultSimilarity open a context the caller asked neither for. They
+// are what this provider always sent, not ElevenLabs' own defaults (0.5 and 0.75,
+// https://elevenlabs.io/docs/api-reference/text-to-speech/v-1-text-to-speech-voice-id-stream-input, opened 2026-10-15).
+const (
+	defaultStability  = 0.5
+	defaultSimilarity = 0.8
+)
+
+// ErrRefused marks a setting this provider will not take: a value out of range, or one the
+// model has no place for. It is the caller's to fix, not a fault of the provider.
+var ErrRefused = errors.New("elevenlabs: refused")
+
+// ErrStyle marks a refused style: one outside 0 to 1, or one asked of a model that has no
+// style. It is a refusal like any other (errors.Is ErrRefused holds), told apart because a
+// style reaches this provider only in the caller's elevenlabs overwrite.
+var ErrStyle = fmt.Errorf("%w: style", ErrRefused)
+
+// minVoiceSetting and maxVoiceSetting bound stability, similarity_boost and style: 0 to 1 per
+// https://elevenlabs.io/docs/api-reference/text-to-dialogue/ttd-websocket (opened 2026-10-15).
+// Live, 1.5 or -0.2 on the text-to-speech socket closes it with an unexplained 1011. No doc
+// gives style a range; live on 2026-10-16, a style of 1.5 or -0.2 on Flash v2.5 was refused
+// with "expected to be greater or equal to 0.0 and less or equal to 1.0".
+const (
+	minVoiceSetting = 0
+	maxVoiceSetting = 1
+)
+
 // minSpeed and maxSpeed bound voice_settings.speed. A speed outside them is refused rather
 // than clamped, since a caller asking for 1.5 and hearing 1.2 cannot tell it was not honoured.
 const (
@@ -105,6 +132,13 @@ type Options struct {
 	// Speed is the rate of delivery, 1 being the voice's own and zero leaving it there.
 	// ElevenLabs accepts 0.7 to 1.2, and only on this socket: the dialogue models take none.
 	Speed float64
+	// Stability and Similarity are voice_settings, nil for the provider's own default. The
+	// dialogue models take stability and no similarity.
+	Stability  *float64
+	Similarity *float64
+	// Style is voice_settings.style, how far to exaggerate the speaker's own style, nil
+	// for none. Only the models before v3 take it, see takesStyle.
+	Style *float64
 	// SampleRate is the rate to synthesise at, one of supportedSampleRates.
 	SampleRate int
 	// BaseURL overrides the endpoint, for a proxy or a test server.
@@ -134,6 +168,8 @@ type voiceSettings struct {
 	Stability       float64 `json:"stability"`
 	SimilarityBoost float64 `json:"similarity_boost"`
 	Speed           float64 `json:"speed,omitempty"`
+	// Style is a pointer because 0 is a style a caller can ask for, and nil sends nothing.
+	Style *float64 `json:"style,omitempty"`
 }
 
 // generationConf controls how much text the model waits for before generating. The first
@@ -282,6 +318,15 @@ func normalize(options Options, fallbackModel string) (Options, *keypool.Pool, *
 		return options, nil, nil, stack.Wrap(fmt.Errorf("elevenlabs: sample rate %d is not one of %v",
 			options.SampleRate, supportedSampleRates))
 	}
+	if err := inRange("stability", options.Stability); err != nil {
+		return options, nil, nil, err
+	}
+	if err := inRange("similarity", options.Similarity); err != nil {
+		return options, nil, nil, err
+	}
+	if err := styleFor(options.Model, options.Style); err != nil {
+		return options, nil, nil, err
+	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
 	}
@@ -298,6 +343,44 @@ func normalize(options Options, fallbackModel string) (Options, *keypool.Pool, *
 	return options, keys, logger, nil
 }
 
+// inRange refuses a voice setting ElevenLabs would not take rather than clamp it, since a
+// caller asking for 1.5 and hearing 1 cannot tell it was not honoured.
+func inRange(name string, value *float64) error {
+	if !outside(value) {
+		return nil
+	}
+	return stack.Wrap(fmt.Errorf("%w: %s %g is outside %d to %d", ErrRefused, name, *value, minVoiceSetting, maxVoiceSetting))
+}
+
+// outside reports whether a voice setting was asked for and is not one ElevenLabs takes.
+func outside(value *float64) bool {
+	return value != nil && (*value < minVoiceSetting || *value > maxVoiceSetting)
+}
+
+// styleFor refuses a style the model would not honour, rather than send one it ignores.
+func styleFor(model string, style *float64) error {
+	if style == nil {
+		return nil
+	}
+	if outside(style) {
+		return stack.Wrap(fmt.Errorf("%w %g is outside %d to %d", ErrStyle, *style, minVoiceSetting, maxVoiceSetting))
+	}
+	if !takesStyle(model) {
+		return stack.Wrap(fmt.Errorf("%w is not taken by %s", ErrStyle, model))
+	}
+	return nil
+}
+
+// takesStyle reports whether a model reads voice_settings.style. The stream-input socket
+// says style "is available on V2+ models"
+// (https://elevenlabs.io/docs/api-reference/text-to-speech/v-1-text-to-speech-voice-id-stream-input,
+// opened 2026-10-16), and the v4 page says "Style and Speed sliders are not available in
+// Eleven v4" (https://elevenlabs.io/docs/overview/capabilities/text-to-speech/eleven-v4,
+// opened 2026-10-16). No doc says whether v3 reads it, and live on 2026-10-16 the file
+// endpoint took a style of 1.5 on eleven_v3 and eleven_v4 without a word while it refused
+// one on Flash v2.5, so the v3 and v4 families are taken to ignore it.
+func takesStyle(model string) bool { return !Performs(model) }
+
 // New validates the options and returns an unstarted provider.
 func New(options Options) (*TTS, error) {
 	options, keys, logger, err := normalize(options, DefaultModel)
@@ -311,7 +394,7 @@ func New(options Options) (*TTS, error) {
 			"elevenlabs: %s is a dialogue model, open it with NewDialogue", options.Model))
 	}
 	if options.Speed != 0 && (options.Speed < minSpeed || options.Speed > maxSpeed) {
-		return nil, stack.Wrap(fmt.Errorf("elevenlabs: speed %g is outside %g to %g", options.Speed, minSpeed, maxSpeed))
+		return nil, stack.Wrap(fmt.Errorf("%w: speed %g is outside %g to %g", ErrRefused, options.Speed, minSpeed, maxSpeed))
 	}
 
 	return &TTS{
@@ -685,13 +768,26 @@ func (t *TTS) url() string {
 func (t *TTS) openContext(sock *socket, id string) error {
 	// A single space is the documented way to open a context without saying anything yet.
 	message := clientMessage{
-		Text:          " ",
-		ContextID:     id,
-		VoiceSettings: &voiceSettings{Stability: 0.5, SimilarityBoost: 0.8, Speed: t.options.Speed},
+		Text:      " ",
+		ContextID: id,
+		VoiceSettings: &voiceSettings{
+			Stability:       valueOr(t.options.Stability, defaultStability),
+			SimilarityBoost: valueOr(t.options.Similarity, defaultSimilarity),
+			Speed:           t.options.Speed,
+			Style:           t.options.Style,
+		},
 		// A short first threshold trades a little prosody for audio that starts sooner.
 		Generation: &generationConf{ChunkLengthSchedule: []int{50, 120, 160, 290}},
 	}
 	return t.send(sock, message)
+}
+
+// valueOr is what was asked for, or the fallback when nothing was.
+func valueOr(asked *float64, fallback float64) float64 {
+	if asked == nil {
+		return fallback
+	}
+	return *asked
 }
 
 func (t *TTS) send(sock *socket, message clientMessage) error {

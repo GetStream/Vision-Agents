@@ -212,11 +212,11 @@ func (a *Agent) holdFirstFrame(p *pipeline, publishCtx context.Context, turnID s
 	held := a.gated
 	window := a.silenceFor(held)
 	a.mu.Unlock()
-	if held.turn == "" || held.turn != turnID {
-		return nil, true
-	}
 	if publishCtx.Err() != nil || p.ctx.Err() != nil {
 		return nil, false
+	}
+	if held.turn == "" || held.turn != turnID {
+		return nil, true
 	}
 	voiced := a.voiced
 	if voiced == nil || window <= 0 {

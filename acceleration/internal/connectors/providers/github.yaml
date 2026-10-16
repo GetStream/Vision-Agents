@@ -9,6 +9,12 @@
 #   [refresh] https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens
 # Opened October 9, 2026:
 #   [readme]  https://github.com/github/github-mcp-server/blob/eb47a99ddb866ca2b8a162920e6bda9521f33ebb/README.md
+# Opened October 15, 2026:
+#   [toolsets] https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md
+#   [rest]    https://docs.github.com/en/rest/using-the-rest-api/getting-started-with-the-rest-api
+#   [restauth] https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api
+#   [versions] https://docs.github.com/en/rest/about-the-rest-api/api-versions
+#   [paging]  https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api
 # And the servers' own metadata, fetched on October 2, 2026 («[prm]» and «[as]»):
 #   [prm] GET https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/ at
 #         2026-10-02T21:06:34Z: resource https://api.githubcopilot.com/mcp/,
@@ -24,8 +30,11 @@
 #         2026-10-02T22:13:25Z, scopes_supported [offline_access].
 id: github
 # A new revision for any change to what this file says; see AGENTS.md. 2 renames
-# client.policy to client.registration. 3 adds bearer (AI-990).
-revision: 3
+# client.policy to client.registration. 3 adds bearer (AI-990). 4 (AI-1308) adds
+# endpoints.api_base, so a backend can call GitHub's REST API through the connection proxy.
+# 5 (AI-1309) adds the X-MCP-Toolsets header on the mcp source, so GitHub offers its Actions
+# tools beside the default ones.
+revision: 5
 # [proto]:78-80
 name: GitHub
 category: Developer tools
@@ -44,6 +53,25 @@ endpoints:
   # RFC 8707 resource indicator: [prm]'s resource. Whether GitHub's authorization server
   # reads it is not documented on the pages above. # unverified
   resource: https://api.githubcopilot.com/mcp/
+  # [rest]: a request's URL «includes the base URL for the GitHub REST API
+  # (https://api.github.com)»; GET /repos/octo/hello/issues is
+  # https://api.github.com/repos/octo/hello/issues. Each scheme's token is taken there as
+  # «Authorization: Bearer»: an OAuth App's ([oauth], «Use the access token to access the
+  # API»: «curl -H "Authorization: Bearer OAUTH-TOKEN" https://api.github.com/user»), a GitHub
+  # App's user token ([user]: «Include the user access token in the Authorization header of an
+  # API request»), and a personal access token ([restauth]: «you can create a personal access
+  # token», «you can use Authorization: Bearer or Authorization: token»). [rest] rejects a
+  # request with no User-Agent; the proxy forwards the caller's, and Go's client sends
+  # Go-http-client/1.1 when there is none (net/http request.go, defaultUserAgent, go1.27).
+  # Accept is a «should» on [rest], and with no X-GitHub-Api-Version GitHub answers as
+  # 2022-11-28 ([versions]), so the proxy adds neither. GitHub pages with an absolute Link
+  # header naming api.github.com ([paging]: «link:
+  # <https://api.github.com/repositories/1300192/issues?page=2>; rel="prev"»); the proxy
+  # rewrites each such link to the connection's proxy URL (api.proxiedLinks). URLs in a body
+  # (url, comments_url and the like) name api.github.com too and are passed as they came: a
+  # client must not follow one with the router's credential, but call its path through the
+  # proxy. With no ROUTER_PUBLIC_URL every Link is dropped (fail closed), so paging needs it set.
+  api_base: https://api.github.com
 # Authorization code with PKCE S256: [oauth], [user] (code_challenge_method S256); [as].
 # And a personal access token the developer supplies, sent to the same endpoint as
 # «"Authorization": "Bearer ${input:github_mcp_pat}"» ([readme]:73-83, «GitHub Personal Access
@@ -108,3 +136,12 @@ refresh:
 sources:
   - kind: mcp
     endpoint: mcp
+    # [toolsets] «Optional Headers»: «X-MCP-Toolsets: Comma-separated list of toolsets to
+    # enable», and /mcp/ alone is the default toolset. The header rather than the /x/actions
+    # path, which «can only be a single toolset», so endpoints.mcp and resource stay
+    # /mcp/ and the tokens of existing connections keep working. Live tools/list with a
+    # personal access token at 2026-10-15T19:15:12Z: no header and «default» 49 tools each;
+    # «actions» 4 (actions_get, actions_list, actions_run_trigger, get_job_logs);
+    # «default,actions» 53, the 49 and the 4.
+    headers:
+      X-MCP-Toolsets: default,actions

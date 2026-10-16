@@ -1340,7 +1340,7 @@ func stopServing(s stopping) error {
 		closePhone(s.telephony, s.logger)
 		shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
 		defer cancel()
-		return errors.Join(shutdown(shutdownCtx, s.public, s.logger), shutdown(shutdownCtx, s.peers, s.logger))
+		return errors.Join(shutdown(shutdownCtx, s.public, "public", grace, s.logger), shutdown(shutdownCtx, s.peers, "peers", grace, s.logger))
 	}
 
 	again := make(chan os.Signal, 1)
@@ -1373,7 +1373,7 @@ func stopServing(s stopping) error {
 	closePhone(s.telephony, s.logger)
 	peerCtx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
-	return shutdown(peerCtx, s.peers, s.logger)
+	return shutdown(peerCtx, s.peers, "peers", grace, s.logger)
 }
 
 // running is how many sessions a router holds; one without sessions holds none.
@@ -1408,14 +1408,16 @@ func servePprof(addr string, logger *slog.Logger) {
 
 // shutdown drains a server that may not exist. A request still open when ctx runs out is
 // a warning, not an error: a deploy outlasting a slow request is how a deploy goes, and an
-// error here would page Sentry and exit 1 on every such rollout.
-func shutdown(ctx context.Context, server *http.Server, logger *slog.Logger) error {
+// error here would page Sentry and exit 1 on every such rollout. The warning names the
+// listener and its grace, since a router without a drain closes both inside the one grace.
+func shutdown(ctx context.Context, server *http.Server, listener string, grace time.Duration, logger *slog.Logger) error {
 	if server == nil {
 		return nil
 	}
 	err := server.Shutdown(ctx)
 	if errors.Is(err, context.DeadlineExceeded) {
-		logger.Warn("requests were still running when the grace ran out", "error", err)
+		logger.Warn("requests were still running when the grace ran out",
+			"listener", listener, "grace", grace, "error", err)
 		return nil
 	}
 	return err
