@@ -95,7 +95,7 @@ func (ConnectionValidationStatus) Schema(registry huma.Registry) *huma.Schema {
 			"connection's current grant, so sessions leave it out until it is approved again; "+
 			"changed_tools names them, and POST .../tools/approve approves them, as does a reconnect "+
 			"of an OAuth connection, which begins a new grant. failed: the provider "+
-			"could not be reached or listed nothing usable; error says why.",
+			"could not be reached or listed nothing usable, or the provider refused a consent (code connector_consent_refused); error says why.",
 		validationConnected, validationPending, validationNeedsReauthorization, validationNeedsScopes,
 		validationNeedsReapproval, validationFailed)
 }

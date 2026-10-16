@@ -108,7 +108,7 @@ Gong needs its tech admin first. In Gong: **Admin center › Settings › MCP** 
 servers › New MCP server integration**
 ([Gong's guide](https://help.gong.io/docs/create-an-integration-to-connect-to-the-mcp-server)).
 Set the redirect URI to the connector's `redirect_uri`, and the registration type to
-**Automatic** (it cannot be changed later). Until then Gong refuses every consent with
+**Automatic** for `dcr` (Manual issues your own client id and secret; the type cannot be changed later). Until then Gong refuses every consent with
 `unauthorized_client`, «This MCP client is not authorized for your company». The connection
 stays pending, and its last validation says why.
 

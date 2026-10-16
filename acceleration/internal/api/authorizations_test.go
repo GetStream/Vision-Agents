@@ -322,6 +322,45 @@ func (s *AuthorizationsSuite) TestAConsentTheProviderRefusedOtherwiseIsLoggedWit
 	s.False(strings.Contains(s.logged.String(), code), "the code is not logged")
 }
 
+// TestAProviderErrorCodeThatEchoesTheCallbackIsKeptCutInTheReason (R1.2): the provider's
+// error code is cut as its description is, so a code that echoes the state, or one past 256
+// bytes, does not reach the connection's last validation whole.
+func (s *AuthorizationsSuite) TestAProviderErrorCodeThatEchoesTheCallbackIsKeptCutInTheReason() {
+	id := s.connection("")
+	alice := s.browser()
+	callback := s.consent(alice.handOff(s.start(id)))
+	query := callback.Query()
+	state := query.Get("state")
+	query.Set("error", "bad_"+state+"_"+strings.Repeat("x", 400))
+	query.Set("error_description", "no")
+	callback.RawQuery = query.Encode()
+	s.Require().Equal(http.StatusFound, alice.get(callback.String()).StatusCode)
+
+	reason := s.get(id).LastValidation.Error
+
+	s.NotContains(reason, state)
+	s.True(strings.HasPrefix(reason, "The provider refused the consent with bad_[redacted]_xxx"), reason)
+	s.Less(len(reason), len("The provider refused the consent with : no.")+core.DescriptionBytes+8)
+}
+
+// TestARefusedReconnectOfAConnectionThatNeedsReauthorizationStoresTheReason (R1.3): only a
+// connected connection keeps its last validation; one that needs reauthorization gets the
+// refusal as its last validation and keeps its status.
+func (s *AuthorizationsSuite) TestARefusedReconnectOfAConnectionThatNeedsReauthorizationStoresTheReason() {
+	id := s.connection("")
+	s.connect(id)
+	_, err := s.store.DB().ExecContext(s.T().Context(),
+		"UPDATE connector_connections SET status = ? WHERE id = ?", store.ConnectionNeedsReauthorization, id)
+	s.Require().NoError(err)
+
+	s.refuse(id, "invalid_scope", func(url.Values) string { return "scope refused" })
+
+	got := s.get(id)
+	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), got.Status)
+	s.Require().NotNil(got.LastValidation)
+	s.Equal("connector_consent_refused", got.LastValidation.Code)
+}
+
 // TestAConsentTheProviderRefusedLeavesItsReasonAsTheLastValidation: an error other than
 // access_denied still lands on the dashboard saying failed and leaves the connection pending, as
 // on base ab4884e0, and now leaves the provider's code and description as the connection's last

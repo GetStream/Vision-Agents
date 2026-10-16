@@ -29,7 +29,8 @@ class ConnectionLastValidation:
                 needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the
                 connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and
                 POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant.
-                failed: the provider could not be reached or listed nothing usable; error says why.
+                failed: the provider could not be reached or listed nothing usable, or the provider refused a consent (code
+                connector_consent_refused); error says why.
             code (str | Unset): The validate's code (connector_credential_rejected, connector_scope_required,
                 connector_tool_schema_changed) when it had one, or connector_consent_refused when the provider refused a consent
                 with an error other than access_denied. Otherwise, when the provider's last answer was an HTTP error, its
