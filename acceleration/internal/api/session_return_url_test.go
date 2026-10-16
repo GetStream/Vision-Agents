@@ -65,6 +65,8 @@ func (s *ChatLoginsSuite) TestAChatLoginOfASessionWithoutAReturnURLIsLaunchedAnd
 		page, location, body := s.loggedIn(asked)
 
 		s.assertEndsAsOnBase(asked["connection_id"].(string), page, location, body)
+		s.Eventually(func() bool { return s.storedWithoutReturnURL(opened.Id) }, settleFor, 20*time.Millisecond,
+			"the row has return_url NULL, not an empty string")
 	}
 }
 
@@ -201,6 +203,15 @@ func (s *ChatLoginsSuite) storedReturnURL(id string) string {
 	}
 	s.Require().NoError(err)
 	return stored.String
+}
+
+// storedWithoutReturnURL is whether the session's row exists with return_url NULL.
+func (s *ChatLoginsSuite) storedWithoutReturnURL(id string) bool {
+	var count int
+	err := s.store.ShardDB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM agent_sessions WHERE id = ? AND return_url IS NULL", id).Scan(&count)
+	s.Require().NoError(err)
+	return count == 1
 }
 
 // launchedFor is the launch page, nonce written NONCE, of the one consent the chat began on

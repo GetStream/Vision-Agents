@@ -653,7 +653,7 @@ apply as on `createAuthorization`, and a URL they refuse is a 400 `invalid_reque
 a chat carried on after it ended, in this process or another, and a fork, go back to the same
 page. An end user's device may send it, since a consent the chat asks for is only ever for
 the caller's own connection and shown to the caller alone. The Go SDK's `SessionOptions` has
-`ReturnURL`. Without it, nothing changes: those consents go back to the dashboard.
+`ReturnURL` and the Python SDK's has `return_url`. Without it, nothing changes: those consents go back to the dashboard.
 
 ### A connector consent can go back to the app's own page
 
