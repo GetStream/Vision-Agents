@@ -2015,6 +2015,7 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+- Barge-in drops late audio from every TTS reply submitted since the previous interruption, including an earlier tool reply that is still synthesising.
 - SIP trunks the router makes in Stream for calls, transfers and attached numbers now accept a call only with a password the vendor sends, or only from the vendor's addresses. A transfer takes the vendor's addresses as a call does, so a transfer on a vendor with no declared addresses and no password (Sinch, Bandwidth) is refused before anything is made. A number attached before this release keeps its old trunk, and attaching it again changes nothing; releasing it removes the trunk, but the same number may not be available to buy again.
 - Attaching a number that is already attached in the same app answers what it has and changes nothing. It made a second SIP trunk for the number, which Stream refuses, so a Go, JavaScript or .NET program that waits for calls failed on every start after its first.
 - An agent.yaml connector whose `connection:` the app does not have no longer stops the Go SDK's folder sync (`Agent.Sync`). The agent syncs without that connector's tools, and a warning names the agent, the connector and the connection; the next sync adds the connector once the connection exists. A label shared by several connections still fails, and so does a missing connection on an entry with `required: true`, whose error says to add the connection or drop `required` (AI-1368).

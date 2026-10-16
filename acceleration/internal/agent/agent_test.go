@@ -3330,6 +3330,93 @@ func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
 	}, "the end of the sentence the agent was already speaking was thrown away")
 }
 
+func (s *AgentSuite) TestBargeInStopsLateAudioFromAnEarlierToolReply() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(true)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"The order is on its way."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+
+	s.voice.mu.Lock()
+	s.voice.silent = true
+	s.voice.mu.Unlock()
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the tool result never started its follow-up reply")
+
+	requests := s.model.requests()
+	oldTurnID, toolReplyID := requests[0].ID, requests[1].ID
+	s.NotEqual(oldTurnID, toolReplyID)
+	s.eventually(func() bool {
+		oldReply, toolReply := false, false
+		for _, request := range s.voice.spoken() {
+			switch request.ID {
+			case oldTurnID:
+				oldReply = true
+			case toolReplyID:
+				toolReply = true
+			}
+		}
+		return oldReply && toolReply
+	}, "both the original and tool-result replies never reached the voice")
+
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: oldTurnID,
+		Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
+	})
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.edge.heard(), func(chunk audio.PcmData) bool {
+			return len(chunk.Samples) == 200
+		})
+	}, "the earlier reply's tail was cut off when the tool-result reply began")
+
+	releaseFreshReply := make(chan struct{})
+	var releaseOnce sync.Once
+	openFreshReply := func() { releaseOnce.Do(func() { close(releaseFreshReply) }) }
+	defer openFreshReply()
+	s.model.mu.Lock()
+	s.model.holdCreate = releaseFreshReply
+	s.model.mu.Unlock()
+	s.voice.mu.Lock()
+	s.voice.silent = false
+	s.voice.mu.Unlock()
+
+	s.says(participant, "actually, stop")
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
+		"the caller's interruption never stopped the tool-result reply")
+	s.eventually(func() bool { return len(s.model.requests()) == 3 },
+		"the new caller reply never reached the model")
+	newTurnID := s.model.requests()[2].ID
+	s.NotEqual(toolReplyID, newTurnID)
+
+	// These late frames are ordered ahead of the new reply's audio on the shared
+	// provider event channel, so the new reply's completion is a delivery barrier.
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: oldTurnID,
+		Audio:       audio.PcmData{Samples: make([]int16, 300), SampleRate: 16_000, Channels: 1},
+	})
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: toolReplyID,
+		Audio:       audio.PcmData{Samples: make([]int16, 400), SampleRate: 16_000, Channels: 1},
+	})
+	openFreshReply()
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			spoke, ok := event.(Spoke)
+			return ok && spoke.TurnID == newTurnID
+		})
+	}, "the new caller reply never finished, leaving no delivery barrier")
+
+	var heardLengths []int
+	for _, chunk := range s.edge.heard() {
+		heardLengths = append(heardLengths, len(chunk.Samples))
+	}
+	s.Equal([]int{160}, heardLengths,
+		"only the fresh caller reply should reach playout after the interruption")
+}
+
 func (s *AgentSuite) TestBargeInWithNothingToSayIsIgnored() {
 	s.join(true)
 
