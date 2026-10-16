@@ -622,6 +622,24 @@ The router reaches only MCP servers on a public https URL. Saving a config (crea
 
 ## New Features
 
+### A backend can give one session instructions of its own
+
+`POST /v1/agents/sessions` and the session socket's start frame take `instructions`: what the
+agent is told to be for this session alone, in place of its config's, such as the brief of a
+customer somebody practises on, without a stored config per brief. Empty or left out, the
+config's instructions stand. A device sending them is a 403, as with `history`. A fork of a
+running session keeps them; a session carried on after it ended in another process, a fork of
+one no longer running and a fork naming a config run on the config's instructions again. Go
+takes them as `client.SessionOptions.Instructions`, and JavaScript's `SessionSpec` from the
+regenerated types; other SDKs follow.
+
+`stream.Accelerated` now sends the agent's instructions, so an `Agent(instructions=...)` on
+the hosted router plays the role it is given at call time, over its `config`'s instructions if
+it has one. An agent with no config and no `instructions` now sends `DEFAULT_INSTRUCTIONS`, as
+`Agent`'s docstring says it is told; before, the router ran it on none. An agent with a
+`config` and no `instructions` of its own is unchanged: the default is not sent over its
+folder's instructions.
+
 ### Built-in BigQuery and Metabase connectors
 
 The connector catalog (`GET /v1/agents/connectors`) has `bigquery` and `metabase` (AI-1381).

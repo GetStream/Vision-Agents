@@ -587,6 +587,9 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	}
 
 	spec.Incognito = value(request.Incognito)
+	if value(request.Instructions) != "" {
+		spec.Instructions = *request.Instructions
+	}
 	spec.Title = override(spec.Title, request.Title)
 	spec.Description = override(spec.Description, request.Description)
 	spec.Project = override(spec.Project, request.ProjectId)
@@ -1265,7 +1268,7 @@ func (*ForkSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema)
 }
 
 // ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
-// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
 type ModelOverwrites struct {
 	Llm             *string                   `json:"llm,omitempty" doc:"A provider/model or a capability shortcut, in place of the config's."`
 	MaxOutputTokens *int                      `json:"max_output_tokens,omitempty" doc:"Caps the reply, reasoning included. Omitted leaves the provider's default."`
@@ -1280,7 +1283,7 @@ type ModelOverwrites struct {
 
 func (*ModelOverwrites) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Properties["max_output_tokens"].Format = ""
-	schema.Description = "What to change about the models for one session, over whatever its agent config decided.\nIt is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent."
+	schema.Description = "What to change about the models for one session, over whatever its agent config decided.\nIt is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send."
 	return schema
 }
 

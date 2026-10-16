@@ -38,6 +38,8 @@ final readonly class CreateSessionRequest
         public ?string $id = null,
         // Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream C...
         public ?bool $incognito = null,
+        // What the agent is told to be for this session alone, in place of its config's instructions: a role given at...
+        public ?string $instructions = null,
         // Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cann...
         /** @var list<string>|null */
         public ?array $keyterms = null,
@@ -102,6 +104,7 @@ final readonly class CreateSessionRequest
             history: array_key_exists('history', $data) && $data['history'] !== null ? array_map(HistoryMessage::fromArray(...), Json::objects($data, 'history')) : null,
             id: array_key_exists('id', $data) && $data['id'] !== null ? Json::string($data, 'id') : null,
             incognito: array_key_exists('incognito', $data) && $data['incognito'] !== null ? Json::bool($data, 'incognito') : null,
+            instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
             keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             languages: array_key_exists('languages', $data) && $data['languages'] !== null ? Json::strings($data, 'languages') : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
@@ -171,6 +174,9 @@ final readonly class CreateSessionRequest
         }
         if ($this->incognito !== null) {
             $out['incognito'] = $this->incognito;
+        }
+        if ($this->instructions !== null) {
+            $out['instructions'] = $this->instructions;
         }
         if ($this->keyterms !== null) {
             $out['keyterms'] = $this->keyterms;

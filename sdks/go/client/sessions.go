@@ -50,6 +50,9 @@ type SessionOptions struct {
 	// thread: the model is handed it before the first response and the router records none
 	// of it. Up to 100 messages. Server side only.
 	History []acceleration.HistoryMessage
+	// Instructions replace the agent's for this conversation alone, for a role given at
+	// call time. Empty leaves the agent's. Server side only.
+	Instructions string
 	// UserID is who the conversation belongs to, for a backend opening one on somebody's
 	// behalf. A client acting for a user leaves it empty: the token already says who.
 	UserID string
@@ -276,6 +279,7 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 		Incognito:       pointer(options.Incognito),
 		ModelOverwrites: options.ModelOverwrites,
 		StartVoice:      pointer(options.StartVoice),
+		Instructions:    pointer(options.Instructions),
 		UserId:          pointer(options.UserID),
 	}
 	if len(options.Custom) > 0 {
