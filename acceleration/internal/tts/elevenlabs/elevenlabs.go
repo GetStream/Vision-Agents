@@ -145,9 +145,7 @@ type Options struct {
 	BaseURL string
 	// HandshakeTimeout bounds the initial connect.
 	HandshakeTimeout time.Duration
-	// CloseTimeout bounds how long Close waits for in-flight events and reader shutdown.
-	// If the event consumer remains blocked past this period, Close closes the event
-	// stream so sends can unwind; undelivered terminal events may then be dropped.
+	// CloseTimeout bounds how long Close waits for the server's closing handshake.
 	CloseTimeout time.Duration
 	Logger       *slog.Logger
 }
@@ -192,78 +190,69 @@ type serverMessage struct {
 type utterance struct {
 	tracker   *tts.Synthesis
 	socket    *socket
-	ready     chan struct{}
-	opened    chan struct{}
-	openOnce  sync.Once
-	requestMu sync.Mutex
-	eventMu   sync.Mutex
+	announced chan struct{}
 	// interrupted stops audio still in flight from being forwarded after barge-in.
 	interrupted bool
 }
 
-// socket is one physical WebSocket generation. A replacement connection always gets a
-// fresh value so an old reader can never clear or settle work belonging to the new one.
+// socket owns one physical WebSocket generation. A reader and every utterance stay
+// attached to this value after a later connection replaces it.
 type socket struct {
-	key       string
-	conn      *websocket.Conn
-	writeMu   sync.Mutex
-	ready     chan struct{}
-	readyOnce sync.Once
-	done      chan struct{}
-	closeOnce sync.Once
+	conn *websocket.Conn
+	key  string
+
+	writeMu sync.Mutex
+	ended   chan struct{}
+	once    sync.Once
 }
 
-// dialAttempt owns the raw transport only while a WebSocket handshake is in flight.
-// Its close callback is bound to this instance, so a delayed cancellation can never
-// close a later reconnect's transport.
+// dialAttempt lets cancellation close the raw transport while Gorilla is waiting for
+// the HTTP upgrade response. Once finish succeeds, cancellation no longer owns it.
 type dialAttempt struct {
-	mu     sync.Mutex
-	conn   net.Conn
-	closed bool
+	mu       sync.Mutex
+	raw      net.Conn
+	finished bool
+	canceled bool
+	callback chan struct{}
 }
 
-// mergeDialContext lets the caller bound the initial connection while keeping Close
-// authoritative over that same attempt, including DNS/TCP work before a raw socket exists.
-func mergeDialContext(caller, lifetime context.Context) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(caller)
-	stopLifetimeCancel := context.AfterFunc(lifetime, cancel)
-	return ctx, func() {
-		stopLifetimeCancel()
-		cancel()
-	}
-}
-
-func (a *dialAttempt) attach(conn net.Conn) bool {
+func (a *dialAttempt) setRaw(conn net.Conn) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.closed {
-		return false
+	if a.finished || a.canceled {
+		a.mu.Unlock()
+		_ = conn.Close()
+		return
 	}
-	a.conn = conn
-	return true
+	a.raw = conn
+	a.mu.Unlock()
 }
 
-func (a *dialAttempt) close() {
+func (a *dialAttempt) abort() {
+	defer close(a.callback)
 	a.mu.Lock()
-	a.closed = true
-	conn := a.conn
-	a.conn = nil
+	var conn net.Conn
+	if !a.finished {
+		a.canceled = true
+		conn = a.raw
+	}
 	a.mu.Unlock()
 	if conn != nil {
 		_ = conn.Close()
 	}
 }
 
-// finish transfers a successful connection to the WebSocket. It returns false when a
-// cancellation callback already closed the attempt.
-func (a *dialAttempt) finish() bool {
+func (a *dialAttempt) finish(keep bool) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.closed {
+	if a.canceled {
 		return false
 	}
-	a.closed = true
-	a.conn = nil
+	a.finished = true
+	conn := a.raw
+	a.raw = nil
+	if !keep && conn != nil {
+		_ = conn.Close()
+	}
 	return true
 }
 
@@ -274,23 +263,19 @@ type TTS struct {
 	logger  *slog.Logger
 	emitter *tts.Emitter
 
-	// dialMu serializes socket replacement with registration of work on that socket.
-	dialMu sync.Mutex
-	conn   *socket
-	ctx    context.Context
-	cancel context.CancelFunc
+	// requestMu keeps each context's open/text sequence together and makes concurrent
+	// new requests share one replacement socket after a disconnect.
+	requestMu sync.Mutex
+	conn      *socket
+	session   context.Context
+	cancel    context.CancelFunc
 
-	dialConnMu  sync.Mutex
-	dialAttempt *dialAttempt
-	readers     sync.WaitGroup
-
-	mu sync.Mutex
-	// terminalIDs prevents late deltas/finals for a failed or interrupted ID from opening
-	// another upstream context after a reconnect.
-	terminalIDs map[string]struct{}
-	active      map[string]*utterance
-	started     bool
-	shutdown    bool
+	mu           sync.Mutex
+	active       map[string]*utterance
+	terminalIDs  map[string]struct{}
+	started      bool
+	sessionReady bool
+	shutdown     bool
 }
 
 // normalize fills in the defaults and reports what cannot be defaulted. Both endpoints
@@ -402,86 +387,87 @@ func New(options Options) (*TTS, error) {
 		keys:        keys,
 		logger:      logger.With("provider", ProviderName, "model", options.Model),
 		emitter:     tts.NewEmitter(64),
-		terminalIDs: map[string]struct{}{},
 		active:      map[string]*utterance{},
+		terminalIDs: map[string]struct{}{},
 	}, nil
 }
 
-// Start dials the WebSocket using ctx for the initial handshake. After the handshake,
-// reconnects use a session lifetime that ends at Close, so a caller's setup deadline does
-// not disable later recovery.
+// Start dials the WebSocket. There is no handshake to wait for: the connection is ready
+// for text as soon as it is open.
 func (t *TTS) Start(ctx context.Context) error {
-	if ctx == nil {
-		return stack.Wrap(errors.New("elevenlabs: start context is required"))
-	}
-	t.dialMu.Lock()
+	t.requestMu.Lock()
+	defer t.requestMu.Unlock()
+
 	t.mu.Lock()
-	if t.shutdown {
-		t.mu.Unlock()
-		t.dialMu.Unlock()
-		return stack.Wrap(errors.New("elevenlabs: session closed"))
-	}
 	if t.started {
 		t.mu.Unlock()
-		t.dialMu.Unlock()
 		return stack.Wrap(errors.New("elevenlabs: already started"))
 	}
 	t.started = true
-	// The successful Start context bounds only this initial handshake. Reconnects
-	// later in the session use a separate lifetime canceled by Close.
-	t.ctx, t.cancel = context.WithCancel(context.Background())
+	t.session, t.cancel = context.WithCancel(context.Background())
+	session := t.session
 	t.mu.Unlock()
 
-	sock, fresh, err := t.connectLocked(ctx)
+	dialCtx, cancel := context.WithCancel(ctx)
+	stopSession := context.AfterFunc(session, cancel)
+	defer func() {
+		stopSession()
+		cancel()
+	}()
+
+	_, response, err := t.connect(dialCtx)
 	if err != nil {
 		t.mu.Lock()
-		t.started = false
-		cancel := t.cancel
+		t.session = nil
+		cancelSession := t.cancel
 		t.cancel = nil
-		t.ctx = nil
 		t.mu.Unlock()
-		if cancel != nil {
-			cancel()
+		if cancelSession != nil {
+			cancelSession()
 		}
-		t.dialMu.Unlock()
-		return err
+		if response != nil {
+			return stack.Wrap(fmt.Errorf("elevenlabs: dial: %w (http %d)", err, response.StatusCode))
+		}
+		return stack.Wrap(fmt.Errorf("elevenlabs: dial: %w", err))
 	}
-	t.dialMu.Unlock()
-	if fresh {
-		t.announce(sock)
-	} else {
-		<-sock.ready
+	t.mu.Lock()
+	if t.shutdown {
+		t.mu.Unlock()
+		return stack.Wrap(errors.New("elevenlabs: session closed"))
 	}
+	t.sessionReady = true
+	t.mu.Unlock()
 	return nil
 }
 
 // Synthesize sends text upstream. Several requests sharing an ID stream one sentence, and
 // the one with Final set closes it so the tail of the audio is generated immediately.
 func (t *TTS) Synthesize(request tts.Request) error {
+	t.requestMu.Lock()
+	defer t.requestMu.Unlock()
+
 	if request.Voice != "" && request.Voice != t.options.VoiceID {
 		return stack.Wrap(fmt.Errorf(
 			"elevenlabs: the connection is bound to voice %s, open a new session for %s",
 			t.options.VoiceID, request.Voice))
 	}
 
-	// A final/error ID is never reopened. In particular, late deltas after a socket loss
-	// must not be replayed into a replacement connection as a new utterance.
-	t.dialMu.Lock()
 	t.mu.Lock()
 	if t.shutdown {
 		t.mu.Unlock()
-		t.dialMu.Unlock()
 		return stack.Wrap(errors.New("elevenlabs: session closed"))
 	}
 	if !t.started {
 		t.mu.Unlock()
-		t.dialMu.Unlock()
+		return stack.Wrap(errors.New("elevenlabs: not started"))
+	}
+	if !t.sessionReady {
+		t.mu.Unlock()
 		return stack.Wrap(errors.New("elevenlabs: not started"))
 	}
 	if request.ID != "" {
 		if _, terminal := t.terminalIDs[request.ID]; terminal {
 			t.mu.Unlock()
-			t.dialMu.Unlock()
 			return nil
 		}
 	}
@@ -489,79 +475,37 @@ func (t *TTS) Synthesize(request tts.Request) error {
 	t.mu.Unlock()
 
 	opened := current == nil
-	var sock *socket
-	fresh := false
 	if opened {
-		var err error
-		sock, fresh, err = t.connectLocked(nil)
+		sock, _, err := t.connect(t.session)
 		if err != nil {
-			t.mu.Lock()
-			stopping := t.shutdown || t.ctx == nil || t.ctx.Err() != nil
-			t.mu.Unlock()
-			if stopping {
-				t.dialMu.Unlock()
-				return err
-			}
-			tracker := tts.NewSynthesis(request.ID)
-			if request.Text != "" {
-				tracker.AddText(request.Text)
-			}
-			t.mu.Lock()
-			t.terminalIDs[tracker.ID] = struct{}{}
-			t.mu.Unlock()
-			t.dialMu.Unlock()
-			t.emitRejected(tracker, err, "connect")
-			return err
-		}
-		current = &utterance{
-			tracker: tts.NewSynthesis(request.ID),
-			socket:  sock,
-			ready:   make(chan struct{}),
-			opened:  make(chan struct{}),
+			return stack.Wrap(fmt.Errorf("elevenlabs: reconnect: %w", err))
 		}
 		t.mu.Lock()
-		if t.shutdown || t.conn != sock {
+		if t.shutdown {
 			t.mu.Unlock()
-			t.dialMu.Unlock()
 			return stack.Wrap(errors.New("elevenlabs: session closed"))
 		}
 		if request.ID != "" {
 			if _, terminal := t.terminalIDs[request.ID]; terminal {
 				t.mu.Unlock()
-				t.dialMu.Unlock()
 				return nil
 			}
 		}
+		// The reader may detach the socket between connect returning and registration.
+		if t.conn != sock {
+			t.mu.Unlock()
+			return stack.Wrap(errors.New("elevenlabs: connection ended before synthesis"))
+		}
+		current = &utterance{
+			tracker:   tts.NewSynthesis(request.ID),
+			socket:    sock,
+			announced: make(chan struct{}),
+		}
 		t.active[current.tracker.ID] = current
 		t.mu.Unlock()
-	} else {
-		sock = current.socket
-	}
-	t.dialMu.Unlock()
-	if opened {
-		current.requestMu.Lock()
-		defer current.requestMu.Unlock()
-		defer current.openOnce.Do(func() { close(current.opened) })
-	} else {
-		<-current.opened
-		current.requestMu.Lock()
-		defer current.requestMu.Unlock()
-		if !t.isRegistered(sock, current.tracker.ID, current) {
-			return nil
-		}
 	}
 
-	if fresh {
-		t.announce(sock)
-	} else {
-		<-sock.ready
-	}
-	if !opened {
-		<-current.ready
-	}
 	if opened {
-		// Track text before sending so a write failure still produces an accurate terminal
-		// synthesis record. The Started event must precede a possible Error/Complete pair.
 		t.emitter.Send(tts.SynthesisStarted{
 			SynthesisID: current.tracker.ID,
 			Provider:    ProviderName,
@@ -569,28 +513,18 @@ func (t *TTS) Synthesize(request tts.Request) error {
 			Voice:       t.options.VoiceID,
 			At:          time.Now(),
 		})
-		close(current.ready)
-	}
-	if request.Text != "" {
-		current.tracker.AddText(request.Text)
-	}
-
-	if opened {
-		if err := t.openContext(sock, current.tracker.ID); err != nil {
-			t.connectionEnded(sock, err, "write")
-			return stack.Wrap(fmt.Errorf("elevenlabs: open context: %w", err))
+		close(current.announced)
+		if err := t.openContext(current.socket, current.tracker.ID); err != nil {
+			return err
 		}
 	}
-	if !t.isRegistered(sock, current.tracker.ID, current) {
-		return nil
-	}
 
 	if request.Text != "" {
+		current.tracker.AddText(request.Text)
 		// The trailing space is what ElevenLabs uses to tell one word from the next
 		// across deltas.
-		err := t.send(sock, clientMessage{Text: request.Text + " ", ContextID: current.tracker.ID})
+		err := t.send(current.socket, clientMessage{Text: request.Text + " ", ContextID: current.tracker.ID})
 		if err != nil {
-			t.connectionEnded(sock, err, "write")
 			return stack.Wrap(fmt.Errorf("elevenlabs: send text: %w", err))
 		}
 	}
@@ -598,8 +532,7 @@ func (t *TTS) Synthesize(request tts.Request) error {
 	if request.Final {
 		// Closing the context flushes the remaining audio and makes the server report
 		// the synthesis as final straight after it.
-		if err := t.send(sock, clientMessage{ContextID: current.tracker.ID, CloseContext: true}); err != nil {
-			t.connectionEnded(sock, err, "write")
+		if err := t.send(current.socket, clientMessage{ContextID: current.tracker.ID, CloseContext: true}); err != nil {
 			return stack.Wrap(fmt.Errorf("elevenlabs: close context: %w", err))
 		}
 	}
@@ -610,10 +543,21 @@ func (t *TTS) Synthesize(request tts.Request) error {
 // audio already on the wire from being forwarded.
 func (t *TTS) Interrupt() error {
 	t.mu.Lock()
+	if len(t.active) == 0 {
+		t.mu.Unlock()
+		return nil
+	}
+	t.mu.Unlock()
+
+	t.requestMu.Lock()
+	defer t.requestMu.Unlock()
+
+	t.mu.Lock()
 	interrupting := make([]*utterance, 0, len(t.active))
 	for _, current := range t.active {
 		if !current.interrupted {
 			current.interrupted = true
+			t.terminalIDs[current.tracker.ID] = struct{}{}
 			interrupting = append(interrupting, current)
 		}
 	}
@@ -621,20 +565,10 @@ func (t *TTS) Interrupt() error {
 
 	var failures []error
 	for _, current := range interrupting {
-		<-current.opened
-		current.requestMu.Lock()
-		if !t.isPresent(current.socket, current.tracker.ID, current) {
-			current.requestMu.Unlock()
-			continue
-		}
 		if err := t.send(current.socket, clientMessage{ContextID: current.tracker.ID, CloseContext: true}); err != nil {
-			t.connectionEnded(current.socket, err, "write")
-			current.requestMu.Unlock()
 			failures = append(failures, err)
-			continue
 		}
 		t.complete(current.socket, current.tracker.ID)
-		current.requestMu.Unlock()
 	}
 
 	if len(failures) > 0 {
@@ -646,10 +580,8 @@ func (t *TTS) Interrupt() error {
 // Events returns audio and synthesis boundaries.
 func (t *TTS) Events() <-chan tts.Event { return t.emitter.Events() }
 
-// Close cancels pending dials and tears down the connection. Outstanding work normally
-// receives an interrupted completion. If the event consumer stays blocked through
-// CloseTimeout, Close closes the event stream to release sends; terminal events that could
-// not be delivered may be dropped.
+// Close asks the server to close, then tears down the connection. Anything still in flight
+// is reported as interrupted so no work goes unaccounted for.
 func (t *TTS) Close() error {
 	t.mu.Lock()
 	if t.shutdown {
@@ -659,56 +591,41 @@ func (t *TTS) Close() error {
 	t.shutdown = true
 	cancel := t.cancel
 	t.mu.Unlock()
-	// Start the shutdown bound before waiting on dial, event, or reader locks. Closing
-	// the emitter cancels any Send blocked by a consumer that stopped draining Events.
-	watchdog := time.AfterFunc(t.options.CloseTimeout, func() {
-		t.logger.Debug("closing event stream after shutdown timeout")
-		t.emitter.Close()
-	})
 	if cancel != nil {
-		// Cancel before waiting for dialMu: DialContext must be able to unwind promptly.
 		cancel()
 	}
-	t.dialConnMu.Lock()
-	attempt := t.dialAttempt
-	t.dialAttempt = nil
-	t.dialConnMu.Unlock()
-	if attempt != nil {
-		// Gorilla's handshake read is bounded by HandshakeTimeout but does not react to
-		// context cancellation after the TCP dial. Closing the in-flight transport makes
-		// Close cancel a stalled upgrade instead of waiting for that timeout.
-		attempt.close()
-	}
 
-	t.dialMu.Lock()
+	// Cancellation above must happen before waiting for a synthesis that may be in
+	// the replacement handshake.
+	t.requestMu.Lock()
+	defer t.requestMu.Unlock()
+
 	t.mu.Lock()
 	sock := t.conn
-	t.conn = nil
-	outstanding := make([]*utterance, 0, len(t.active))
-	for id, current := range t.active {
-		current.interrupted = true
-		t.terminalIDs[id] = struct{}{}
-		outstanding = append(outstanding, current)
-	}
-	clear(t.active)
 	t.mu.Unlock()
-	t.dialMu.Unlock()
+
+	t.settleOutstanding()
 
 	if sock != nil {
-		sock.signalReady()
-		sock.closeConn()
+		// The protocol tears down in two steps: we ask the server to close, then it does.
+		// Waiting for its close avoids ending the session on an abnormal closure.
+		if err := t.send(sock, clientMessage{CloseSocket: true}); err != nil {
+			t.logger.Debug("close_socket not delivered", "error", err)
+		} else {
+			select {
+			case <-sock.ended:
+			case <-time.After(t.options.CloseTimeout):
+				t.logger.Debug("server did not close the socket in time")
+			}
+		}
+		_ = sock.conn.Close()
+		t.mu.Lock()
+		if t.conn == sock {
+			t.conn = nil
+		}
+		t.mu.Unlock()
 	}
-	for _, current := range outstanding {
-		<-current.ready
-		current.eventMu.Lock()
-		t.emitter.Send(current.tracker.Complete(ProviderName, t.options.Model, true))
-		current.eventMu.Unlock()
-	}
-	// dialMu is held during every reader Add, so after detaching the connection no
-	// new readers can be added and this Wait is safe. The watchdog above releases
-	// blocked event sends before this join if the consumer is stalled.
-	t.readers.Wait()
-	watchdog.Stop()
+
 	t.emitter.Close()
 	return nil
 }
@@ -736,8 +653,7 @@ func (t *TTS) Prompt() string { return "" }
 // SampleRate is the rate the audio comes back at.
 func (t *TTS) SampleRate() int { return t.options.SampleRate }
 
-// Client exposes the current underlying WebSocket so callers can use the API directly.
-// It returns nil while disconnected.
+// Client exposes the underlying WebSocket so callers can use the API directly.
 func (t *TTS) Client() *websocket.Conn {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -779,7 +695,10 @@ func (t *TTS) openContext(sock *socket, id string) error {
 		// A short first threshold trades a little prosody for audio that starts sooner.
 		Generation: &generationConf{ChunkLengthSchedule: []int{50, 120, 160, 290}},
 	}
-	return t.send(sock, message)
+	if err := t.send(sock, message); err != nil {
+		return stack.Wrap(fmt.Errorf("elevenlabs: open context: %w", err))
+	}
+	return nil
 }
 
 // valueOr is what was asked for, or the fallback when nothing was.
@@ -791,143 +710,106 @@ func valueOr(asked *float64, fallback float64) float64 {
 }
 
 func (t *TTS) send(sock *socket, message clientMessage) error {
-	if sock == nil {
-		return stack.Wrap(errors.New("not connected"))
-	}
 	payload, err := json.Marshal(message)
 	if err != nil {
 		return stack.Wrap(err)
 	}
 
+	if sock == nil {
+		return stack.Wrap(errors.New("not connected"))
+	}
 	sock.writeMu.Lock()
-	defer sock.writeMu.Unlock()
-	return stack.Wrap(sock.conn.WriteMessage(websocket.TextMessage, payload))
+	err = sock.conn.WriteMessage(websocket.TextMessage, payload)
+	sock.writeMu.Unlock()
+	if err != nil {
+		t.connectionEnded(sock, err)
+	}
+	return stack.Wrap(err)
 }
 
-// connectLocked returns the current socket or dials a replacement. dialMu must be held.
-// An explicit dialContext is used only for Start's initial connection; reconnects
-// otherwise use the Close-owned session lifetime.
-func (t *TTS) connectLocked(dialContext context.Context) (*socket, bool, error) {
+// connect returns the current socket or installs one replacement. Synthesis calls are
+// serialized while connecting, so concurrent new requests share the same successful dial.
+func (t *TTS) connect(ctx context.Context) (*socket, *http.Response, error) {
 	t.mu.Lock()
 	if t.shutdown {
 		t.mu.Unlock()
-		return nil, false, stack.Wrap(errors.New("elevenlabs: session closed"))
+		return nil, nil, errors.New("session closed")
 	}
-	if !t.started || t.ctx == nil {
+	if !t.started {
 		t.mu.Unlock()
-		return nil, false, stack.Wrap(errors.New("elevenlabs: not started"))
+		return nil, nil, errors.New("not started")
 	}
 	if t.conn != nil {
 		sock := t.conn
 		t.mu.Unlock()
-		return sock, false, nil
-	}
-	sessionCtx := t.ctx
-	ctx := sessionCtx
-	var cancelDial context.CancelFunc
-	if dialContext != nil {
-		ctx, cancelDial = mergeDialContext(dialContext, sessionCtx)
+		return sock, nil, nil
 	}
 	t.mu.Unlock()
-	if cancelDial != nil {
-		defer cancelDial()
-	}
 
-	dialer := &websocket.Dialer{HandshakeTimeout: t.options.HandshakeTimeout}
-	attempt := &dialAttempt{}
-	dialer.NetDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
-		if err != nil {
-			return nil, err
-		}
-		t.mu.Lock()
-		stopping := t.shutdown || t.ctx == nil || t.ctx.Err() != nil || ctx.Err() != nil
-		t.mu.Unlock()
-		if stopping || !attempt.attach(conn) {
-			_ = conn.Close()
-			return nil, context.Canceled
-		}
-		t.dialConnMu.Lock()
-		t.dialAttempt = attempt
-		t.dialConnMu.Unlock()
-		return conn, nil
+	attempt := &dialAttempt{callback: make(chan struct{})}
+	stop := context.AfterFunc(ctx, attempt.abort)
+	dialer := &websocket.Dialer{
+		HandshakeTimeout: t.options.HandshakeTimeout,
+		NetDialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+			if err == nil {
+				attempt.setRaw(conn)
+			}
+			return conn, err
+		},
 	}
-	stopDialCancel := context.AfterFunc(ctx, attempt.close)
 	conn, response, key, err := t.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
 		return t.url(), http.Header{"xi-api-key": []string{key}}
 	})
-	t.dialConnMu.Lock()
-	if t.dialAttempt == attempt {
-		t.dialAttempt = nil
-	}
-	t.dialConnMu.Unlock()
-	stopDialCancel()
-	if response != nil && response.Body != nil {
-		_ = response.Body.Close()
+	stopped := stop()
+	if !stopped {
+		<-attempt.callback
 	}
 	if err != nil {
-		attempt.close()
-		if response != nil {
-			return nil, false, stack.Wrap(fmt.Errorf("elevenlabs: dial: %w (http %d)", err, response.StatusCode))
-		}
-		return nil, false, stack.Wrap(fmt.Errorf("elevenlabs: dial: %w", err))
+		attempt.finish(false)
+		return nil, response, err
 	}
-	if err := ctx.Err(); err != nil {
-		attempt.close()
-		return nil, false, stack.Wrap(fmt.Errorf("elevenlabs: dial: %w", err))
-	}
-	if !attempt.finish() {
+	if ctx.Err() != nil || !attempt.finish(true) {
 		_ = conn.Close()
-		return nil, false, stack.Wrap(errors.New("elevenlabs: dial canceled"))
+		if ctx.Err() != nil {
+			return nil, response, ctx.Err()
+		}
+		return nil, response, context.Canceled
 	}
 
-	sock := &socket{conn: conn, key: key, ready: make(chan struct{}), done: make(chan struct{})}
+	sock := &socket{conn: conn, key: key, ended: make(chan struct{})}
 	t.mu.Lock()
-	if t.shutdown || t.ctx.Err() != nil || (dialContext != nil && dialContext.Err() != nil) {
+	if t.shutdown || t.conn != nil {
+		shutdown := t.shutdown
+		current := t.conn
 		t.mu.Unlock()
 		_ = conn.Close()
-		return nil, false, stack.Wrap(errors.New("elevenlabs: session closed"))
+		if shutdown {
+			return nil, response, errors.New("session closed")
+		}
+		return current, response, nil
 	}
 	t.conn = sock
 	t.mu.Unlock()
-	// connectLocked is called while dialMu is held. Close takes that same lock before
-	// waiting, which prevents WaitGroup.Add from racing the final Wait.
-	t.readers.Add(1)
+
+	t.emitter.Send(tts.Connected{Provider: ProviderName, Model: t.options.Model, At: time.Now()})
 	go t.readLoop(sock)
-	return sock, true, nil
+	return sock, response, nil
 }
 
-func (t *TTS) announce(sock *socket) {
-	t.mu.Lock()
-	announce := !t.shutdown && t.conn == sock
-	t.mu.Unlock()
-	if announce {
-		t.emitter.Send(tts.Connected{Provider: ProviderName, Model: t.options.Model, At: time.Now()})
-	}
-	sock.signalReady()
-}
-
-func (s *socket) signalReady() { s.readyOnce.Do(func() { close(s.ready) }) }
-
-func (s *socket) closeConn() {
-	s.closeOnce.Do(func() { _ = s.conn.Close() })
-}
-
-// readLoop translates server frames for this socket generation until it ends.
+// readLoop translates frames from one physical connection. A replaced reader cannot
+// change the state of the newer socket.
 func (t *TTS) readLoop(sock *socket) {
-	defer t.readers.Done()
-	defer close(sock.done)
-	<-sock.ready
 	for {
 		_, raw, err := sock.conn.ReadMessage()
 		if err != nil {
-			t.connectionEnded(sock, err, "read")
+			t.connectionEnded(sock, err)
 			return
 		}
 
 		var message serverMessage
 		if err := json.Unmarshal(raw, &message); err != nil {
-			t.logger.Warn("the voice sent a frame that could not be read", "error", err, "bytes", len(raw))
+			t.logger.Debug("undecodable frame", "error", err)
 			continue
 		}
 		if message.Error == quotaExceeded {
@@ -937,54 +819,79 @@ func (t *TTS) readLoop(sock *socket) {
 	}
 }
 
-// connectionEnded detaches only the socket that ended. A late reader from an older
-// generation cannot alter the replacement or settle its utterances.
-func (t *TTS) connectionEnded(sock *socket, err error, failureContext string) {
-	t.dialMu.Lock()
-	t.mu.Lock()
-	if t.conn != sock || t.shutdown {
+func (t *TTS) connectionEnded(sock *socket, err error) {
+	sock.once.Do(func() {
+		defer close(sock.ended)
+		t.mu.Lock()
+		current := t.conn == sock
+		if current {
+			t.conn = nil
+		}
+		shutdown := t.shutdown
+		var outstanding []*utterance
+		for id, active := range t.active {
+			if active.socket == sock {
+				delete(t.active, id)
+				t.terminalIDs[id] = struct{}{}
+				outstanding = append(outstanding, active)
+			}
+		}
 		t.mu.Unlock()
-		t.dialMu.Unlock()
-		sock.closeConn()
+
+		_ = sock.conn.Close()
+		if current && !shutdown {
+			t.handleReadError(err)
+		}
+		for _, active := range outstanding {
+			<-active.announced
+			t.emitter.Send(active.tracker.Complete(ProviderName, t.options.Model, true))
+		}
+	})
+}
+
+func (t *TTS) handleReadError(err error) {
+	t.mu.Lock()
+	shutdown := t.shutdown
+	t.mu.Unlock()
+	if shutdown {
 		return
 	}
-	t.conn = nil
-	failed := make([]*utterance, 0)
-	for id, current := range t.active {
-		if current.socket != sock {
-			continue
-		}
-		delete(t.active, id)
-		t.terminalIDs[id] = struct{}{}
-		current.interrupted = true
-		failed = append(failed, current)
-	}
-	t.mu.Unlock()
-	t.dialMu.Unlock()
-	sock.closeConn()
 
-	for _, current := range failed {
-		t.emitTerminal(current, err, failureContext)
-	}
-	clean := websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway)
-	if err != nil {
+	if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 		t.emitter.Send(tts.Disconnected{
 			Provider: ProviderName,
 			Model:    t.options.Model,
-			Reason:   "upstream WebSocket closed",
-			Clean:    clean,
+			Clean:    true,
 			At:       time.Now(),
 		})
+		return
 	}
+	t.emitter.Send(tts.Error{
+		Provider: ProviderName,
+		Model:    t.options.Model,
+		Err:      err,
+		Context:  "read",
+		Fatal:    true,
+	})
 }
 
 func (t *TTS) handleMessage(sock *socket, message serverMessage) {
+	t.mu.Lock()
+	currentSocket := t.conn == sock
+	t.mu.Unlock()
+	if !currentSocket {
+		return
+	}
+
 	if failure := failureOf(message); failure != "" {
-		if message.ContextID == "" {
-			t.connectionEnded(sock, errors.New(failure), "server")
-			return
-		}
-		t.failUtterance(sock, message.ContextID, errors.New(failure), "server")
+		t.emitter.Send(tts.Error{
+			Provider:    ProviderName,
+			Model:       t.options.Model,
+			SynthesisID: message.ContextID,
+			Err:         errors.New(failure),
+			Context:     "server",
+			Fatal:       false,
+		})
 		return
 	}
 
@@ -999,7 +906,13 @@ func (t *TTS) handleMessage(sock *socket, message serverMessage) {
 func (t *TTS) handleAudio(sock *socket, message serverMessage) {
 	raw, err := base64.StdEncoding.DecodeString(message.Audio)
 	if err != nil {
-		t.failUtterance(sock, message.ContextID, fmt.Errorf("decode audio: %w", err), "audio")
+		t.emitter.Send(tts.Error{
+			Provider:    ProviderName,
+			Model:       t.options.Model,
+			SynthesisID: message.ContextID,
+			Err:         fmt.Errorf("decode audio: %w", err),
+			Context:     "audio",
+		})
 		return
 	}
 
@@ -1008,11 +921,7 @@ func (t *TTS) handleAudio(sock *socket, message serverMessage) {
 		// The utterance was interrupted or already settled, so this audio is stale.
 		return
 	}
-	current.eventMu.Lock()
-	if t.isActive(sock, message.ContextID, current) {
-		t.emitter.Send(current.tracker.Chunk(audio.FromBytes(raw, t.options.SampleRate, 1)))
-	}
-	current.eventMu.Unlock()
+	t.emitter.Send(current.tracker.Chunk(audio.FromBytes(raw, t.options.SampleRate, 1)))
 }
 
 // complete settles an utterance and emits its summary. It is a no-op for one that has
@@ -1020,18 +929,33 @@ func (t *TTS) handleAudio(sock *socket, message serverMessage) {
 func (t *TTS) complete(sock *socket, id string) {
 	t.mu.Lock()
 	current, ok := t.active[id]
-	if !ok || current.socket != sock || t.conn != sock {
-		t.mu.Unlock()
-		return
+	if ok && current.socket == sock {
+		delete(t.active, id)
+	} else {
+		ok = false
 	}
-	delete(t.active, id)
-	t.terminalIDs[id] = struct{}{}
 	t.mu.Unlock()
 
-	<-current.ready
-	current.eventMu.Lock()
+	if !ok {
+		return
+	}
 	t.emitter.Send(current.tracker.Complete(ProviderName, t.options.Model, current.interrupted))
-	current.eventMu.Unlock()
+}
+
+// settleOutstanding reports every utterance still in flight as interrupted. A connection
+// that dies, or a session that is torn down, must not leave work unaccounted for.
+func (t *TTS) settleOutstanding() {
+	t.mu.Lock()
+	outstanding := make([]*utterance, 0, len(t.active))
+	for _, current := range t.active {
+		outstanding = append(outstanding, current)
+	}
+	clear(t.active)
+	t.mu.Unlock()
+
+	for _, current := range outstanding {
+		t.emitter.Send(current.tracker.Complete(ProviderName, t.options.Model, true))
+	}
 }
 
 // lookup returns an utterance that is still accepting audio.
@@ -1040,81 +964,10 @@ func (t *TTS) lookup(sock *socket, id string) (*utterance, bool) {
 	defer t.mu.Unlock()
 
 	current, ok := t.active[id]
-	if !ok || current.socket != sock || t.conn != sock || current.interrupted || t.shutdown {
+	if !ok || current.socket != sock || current.interrupted {
 		return nil, false
 	}
 	return current, true
-}
-
-func (t *TTS) isActive(sock *socket, id string, current *utterance) bool {
-	return t.isRegistered(sock, id, current)
-}
-
-func (t *TTS) isRegistered(sock *socket, id string, current *utterance) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return !t.shutdown && t.conn == sock && t.active[id] == current && !current.interrupted
-}
-
-func (t *TTS) isPresent(sock *socket, id string, current *utterance) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return !t.shutdown && t.conn == sock && t.active[id] == current
-}
-
-func (t *TTS) failUtterance(sock *socket, id string, err error, context string) {
-	if id == "" {
-		// An error that names no utterance is about the connection or the account, such as a
-		// spent quota, and is the only word of it the agent gets.
-		t.logger.Warn("the voice reported an error for no utterance", "error", err, "context", context)
-		return
-	}
-	t.mu.Lock()
-	current, ok := t.active[id]
-	if !ok || current.socket != sock || t.conn != sock {
-		t.mu.Unlock()
-		return
-	}
-	delete(t.active, id)
-	t.terminalIDs[id] = struct{}{}
-	current.interrupted = true
-	t.mu.Unlock()
-	t.emitTerminal(current, err, context)
-}
-
-func (t *TTS) emitTerminal(current *utterance, err error, context string) {
-	<-current.ready
-	current.eventMu.Lock()
-	if err != nil {
-		t.emitter.Send(tts.Error{
-			Provider:    ProviderName,
-			Model:       t.options.Model,
-			SynthesisID: current.tracker.ID,
-			Err:         err,
-			Context:     context,
-			Fatal:       false,
-		})
-	}
-	t.emitter.Send(current.tracker.Complete(ProviderName, t.options.Model, true))
-	current.eventMu.Unlock()
-}
-
-func (t *TTS) emitRejected(tracker *tts.Synthesis, err error, context string) {
-	t.emitter.Send(tts.SynthesisStarted{
-		SynthesisID: tracker.ID,
-		Provider:    ProviderName,
-		Model:       t.options.Model,
-		Voice:       t.options.VoiceID,
-		At:          time.Now(),
-	})
-	t.emitter.Send(tts.Error{
-		Provider:    ProviderName,
-		Model:       t.options.Model,
-		SynthesisID: tracker.ID,
-		Err:         err,
-		Context:     context,
-	})
-	t.emitter.Send(tracker.Complete(ProviderName, t.options.Model, true))
 }
 
 // failureOf returns the error text of a frame, or empty when it is not a failure.

@@ -2352,6 +2352,7 @@ The component metadata added in #618 was merged *under* the existing `agent_user
 
 - Hosted demo links carry the agent's call type and transcript channel type, so a browser joins the same call and chat channel.
 - Closing an acceleration harness flow prevents later decisions from reaching its closed model sessions, and cancelling a turn safely handles a stream returned at the same time.
+- ElevenLabs reconnects for a new synthesis after a WebSocket disconnect; socket-loss and interrupted synthesis IDs stay terminal.
 
 # v0.6.9
 
