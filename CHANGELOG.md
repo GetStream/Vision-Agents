@@ -2026,7 +2026,6 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 - Decimal values remain intact when streaming voice replies are split into speech requests.
 - Healthcare tool history preserves each appointment response after later reschedules.
 - Corrected caller transcripts replace stale queued fragments without losing words from a separate utterance.
-- ElevenLabs reconnects for a new synthesis after a WebSocket disconnect; socket-loss and interrupted synthesis IDs stay terminal.
 - New voice replies wait until interruption cleanup finishes, so barge-in no longer loses a queued follow-up.
 - A failed voice replacement keeps queued caller and delegated replies until the new voice is ready; a late completion from the lost voice no longer marks replacement speech finished.
 - Deepgram Flux preserves words received with the start-of-turn event instead of waiting for a later transcript update.
@@ -2280,6 +2279,8 @@ Asked for no voice, Gemini picks one on every request, and the router sends it o
 ### Agent metadata was overwritten by stale user data (#630)
 
 The component metadata added in #618 was merged *under* the existing `agent_user.custom`, so a pre-set `custom` won and the provider/model fields never reached the edge. Component metadata now takes precedence, and keys that don't describe a configured component are unset on the stored user, so a previous run's `tts`/`avatar`/... values are cleared instead of lingering. `StreamEdge` maps a `None` custom field to the partial-update `unset` list rather than writing a literal null.
+
+- ElevenLabs reconnects for a new synthesis after a WebSocket disconnect; socket-loss and interrupted synthesis IDs stay terminal.
 
 # v0.6.9
 
