@@ -88,6 +88,39 @@ func (s *ChunkerSuite) TestANumberIsNotSplitAtItsSeparator() {
 	s.Equal([]string{"Your table is booked at 7:30 on Saturday."}, s.stream("Your table is booked at 7:30 on Saturday."))
 }
 
+func (s *ChunkerSuite) TestADecimalDoesNotEndASentenceAtItsPoint() {
+	reply := "That comes to 12.63."
+	want := []string{reply}
+
+	for split := 0; split <= len(reply); split++ {
+		s.Require().Equal(want, s.stream(reply[:split], reply[split:]), "split after byte %d", split)
+	}
+
+	deltas := make([]string, 0, len(reply))
+	for _, r := range reply {
+		deltas = append(deltas, string(r))
+	}
+	s.Require().Equal(want, s.stream(deltas...), "the decimal point and following digit may arrive in separate deltas")
+}
+
+func (s *ChunkerSuite) TestAnIntegerSentenceEndsBeforeTheNextSentence() {
+	var chunker chunker
+
+	got := chunker.Add("The total is 12.")
+	got = append(got, chunker.Add(" The second sentence follows.")...)
+	s.Equal([]string{"The total is 12.", "The second sentence follows."}, got)
+}
+
+func (s *ChunkerSuite) TestAReplyEndingWithAnIntegerIsReturnedOnFlush() {
+	var chunker chunker
+
+	got := chunker.Add("The total is 12.")
+	if tail := chunker.Flush(); tail != "" {
+		got = append(got, tail)
+	}
+	s.Equal([]string{"The total is 12."}, got)
+}
+
 func (s *ChunkerSuite) TestEachReplyOpensWithItsOwnClause() {
 	var chunker chunker
 	chunker.Add("Of course, a table for four on Saturday, at 7:30.")
