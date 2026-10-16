@@ -360,9 +360,10 @@ func (c consents) begin(ctx context.Context, connection store.ConnectorConnectio
 	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
 	begun, err := scheme.Begin(ctx, core.BeginInput{Ref: ref, Manifest: manifest, RedirectURI: connectorCallbackURL(c.publicURL)})
 	// The client comes from the app's own record or the operator's environment
-	// (ConnectorClients), so a connector that takes a client the app can give and finds none
-	// says how to give it one.
-	if errors.Is(err, oauth2code.ErrNoClient) {
+	// (ConnectorClients), so a connector that takes a client the app can give and finds none,
+	// or whose provider refused to register one (WWSD feedback #31, Gong), says how to give it
+	// one.
+	if errors.Is(err, oauth2code.ErrNoClient) || errors.Is(err, oauth2code.ErrRegistration) {
 		if failure, ok := missingOAuthClient(err, manifest, connection.ConnectorID, connectorCallbackURL(c.publicURL),
 			c.providerApps && whyNotManaged(latest.Manifest) == nil); ok {
 			return Authorization{}, failure
@@ -843,12 +844,13 @@ func (s *Server) attemptCookie(id, value string, expires time.Time) *http.Cookie
 	return cookie
 }
 
-// missingOAuthClient answers a consent that found no OAuth client (oauth2code.ErrNoClient) with
-// every way to give the connector one that its client.registration lists: the app's own client
-// (customer, setConnectorOAuthClient) and the app the router creates (managed,
-// setConnectorProviderApp). ok is false when it lists neither, since the app can then give
-// none. WWSD platform feedback #4: the answer used to name only the first, and finding the
-// second took reading every connector operation.
+// missingOAuthClient answers a consent that found no OAuth client (oauth2code.ErrNoClient), or
+// whose dynamic registration gave none (oauth2code.ErrRegistration), with every way to give the
+// connector one that its client.registration lists: the app's own client (customer,
+// setConnectorOAuthClient) and the app the router creates (managed, setConnectorProviderApp).
+// ok is false when it lists neither, since the app can then give none. WWSD platform feedback
+// #4: the answer used to name only the first, and finding the second took reading every
+// connector operation.
 func missingOAuthClient(err error, manifest core.ResolvedManifest, connectorID, redirectURI string, providerApp bool) (APIError, bool) {
 	var ways []string
 	if slices.Contains(manifest.Client.Registration, core.ClientCustomer) {
