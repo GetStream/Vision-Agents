@@ -75,7 +75,7 @@ var everyTerm = []options.Term{
 	options.MaxSpeakers, options.Keyterms, options.Format, options.Redact, options.Events,
 	options.Channels, options.Words, options.Summary, options.Entities, options.Verbatim,
 	options.ProfanityFilter, options.Speed, options.Volume, options.Emotion,
-	options.Stability, options.Pronunciations, options.ChunkSchedule, options.Domains,
+	options.Stability, options.Similarity, options.Pronunciations, options.ChunkSchedule, options.Domains,
 	options.Category, options.Recency, options.Location, options.Contents,
 	options.OutputSchema, options.SemanticTurns, options.ManualTurns, options.Tools,
 	options.TextInput, options.InputTranscript, options.OutputTranscript,

@@ -172,6 +172,47 @@ func (s *DialogueSuite) TestTheSessionRegistersItsVoiceBeforeSayingAnything() {
 	s.Empty(opening.Inputs, "the first frame is registration, not a line")
 }
 
+// openingVoiceSettings is the voice_settings of the registration frame, as it went on the
+// wire.
+func (s *DialogueSuite) openingVoiceSettings(options Options) string {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, conn := s.connect(fake, options)
+	defer provider.Close()
+
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	_, raw, err := conn.ReadMessage()
+	s.Require().NoError(err)
+	var opening struct {
+		VoiceSettings json.RawMessage `json:"voice_settings"`
+	}
+	s.Require().NoError(json.Unmarshal(raw, &opening))
+	return string(opening.VoiceSettings)
+}
+
+func (s *DialogueSuite) TestASessionOpenedWithNothingAskedSendsWhatItAlwaysHas() {
+	// The frame this provider sent before stability could be asked for, captured on the
+	// commit before it could.
+	s.JSONEq(`{"stability":0.5}`, s.openingVoiceSettings(Options{VoiceID: "v1"}))
+}
+
+func (s *DialogueSuite) TestTheSessionOpensWithTheStabilityAskedFor() {
+	// ElevenLabs documents 0 to 1, continuous
+	// (https://elevenlabs.io/docs/api-reference/text-to-dialogue/ttd-websocket, opened
+	// 2026-10-15), and a live session at 0.3 spoke on v3 conversational, v4 and v4 Turbo.
+	stability := 0.3
+
+	s.JSONEq(`{"stability":0.3}`, s.openingVoiceSettings(Options{VoiceID: "v1", Stability: &stability}))
+}
+
+func (s *DialogueSuite) TestASimilarityIsRefusedRatherThanDropped() {
+	similarity := 0.7
+
+	_, err := NewDialogue(Options{APIKey: "k", Similarity: &similarity})
+	s.ErrorIs(err, ErrRefused, "the caller's mistake, not the provider's fault")
+	s.ErrorContains(err, "takes no similarity")
+}
+
 func (s *DialogueSuite) TestOnlyASecondUtteranceEndsTheTurnBeforeIt() {
 	// Without a turn boundary two replies run together as one breath; asking for one on
 	// the first would end a turn that was never started.

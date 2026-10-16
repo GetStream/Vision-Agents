@@ -237,6 +237,58 @@ func (s *ElevenLabsSuite) TestNoSpeedIsSentWhenNoneWasAskedFor() {
 	s.NotContains(string(raw), `"speed"`, "the voice keeps its own pace unless told otherwise")
 }
 
+// openedVoiceSettings is the voice_settings of the first frame the provider sent, as it
+// went on the wire.
+func (s *ElevenLabsSuite) openedVoiceSettings(options Options) string {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, conn := s.connect(fake, options)
+	defer provider.Close()
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "hello", Final: true}))
+
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	_, raw, err := conn.ReadMessage()
+	s.Require().NoError(err)
+	var opened struct {
+		VoiceSettings json.RawMessage `json:"voice_settings"`
+	}
+	s.Require().NoError(json.Unmarshal(raw, &opened))
+	return string(opened.VoiceSettings)
+}
+
+func (s *ElevenLabsSuite) TestAContextOpenedWithNothingAskedSendsWhatItAlwaysHas() {
+	// The frame this provider sent before stability and similarity could be asked for,
+	// captured on the commit before they could.
+	s.JSONEq(`{"stability":0.5,"similarity_boost":0.8}`, s.openedVoiceSettings(Options{VoiceID: "v1"}))
+}
+
+func (s *ElevenLabsSuite) TestEveryContextIsOpenedWithTheStabilityAndSimilarityAskedFor() {
+	stability, similarity := 0.3, 0.6
+
+	s.JSONEq(`{"stability":0.3,"similarity_boost":0.6}`,
+		s.openedVoiceSettings(Options{VoiceID: "v1", Stability: &stability, Similarity: &similarity}))
+}
+
+func (s *ElevenLabsSuite) TestAStabilityOfZeroIsSentRatherThanTakenForNone() {
+	// Zero is the most variable the voice can be, not an absent setting.
+	stability := 0.0
+
+	s.JSONEq(`{"stability":0,"similarity_boost":0.8}`,
+		s.openedVoiceSettings(Options{VoiceID: "v1", Stability: &stability}))
+}
+
+func (s *ElevenLabsSuite) TestAVoiceSettingOutsideZeroToOneIsRefused() {
+	above, below := 1.5, -0.2
+
+	_, err := New(Options{APIKey: "k", Stability: &above})
+	s.ErrorIs(err, ErrRefused, "the caller's mistake, not the provider's fault")
+	s.ErrorContains(err, "stability 1.5 is outside 0 to 1")
+
+	_, err = New(Options{APIKey: "k", Similarity: &below})
+	s.ErrorContains(err, "similarity -0.2 is outside 0 to 1")
+}
+
 func (s *ElevenLabsSuite) TestTheEndpointCarriesTheVoiceModelAndFormat() {
 	url := s.newTTS(Options{VoiceID: "v1", SampleRate: 16_000}).url()
 
