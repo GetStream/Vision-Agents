@@ -1128,7 +1128,8 @@ func TestSyncSendsTheConnectorsItLeftOut(t *testing.T) {
 func TestSyncLeavesAnOverLongLeftOutEntryOutOfTheList(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	label := strings.Repeat("c", 121)
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: issues\n    connection: "+label+"\n  - name: code\n    connector: github\n    connection: team\n")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: issues\n    connection: "+label+
+		"\n  - name: "+strings.Repeat("a", 64)+"\n    connection: team\n  - name: tracker\n    connector: "+strings.Repeat("b", 65)+"\n    connection: team\n  - name: code\n    connector: github\n    connection: team\n")
 	router := newBackend(t)
 	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
 		return connectionPage("", listedConnection("other", "work"))
