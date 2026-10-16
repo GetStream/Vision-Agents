@@ -10,6 +10,7 @@ import time
 import av
 from PIL import Image
 from vision_agents.core import Agent, User
+from vision_agents.core.agents.agents import DEFAULT_INSTRUCTIONS
 from vision_agents.core.harness import Daytona, DefaultHarness
 from vision_agents.core.llm.llm import ImageContent
 from vision_agents.core.llm.remote import (
@@ -212,11 +213,9 @@ class TestAccelerated:
         assert router.created is not None
         assert "instructions" not in router.created
 
-    async def test_an_agent_with_a_config_is_told_what_to_be_by_the_config(
+    async def test_instructions_given_beside_a_config_win_over_it(
         self, router: Router, call: RemoteCall
     ):
-        # The folder holds the agent's instructions, so the ones the call carries are not
-        # sent over them.
         pipeline = stream.Accelerated(config="john", url=router.url, customer_id="acme")
 
         await pipeline.join_remote(call)
@@ -224,7 +223,63 @@ class TestAccelerated:
 
         assert router.created is not None
         assert router.created["config_id"] == "config-7"
+        assert router.created["instructions"] == "be brief"
+
+    async def test_a_config_with_no_instructions_given_speaks_for_itself(
+        self, router: Router
+    ):
+        pipeline = stream.Accelerated(config="john", url=router.url, customer_id="acme")
+
+        await pipeline.join_remote(
+            RemoteCall(
+                call_type="default",
+                call_id="call-3",
+                agent_user_id="agent",
+                instructions="",
+            )
+        )
+        await pipeline.leave_remote()
+
+        assert router.created is not None
+        assert router.created["config_id"] == "config-7"
         assert "instructions" not in router.created
+
+    async def test_the_default_an_agent_is_given_does_not_replace_a_config(
+        self, router: Router
+    ):
+        pipeline = stream.Accelerated(config="john", url=router.url, customer_id="acme")
+
+        await pipeline.join_remote(
+            RemoteCall(
+                call_type="default",
+                call_id="call-4",
+                agent_user_id="agent",
+                instructions=DEFAULT_INSTRUCTIONS,
+            )
+        )
+        await pipeline.leave_remote()
+
+        assert router.created is not None
+        assert router.created["config_id"] == "config-7"
+        assert "instructions" not in router.created
+
+    async def test_the_default_is_played_by_an_agent_without_a_config(
+        self, router: Router
+    ):
+        pipeline = stream.Accelerated(url=router.url, customer_id="acme")
+
+        await pipeline.join_remote(
+            RemoteCall(
+                call_type="default",
+                call_id="call-5",
+                agent_user_id="agent",
+                instructions=DEFAULT_INSTRUCTIONS,
+            )
+        )
+        await pipeline.leave_remote()
+
+        assert router.created is not None
+        assert router.created["instructions"] == DEFAULT_INSTRUCTIONS
 
     async def test_a_greeting_is_sent_with_its_mode(
         self, router: Router, call: RemoteCall

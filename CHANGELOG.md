@@ -633,11 +633,12 @@ one no longer running and a fork naming a config run on the config's instruction
 takes them as `client.SessionOptions.Instructions`, and JavaScript's `SessionSpec` from the
 regenerated types; other SDKs follow.
 
-`stream.Accelerated` now sends the agent's instructions when it has no `config`, so an
-`Agent(instructions=...)` on the hosted router plays the role it is given at call time. An
-agent with no config and no `instructions` now sends `DEFAULT_INSTRUCTIONS`, as `Agent`'s
-docstring says it is told; before, the router ran it on none. An agent with a `config` is
-unchanged: its folder carries its instructions.
+`stream.Accelerated` now sends the agent's instructions, so an `Agent(instructions=...)` on
+the hosted router plays the role it is given at call time, over its `config`'s instructions if
+it has one. An agent with no config and no `instructions` now sends `DEFAULT_INSTRUCTIONS`, as
+`Agent`'s docstring says it is told; before, the router ran it on none. An agent with a
+`config` and no `instructions` of its own is unchanged: the default is not sent over its
+folder's instructions.
 
 ### An agent config says which agent.yaml connectors its last sync left out
 
